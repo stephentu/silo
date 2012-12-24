@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <malloc.h>
 
 #include <cstddef>
 #include <iostream>
@@ -9,7 +10,8 @@
 #include "static_assert.h"
 #include "util.h"
 
-#define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(64)))
+#define CACHELINE_SIZE 64
+#define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(CACHELINE_SIZE)))
 #define NEVER_INLINE __attribute__((noinline))
 
 /**
@@ -211,6 +213,15 @@ private:
       base_invariant_checker(min_key, max_key, is_root);
     }
 
+    static inline leaf_node*
+    alloc()
+    {
+      void *p = memalign(CACHELINE_SIZE, sizeof(leaf_node));
+      if (!p)
+        return NULL;
+      return new (p) leaf_node;
+    }
+
   } PACKED_CACHE_ALIGNED;
 
   struct internal_node : public node {
@@ -238,6 +249,15 @@ private:
           children[i]->invariant_checker(&keys[i - 1], &keys[i], false);
         }
       }
+    }
+
+    static inline internal_node*
+    alloc()
+    {
+      void *p = memalign(CACHELINE_SIZE, sizeof(internal_node));
+      if (!p)
+        return NULL;
+      return new (p) internal_node;
     }
 
   } PACKED_CACHE_ALIGNED;
@@ -296,7 +316,7 @@ private:
 
 public:
 
-  btree() : root(new leaf_node)
+  btree() : root(leaf_node::alloc())
   {
     _static_assert(sizeof(leaf_node) <= NodeSize);
     _static_assert(sizeof(leaf_node) % 64 == 0);
@@ -348,7 +368,7 @@ public:
     node *ret = insert0(root, k, insert_value(v), mk);
     if (ret) {
       assert(ret->key_slots_used());
-      internal_node *new_root = new internal_node;
+      internal_node *new_root = internal_node::alloc();
       new_root->children[0] = root;
       new_root->children[1] = ret;
       new_root->keys[0] = mk;
@@ -428,7 +448,7 @@ private:
         leaf->inc_key_slots_used();
         return NULL;
       } else {
-        leaf_node *new_leaf = new leaf_node;
+        leaf_node *new_leaf = leaf_node::alloc();
         for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode; i++, j++) {
           new_leaf->keys[j] = leaf->keys[i];
           new_leaf->values[j] = leaf->values[i];
@@ -480,7 +500,7 @@ private:
       } else {
         // splitting an internal node is the trickiest case to get right!
 
-        internal_node *new_internal = new internal_node;
+        internal_node *new_internal = internal_node::alloc();
 
         // find where we *would* put the new key (mk) if we could
         ssize_t ret = internal->key_lower_bound_search(mk);
