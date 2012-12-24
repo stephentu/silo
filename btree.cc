@@ -638,6 +638,30 @@ test1()
 }
 
 static void
+test2()
+{
+  btree btr;
+  const size_t n = 0;
+  for (size_t i = 0; i < n; i += 2) {
+    btr.insert(i, (btree::value_type) i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+
+  for (size_t i = 1; i < n; i += 2) {
+    btr.insert(i, (btree::value_type) i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+}
+
+static void
 perf_test()
 {
   const size_t nrecs = 10000000;
@@ -665,6 +689,7 @@ int
 main(void)
 {
   test1();
-  perf_test();
+  test2();
+  //perf_test();
   return 0;
 }
