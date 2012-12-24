@@ -4,10 +4,13 @@
 #include <unistd.h>
 
 #include <cstddef>
+#include <iostream>
 
 #include "static_assert.h"
+#include "util.h"
 
 #define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(64)))
+#define NEVER_INLINE __attribute__((noinline))
 
 /**
  * This btree maps keys of type key_type -> value_type, where key_type is
@@ -81,6 +84,13 @@ private:
       set_key_slots_used(key_slots_used() + 1);
     }
 
+    inline void
+    dec_key_slots_used()
+    {
+      assert(key_slots_used() > 0);
+      set_key_slots_used(key_slots_used() - 1);
+    }
+
     /**
      * keys[key_search(k)] == k if key_search(k) != -1
      * key does not exist otherwise
@@ -103,11 +113,28 @@ private:
       return -1;
     }
 
+    NEVER_INLINE std::string
+    key_list_string() const
+    {
+      return util::format_list(keys, keys + key_slots_used());
+    }
+
     /**
      * tightest lower bound key, -1 if no such key exists
      */
     inline ssize_t
     key_lower_bound_search(key_type k) const
+    {
+      ssize_t ret = key_lower_bound_search0(k);
+      //std::cout << "key_lower_bound_search(" << k << "):" << std::endl
+      //          << "  keys: " << util::format_list(keys, keys + key_slots_used()) << std::endl
+      //          << "  ret: " << ret << std::endl
+      //          ;
+      return ret;
+    }
+
+    inline ssize_t
+    key_lower_bound_search0(key_type k) const
     {
       ssize_t ret = -1;
       ssize_t lower = 0;
@@ -138,7 +165,7 @@ private:
       assert(n <= NKeysPerNode);
       if (is_root) {
         if (is_internal_node())
-          assert(n >= 2);
+          assert(n >= 1);
       } else {
         assert(n >= NKeysPerNode / 2);
       }
@@ -206,7 +233,7 @@ private:
         if (i == 0) {
           children[0]->invariant_checker(min_key, &keys[0], false);
         } else if (i == n) {
-          children[n]->invariant_checker(&keys[n], max_key, false);
+          children[n]->invariant_checker(&keys[n - 1], max_key, false);
         } else {
           children[i]->invariant_checker(&keys[i - 1], &keys[i], false);
         }
@@ -376,7 +403,10 @@ private:
    * insert k=>v into node n. if this insert into n causes it to split into two
    * nodes, return the new node (upper half of keys). in this case, min_key is set to the
    * smallest key that the new node is responsible for. otherwise return null, in which
-   * case min_key's value is not defined
+   * case min_key's value is not defined.
+   *
+   * NOTE: our implementation of insert0() is not as efficient as possible, in favor
+   * of code clarity
    */
   node *
   insert0(node *n, key_type k, const insert_value &v, key_type &min_key)
@@ -429,7 +459,7 @@ private:
       internal_node *internal = AsInternal(n);
       assert(internal->key_slots_used());
       ssize_t ret = internal->key_lower_bound_search(k);
-      size_t child_idx = (ret == -1) ? 0 : ret;
+      size_t child_idx = (ret == -1) ? 0 : ret + 1;
       key_type mk;
       node *new_child =
         v.is_value() ?
@@ -443,30 +473,89 @@ private:
           internal->keys[i] = internal->keys[i - 1];
         for (size_t i = internal->key_slots_used() + 1; i > child_idx + 1; i--)
           internal->children[i] = internal->children[i - 1];
-        internal->keys[child_idx] = mk;
+        internal->keys[child_idx] = v.is_value() ? mk : k;
         internal->children[child_idx + 1] = new_child;
         internal->inc_key_slots_used();
         return NULL;
       } else {
+        // splitting an internal node is the trickiest case to get right!
+
         internal_node *new_internal = new internal_node;
-        min_key = internal->keys[NKeysPerNode / 2];
-        for (size_t i = NKeysPerNode / 2 + 1, j = 0; i < NKeysPerNode; i++, j++)
-          new_internal->keys[j] = internal->keys[i];
-        for (size_t i = NKeysPerNode / 2 + 1, j = 0; i < NKeysPerNode + 1; i++, j++)
-          new_internal->children[j] = internal->children[i];
-        new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
-        internal->set_key_slots_used(NKeysPerNode / 2);
-        if (mk >= min_key) {
+
+        // find where we *would* put the new key (mk) if we could
+        ssize_t ret = internal->key_lower_bound_search(mk);
+
+        // there are three cases post-split:
+        // (1) mk goes in the original node
+        // (2) mk is the key we push up
+        // (3) mk goes in the new node
+
+        ssize_t split_point = NKeysPerNode / 2 - 1;
+        if (ret < split_point) {
+          // case (1)
+          min_key = internal->keys[split_point];
+
+          // copy keys at positions [NKeysPerNode/2, NKeysPerNode) over to
+          // the new node starting at position 0
+          for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode; i++, j++)
+            new_internal->keys[j] = internal->keys[i];
+
+          // copy children at positions [NKeysPerNode/2 - 1, NKeysPerNode + 1)
+          // over to the new node starting at position 0
+          for (size_t i = NKeysPerNode / 2 - 1, j = 0; i < NKeysPerNode + 1; i++, j++)
+            new_internal->children[j] = internal->children[i];
+
+          new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
+          internal->set_key_slots_used(NKeysPerNode / 2 - 1);
+
           key_type mk0;
-          node *ret = insert0(new_internal, k, insert_value(new_child), mk0);
-          if (ret)
+          node *ret0 = insert0(internal, mk, insert_value(new_child), mk0);
+          if (ret0)
             assert(false);
+          assert(internal->key_slots_used() == (NKeysPerNode / 2));
+        } else if (ret == split_point) {
+          // case (2)
+          min_key = mk;
+
+          // copy keys at positions [NKeysPerNode/2, NKeysPerNode) over to
+          // the new node starting at position 0
+          for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode; i++, j++)
+            new_internal->keys[j] = internal->keys[i];
+
+          // copy children at positions [NKeysPerNode/2 + 1, NKeysPerNode + 1)
+          // over to the new node starting at position 1
+          for (size_t i = NKeysPerNode / 2 + 1, j = 1; i < NKeysPerNode + 1; i++, j++)
+            new_internal->children[j] = internal->children[i];
+
+          new_internal->children[0] = new_child;
+
+          new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
+          internal->set_key_slots_used(NKeysPerNode / 2);
+
         } else {
+          // case (3)
+          min_key = internal->keys[NKeysPerNode / 2];
+
+          // copy keys at positions [NKeysPerNode/2 + 1, NKeysPerNode) over to
+          // the new node starting at position 0
+          for (size_t i = NKeysPerNode / 2 + 1, j = 0; i < NKeysPerNode; i++, j++)
+            new_internal->keys[j] = internal->keys[i];
+
+          // copy children at positions [NKeysPerNode/2 + 1, NKeysPerNode + 1)
+          // over to the new node starting at position 0
+          for (size_t i = NKeysPerNode / 2 + 1, j = 0; i < NKeysPerNode + 1; i++, j++)
+            new_internal->children[j] = internal->children[i];
+
+          new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2) - 1);
+          internal->set_key_slots_used(NKeysPerNode / 2);
+
           key_type mk0;
-          node *ret = insert0(internal, k, insert_value(new_child), mk0);
-          if (ret)
+          node *ret0 = insert0(new_internal, mk, insert_value(new_child), mk0);
+          if (ret0)
             assert(false);
+          assert(new_internal->key_slots_used() == (NKeysPerNode - (NKeysPerNode / 2)));
         }
+
         return new_internal;
       }
     }
@@ -491,6 +580,7 @@ main(void)
   btree btr;
   btr.invariant_checker();
 
+  // fill up root leaf node
   for (size_t i = 0; i < btree::NKeysPerNode; i++) {
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
@@ -499,6 +589,32 @@ main(void)
     assert(btr.search(i, v));
     assert(v == (btree::value_type) i);
   }
+
+  // induce a split
+  btr.insert(btree::NKeysPerNode, (btree::value_type) (btree::NKeysPerNode));
+  btr.invariant_checker();
+
+  // now make sure we can find everything post split
+  for (size_t i = 0; i < btree::NKeysPerNode + 1; i++) {
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+
+  // now fill up the new root node
+  const size_t n = (btree::NKeysPerNode + btree::NKeysPerNode * (btree::NKeysPerNode / 2));
+  for (size_t i = btree::NKeysPerNode + 1; i < n; i++) {
+    btr.insert(i, (btree::value_type) i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+
+  // cause the root node to split
+  btr.insert(n, (btree::value_type) n);
+  btr.invariant_checker();
 
   return 0;
 }
