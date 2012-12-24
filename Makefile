@@ -1,7 +1,7 @@
 all: btree
 
 btree: btree.cc static_assert.h util.h
-	$(CXX) -Wall -g -o btree btree.cc
+	$(CXX) -Wall -O2 -g -o btree btree.cc
 
 .PHONY: clean
 clean:

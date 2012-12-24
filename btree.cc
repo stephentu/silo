@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <malloc.h>
 
+#include <map>
 #include <cstddef>
 #include <iostream>
 
@@ -480,7 +481,7 @@ private:
       assert(internal->key_slots_used());
       ssize_t ret = internal->key_lower_bound_search(k);
       size_t child_idx = (ret == -1) ? 0 : ret + 1;
-      key_type mk;
+      key_type mk = 0;
       node *new_child =
         v.is_value() ?
           insert0(internal->children[child_idx], k, v, mk) :
@@ -593,9 +594,8 @@ btree::node::invariant_checker(
     AsInternal(this)->invariant_checker_impl(min_key, max_key, is_root) ;
 }
 
-
-int
-main(void)
+static void
+test1()
 {
   btree btr;
   btr.invariant_checker();
@@ -635,6 +635,36 @@ main(void)
   // cause the root node to split
   btr.insert(n, (btree::value_type) n);
   btr.invariant_checker();
+}
 
+static void
+perf_test()
+{
+  const size_t nrecs = 10000000;
+
+  {
+    std::map<uint64_t, uint64_t> m;
+    {
+      util::scoped_timer t("std::map insert");
+      for (size_t i = 0; i < nrecs; i++)
+        m[i] = i;
+    }
+  }
+
+  {
+    btree btr;
+    {
+      util::scoped_timer t("btree insert");
+      for (size_t i = 0; i < nrecs; i++)
+        btr.insert(i, (btree::value_type) i);
+    }
+  }
+}
+
+int
+main(void)
+{
+  test1();
+  perf_test();
   return 0;
 }
