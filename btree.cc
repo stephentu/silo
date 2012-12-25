@@ -1068,6 +1068,31 @@ test3()
     btree::value_type v;
     assert(!btr.search(i, v));
   }
+
+  for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
+    btr.insert(i, (btree::value_type) i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+
+  for (ssize_t i = btree::NKeysPerNode; i >= 0; i--) {
+    btr.remove(i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(!btr.search(i, v));
+  }
+
+  for (size_t i = btree::NKeysPerNode + 1; i < btree::NKeysPerNode * 2; i++) {
+    btr.remove(i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(!btr.search(i, v));
+  }
 }
 
 static void
