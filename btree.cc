@@ -422,7 +422,6 @@ public:
     case NONE:
       return;
     case REPLACE_NODE:
-      internal_node::release(AsInternal(root));
       root = replace_node;
       return;
     default:
@@ -810,7 +809,7 @@ private:
         return NONE;
 
       case STOLE_FROM_RIGHT:
-        internal->keys[child_idx + 1] = nk;
+        internal->keys[child_idx] = nk;
         return NONE;
 
       case MERGE_WITH_LEFT:
@@ -824,9 +823,9 @@ private:
           del_key_idx = child_idx - 1;
           del_child_idx = child_idx;
         } else {
-          // need to delete key at position (child_idx + 1), and child at
+          // need to delete key at position (child_idx), and child at
           // posiiton (child_idx + 1)
-          del_key_idx = child_idx + 1;
+          del_key_idx = child_idx;
           del_child_idx = child_idx + 1;
         }
 
@@ -944,10 +943,9 @@ private:
         return NONE;
       }
 
-      case REPLACE_NODE:
-        // only the root node can return this
+      default:
         assert(false);
-
+        return NONE;
       }
     }
   }
@@ -1033,6 +1031,28 @@ test2()
 }
 
 static void
+test3()
+{
+  btree btr;
+  for (size_t i = 0; i < btree::NKeysPerNode * 2; i ++) {
+    btr.insert(i, (btree::value_type) i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+
+  for (size_t i = 0; i < btree::NKeysPerNode * 2; i ++) {
+    btr.remove(i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(!btr.search(i, v));
+  }
+}
+
+static void
 perf_test()
 {
   const size_t nrecs = 10000000;
@@ -1061,6 +1081,7 @@ main(void)
 {
   test1();
   test2();
+  test3();
   //perf_test();
   return 0;
 }
