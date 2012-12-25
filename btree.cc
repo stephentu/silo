@@ -6,6 +6,7 @@
 
 #include <map>
 #include <cstddef>
+#include <cstdlib>
 #include <iostream>
 
 #include "static_assert.h"
@@ -193,6 +194,8 @@ private:
     invariant_checker(
         const key_type *min_key,
         const key_type *max_key,
+        const node *left_sibling,
+        const node *right_sibling,
         bool is_root) const;
   };
 
@@ -209,9 +212,27 @@ private:
     invariant_checker_impl(
         const key_type *min_key,
         const key_type *max_key,
+        const node *left_sibling,
+        const node *right_sibling,
         bool is_root) const
     {
       base_invariant_checker(min_key, max_key, is_root);
+      if (min_key || is_root)
+        return;
+      assert(key_slots_used());
+      bool first = true;
+      key_type k = keys[0];
+      const leaf_node *cur = this;
+      while (cur) {
+        size_t n = cur->key_slots_used();
+        for (size_t i = (first ? 1 : 0); i < n; i++) {
+          if (cur->keys[i] <= k)
+            assert(false);
+          k = cur->keys[i];
+        }
+        first = false;
+        cur = cur->next;
+      }
     }
 
     static inline leaf_node*
@@ -253,6 +274,8 @@ private:
     invariant_checker_impl(
         const key_type *min_key,
         const key_type *max_key,
+        const node *left_sibling,
+        const node *right_sibling,
         bool is_root) const
     {
       base_invariant_checker(min_key, max_key, is_root);
@@ -260,12 +283,32 @@ private:
       for (size_t i = 0; i <= n; i++) {
         assert(children[i]);
         if (i == 0) {
-          children[0]->invariant_checker(min_key, &keys[0], false);
+          const node *left_child_sibling = NULL;
+          if (left_sibling)
+            left_child_sibling = AsInternal(left_sibling)->children[left_sibling->key_slots_used()];
+          children[0]->invariant_checker(min_key, &keys[0], left_child_sibling, children[i + 1], false);
         } else if (i == n) {
-          children[n]->invariant_checker(&keys[n - 1], max_key, false);
+          const node *right_child_sibling = NULL;
+          if (right_sibling)
+            right_child_sibling = AsInternal(right_sibling)->children[0];
+          children[n]->invariant_checker(&keys[n - 1], max_key, children[i - 1], right_child_sibling, false);
         } else {
-          children[i]->invariant_checker(&keys[i - 1], &keys[i], false);
+          children[i]->invariant_checker(&keys[i - 1], &keys[i], children[i - 1], children[i + 1], false);
         }
+      }
+      if (!n || children[0]->is_internal_node())
+        return;
+      for (size_t i = 0; i <= n; i++) {
+        const node *left_child_sibling = NULL;
+        const node *right_child_sibling = NULL;
+        if (left_sibling)
+          left_child_sibling = AsInternal(left_sibling)->children[left_sibling->key_slots_used()];
+        if (right_sibling)
+          right_child_sibling = AsInternal(right_sibling)->children[0];
+        const leaf_node *child_prev = (i == 0) ? AsLeaf(left_child_sibling) : AsLeaf(children[i - 1]);
+        const leaf_node *child_next = (i == n) ? AsLeaf(right_child_sibling) : AsLeaf(children[i + 1]);
+        assert(AsLeaf(children[i])->prev == child_prev);
+        assert(AsLeaf(children[i])->next == child_next);
       }
     }
 
@@ -360,7 +403,7 @@ public:
   void
   invariant_checker() const
   {
-    root->invariant_checker(NULL, NULL, true);
+    root->invariant_checker(NULL, NULL, NULL, NULL, true);
   }
 
   bool
@@ -519,7 +562,7 @@ private:
             assert(false);
         } else {
           key_type mk;
-          node *ret = insert0(n, k, v, mk);
+          node *ret = insert0(leaf, k, v, mk);
           if (ret)
             assert(false);
         }
@@ -686,8 +729,8 @@ private:
       btree::node *&replace_node)
   {
     if (leaf_node *leaf = AsLeafCheck(node)) {
-      assert(!left_node || leaf->prev == left_node);
-      assert(!right_node || leaf->next == right_node);
+      assert(!left_node || (leaf->prev == left_node && AsLeaf(left_node)->next == leaf));
+      assert(!right_node || (leaf->next == right_node && AsLeaf(right_node)->prev == leaf));
       ssize_t ret = leaf->key_search(k);
       if (ret == -1)
         return NONE;
@@ -754,6 +797,12 @@ private:
 
           left_sibling->set_key_slots_used(left_n + (n - 1));
           left_sibling->next = leaf->next;
+          if (leaf->next)
+            leaf->next->prev = left_sibling;
+
+          assert(!left_sibling->next || left_sibling->next->prev == left_sibling);
+          assert(!left_sibling->prev || left_sibling->prev->next == left_sibling);
+
           leaf_node::release(leaf);
           return MERGE_WITH_LEFT;
         }
@@ -774,6 +823,12 @@ private:
           }
           leaf->set_key_slots_used(right_n + (n - 1));
           leaf->next = right_sibling->next;
+          if (right_sibling->next)
+            right_sibling->next->prev = leaf;
+
+          assert(!leaf->next || leaf->next->prev == leaf);
+          assert(!leaf->prev || leaf->prev->next == leaf);
+
           leaf_node::release(right_sibling);
           return MERGE_WITH_RIGHT;
         }
@@ -806,10 +861,12 @@ private:
 
       case STOLE_FROM_LEFT:
         internal->keys[child_idx - 1] = nk;
+        internal->invariant_checker(min_key, max_key, left_node, right_node, internal == root);
         return NONE;
 
       case STOLE_FROM_RIGHT:
         internal->keys[child_idx] = nk;
+        internal->invariant_checker(min_key, max_key, left_node, right_node, internal == root);
         return NONE;
 
       case MERGE_WITH_LEFT:
@@ -831,6 +888,7 @@ private:
 
         if (n > NKeysPerNode / 2) {
           remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
+          internal->invariant_checker(min_key, max_key, left_node, right_node, internal == root);
           return NONE;
         }
 
@@ -840,9 +898,11 @@ private:
         size_t right_n = 0;
 
         if (left_sibling) {
-          assert(min_key);
           left_n = left_sibling->key_slots_used();
+          assert(min_key);
           assert(left_sibling->keys[left_n - 1] < internal->keys[0]);
+          assert(left_sibling->keys[left_n - 1] < *min_key);
+          assert(*min_key < internal->keys[0]);
           if (left_n > NKeysPerNode / 2) {
             // sift keys to right
             for (size_t i = del_key_idx; i > 0; i--)
@@ -856,6 +916,7 @@ private:
             new_key = left_sibling->keys[left_n - 1];
             left_sibling->dec_key_slots_used();
 
+            internal->invariant_checker(&new_key, max_key, left_node, right_node, internal == root);
             return STOLE_FROM_LEFT;
           }
         }
@@ -863,7 +924,7 @@ private:
         if (right_sibling) {
           assert(max_key);
           right_n = right_sibling->key_slots_used();
-          assert(right_sibling->keys[0] < internal->keys[n - 1]);
+          assert(right_sibling->keys[0] > internal->keys[n - 1]);
           if (right_n > NKeysPerNode / 2) {
             // sift keys to left
             for (size_t i = del_key_idx; i < n - 1; i++)
@@ -884,6 +945,7 @@ private:
               right_sibling->children[i] = right_sibling->children[i + 1];
             right_sibling->dec_key_slots_used();
 
+            internal->invariant_checker(min_key, &new_key, left_node, right_node, internal == root);
             return STOLE_FROM_RIGHT;
           }
         }
@@ -892,8 +954,8 @@ private:
           // merge into left sibling
           assert(min_key);
 
-          size_t left_key_j = left_n - 1;
-          size_t left_child_j = left_n;
+          size_t left_key_j = left_n;
+          size_t left_child_j = left_n + 1;
 
           left_sibling->keys[left_key_j++] = *min_key;
           for (size_t i = 0; i < del_key_idx; i++, left_key_j++)
@@ -956,11 +1018,13 @@ void
 btree::node::invariant_checker(
     const key_type *min_key,
     const key_type *max_key,
+    const node *left_sibling,
+    const node *right_sibling,
     bool is_root) const
 {
   is_leaf_node() ?
-    AsLeaf(this)->invariant_checker_impl(min_key, max_key, is_root) :
-    AsInternal(this)->invariant_checker_impl(min_key, max_key, is_root) ;
+    AsLeaf(this)->invariant_checker_impl(min_key, max_key, left_sibling, right_sibling, is_root) :
+    AsInternal(this)->invariant_checker_impl(min_key, max_key, left_sibling, right_sibling, is_root) ;
 }
 
 static void
@@ -1004,6 +1068,13 @@ test1()
   // cause the root node to split
   btr.insert(n, (btree::value_type) n);
   btr.invariant_checker();
+
+  // once again make sure we can find everything
+  for (size_t i = 0; i < n + 1; i++) {
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
 }
 
 static void
@@ -1096,6 +1167,31 @@ test3()
 }
 
 static void
+test4()
+{
+  btree btr;
+  for (size_t i = 0; i < 10000; i++) {
+    btr.insert(i, (btree::value_type) i);
+    btr.invariant_checker();
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+
+  srand(12345);
+
+  for (size_t i = 0; i < 10000; i++) {
+    size_t k = rand() % 10000;
+    std::cerr << "removing " << k << std::endl;
+    btr.remove(k);
+    btr.invariant_checker();
+    btree::value_type v;
+    assert(!btr.search(k, v));
+    std::cerr << "   removed " << k << std::endl;
+  }
+}
+
+static void
 perf_test()
 {
   const size_t nrecs = 10000000;
@@ -1125,6 +1221,7 @@ main(void)
   test1();
   test2();
   test3();
+  test4();
   //perf_test();
   return 0;
 }
