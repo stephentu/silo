@@ -742,7 +742,7 @@ private:
           assert(left_sibling->keys[left_n - 1] < leaf->keys[0]);
           assert((left_n + (n - 1)) <= NKeysPerNode);
 
-          size_t j = 0;
+          size_t j = left_n;
           for (size_t i = 0; i < size_t(ret); i++, j++) {
             left_sibling->keys[j] = leaf->keys[i];
             left_sibling->values[j] = leaf->values[i];
@@ -1034,7 +1034,8 @@ static void
 test3()
 {
   btree btr;
-  for (size_t i = 0; i < btree::NKeysPerNode * 2; i ++) {
+
+  for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
@@ -1043,7 +1044,24 @@ test3()
     assert(v == (btree::value_type) i);
   }
 
-  for (size_t i = 0; i < btree::NKeysPerNode * 2; i ++) {
+  for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
+    btr.remove(i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(!btr.search(i, v));
+  }
+
+  for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
+    btr.insert(i, (btree::value_type) i);
+    btr.invariant_checker();
+
+    btree::value_type v;
+    assert(btr.search(i, v));
+    assert(v == (btree::value_type) i);
+  }
+
+  for (ssize_t i = btree::NKeysPerNode * 2 - 1; i >= 0; i--) {
     btr.remove(i);
     btr.invariant_checker();
 
