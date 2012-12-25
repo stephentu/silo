@@ -223,9 +223,26 @@ private:
       return new (p) leaf_node;
     }
 
+    static inline void
+    release(leaf_node *n)
+    {
+      if (!n)
+        return;
+      n->~leaf_node();
+      free(n);
+    }
+
   } PACKED_CACHE_ALIGNED;
 
   struct internal_node : public node {
+    /**
+     * child at position child_idx is responsible for keys
+     * [keys[child_idx - 1], keys[child_idx])
+     *
+     * in the case where child_idx == 0 or child_idx == key_slots_used(), then
+     * the responsiblity value of the min/max key, respectively, is determined
+     * by the parent
+     */
     node *children[NKeysPerNode + 1];
     internal_node()
     {
@@ -261,12 +278,21 @@ private:
       return new (p) internal_node;
     }
 
+    static inline void
+    release(internal_node *n)
+    {
+      if (!n)
+        return;
+      n->~internal_node();
+      free(n);
+    }
+
   } PACKED_CACHE_ALIGNED;
 
   static inline leaf_node*
   AsLeaf(node *n)
   {
-    assert(n->is_leaf_node());
+    assert(!n || n->is_leaf_node());
     return static_cast<leaf_node *>(n);
   }
 
@@ -279,7 +305,7 @@ private:
   static inline internal_node*
   AsInternal(node *n)
   {
-    assert(n->is_internal_node());
+    assert(!n || n->is_internal_node());
     return static_cast<internal_node *>(n);
   }
 
@@ -292,7 +318,7 @@ private:
   static inline leaf_node*
   AsLeafCheck(node *n)
   {
-    return n->is_leaf_node() ? static_cast<leaf_node *>(n) : NULL;
+    return n && n->is_leaf_node() ? static_cast<leaf_node *>(n) : NULL;
   }
 
   static inline const leaf_node*
@@ -304,7 +330,7 @@ private:
   static inline internal_node*
   AsInternalCheck(node *n)
   {
-    return n->is_internal_node() ? static_cast<internal_node *>(n) : NULL;
+    return n && n->is_internal_node() ? static_cast<internal_node *>(n) : NULL;
   }
 
   static inline const internal_node*
@@ -375,6 +401,32 @@ public:
       new_root->keys[0] = mk;
       new_root->set_key_slots_used(1);
       root = new_root;
+    }
+  }
+
+  void
+  remove(key_type k)
+  {
+    key_type new_key;
+    node *replace_node;
+    remove_status status = remove0(
+        root,
+        NULL, /* min_key */
+        NULL, /* max_key */
+        k,
+        NULL, /* left_node */
+        NULL, /* right_node */
+        new_key,
+        replace_node);
+    switch (status) {
+    case NONE:
+      return;
+    case REPLACE_NODE:
+      internal_node::release(AsInternal(root));
+      root = replace_node;
+      return;
+    default:
+      assert(false);
     }
   }
 
@@ -499,8 +551,6 @@ private:
         internal->inc_key_slots_used();
         return NULL;
       } else {
-        // splitting an internal node is the trickiest case to get right!
-
         internal_node *new_internal = internal_node::alloc();
 
         // find where we *would* put the new key (mk) if we could
@@ -581,6 +631,327 @@ private:
       }
     }
   }
+
+  enum remove_status {
+    NONE,
+    STOLE_FROM_LEFT,
+    STOLE_FROM_RIGHT,
+    MERGE_WITH_LEFT,
+    MERGE_WITH_RIGHT,
+    REPLACE_NODE,
+  };
+
+  inline void
+  remove_pos_from_leaf_node(leaf_node *leaf, size_t pos, size_t n)
+  {
+    assert(leaf->key_slots_used() == n);
+    assert(pos < n);
+    for (size_t i = pos; i < n - 1; i++) {
+      leaf->keys[i] = leaf->keys[i + 1];
+      leaf->values[i] = leaf->values[i + 1];
+    }
+    leaf->dec_key_slots_used();
+  }
+
+  inline void
+  remove_pos_from_internal_node(
+      internal_node *internal, size_t key_pos, size_t child_pos, size_t n)
+  {
+    assert(internal->key_slots_used() == n);
+    assert(key_pos < n);
+    assert(child_pos < n + 1);
+    for (size_t i = key_pos; i < n - 1; i++)
+      internal->keys[i] = internal->keys[i + 1];
+    for (size_t i = child_pos; i < n; i++)
+      internal->children[i] = internal->children[i + 1];
+    internal->dec_key_slots_used();
+  }
+
+  /**
+   * remove is very tricky to get right!
+   *
+   * XXX: g++ complains if we don't say btree::node here, for some reason...
+   */
+  remove_status
+  remove0(
+      btree::node *node,
+      key_type *min_key,
+      key_type *max_key,
+
+      key_type k,
+
+      btree::node *left_node,
+      btree::node *right_node,
+
+      key_type &new_key,
+      btree::node *&replace_node)
+  {
+    if (leaf_node *leaf = AsLeafCheck(node)) {
+      assert(!left_node || leaf->prev == left_node);
+      assert(!right_node || leaf->next == right_node);
+      ssize_t ret = leaf->key_search(k);
+      if (ret == -1)
+        return NONE;
+      size_t n = leaf->key_slots_used();
+      if (n > NKeysPerNode / 2) {
+        remove_pos_from_leaf_node(leaf, ret, n);
+        return NONE;
+      } else {
+        leaf_node *left_sibling = AsLeaf(left_node);
+        leaf_node *right_sibling = AsLeaf(right_node);
+        if (left_sibling) {
+          size_t left_n = left_sibling->key_slots_used();
+          if (left_n > NKeysPerNode / 2) {
+            // steal last from left
+            assert(left_sibling->keys[left_n - 1] < leaf->keys[0]);
+            for (size_t i = ret; i > 0; i--) {
+              leaf->keys[i] = leaf->keys[i - 1];
+              leaf->values[i] = leaf->values[i - 1];
+            }
+            leaf->keys[0] = left_sibling->keys[left_n - 1];
+            leaf->values[0] = left_sibling->values[left_n - 1];
+            left_sibling->dec_key_slots_used();
+            new_key = leaf->keys[0];
+            return STOLE_FROM_LEFT;
+          }
+        }
+
+        if (right_sibling) {
+          size_t right_n = right_sibling->key_slots_used();
+          if (right_n > NKeysPerNode / 2) {
+            // steal first from right
+            assert(right_sibling->keys[0] > leaf->keys[n - 1]);
+            for (size_t i = ret; i < n - 1; i++) {
+              leaf->keys[i] = leaf->keys[i + 1];
+              leaf->values[i] = leaf->values[i + 1];
+            }
+            leaf->keys[n - 1] = right_sibling->keys[0];
+            leaf->values[n - 1] = right_sibling->values[0];
+            for (size_t i = 0; i < right_n; i++) {
+              right_sibling->keys[i] = right_sibling->keys[i + 1];
+              right_sibling->values[i] = right_sibling->values[i + 1];
+            }
+            right_sibling->dec_key_slots_used();
+            new_key = right_sibling->keys[0];
+            return STOLE_FROM_RIGHT;
+          }
+        }
+
+        if (left_sibling) {
+          // merge this node into left sibling
+          size_t left_n = left_sibling->key_slots_used();
+          assert(left_sibling->keys[left_n - 1] < leaf->keys[0]);
+          assert((left_n + (n - 1)) <= NKeysPerNode);
+
+          size_t j = 0;
+          for (size_t i = 0; i < size_t(ret); i++, j++) {
+            left_sibling->keys[j] = leaf->keys[i];
+            left_sibling->values[j] = leaf->values[i];
+          }
+          for (size_t i = ret + 1; i < n; i++, j++) {
+            left_sibling->keys[j] = leaf->keys[i];
+            left_sibling->values[j] = leaf->values[i];
+          }
+
+          left_sibling->set_key_slots_used(left_n + (n - 1));
+          left_sibling->next = leaf->next;
+          leaf_node::release(leaf);
+          return MERGE_WITH_LEFT;
+        }
+
+        if (right_sibling) {
+          // merge right sibling into this node
+          size_t right_n = right_sibling->key_slots_used();
+          assert(right_sibling->keys[0] > leaf->keys[n - 1]);
+          assert((right_n + (n - 1)) <= NKeysPerNode);
+
+          for (size_t i = ret; i < n - 1; i++) {
+            leaf->keys[i] = leaf->keys[i + 1];
+            leaf->values[i] = leaf->values[i + 1];
+          }
+          for (size_t i = 0, j = n - 1; i < right_n; i++, j++) {
+            leaf->keys[j] = right_sibling->keys[i];
+            leaf->values[j] = right_sibling->values[i];
+          }
+          leaf->set_key_slots_used(right_n + (n - 1));
+          leaf->next = right_sibling->next;
+          leaf_node::release(right_sibling);
+          return MERGE_WITH_RIGHT;
+        }
+
+        // root node, so we are ok
+        assert(leaf == root);
+        remove_pos_from_leaf_node(leaf, ret, n);
+        return NONE;
+      }
+    } else {
+      internal_node *internal = AsInternal(node);
+      size_t n = internal->key_slots_used();
+      assert(n);
+      ssize_t ret = internal->key_lower_bound_search(k);
+      size_t child_idx = (ret == -1) ? 0 : ret + 1;
+      key_type nk;
+      btree::node *rn;
+      remove_status status = remove0(
+          internal->children[child_idx],
+          child_idx == 0 ? NULL : &internal->keys[child_idx - 1],
+          child_idx == n ? NULL : &internal->keys[child_idx],
+          k,
+          child_idx == 0 ? NULL : internal->children[child_idx - 1],
+          child_idx == n ? NULL : internal->children[child_idx + 1],
+          nk, rn);
+
+      switch (status) {
+      case NONE:
+        return NONE;
+
+      case STOLE_FROM_LEFT:
+        internal->keys[child_idx - 1] = nk;
+        return NONE;
+
+      case STOLE_FROM_RIGHT:
+        internal->keys[child_idx + 1] = nk;
+        return NONE;
+
+      case MERGE_WITH_LEFT:
+      case MERGE_WITH_RIGHT:
+      {
+
+        size_t del_key_idx, del_child_idx;
+        if (status == MERGE_WITH_LEFT) {
+          // need to delete key at position (child_idx - 1), and child at
+          // position (child_idx)
+          del_key_idx = child_idx - 1;
+          del_child_idx = child_idx;
+        } else {
+          // need to delete key at position (child_idx + 1), and child at
+          // posiiton (child_idx + 1)
+          del_key_idx = child_idx + 1;
+          del_child_idx = child_idx + 1;
+        }
+
+        if (n > NKeysPerNode / 2) {
+          remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
+          return NONE;
+        }
+
+        internal_node *left_sibling = AsInternal(left_node);
+        internal_node *right_sibling = AsInternal(right_node);
+        size_t left_n = 0;
+        size_t right_n = 0;
+
+        if (left_sibling) {
+          assert(min_key);
+          left_n = left_sibling->key_slots_used();
+          assert(left_sibling->keys[left_n - 1] < internal->keys[0]);
+          if (left_n > NKeysPerNode / 2) {
+            // sift keys to right
+            for (size_t i = del_key_idx; i > 0; i--)
+              internal->keys[i] = internal->keys[i - 1];
+            // sift children to right
+            for (size_t i = del_child_idx; i > 0; i--)
+              internal->children[i] = internal->children[i - 1];
+
+            internal->keys[0] = *min_key;
+            internal->children[0] = left_sibling->children[left_n];
+            new_key = left_sibling->keys[left_n - 1];
+            left_sibling->dec_key_slots_used();
+
+            return STOLE_FROM_LEFT;
+          }
+        }
+
+        if (right_sibling) {
+          assert(max_key);
+          right_n = right_sibling->key_slots_used();
+          assert(right_sibling->keys[0] < internal->keys[n - 1]);
+          if (right_n > NKeysPerNode / 2) {
+            // sift keys to left
+            for (size_t i = del_key_idx; i < n - 1; i++)
+              internal->keys[i] = internal->keys[i + 1];
+            // sift children to left
+            for (size_t i = del_child_idx; i < n; i++)
+              internal->children[i] = internal->children[i + 1];
+
+            internal->keys[n - 1] = *max_key;
+            internal->children[n] = right_sibling->children[0];
+            new_key = right_sibling->keys[0];
+
+            // sift keys to left
+            for (size_t i = 0; i < right_n - 1; i++)
+              right_sibling->keys[i] = right_sibling->keys[i + 1];
+            // sift children to left
+            for (size_t i = 0; i < right_n ; i++)
+              right_sibling->children[i] = right_sibling->children[i + 1];
+            right_sibling->dec_key_slots_used();
+
+            return STOLE_FROM_RIGHT;
+          }
+        }
+
+        if (left_sibling) {
+          // merge into left sibling
+          assert(min_key);
+
+          size_t left_key_j = left_n - 1;
+          size_t left_child_j = left_n;
+
+          left_sibling->keys[left_key_j++] = *min_key;
+          for (size_t i = 0; i < del_key_idx; i++, left_key_j++)
+            left_sibling->keys[left_key_j] = internal->keys[i];
+          for (size_t i = del_key_idx + 1; i < n; i++, left_key_j++)
+            left_sibling->keys[left_key_j] = internal->keys[i];
+          for (size_t i = 0; i < del_child_idx; i++, left_child_j++)
+            left_sibling->children[left_child_j] = internal->children[i];
+          for (size_t i = del_child_idx + 1; i < n + 1; i++, left_child_j++)
+            left_sibling->children[left_child_j] = internal->children[i];
+
+          left_sibling->set_key_slots_used(left_key_j);
+          internal_node::release(internal);
+          return MERGE_WITH_LEFT;
+        }
+
+        if (right_sibling) {
+          // merge with right
+          assert(max_key);
+
+          // sift keys left
+          for (size_t i = del_key_idx; i < n - 1; i++)
+            internal->keys[i] = internal->keys[i + 1];
+          // sift children left
+          for (size_t i = del_child_idx; i < n; i++)
+            internal->children[i] = internal->children[i + 1];
+
+          internal->keys[n - 1] = *max_key;
+          for (size_t i = 0, j = n; i < right_n; i++, j++)
+            internal->keys[j] = right_sibling->keys[i];
+          for (size_t i = 0, j = n; i < right_n + 1; i++, j++)
+            internal->children[j] = right_sibling->children[j];
+
+          internal->set_key_slots_used(n + right_n);
+          internal_node::release(right_sibling);
+          return MERGE_WITH_RIGHT;
+        }
+
+        assert(internal == root);
+        remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
+        if (internal->key_slots_used() == 0) {
+          replace_node = internal->children[0];
+          internal_node::release(internal);
+          return REPLACE_NODE;
+        }
+
+        return NONE;
+      }
+
+      case REPLACE_NODE:
+        // only the root node can return this
+        assert(false);
+
+      }
+    }
+  }
+
 };
 
 void
