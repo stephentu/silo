@@ -548,7 +548,8 @@ private:
       }
       if (leaf->key_slots_used() < NKeysPerNode) {
         ret = leaf->key_lower_bound_search(k);
-        for (size_t i = leaf->key_slots_used(); i > size_t(ret) + 1; i--) {
+        // ret + 1 is the slot we want the new key to go into
+        for (size_t i = leaf->key_slots_used(); i > size_t(ret + 1); i--) {
           leaf->keys[i] = leaf->keys[i - 1];
           leaf->values[i] = leaf->values[i - 1];
         }
@@ -565,6 +566,8 @@ private:
         new_leaf->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
         new_leaf->prev = leaf;
         new_leaf->next = leaf->next;
+        if (leaf->next)
+          leaf->next->prev = new_leaf;
 
         leaf->next = new_leaf;
         leaf->set_key_slots_used(NKeysPerNode / 2);
@@ -598,7 +601,7 @@ private:
         return NULL;
       INVARIANT(new_child->key_slots_used() > 0);
       if (internal->key_slots_used() < NKeysPerNode) {
-        for (size_t i = internal->key_slots_used(); i > (child_idx + 1) + 1; i--)
+        for (size_t i = internal->key_slots_used(); i > child_idx; i--)
           internal->keys[i] = internal->keys[i - 1];
         for (size_t i = internal->key_slots_used() + 1; i > child_idx + 1; i--)
           internal->children[i] = internal->children[i - 1];
@@ -617,7 +620,7 @@ private:
         // (2) mk is the key we push up
         // (3) mk goes in the new node
 
-        ssize_t split_point = NKeysPerNode / 2 - 1;
+        const ssize_t split_point = NKeysPerNode / 2 - 1;
         if (ret < split_point) {
           // case (1)
           min_key = internal->keys[split_point];
@@ -627,9 +630,9 @@ private:
           for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode; i++, j++)
             new_internal->keys[j] = internal->keys[i];
 
-          // copy children at positions [NKeysPerNode/2 - 1, NKeysPerNode + 1)
+          // copy children at positions [NKeysPerNode/2, NKeysPerNode + 1)
           // over to the new node starting at position 0
-          for (size_t i = NKeysPerNode / 2 - 1, j = 0; i < NKeysPerNode + 1; i++, j++)
+          for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode + 1; i++, j++)
             new_internal->children[j] = internal->children[i];
 
           new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
@@ -1208,6 +1211,39 @@ test4()
 }
 
 static void
+test5()
+{
+  // insert in random order, delete in random order
+  btree btr;
+
+  srand(54321);
+
+  for (size_t i = 0; i < 10000; i++) {
+    size_t k = rand() % 10000;
+    btr.insert(k, (btree::value_type) k);
+    btr.invariant_checker();
+    btree::value_type v;
+    ALWAYS_ASSERT(btr.search(k, v));
+    ALWAYS_ASSERT(v == (btree::value_type) k);
+  }
+
+  for (size_t i = 0; i < 10000; i++) {
+    size_t k = rand() % 10000;
+    btr.remove(k);
+    btr.invariant_checker();
+    btree::value_type v;
+    ALWAYS_ASSERT(!btr.search(k, v));
+  }
+
+  for (size_t i = 0; i < 10000; i++) {
+    btr.remove(i);
+    btr.invariant_checker();
+    btree::value_type v;
+    ALWAYS_ASSERT(!btr.search(i, v));
+  }
+}
+
+static void
 perf_test()
 {
   const size_t nrecs = 10000000;
@@ -1238,6 +1274,7 @@ main(void)
   test2();
   test3();
   test4();
+  test5();
   //perf_test();
   return 0;
 }
