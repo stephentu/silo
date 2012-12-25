@@ -861,12 +861,10 @@ private:
 
       case STOLE_FROM_LEFT:
         internal->keys[child_idx - 1] = nk;
-        internal->invariant_checker(min_key, max_key, left_node, right_node, internal == root);
         return NONE;
 
       case STOLE_FROM_RIGHT:
         internal->keys[child_idx] = nk;
-        internal->invariant_checker(min_key, max_key, left_node, right_node, internal == root);
         return NONE;
 
       case MERGE_WITH_LEFT:
@@ -888,7 +886,6 @@ private:
 
         if (n > NKeysPerNode / 2) {
           remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
-          internal->invariant_checker(min_key, max_key, left_node, right_node, internal == root);
           return NONE;
         }
 
@@ -916,7 +913,6 @@ private:
             new_key = left_sibling->keys[left_n - 1];
             left_sibling->dec_key_slots_used();
 
-            internal->invariant_checker(&new_key, max_key, left_node, right_node, internal == root);
             return STOLE_FROM_LEFT;
           }
         }
@@ -925,6 +921,7 @@ private:
           assert(max_key);
           right_n = right_sibling->key_slots_used();
           assert(right_sibling->keys[0] > internal->keys[n - 1]);
+          assert(*max_key > internal->keys[n - 1]);
           if (right_n > NKeysPerNode / 2) {
             // sift keys to left
             for (size_t i = del_key_idx; i < n - 1; i++)
@@ -945,7 +942,6 @@ private:
               right_sibling->children[i] = right_sibling->children[i + 1];
             right_sibling->dec_key_slots_used();
 
-            internal->invariant_checker(min_key, &new_key, left_node, right_node, internal == root);
             return STOLE_FROM_RIGHT;
           }
         }
@@ -967,6 +963,7 @@ private:
           for (size_t i = del_child_idx + 1; i < n + 1; i++, left_child_j++)
             left_sibling->children[left_child_j] = internal->children[i];
 
+          assert(left_key_j == n + left_n);
           left_sibling->set_key_slots_used(left_key_j);
           internal_node::release(internal);
           return MERGE_WITH_LEFT;
@@ -987,7 +984,7 @@ private:
           for (size_t i = 0, j = n; i < right_n; i++, j++)
             internal->keys[j] = right_sibling->keys[i];
           for (size_t i = 0, j = n; i < right_n + 1; i++, j++)
-            internal->children[j] = right_sibling->children[j];
+            internal->children[j] = right_sibling->children[i];
 
           internal->set_key_slots_used(n + right_n);
           internal_node::release(right_sibling);
@@ -1182,12 +1179,17 @@ test4()
 
   for (size_t i = 0; i < 10000; i++) {
     size_t k = rand() % 10000;
-    std::cerr << "removing " << k << std::endl;
     btr.remove(k);
     btr.invariant_checker();
     btree::value_type v;
     assert(!btr.search(k, v));
-    std::cerr << "   removed " << k << std::endl;
+  }
+
+  for (size_t i = 0; i < 10000; i++) {
+    btr.remove(i);
+    btr.invariant_checker();
+    btree::value_type v;
+    assert(!btr.search(i, v));
   }
 }
 
