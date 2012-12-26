@@ -933,17 +933,16 @@ private:
           size_t left_child_j = left_n + 1;
 
           left_sibling->keys[left_key_j++] = *min_key;
-          for (size_t i = 0; i < del_key_idx; i++, left_key_j++)
-            left_sibling->keys[left_key_j] = internal->keys[i];
-          for (size_t i = del_key_idx + 1; i < n; i++, left_key_j++)
-            left_sibling->keys[left_key_j] = internal->keys[i];
-          for (size_t i = 0; i < del_child_idx; i++, left_child_j++)
-            left_sibling->children[left_child_j] = internal->children[i];
-          for (size_t i = del_child_idx + 1; i < n + 1; i++, left_child_j++)
-            left_sibling->children[left_child_j] = internal->children[i];
 
-          INVARIANT(left_key_j == n + left_n);
-          left_sibling->set_key_slots_used(left_key_j);
+          copy_into(&left_sibling->keys[left_key_j], internal->keys, 0, del_key_idx);
+          left_key_j += del_key_idx;
+          copy_into(&left_sibling->keys[left_key_j], internal->keys, del_key_idx + 1, n);
+
+          copy_into(&left_sibling->children[left_child_j], internal->children, 0, del_child_idx);
+          left_child_j += del_child_idx;
+          copy_into(&left_sibling->children[left_child_j], internal->children, del_child_idx + 1, n + 1);
+
+          left_sibling->set_key_slots_used(n + left_n);
           internal_node::release(internal);
           return MERGE_WITH_LEFT;
         }
@@ -952,18 +951,12 @@ private:
           // merge with right
           INVARIANT(max_key);
 
-          // sift keys left
-          for (size_t i = del_key_idx; i < n - 1; i++)
-            internal->keys[i] = internal->keys[i + 1];
-          // sift children left
-          for (size_t i = del_child_idx; i < n; i++)
-            internal->children[i] = internal->children[i + 1];
-
+          sift_left(internal->keys, del_key_idx, n);
           internal->keys[n - 1] = *max_key;
-          for (size_t i = 0, j = n; i < right_n; i++, j++)
-            internal->keys[j] = right_sibling->keys[i];
-          for (size_t i = 0, j = n; i < right_n + 1; i++, j++)
-            internal->children[j] = right_sibling->children[i];
+          copy_into(&internal->keys[n], right_sibling->keys, 0, right_n);
+
+          sift_left(internal->children, del_child_idx, n + 1);
+          copy_into(&internal->children[n], right_sibling->children, 0, right_n + 1);
 
           internal->set_key_slots_used(n + right_n);
           internal_node::release(right_sibling);
@@ -972,7 +965,8 @@ private:
 
         INVARIANT(internal == root);
         remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
-        if (internal->key_slots_used() == 0) {
+        INVARIANT(internal->key_slots_used() + 1 == n);
+        if ((n - 1) == 0) {
           replace_node = internal->children[0];
           internal_node::release(internal);
           return REPLACE_NODE;
