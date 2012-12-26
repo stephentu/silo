@@ -1,5 +1,6 @@
 
 #include <assert.h>
+#include <string.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <malloc.h>
@@ -34,6 +35,9 @@
 #else
   #define INVARIANT(expr) ((void)0)
 #endif /* CHECK_INVARIANTS */
+
+#define USE_MEMMOVE
+#define USE_MEMCPY
 
 /**
  * This btree maps keys of type key_type -> value_type, where key_type is
@@ -500,36 +504,49 @@ private:
   static inline ALWAYS_INLINE void
   sift_right(T *array, size_t p, size_t n)
   {
-    // XXX: experiment with using memmove() also
+#ifdef USE_MEMMOVE
+    if (unlikely(p >= n))
+      return;
+    memmove(&array[p + 1], &array[p], (n - p) * sizeof(T));
+#else
     for (size_t i = n; i > p; i--)
       array[i] = array[i - 1];
+#endif /* USE_MEMMOVE */
   }
 
   /**
    * Move the array slice from [p + 1, n) to the left by 1 position, occupying [p, n - 1),
-   * overwriting array[p] and leaving the value of array[n - 1] undefined. Has no effect if p >= n
+   * overwriting array[p] and leaving the value of array[n - 1] undefined. Has no effect if p + 1 >= n
    */
   template <typename T>
   static inline ALWAYS_INLINE void
   sift_left(T *array, size_t p, size_t n)
   {
-    if (unlikely(p >= n))
+    if (unlikely(p + 1 >= n))
       return;
-    // XXX: experiment with using memmove() also
+#ifdef USE_MEMMOVE
+    memmove(&array[p], &array[p + 1], (n - 1 - p) * sizeof(T));
+#else
     for (size_t i = p; i < n - 1; i++)
       array[i] = array[i + 1];
+#endif /* USE_MEMMOVE */
   }
 
   /**
-   * Copy [p, n) from source into dest
+   * Copy [p, n) from source into dest. Has no effect if p >= n
    */
   template <typename T>
   static inline ALWAYS_INLINE void
   copy_into(T *dest, T *source, size_t p, size_t n)
   {
-    // XXX: experiment with memcpy
+#ifdef USE_MEMCPY
+    if (unlikely(p >= n))
+      return;
+    memcpy(dest, &source[p], (n - p) * sizeof(T));
+#else
     for (size_t i = p; i < n; i++)
       *dest++ = source[i];
+#endif /* USE_MEMCPY */
   }
 
   /**
