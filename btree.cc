@@ -801,18 +801,15 @@ private:
 
         if (right_sibling) {
           // merge right sibling into this node
-          size_t right_n = right_sibling->key_slots_used();
           INVARIANT(right_sibling->keys[0] > leaf->keys[n - 1]);
           INVARIANT((right_n + (n - 1)) <= NKeysPerNode);
 
-          for (size_t i = ret; i < n - 1; i++) {
-            leaf->keys[i] = leaf->keys[i + 1];
-            leaf->values[i] = leaf->values[i + 1];
-          }
-          for (size_t i = 0, j = n - 1; i < right_n; i++, j++) {
-            leaf->keys[j] = right_sibling->keys[i];
-            leaf->values[j] = right_sibling->values[i];
-          }
+          sift_left(leaf->keys, ret, n);
+          copy_into(&leaf->keys[n - 1], right_sibling->keys, 0, right_n);
+
+          sift_left(leaf->values, ret, n);
+          copy_into(&leaf->values[n - 1], right_sibling->values, 0, right_n);
+
           leaf->set_key_slots_used(right_n + (n - 1));
           leaf->next = right_sibling->next;
           if (right_sibling->next)
@@ -893,15 +890,12 @@ private:
           INVARIANT(left_sibling->keys[left_n - 1] < *min_key);
           INVARIANT(*min_key < internal->keys[0]);
           if (left_n > NMinKeysPerNode) {
-            // sift keys to right
-            for (size_t i = del_key_idx; i > 0; i--)
-              internal->keys[i] = internal->keys[i - 1];
-            // sift children to right
-            for (size_t i = del_child_idx; i > 0; i--)
-              internal->children[i] = internal->children[i - 1];
-
+            sift_right(internal->keys, 0, del_key_idx);
             internal->keys[0] = *min_key;
+
+            sift_right(internal->children, 0, del_child_idx);
             internal->children[0] = left_sibling->children[left_n];
+
             new_key = left_sibling->keys[left_n - 1];
             left_sibling->dec_key_slots_used();
 
@@ -915,23 +909,16 @@ private:
           INVARIANT(right_sibling->keys[0] > internal->keys[n - 1]);
           INVARIANT(*max_key > internal->keys[n - 1]);
           if (right_n > NMinKeysPerNode) {
-            // sift keys to left
-            for (size_t i = del_key_idx; i < n - 1; i++)
-              internal->keys[i] = internal->keys[i + 1];
-            // sift children to left
-            for (size_t i = del_child_idx; i < n; i++)
-              internal->children[i] = internal->children[i + 1];
-
+            sift_left(internal->keys, del_key_idx, n);
             internal->keys[n - 1] = *max_key;
+
+            sift_left(internal->children, del_child_idx, n + 1);
             internal->children[n] = right_sibling->children[0];
+
             new_key = right_sibling->keys[0];
 
-            // sift keys to left
-            for (size_t i = 0; i < right_n - 1; i++)
-              right_sibling->keys[i] = right_sibling->keys[i + 1];
-            // sift children to left
-            for (size_t i = 0; i < right_n ; i++)
-              right_sibling->children[i] = right_sibling->children[i + 1];
+            sift_left(right_sibling->keys, 0, right_n);
+            sift_left(right_sibling->children, 0, right_n + 1);
             right_sibling->dec_key_slots_used();
 
             return STOLE_FROM_RIGHT;
