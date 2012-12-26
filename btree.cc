@@ -451,7 +451,7 @@ public:
   insert(key_type k, value_type v)
   {
     key_type mk;
-    node *ret = insert0(root, k, insert_value(v), mk);
+    node *ret = insert0(root, k, v, mk);
     if (ret) {
       INVARIANT(ret->key_slots_used() > 0);
       internal_node *new_root = internal_node::alloc();
@@ -489,46 +489,6 @@ public:
   }
 
 private:
-
-  struct insert_value {
-    uint8_t type;
-    union {
-      value_type value;
-      node *ptr;
-    } v;
-    insert_value(value_type value)
-    {
-      type = 0;
-      v.value = value;
-    }
-    insert_value(node *ptr)
-    {
-      type = 1;
-      v.ptr = ptr;
-    }
-    inline bool
-    is_value() const
-    {
-      return type == 0;
-    }
-    inline bool
-    is_ptr() const
-    {
-      return !is_value();
-    }
-    inline value_type
-    as_value() const
-    {
-      INVARIANT(type == 0);
-      return v.value;
-    }
-    inline node *
-    as_ptr() const
-    {
-      INVARIANT(type == 1);
-      return v.ptr;
-    }
-  };
 
   /**
    * Move the array slice from [p, n) to the right by 1 position, occupying [p + 1, n + 1),
@@ -582,12 +542,12 @@ private:
    * of code clarity
    */
   node *
-  insert0(node *n, key_type k, const insert_value &v, key_type &min_key)
+  insert0(node *n, key_type k, value_type v, key_type &min_key)
   {
     if (leaf_node *leaf = AsLeafCheck(n)) {
       ssize_t ret = leaf->key_lower_bound_search(k);
       if (ret != -1 && leaf->keys[ret] == k) {
-        leaf->values[ret] = v.as_value();
+        leaf->values[ret] = v;
         return NULL;
       }
       size_t n = leaf->key_slots_used();
@@ -596,7 +556,7 @@ private:
         sift_right(leaf->keys, ret + 1, n);
         leaf->keys[ret + 1] = k;
         sift_right(leaf->values, ret + 1, n);
-        leaf->values[ret + 1] = v.as_value();
+        leaf->values[ret + 1] = v;
         leaf->inc_key_slots_used();
         return NULL;
       } else {
@@ -611,7 +571,7 @@ private:
           copy_into(&new_leaf->keys[pos + 1], leaf->keys, ret + 1, NKeysPerNode);
 
           copy_into(&new_leaf->values[0], leaf->values, NMinKeysPerNode, ret + 1);
-          new_leaf->values[pos] = v.as_value();
+          new_leaf->values[pos] = v;
           copy_into(&new_leaf->values[pos + 1], leaf->values, ret + 1, NKeysPerNode);
 
           leaf->set_key_slots_used(NMinKeysPerNode);
@@ -625,7 +585,7 @@ private:
           sift_right(leaf->keys, ret + 1, NMinKeysPerNode);
           leaf->keys[ret + 1] = k;
           sift_right(leaf->values, ret + 1, NMinKeysPerNode);
-          leaf->values[ret + 1] = v.as_value();
+          leaf->values[ret + 1] = v;
 
           leaf->set_key_slots_used(NMinKeysPerNode + 1);
           new_leaf->set_key_slots_used(NKeysPerNode - NMinKeysPerNode);
@@ -643,31 +603,27 @@ private:
       }
     } else {
       internal_node *internal = AsInternal(n);
-      INVARIANT(internal->key_slots_used() > 0);
       ssize_t ret = internal->key_lower_bound_search(k);
       size_t child_idx = (ret == -1) ? 0 : ret + 1;
       key_type mk = 0;
-      node *new_child =
-        v.is_value() ?
-          insert0(internal->children[child_idx], k, v, mk) :
-          v.as_ptr();
+      node *new_child = insert0(internal->children[child_idx], k, v, mk);
       if (!new_child)
         return NULL;
       INVARIANT(new_child->key_slots_used() > 0);
-      if (internal->key_slots_used() < NKeysPerNode) {
-        for (size_t i = internal->key_slots_used(); i > child_idx; i--)
-          internal->keys[i] = internal->keys[i - 1];
-        for (size_t i = internal->key_slots_used() + 1; i > child_idx + 1; i--)
-          internal->children[i] = internal->children[i - 1];
-        internal->keys[child_idx] = v.is_value() ? mk : k;
+      size_t n = internal->key_slots_used();
+      INVARIANT(n > 0);
+      if (n < NKeysPerNode) {
+        sift_right(internal->keys, child_idx, n);
+        internal->keys[child_idx] = mk;
+        sift_right(internal->children, child_idx + 1, n + 1);
         internal->children[child_idx + 1] = new_child;
         internal->inc_key_slots_used();
         return NULL;
       } else {
-        internal_node *new_internal = internal_node::alloc();
+        INVARIANT(n == NKeysPerNode);
+        INVARIANT(ret == internal->key_lower_bound_search(mk));
 
-        // find where we *would* put the new key (mk) if we could
-        ssize_t ret = internal->key_lower_bound_search(mk);
+        internal_node *new_internal = internal_node::alloc();
 
         // there are three cases post-split:
         // (1) mk goes in the original node
@@ -679,65 +635,42 @@ private:
           // case (1)
           min_key = internal->keys[split_point];
 
-          // copy keys at positions [NKeysPerNode/2, NKeysPerNode) over to
-          // the new node starting at position 0
-          for (size_t i = NMinKeysPerNode, j = 0; i < NKeysPerNode; i++, j++)
-            new_internal->keys[j] = internal->keys[i];
+          copy_into(&new_internal->keys[0], internal->keys, NMinKeysPerNode, NKeysPerNode);
+          copy_into(&new_internal->children[0], internal->children, NMinKeysPerNode, NKeysPerNode + 1);
+          new_internal->set_key_slots_used(NKeysPerNode - NMinKeysPerNode);
 
-          // copy children at positions [NKeysPerNode/2, NKeysPerNode + 1)
-          // over to the new node starting at position 0
-          for (size_t i = NMinKeysPerNode, j = 0; i < NKeysPerNode + 1; i++, j++)
-            new_internal->children[j] = internal->children[i];
+          sift_right(internal->keys, child_idx, NMinKeysPerNode - 1);
+          internal->keys[child_idx] = mk;
+          sift_right(internal->children, child_idx + 1, NMinKeysPerNode);
+          internal->children[child_idx + 1] = new_child;
+          internal->set_key_slots_used(NMinKeysPerNode);
 
-          new_internal->set_key_slots_used(NKeysPerNode - (NMinKeysPerNode));
-          internal->set_key_slots_used(NMinKeysPerNode - 1);
-
-          key_type mk0;
-          node *ret0 = insert0(internal, mk, insert_value(new_child), mk0);
-          if (ret0)
-            INVARIANT(false);
-          INVARIANT(internal->key_slots_used() == (NMinKeysPerNode));
         } else if (ret == split_point) {
           // case (2)
           min_key = mk;
 
-          // copy keys at positions [NKeysPerNode/2, NKeysPerNode) over to
-          // the new node starting at position 0
-          for (size_t i = NMinKeysPerNode, j = 0; i < NKeysPerNode; i++, j++)
-            new_internal->keys[j] = internal->keys[i];
-
-          // copy children at positions [NKeysPerNode/2 + 1, NKeysPerNode + 1)
-          // over to the new node starting at position 1
-          for (size_t i = NMinKeysPerNode + 1, j = 1; i < NKeysPerNode + 1; i++, j++)
-            new_internal->children[j] = internal->children[i];
-
+          copy_into(&new_internal->keys[0], internal->keys, NMinKeysPerNode, NKeysPerNode);
+          copy_into(&new_internal->children[1], internal->children, NMinKeysPerNode + 1, NKeysPerNode + 1);
           new_internal->children[0] = new_child;
-
-          new_internal->set_key_slots_used(NKeysPerNode - (NMinKeysPerNode));
+          new_internal->set_key_slots_used(NKeysPerNode - NMinKeysPerNode);
           internal->set_key_slots_used(NMinKeysPerNode);
 
         } else {
           // case (3)
           min_key = internal->keys[NMinKeysPerNode];
 
-          // copy keys at positions [NKeysPerNode/2 + 1, NKeysPerNode) over to
-          // the new node starting at position 0
-          for (size_t i = NMinKeysPerNode + 1, j = 0; i < NKeysPerNode; i++, j++)
-            new_internal->keys[j] = internal->keys[i];
+          size_t pos = child_idx - NMinKeysPerNode - 1;
 
-          // copy children at positions [NKeysPerNode/2 + 1, NKeysPerNode + 1)
-          // over to the new node starting at position 0
-          for (size_t i = NMinKeysPerNode + 1, j = 0; i < NKeysPerNode + 1; i++, j++)
-            new_internal->children[j] = internal->children[i];
+          copy_into(&new_internal->keys[0], internal->keys, NMinKeysPerNode + 1, child_idx);
+          new_internal->keys[pos] = mk;
+          copy_into(&new_internal->keys[pos + 1], internal->keys, child_idx, NKeysPerNode);
 
-          new_internal->set_key_slots_used(NKeysPerNode - (NMinKeysPerNode) - 1);
+          copy_into(&new_internal->children[0], internal->children, NMinKeysPerNode + 1, child_idx + 1);
+          new_internal->children[pos + 1] = new_child;
+          copy_into(&new_internal->children[pos + 2], internal->children, child_idx + 1, NKeysPerNode + 1);
+
+          new_internal->set_key_slots_used(NKeysPerNode - NMinKeysPerNode);
           internal->set_key_slots_used(NMinKeysPerNode);
-
-          key_type mk0;
-          node *ret0 = insert0(new_internal, mk, insert_value(new_child), mk0);
-          if (ret0)
-            INVARIANT(false);
-          INVARIANT(new_internal->key_slots_used() == (NKeysPerNode - (NMinKeysPerNode)));
         }
 
         return new_internal;
