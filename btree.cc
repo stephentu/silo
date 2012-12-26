@@ -1189,30 +1189,38 @@ test5()
   // insert in random order, delete in random order
   btree btr;
 
-  srand(54321);
+  unsigned int seeds[] = {
+    54321, 2013883780, 3028985725, 3058602342, 256561598, 2895653051
+  };
 
-  for (size_t i = 0; i < 10000; i++) {
-    size_t k = rand() % 10000;
-    btr.insert(k, (btree::value_type) k);
-    btr.invariant_checker();
-    btree::value_type v;
-    ALWAYS_ASSERT(btr.search(k, v));
-    ALWAYS_ASSERT(v == (btree::value_type) k);
-  }
+#define ARRAY_NELEMS(a) (sizeof(a)/sizeof(a[0]))
+  for (size_t iter = 0; iter < ARRAY_NELEMS(seeds); iter++) {
+    srand(seeds[iter]);
+    const size_t nkeys = 20000;
+    for (size_t i = 0; i < nkeys; i++) {
+      size_t k = rand() % nkeys;
+      btr.insert(k, (btree::value_type) k);
+      btr.invariant_checker();
+      btree::value_type v;
+      ALWAYS_ASSERT(btr.search(k, v));
+      ALWAYS_ASSERT(v == (btree::value_type) k);
+    }
 
-  for (size_t i = 0; i < 10000; i++) {
-    size_t k = rand() % 10000;
-    btr.remove(k);
-    btr.invariant_checker();
-    btree::value_type v;
-    ALWAYS_ASSERT(!btr.search(k, v));
-  }
+    for (size_t i = 0; i < nkeys * 2; i++) {
+      size_t k = rand() % nkeys;
+      btr.remove(k);
+      btr.invariant_checker();
+      btree::value_type v;
+      ALWAYS_ASSERT(!btr.search(k, v));
+    }
 
-  for (size_t i = 0; i < 10000; i++) {
-    btr.remove(i);
-    btr.invariant_checker();
-    btree::value_type v;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    // clean it up
+    for (size_t i = 0; i < nkeys; i++) {
+      btr.remove(i);
+      btr.invariant_checker();
+      btree::value_type v;
+      ALWAYS_ASSERT(!btr.search(i, v));
+    }
   }
 }
 
