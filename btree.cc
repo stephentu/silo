@@ -28,7 +28,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-//#define CHECK_INVARIANTS
+#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -38,6 +38,20 @@
 
 //#define USE_MEMMOVE
 //#define USE_MEMCPY
+
+#define NODE_PREFETCH
+
+#ifdef NODE_PREFETCH
+  #define prefetch_node(n) \
+    do { \
+      __builtin_prefetch((uint8_t *)n); \
+      __builtin_prefetch(((uint8_t *)n) + CACHELINE_SIZE); \
+      __builtin_prefetch(((uint8_t *)n) + 2 * CACHELINE_SIZE); \
+      __builtin_prefetch(((uint8_t *)n) + 3 * CACHELINE_SIZE); \
+    } while (0)
+#else
+  #define prefetch_node(n) ((void)0)
+#endif /* NODE_PREFETCH */
 
 /**
  * This btree maps keys of type key_type -> value_type, where key_type is
@@ -561,6 +575,7 @@ private:
   node *
   insert0(node *n, key_type k, value_type v, key_type &min_key)
   {
+    prefetch_node(n);
     if (leaf_node *leaf = AsLeafCheck(n)) {
       ssize_t ret = leaf->key_lower_bound_search(k);
       if (ret != -1 && leaf->keys[ret] == k) {
