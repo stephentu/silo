@@ -28,7 +28,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-#define CHECK_INVARIANTS
+//#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -36,8 +36,8 @@
   #define INVARIANT(expr) ((void)0)
 #endif /* CHECK_INVARIANTS */
 
-#define USE_MEMMOVE
-#define USE_MEMCPY
+//#define USE_MEMMOVE
+//#define USE_MEMCPY
 
 /**
  * This btree maps keys of type key_type -> value_type, where key_type is
@@ -1216,26 +1216,67 @@ test5()
   }
 }
 
+class scoped_rate_timer {
+private:
+  util::timer t;
+  std::string region;
+  size_t n;
+
+public:
+  scoped_rate_timer(const std::string &region, size_t n) : region(region), n(n)
+  {}
+
+  ~scoped_rate_timer()
+  {
+    double x = t.lap() / 1000.0; // ms
+    double rate = double(n) / (x / 1000.0);
+    std::cerr << "timed region `" << region << "' took " << x
+              << " ms (" << rate << " events/sec)" << std::endl;
+  }
+};
+
 static void
 perf_test()
 {
   const size_t nrecs = 10000000;
+  const size_t nlookups = 10000000;
 
   {
+    srand(9876);
     std::map<uint64_t, uint64_t> m;
     {
-      util::scoped_timer t("std::map insert");
+      scoped_rate_timer t("std::map insert", nrecs);
       for (size_t i = 0; i < nrecs; i++)
         m[i] = i;
+    }
+    {
+      scoped_rate_timer t("std::map random lookups", nlookups);
+      for (size_t i = 0; i < nlookups; i++) {
+        //uint64_t key = rand() % nrecs;
+        uint64_t key = i;
+        std::map<uint64_t, uint64_t>::iterator it =
+          m.find(key);
+        ALWAYS_ASSERT(it != m.end());
+      }
     }
   }
 
   {
+    srand(9876);
     btree btr;
     {
-      util::scoped_timer t("btree insert");
+      scoped_rate_timer t("btree insert", nrecs);
       for (size_t i = 0; i < nrecs; i++)
         btr.insert(i, (btree::value_type) i);
+    }
+    {
+      scoped_rate_timer t("btree random lookups", nlookups);
+      for (size_t i = 0; i < nlookups; i++) {
+        //uint64_t key = rand() % nrecs;
+        uint64_t key = i;
+        btree::value_type v;
+        ALWAYS_ASSERT(btr.search(key, v));
+      }
     }
   }
 }
