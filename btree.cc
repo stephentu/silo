@@ -15,7 +15,8 @@
 
 #define CACHELINE_SIZE 64
 #define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(CACHELINE_SIZE)))
-#define NEVER_INLINE __attribute__((noinline))
+#define NEVER_INLINE  __attribute__((noinline))
+#define ALWAYS_INLINE __attribute__((always_inline))
 
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
@@ -45,6 +46,7 @@ public:
 
   // public to assist in testing
   static const unsigned int NKeysPerNode = 14;
+  static const unsigned int NMinKeysPerNode = NKeysPerNode / 2;
 
 private:
 
@@ -189,7 +191,7 @@ private:
         if (is_internal_node())
           ALWAYS_ASSERT(n >= 1);
       } else {
-        ALWAYS_ASSERT(n >= NKeysPerNode / 2);
+        ALWAYS_ASSERT(n >= NMinKeysPerNode);
       }
       if (n == 0)
         return;
@@ -529,6 +531,48 @@ private:
   };
 
   /**
+   * Move the array slice from [p, n) to the right by 1 position, occupying [p + 1, n + 1),
+   * leaving the value of array[p] undefined. Has no effect if p >= n
+   *
+   * Note: Assumes that array[n] is valid memory.
+   */
+  template <typename T>
+  static inline ALWAYS_INLINE void
+  sift_right(T *array, size_t p, size_t n)
+  {
+    // XXX: experiment with using memmove() also
+    for (size_t i = n; i > p; i--)
+      array[i] = array[i - 1];
+  }
+
+  /**
+   * Move the array slice from [p + 1, n) to the left by 1 position, occupying [p, n - 1),
+   * overwriting array[p] and leaving the value of array[n - 1] undefined. Has no effect if p >= n
+   */
+  template <typename T>
+  static inline ALWAYS_INLINE void
+  sift_left(T *array, size_t p, size_t n)
+  {
+    if (unlikely(p >= n))
+      return;
+    // XXX: experiment with using memmove() also
+    for (size_t i = p; i < n - 1; i++)
+      array[i] = array[i + 1];
+  }
+
+  /**
+   * Copy [p, n) from source into dest
+   */
+  template <typename T>
+  static inline ALWAYS_INLINE void
+  copy_into(T *dest, T *source, size_t p, size_t n)
+  {
+    // XXX: experiment with memcpy
+    for (size_t i = p; i < n; i++)
+      *dest++ = source[i];
+  }
+
+  /**
    * insert k=>v into node n. if this insert into n causes it to split into two
    * nodes, return the new node (upper half of keys). in this case, min_key is set to the
    * smallest key that the new node is responsible for. otherwise return null, in which
@@ -541,48 +585,58 @@ private:
   insert0(node *n, key_type k, const insert_value &v, key_type &min_key)
   {
     if (leaf_node *leaf = AsLeafCheck(n)) {
-      ssize_t ret = leaf->key_search(k);
-      if (ret != -1) {
+      ssize_t ret = leaf->key_lower_bound_search(k);
+      if (ret != -1 && leaf->keys[ret] == k) {
         leaf->values[ret] = v.as_value();
         return NULL;
       }
-      if (leaf->key_slots_used() < NKeysPerNode) {
-        ret = leaf->key_lower_bound_search(k);
-        // ret + 1 is the slot we want the new key to go into
-        for (size_t i = leaf->key_slots_used(); i > size_t(ret + 1); i--) {
-          leaf->keys[i] = leaf->keys[i - 1];
-          leaf->values[i] = leaf->values[i - 1];
-        }
+      size_t n = leaf->key_slots_used();
+      // ret + 1 is the slot we want the new key to go into, in the leaf node
+      if (n < NKeysPerNode) {
+        sift_right(leaf->keys, ret + 1, n);
         leaf->keys[ret + 1] = k;
+        sift_right(leaf->values, ret + 1, n);
         leaf->values[ret + 1] = v.as_value();
         leaf->inc_key_slots_used();
         return NULL;
       } else {
+        INVARIANT(n == NKeysPerNode);
         leaf_node *new_leaf = leaf_node::alloc();
-        for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode; i++, j++) {
-          new_leaf->keys[j] = leaf->keys[i];
-          new_leaf->values[j] = leaf->values[i];
+        if (ret + 1 >= NMinKeysPerNode) {
+          // put new key in new leaf
+          size_t pos = ret + 1 - NMinKeysPerNode;
+
+          copy_into(&new_leaf->keys[0], leaf->keys, NMinKeysPerNode, ret + 1);
+          new_leaf->keys[pos] = k;
+          copy_into(&new_leaf->keys[pos + 1], leaf->keys, ret + 1, NKeysPerNode);
+
+          copy_into(&new_leaf->values[0], leaf->values, NMinKeysPerNode, ret + 1);
+          new_leaf->values[pos] = v.as_value();
+          copy_into(&new_leaf->values[pos + 1], leaf->values, ret + 1, NKeysPerNode);
+
+          leaf->set_key_slots_used(NMinKeysPerNode);
+          new_leaf->set_key_slots_used(NKeysPerNode - NMinKeysPerNode + 1);
+        } else {
+          // put new key in original leaf
+
+          copy_into(&new_leaf->keys[0], leaf->keys, NMinKeysPerNode, NKeysPerNode);
+          copy_into(&new_leaf->values[0], leaf->values, NMinKeysPerNode, NKeysPerNode);
+
+          sift_right(leaf->keys, ret + 1, NMinKeysPerNode);
+          leaf->keys[ret + 1] = k;
+          sift_right(leaf->values, ret + 1, NMinKeysPerNode);
+          leaf->values[ret + 1] = v.as_value();
+
+          leaf->set_key_slots_used(NMinKeysPerNode + 1);
+          new_leaf->set_key_slots_used(NKeysPerNode - NMinKeysPerNode);
         }
-        new_leaf->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
+
+        // pointer adjustment
         new_leaf->prev = leaf;
         new_leaf->next = leaf->next;
         if (leaf->next)
           leaf->next->prev = new_leaf;
-
         leaf->next = new_leaf;
-        leaf->set_key_slots_used(NKeysPerNode / 2);
-
-        if (k >= new_leaf->keys[0]) {
-          key_type mk;
-          node *ret = insert0(new_leaf, k, v, mk);
-          if (ret)
-            INVARIANT(false);
-        } else {
-          key_type mk;
-          node *ret = insert0(leaf, k, v, mk);
-          if (ret)
-            INVARIANT(false);
-        }
 
         min_key = new_leaf->keys[0];
         return new_leaf;
@@ -620,70 +674,70 @@ private:
         // (2) mk is the key we push up
         // (3) mk goes in the new node
 
-        const ssize_t split_point = NKeysPerNode / 2 - 1;
+        const ssize_t split_point = NMinKeysPerNode - 1;
         if (ret < split_point) {
           // case (1)
           min_key = internal->keys[split_point];
 
           // copy keys at positions [NKeysPerNode/2, NKeysPerNode) over to
           // the new node starting at position 0
-          for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode; i++, j++)
+          for (size_t i = NMinKeysPerNode, j = 0; i < NKeysPerNode; i++, j++)
             new_internal->keys[j] = internal->keys[i];
 
           // copy children at positions [NKeysPerNode/2, NKeysPerNode + 1)
           // over to the new node starting at position 0
-          for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode + 1; i++, j++)
+          for (size_t i = NMinKeysPerNode, j = 0; i < NKeysPerNode + 1; i++, j++)
             new_internal->children[j] = internal->children[i];
 
-          new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
-          internal->set_key_slots_used(NKeysPerNode / 2 - 1);
+          new_internal->set_key_slots_used(NKeysPerNode - (NMinKeysPerNode));
+          internal->set_key_slots_used(NMinKeysPerNode - 1);
 
           key_type mk0;
           node *ret0 = insert0(internal, mk, insert_value(new_child), mk0);
           if (ret0)
             INVARIANT(false);
-          INVARIANT(internal->key_slots_used() == (NKeysPerNode / 2));
+          INVARIANT(internal->key_slots_used() == (NMinKeysPerNode));
         } else if (ret == split_point) {
           // case (2)
           min_key = mk;
 
           // copy keys at positions [NKeysPerNode/2, NKeysPerNode) over to
           // the new node starting at position 0
-          for (size_t i = NKeysPerNode / 2, j = 0; i < NKeysPerNode; i++, j++)
+          for (size_t i = NMinKeysPerNode, j = 0; i < NKeysPerNode; i++, j++)
             new_internal->keys[j] = internal->keys[i];
 
           // copy children at positions [NKeysPerNode/2 + 1, NKeysPerNode + 1)
           // over to the new node starting at position 1
-          for (size_t i = NKeysPerNode / 2 + 1, j = 1; i < NKeysPerNode + 1; i++, j++)
+          for (size_t i = NMinKeysPerNode + 1, j = 1; i < NKeysPerNode + 1; i++, j++)
             new_internal->children[j] = internal->children[i];
 
           new_internal->children[0] = new_child;
 
-          new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2));
-          internal->set_key_slots_used(NKeysPerNode / 2);
+          new_internal->set_key_slots_used(NKeysPerNode - (NMinKeysPerNode));
+          internal->set_key_slots_used(NMinKeysPerNode);
 
         } else {
           // case (3)
-          min_key = internal->keys[NKeysPerNode / 2];
+          min_key = internal->keys[NMinKeysPerNode];
 
           // copy keys at positions [NKeysPerNode/2 + 1, NKeysPerNode) over to
           // the new node starting at position 0
-          for (size_t i = NKeysPerNode / 2 + 1, j = 0; i < NKeysPerNode; i++, j++)
+          for (size_t i = NMinKeysPerNode + 1, j = 0; i < NKeysPerNode; i++, j++)
             new_internal->keys[j] = internal->keys[i];
 
           // copy children at positions [NKeysPerNode/2 + 1, NKeysPerNode + 1)
           // over to the new node starting at position 0
-          for (size_t i = NKeysPerNode / 2 + 1, j = 0; i < NKeysPerNode + 1; i++, j++)
+          for (size_t i = NMinKeysPerNode + 1, j = 0; i < NKeysPerNode + 1; i++, j++)
             new_internal->children[j] = internal->children[i];
 
-          new_internal->set_key_slots_used(NKeysPerNode - (NKeysPerNode / 2) - 1);
-          internal->set_key_slots_used(NKeysPerNode / 2);
+          new_internal->set_key_slots_used(NKeysPerNode - (NMinKeysPerNode) - 1);
+          internal->set_key_slots_used(NMinKeysPerNode);
 
           key_type mk0;
           node *ret0 = insert0(new_internal, mk, insert_value(new_child), mk0);
           if (ret0)
             INVARIANT(false);
-          INVARIANT(new_internal->key_slots_used() == (NKeysPerNode - (NKeysPerNode / 2)));
+          INVARIANT(new_internal->key_slots_used() == (NKeysPerNode - (NMinKeysPerNode)));
         }
 
         return new_internal;
@@ -752,7 +806,7 @@ private:
       if (ret == -1)
         return NONE;
       size_t n = leaf->key_slots_used();
-      if (n > NKeysPerNode / 2) {
+      if (n > NMinKeysPerNode) {
         remove_pos_from_leaf_node(leaf, ret, n);
         return NONE;
       } else {
@@ -760,7 +814,7 @@ private:
         leaf_node *right_sibling = AsLeaf(right_node);
         if (left_sibling) {
           size_t left_n = left_sibling->key_slots_used();
-          if (left_n > NKeysPerNode / 2) {
+          if (left_n > NMinKeysPerNode) {
             // steal last from left
             INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
             for (size_t i = ret; i > 0; i--) {
@@ -777,7 +831,7 @@ private:
 
         if (right_sibling) {
           size_t right_n = right_sibling->key_slots_used();
-          if (right_n > NKeysPerNode / 2) {
+          if (right_n > NMinKeysPerNode) {
             // steal first from right
             INVARIANT(right_sibling->keys[0] > leaf->keys[n - 1]);
             for (size_t i = ret; i < n - 1; i++) {
@@ -901,7 +955,7 @@ private:
           del_child_idx = child_idx + 1;
         }
 
-        if (n > NKeysPerNode / 2) {
+        if (n > NMinKeysPerNode) {
           remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
           return NONE;
         }
@@ -917,7 +971,7 @@ private:
           INVARIANT(left_sibling->keys[left_n - 1] < internal->keys[0]);
           INVARIANT(left_sibling->keys[left_n - 1] < *min_key);
           INVARIANT(*min_key < internal->keys[0]);
-          if (left_n > NKeysPerNode / 2) {
+          if (left_n > NMinKeysPerNode) {
             // sift keys to right
             for (size_t i = del_key_idx; i > 0; i--)
               internal->keys[i] = internal->keys[i - 1];
@@ -939,7 +993,7 @@ private:
           right_n = right_sibling->key_slots_used();
           INVARIANT(right_sibling->keys[0] > internal->keys[n - 1]);
           INVARIANT(*max_key > internal->keys[n - 1]);
-          if (right_n > NKeysPerNode / 2) {
+          if (right_n > NMinKeysPerNode) {
             // sift keys to left
             for (size_t i = del_key_idx; i < n - 1; i++)
               internal->keys[i] = internal->keys[i + 1];
@@ -1069,7 +1123,7 @@ test1()
   }
 
   // now fill up the new root node
-  const size_t n = (btree::NKeysPerNode + btree::NKeysPerNode * (btree::NKeysPerNode / 2));
+  const size_t n = (btree::NKeysPerNode + btree::NKeysPerNode * (btree::NMinKeysPerNode));
   for (size_t i = btree::NKeysPerNode + 1; i < n; i++) {
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
