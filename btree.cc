@@ -28,7 +28,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-#define CHECK_INVARIANTS
+//#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -445,6 +445,7 @@ public:
   {
     node *cur = root;
     while (cur) {
+      prefetch_node(cur);
       if (leaf_node *leaf = AsLeafCheck(cur)) {
         ssize_t ret = leaf->key_search(k);
         if (ret != -1) {
@@ -594,6 +595,7 @@ private:
       } else {
         INVARIANT(n == NKeysPerNode);
         leaf_node *new_leaf = leaf_node::alloc();
+        prefetch_node(new_leaf);
         if (ret + 1 >= NMinKeysPerNode) {
           // put new key in new leaf
           size_t pos = ret + 1 - NMinKeysPerNode;
@@ -655,6 +657,7 @@ private:
         INVARIANT(ret == internal->key_lower_bound_search(mk));
 
         internal_node *new_internal = internal_node::alloc();
+        prefetch_node(new_internal);
 
         // there are three cases post-split:
         // (1) mk goes in the original node
@@ -759,6 +762,7 @@ private:
       key_type &new_key,
       btree::node *&replace_node)
   {
+    prefetch_node(node);
     if (leaf_node *leaf = AsLeafCheck(node)) {
       INVARIANT(!left_node || (leaf->prev == left_node && AsLeaf(left_node)->next == leaf));
       INVARIANT(!right_node || (leaf->next == right_node && AsLeaf(right_node)->prev == leaf));
@@ -1307,11 +1311,11 @@ perf_test()
 int
 main(void)
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  //perf_test();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  perf_test();
   return 0;
 }
