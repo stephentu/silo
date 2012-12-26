@@ -578,7 +578,6 @@ private:
           new_leaf->set_key_slots_used(NKeysPerNode - NMinKeysPerNode + 1);
         } else {
           // put new key in original leaf
-
           copy_into(&new_leaf->keys[0], leaf->keys, NMinKeysPerNode, NKeysPerNode);
           copy_into(&new_leaf->values[0], leaf->values, NMinKeysPerNode, NKeysPerNode);
 
@@ -687,29 +686,25 @@ private:
     REPLACE_NODE,
   };
 
-  inline void
+  inline ALWAYS_INLINE void
   remove_pos_from_leaf_node(leaf_node *leaf, size_t pos, size_t n)
   {
     INVARIANT(leaf->key_slots_used() == n);
     INVARIANT(pos < n);
-    for (size_t i = pos; i < n - 1; i++) {
-      leaf->keys[i] = leaf->keys[i + 1];
-      leaf->values[i] = leaf->values[i + 1];
-    }
+    sift_left(leaf->keys, pos, n);
+    sift_left(leaf->values, pos, n);
     leaf->dec_key_slots_used();
   }
 
-  inline void
+  inline ALWAYS_INLINE void
   remove_pos_from_internal_node(
       internal_node *internal, size_t key_pos, size_t child_pos, size_t n)
   {
     INVARIANT(internal->key_slots_used() == n);
     INVARIANT(key_pos < n);
     INVARIANT(child_pos < n + 1);
-    for (size_t i = key_pos; i < n - 1; i++)
-      internal->keys[i] = internal->keys[i + 1];
-    for (size_t i = child_pos; i < n; i++)
-      internal->children[i] = internal->children[i + 1];
+    sift_left(internal->keys, key_pos, n);
+    sift_left(internal->children, child_pos, n + 1);
     internal->dec_key_slots_used();
   }
 
@@ -745,16 +740,18 @@ private:
       } else {
         leaf_node *left_sibling = AsLeaf(left_node);
         leaf_node *right_sibling = AsLeaf(right_node);
+
+        size_t left_n = 0;
+        size_t right_n = 0;
+
         if (left_sibling) {
-          size_t left_n = left_sibling->key_slots_used();
+          left_n = left_sibling->key_slots_used();
           if (left_n > NMinKeysPerNode) {
             // steal last from left
             INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
-            for (size_t i = ret; i > 0; i--) {
-              leaf->keys[i] = leaf->keys[i - 1];
-              leaf->values[i] = leaf->values[i - 1];
-            }
+            sift_right(leaf->keys, 0, ret);
             leaf->keys[0] = left_sibling->keys[left_n - 1];
+            sift_right(leaf->values, 0, ret);
             leaf->values[0] = left_sibling->values[left_n - 1];
             left_sibling->dec_key_slots_used();
             new_key = leaf->keys[0];
@@ -763,20 +760,16 @@ private:
         }
 
         if (right_sibling) {
-          size_t right_n = right_sibling->key_slots_used();
+          right_n = right_sibling->key_slots_used();
           if (right_n > NMinKeysPerNode) {
             // steal first from right
             INVARIANT(right_sibling->keys[0] > leaf->keys[n - 1]);
-            for (size_t i = ret; i < n - 1; i++) {
-              leaf->keys[i] = leaf->keys[i + 1];
-              leaf->values[i] = leaf->values[i + 1];
-            }
+            sift_left(leaf->keys, ret, n);
             leaf->keys[n - 1] = right_sibling->keys[0];
+            sift_left(leaf->values, ret, n);
             leaf->values[n - 1] = right_sibling->values[0];
-            for (size_t i = 0; i < right_n; i++) {
-              right_sibling->keys[i] = right_sibling->keys[i + 1];
-              right_sibling->values[i] = right_sibling->values[i + 1];
-            }
+            sift_left(right_sibling->keys, 0, right_n);
+            sift_left(right_sibling->values, 0, right_n);
             right_sibling->dec_key_slots_used();
             new_key = right_sibling->keys[0];
             return STOLE_FROM_RIGHT;
@@ -785,19 +778,14 @@ private:
 
         if (left_sibling) {
           // merge this node into left sibling
-          size_t left_n = left_sibling->key_slots_used();
           INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
           INVARIANT((left_n + (n - 1)) <= NKeysPerNode);
 
-          size_t j = left_n;
-          for (size_t i = 0; i < size_t(ret); i++, j++) {
-            left_sibling->keys[j] = leaf->keys[i];
-            left_sibling->values[j] = leaf->values[i];
-          }
-          for (size_t i = ret + 1; i < n; i++, j++) {
-            left_sibling->keys[j] = leaf->keys[i];
-            left_sibling->values[j] = leaf->values[i];
-          }
+          copy_into(&left_sibling->keys[left_n], leaf->keys, 0, ret);
+          copy_into(&left_sibling->keys[left_n + ret], leaf->keys, ret + 1, n);
+
+          copy_into(&left_sibling->values[left_n], leaf->values, 0, ret);
+          copy_into(&left_sibling->values[left_n + ret], leaf->values, ret + 1, n);
 
           left_sibling->set_key_slots_used(left_n + (n - 1));
           left_sibling->next = leaf->next;
