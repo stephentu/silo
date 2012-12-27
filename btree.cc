@@ -28,7 +28,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-//#define CHECK_INVARIANTS
+#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -1311,11 +1311,11 @@ perf_test()
 int
 main(void)
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  perf_test();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  //perf_test();
   return 0;
 }
