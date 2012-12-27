@@ -80,8 +80,8 @@ private:
      * hdr bits: layout is:
      *
      * <-- low bits
-     * [type | key_slots | unused]
-     * [0:1  | 1:5       | 5:64  ]
+     * [type | key_slots_used | unused]
+     * [0:1  | 1:5            | 5:64  ]
      */
     uint64_t hdr;
 
@@ -166,17 +166,6 @@ private:
      */
     inline ssize_t
     key_lower_bound_search(key_type k) const
-    {
-      ssize_t ret = key_lower_bound_search0(k);
-      //std::cout << "key_lower_bound_search(" << k << "):" << std::endl
-      //          << "  keys: " << util::format_list(keys, keys + key_slots_used()) << std::endl
-      //          << "  ret: " << ret << std::endl
-      //          ;
-      return ret;
-    }
-
-    inline ssize_t
-    key_lower_bound_search0(key_type k) const
     {
       ssize_t ret = -1;
       ssize_t lower = 0;
