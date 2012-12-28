@@ -189,14 +189,17 @@ private:
     unlock()
     {
       uint64_t v = hdr;
+      bool mod = false;
       INVARIANT(IsLocked(v));
       if (IsModifying(v)) {
+        mod = true;
         uint64_t n = Version(v);
         v &= ~HDR_VERSION_MASK;
         v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       }
       // clear locked + modifying bits
       v &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK);
+      if (mod) INVARIANT(!check_version(v));
       INVARIANT(!IsLocked(v));
       INVARIANT(!IsModifying(v));
       COMPILER_MEMORY_FENCE;
@@ -355,10 +358,11 @@ private:
   };
 
   struct leaf_node : public node {
+    key_type min_key;
     value_type values[NKeysPerNode];
     leaf_node *prev;
     leaf_node *next;
-    leaf_node() : prev(NULL), next(NULL)
+    leaf_node() : min_key(0), prev(NULL), next(NULL)
     {
       hdr = 0;
     }
@@ -372,6 +376,7 @@ private:
         bool is_root) const
     {
       base_invariant_checker(min_key, max_key, is_root);
+      ALWAYS_ASSERT(!min_key || *min_key == this->min_key);
       if (min_key || is_root)
         return;
       ALWAYS_ASSERT(key_slots_used() > 0);
@@ -538,7 +543,7 @@ private:
     return AsInternalCheck(const_cast<node *>(n));
   }
 
-  node *root;
+  node *volatile root;
 
 public:
 
@@ -567,17 +572,55 @@ public:
   {
   retry:
     node *cur = root;
+  process:
     while (cur) {
       prefetch_node(cur);
       uint64_t version = cur->stable_version();
       if (leaf_node *leaf = AsLeafCheck(cur)) {
         key_search_ret kret = leaf->key_search(k);
         ssize_t ret = kret.first;
-        if (ret != -1)
+        if (ret != -1) {
+          // found
           v = leaf->values[ret];
-        if (!leaf->check_version(version))
-          goto retry;
-        return ret != -1;
+          if (unlikely(!leaf->check_version(version)))
+            goto retry;
+          return true;
+        }
+
+        // leaf might have lost responsibility for key k during the descend. we
+        // need to check this and adjust accordingly
+        if (unlikely(k < leaf->min_key)) {
+          // try to go left
+          leaf_node *left_sibling = leaf->prev;
+          if (unlikely(!leaf->check_version(version)))
+            goto retry;
+          if (likely(left_sibling)) {
+            cur = left_sibling;
+            goto process;
+          } else {
+            // XXX: this case shouldn't be possible...
+            goto retry;
+          }
+        } else {
+          // try to go right
+          leaf_node *right_sibling = leaf->next;
+          prefetch_node(right_sibling);
+          if (unlikely(!right_sibling))
+            return false;
+
+          uint64_t right_version = right_sibling->stable_version();
+          key_type right_min_key = right_sibling->min_key;
+          if (unlikely(!leaf->check_version(version)))
+            goto retry;
+          if (unlikely(!right_sibling->check_version(right_version)))
+            goto retry;
+          if (unlikely(k >= right_min_key)) {
+            cur = right_sibling;
+            goto process;
+          }
+        }
+
+        return false;
       } else {
         internal_node *internal = AsInternal(cur);
         key_search_ret kret = internal->key_lower_bound_search(k);
@@ -587,7 +630,7 @@ public:
           cur = internal->children[ret + 1];
         else
           cur = n ? internal->children[0] : NULL;
-        if (!internal->check_version(version))
+        if (unlikely(!internal->check_version(version)))
           goto retry;
       }
     }
@@ -603,7 +646,7 @@ public:
     std::vector<node *> locked_nodes;
     try {
       node *ret = insert0(root, k, v, mk, parents, locked_nodes);
-      if (ret) {
+      if (unlikely(ret)) {
         INVARIANT(ret->key_slots_used() > 0);
         INVARIANT(root->is_modifying());
         internal_node *new_root = internal_node::alloc();
@@ -747,12 +790,26 @@ private:
   {
     prefetch_node(n);
     if (leaf_node *leaf = AsLeafCheck(n)) {
-
       // locked nodes are acquired bottom to top
       INVARIANT(locked_nodes.empty());
 
       leaf->lock();
       locked_nodes.push_back(leaf);
+
+      // now we need to ensure that this leaf node still has
+      // responsibility for k, before we proceed
+      if (unlikely(k < leaf->min_key))
+        throw retry_exception();
+      if (likely(leaf->next)) {
+        uint64_t right_version = leaf->next->stable_version();
+        key_type right_min_key = leaf->next->min_key;
+        if (!leaf->next->check_version(right_version))
+          throw retry_exception();
+        if (unlikely(k >= right_min_key))
+          throw retry_exception();
+      }
+
+      // we know now that leaf is responsible for k, so we can proceed
 
       key_search_ret kret = leaf->key_lower_bound_search(k);
       ssize_t ret = kret.first;
@@ -765,7 +822,7 @@ private:
       size_t n = kret.second;
       // ret + 1 is the slot we want the new key to go into, in the leaf node
       if (n < NKeysPerNode) {
-        // also easy case- we ony need to make local modifications
+        // also easy case- we only need to make local modifications
         leaf->mark_modifying();
 
         sift_right(leaf->keys, ret + 1, n);
@@ -855,6 +912,7 @@ private:
         leaf->next = new_leaf;
 
         min_key = new_leaf->keys[0];
+        new_leaf->min_key = min_key;
         return new_leaf;
       }
     } else {
@@ -865,7 +923,7 @@ private:
       size_t n = kret.second;
       size_t child_idx = (ret == -1) ? 0 : ret + 1;
       node *child_ptr = internal->children[child_idx];
-      if (!internal->check_version(version))
+      if (unlikely(!internal->check_version(version)))
         throw retry_exception();
       parents.push_back(insert_parent_entry(internal, version));
       key_type mk = 0;
@@ -1024,8 +1082,8 @@ private:
       leaf->lock();
       locked_nodes.push_back(leaf);
 
-      INVARIANT(!left_node || (leaf->prev == left_node && AsLeaf(left_node)->next == leaf));
-      INVARIANT(!right_node || (leaf->next == right_node && AsLeaf(right_node)->prev == leaf));
+      //INVARIANT(!left_node || (leaf->prev == left_node && AsLeaf(left_node)->next == leaf));
+      //INVARIANT(!right_node || (leaf->next == right_node && AsLeaf(right_node)->prev == leaf));
 
       key_search_ret kret = leaf->key_search(k);
       ssize_t ret = kret.first;
@@ -1118,6 +1176,7 @@ private:
             sift_left(right_sibling->values, 0, right_n);
             right_sibling->dec_key_slots_used();
             new_key = right_sibling->keys[0];
+            right_sibling->min_key = new_key;
             return STOLE_FROM_RIGHT;
           } else {
             // merge right sibling into this node
@@ -1155,6 +1214,7 @@ private:
             leaf->values[0] = left_sibling->values[left_n - 1];
             left_sibling->dec_key_slots_used();
             new_key = leaf->keys[0];
+            leaf->min_key = new_key;
             return STOLE_FROM_LEFT;
           } else {
             // merge this node into left sibling
@@ -1590,16 +1650,19 @@ test5()
   }
 
 namespace mp_test1_ns {
+
+  static const size_t nkeys = 20000;
+
   static void ins0(btree *btr)
   {
-    for (size_t i = 0; i < 1000; i++)
+    for (size_t i = 0; i < nkeys / 2; i++)
       btr->insert(i, (btree::value_type) i);
   }
   WORKER(ins0)
 
   static void ins1(btree *btr)
   {
-    for (size_t i = 1000; i < 2000; i++)
+    for (size_t i = nkeys / 2; i < nkeys; i++)
       btr->insert(i, (btree::value_type) i);
   }
   WORKER(ins1)
@@ -1620,7 +1683,7 @@ mp_test1()
   ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
 
   btr.invariant_checker();
-  for (size_t i = 0; i < 2000; i++) {
+  for (size_t i = 0; i < nkeys; i++) {
     btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
@@ -1695,11 +1758,11 @@ perf_test()
 int
 main(void)
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
   mp_test1();
   //perf_test();
   return 0;
