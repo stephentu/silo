@@ -704,6 +704,33 @@ public:
     }
   }
 
+  size_t
+  size() const
+  {
+  retry:
+    node *cur = root;
+    size_t count = 0;
+    while (cur) {
+      prefetch_node(cur);
+    process:
+      uint64_t version = cur->stable_version();
+      if (leaf_node *leaf = AsLeafCheck(cur)) {
+        size_t n = leaf->key_slots_used();
+        leaf_node *next = leaf->next;
+        if (unlikely(!leaf->check_version(version)))
+          goto process;
+        count += n;
+        cur = next;
+      } else {
+        internal_node *internal = AsInternal(cur);
+        cur = internal->children[0];
+        if (unlikely(!internal->check_version(version)))
+          goto retry;
+      }
+    }
+    return count;
+  }
+
 private:
 
   /**
@@ -803,7 +830,7 @@ private:
       if (likely(leaf->next)) {
         uint64_t right_version = leaf->next->stable_version();
         key_type right_min_key = leaf->next->min_key;
-        if (!leaf->next->check_version(right_version))
+        if (unlikely(!leaf->next->check_version(right_version)))
           throw retry_exception();
         if (unlikely(k >= right_min_key))
           throw retry_exception();
@@ -847,7 +874,7 @@ private:
           node *p = rit->first;
           p->lock();
           locked_nodes.push_back(p);
-          if (!p->check_version(rit->second))
+          if (unlikely(!p->check_version(rit->second)))
             // in traversing down the tree, an ancestor of this node was
             // modified- to be safe, we start over
             throw retry_exception();
@@ -1085,6 +1112,22 @@ private:
       //INVARIANT(!left_node || (leaf->prev == left_node && AsLeaf(left_node)->next == leaf));
       //INVARIANT(!right_node || (leaf->next == right_node && AsLeaf(right_node)->prev == leaf));
 
+      // now we need to ensure that this leaf node still has
+      // responsibility for k, before we proceed - note this check
+      // is duplicated from insert0()
+      if (unlikely(k < leaf->min_key))
+        throw retry_exception();
+      if (likely(leaf->next)) {
+        uint64_t right_version = leaf->next->stable_version();
+        key_type right_min_key = leaf->next->min_key;
+        if (unlikely(!leaf->next->check_version(right_version)))
+          throw retry_exception();
+        if (unlikely(k >= right_min_key))
+          throw retry_exception();
+      }
+
+      // we know now that leaf is responsible for k, so we can proceed
+
       key_search_ret kret = leaf->key_search(k);
       ssize_t ret = kret.first;
       if (ret == -1)
@@ -1125,7 +1168,7 @@ private:
           left_sibling->lock();
           locked_nodes.push_back(left_sibling);
           leaf->lock();
-          if (!leaf->check_version(leaf_version))
+          if (unlikely(!leaf->check_version(leaf_version)))
             throw retry_exception();
         } else {
           INVARIANT(leaf == root);
@@ -1140,7 +1183,7 @@ private:
           uint64_t p_version = rit->parent_version;
           p->lock();
           locked_nodes.push_back(p);
-          if (!p->check_version(p_version))
+          if (unlikely(!p->check_version(p_version)))
             throw retry_exception();
           size_t p_n = p->key_slots_used();
           if (p_n > NMinKeysPerNode)
@@ -1153,7 +1196,7 @@ private:
             l->lock();
             locked_nodes.push_back(l);
             p->lock();
-            if (!p->check_version(p_version))
+            if (unlikely(!p->check_version(p_version)))
               throw retry_exception();
           } else {
             INVARIANT(p == root);
@@ -1257,7 +1300,7 @@ private:
       key_type *child_max_key = child_idx == n ? NULL : &internal->keys[child_idx];
       node *child_left_sibling = child_idx == 0 ? NULL : internal->children[child_idx - 1];
       node *child_right_sibling = child_idx == n ? NULL : internal->children[child_idx + 1];
-      if (!internal->check_version(version))
+      if (unlikely(!internal->check_version(version)))
         throw retry_exception();
       parents.push_back(remove_parent_entry(internal, left_node, right_node, version));
       INVARIANT(n > 0);
@@ -1688,6 +1731,52 @@ mp_test1()
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+  ALWAYS_ASSERT(btr.size() == nkeys);
+}
+
+namespace mp_test2_ns {
+
+  static const size_t nkeys = 2000;
+
+  static void rm0(btree *btr)
+  {
+    for (size_t i = 0; i < nkeys / 2; i++)
+      btr->remove(i);
+  }
+  WORKER(rm0)
+
+  static void rm1(btree *btr)
+  {
+    for (size_t i = nkeys / 2; i < nkeys; i++)
+      btr->remove(i);
+  }
+  WORKER(rm1)
+}
+
+static void
+mp_test2()
+{
+  using namespace mp_test2_ns;
+
+  // test a bunch of concurrent inserts
+  btree btr;
+
+  for (size_t i = 0; i < nkeys; i++)
+    btr.insert(i, (btree::value_type) i);
+  btr.invariant_checker();
+
+  pthread_t t0, t1;
+  ALWAYS_ASSERT(pthread_create(&t0, NULL, rm0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t1, NULL, rm1_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
+  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
+
+  btr.invariant_checker();
+  for (size_t i = 0; i < nkeys; i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(!btr.search(i, v));
+  }
+  ALWAYS_ASSERT(btr.size() == 0);
 }
 
 class scoped_rate_timer {
@@ -1758,12 +1847,13 @@ perf_test()
 int
 main(void)
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
   mp_test1();
+  mp_test2();
   //perf_test();
   return 0;
 }
