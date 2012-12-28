@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <malloc.h>
 #include <stdio.h>
+#include <pthread.h>
 
 #include <map>
 #include <cstddef>
@@ -32,7 +33,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-//#define CHECK_INVARIANTS
+#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -1579,6 +1580,53 @@ test5()
   }
 }
 
+#define WORKER(name) \
+  static void * \
+  name ## _worker(void *p) \
+  { \
+    btree *btr = (btree *) p; \
+    name(btr); \
+    return NULL; \
+  }
+
+namespace mp_test1_ns {
+  static void ins0(btree *btr)
+  {
+    for (size_t i = 0; i < 1000; i++)
+      btr->insert(i, (btree::value_type) i);
+  }
+  WORKER(ins0)
+
+  static void ins1(btree *btr)
+  {
+    for (size_t i = 1000; i < 2000; i++)
+      btr->insert(i, (btree::value_type) i);
+  }
+  WORKER(ins1)
+}
+
+static void
+mp_test1()
+{
+  using namespace mp_test1_ns;
+
+  // test a bunch of concurrent inserts
+  btree btr;
+
+  pthread_t t0, t1;
+  ALWAYS_ASSERT(pthread_create(&t0, NULL, ins0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t1, NULL, ins1_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
+  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
+
+  btr.invariant_checker();
+  for (size_t i = 0; i < 2000; i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(v == (btree::value_type) i);
+  }
+}
+
 class scoped_rate_timer {
 private:
   util::timer t;
@@ -1652,6 +1700,7 @@ main(void)
   //test3();
   //test4();
   //test5();
-  perf_test();
+  mp_test1();
+  //perf_test();
   return 0;
 }
