@@ -7,6 +7,7 @@
 #include <pthread.h>
 
 #include <map>
+#include <set>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
@@ -1488,10 +1489,12 @@ test1()
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+  ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode);
 
   // induce a split
   btr.insert(btree::NKeysPerNode, (btree::value_type) (btree::NKeysPerNode));
   btr.invariant_checker();
+  ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode + 1);
 
   // now make sure we can find everything post split
   for (size_t i = 0; i < btree::NKeysPerNode + 1; i++) {
@@ -1510,10 +1513,12 @@ test1()
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+  ALWAYS_ASSERT(btr.size() == n);
 
   // cause the root node to split
   btr.insert(n, (btree::value_type) n);
   btr.invariant_checker();
+  ALWAYS_ASSERT(btr.size() == n + 1);
 
   // once again make sure we can find everything
   for (size_t i = 0; i < n + 1; i++) {
@@ -1527,7 +1532,7 @@ static void
 test2()
 {
   btree btr;
-  const size_t n = 0;
+  const size_t n = 1000;
   for (size_t i = 0; i < n; i += 2) {
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
@@ -1545,6 +1550,8 @@ test2()
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+
+  ALWAYS_ASSERT(btr.size() == n);
 }
 
 static void
@@ -1560,6 +1567,7 @@ test3()
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+  ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode * 2);
 
   for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
     btr.remove(i);
@@ -1568,6 +1576,7 @@ test3()
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
+  ALWAYS_ASSERT(btr.size() == 0);
 
   for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
     btr.insert(i, (btree::value_type) i);
@@ -1577,6 +1586,7 @@ test3()
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+  ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode * 2);
 
   for (ssize_t i = btree::NKeysPerNode * 2 - 1; i >= 0; i--) {
     btr.remove(i);
@@ -1585,6 +1595,7 @@ test3()
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
+  ALWAYS_ASSERT(btr.size() == 0);
 
   for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
     btr.insert(i, (btree::value_type) i);
@@ -1594,6 +1605,7 @@ test3()
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+  ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode * 2);
 
   for (ssize_t i = btree::NKeysPerNode; i >= 0; i--) {
     btr.remove(i);
@@ -1610,36 +1622,40 @@ test3()
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
+  ALWAYS_ASSERT(btr.size() == 0);
 }
 
 static void
 test4()
 {
   btree btr;
-  for (size_t i = 0; i < 10000; i++) {
+  const size_t nkeys = 10000;
+  for (size_t i = 0; i < nkeys; i++) {
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
     btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+  ALWAYS_ASSERT(btr.size() == nkeys);
 
   srand(12345);
 
-  for (size_t i = 0; i < 10000; i++) {
-    size_t k = rand() % 10000;
+  for (size_t i = 0; i < nkeys; i++) {
+    size_t k = rand() % nkeys;
     btr.remove(k);
     btr.invariant_checker();
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(k, v));
   }
 
-  for (size_t i = 0; i < 10000; i++) {
+  for (size_t i = 0; i < nkeys; i++) {
     btr.remove(i);
     btr.invariant_checker();
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
+  ALWAYS_ASSERT(btr.size() == 0);
 }
 
 static void
@@ -1656,14 +1672,17 @@ test5()
   for (size_t iter = 0; iter < ARRAY_NELEMS(seeds); iter++) {
     srand(seeds[iter]);
     const size_t nkeys = 20000;
+    std::set<size_t> s;
     for (size_t i = 0; i < nkeys; i++) {
       size_t k = rand() % nkeys;
+      s.insert(k);
       btr.insert(k, (btree::value_type) k);
       btr.invariant_checker();
       btree::value_type v = 0;
       ALWAYS_ASSERT(btr.search(k, v));
       ALWAYS_ASSERT(v == (btree::value_type) k);
     }
+    ALWAYS_ASSERT(btr.size() == s.size());
 
     for (size_t i = 0; i < nkeys * 2; i++) {
       size_t k = rand() % nkeys;
@@ -1680,6 +1699,8 @@ test5()
       btree::value_type v = 0;
       ALWAYS_ASSERT(!btr.search(i, v));
     }
+
+    ALWAYS_ASSERT(btr.size() == 0);
   }
 }
 
@@ -1847,11 +1868,11 @@ perf_test()
 int
 main(void)
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
   mp_test1();
   mp_test2();
   //perf_test();
