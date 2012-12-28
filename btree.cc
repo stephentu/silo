@@ -32,7 +32,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-#define CHECK_INVARIANTS
+//#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -188,11 +188,9 @@ private:
     unlock()
     {
       uint64_t v = hdr;
-      uint64_t n = Version(v);
-      bool mod = false;
       INVARIANT(IsLocked(v));
       if (IsModifying(v)) {
-        mod = true;
+        uint64_t n = Version(v);
         v &= ~HDR_VERSION_MASK;
         v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       }
@@ -200,7 +198,6 @@ private:
       v &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK);
       INVARIANT(!IsLocked(v));
       INVARIANT(!IsModifying(v));
-      INVARIANT(mod || Version(v) == n);
       COMPILER_MEMORY_FENCE;
       hdr = v;
     }
@@ -1650,11 +1647,11 @@ perf_test()
 int
 main(void)
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  //perf_test();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  perf_test();
   return 0;
 }
