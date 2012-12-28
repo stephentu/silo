@@ -1,4 +1,4 @@
-CXXFLAGS := -Wall -g -O2
+CXXFLAGS := -Wall -g
 
 all: btree
 

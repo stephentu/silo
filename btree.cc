@@ -10,6 +10,9 @@
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
+#include <vector>
+#include <utility>
+#include <stdexcept>
 
 #include "static_assert.h"
 #include "util.h"
@@ -21,6 +24,8 @@
 
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
+
+#define COMPILER_MEMORY_FENCE asm volatile("" ::: "memory")
 
 #ifdef NDEBUG
   #define ALWAYS_ASSERT(expr) (likely(e) ? (void)0 : abort())
@@ -73,17 +78,38 @@ private:
   static const uint64_t HDR_TYPE_MASK = 0x1;
 
   // 0xf = (1 << ceil(log2(NKeysPerNode))) - 1
-  static const uint64_t HDR_KEY_SLOTS_MASK = (0xf) << 1;
+  static const uint64_t HDR_KEY_SLOTS_SHIFT = 1;
+  static const uint64_t HDR_KEY_SLOTS_MASK = 0xf << HDR_KEY_SLOTS_SHIFT;
+
+  static const uint64_t HDR_LOCKED_SHIFT = 5;
+  static const uint64_t HDR_LOCKED_MASK = 0x1 << HDR_LOCKED_SHIFT;
+
+  static const uint64_t HDR_MODIFYING_SHIFT = 6;
+  static const uint64_t HDR_MODIFYING_MASK = 0x1 << HDR_MODIFYING_SHIFT;
+
+  static const uint64_t HDR_VERSION_SHIFT = 7;
+  static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
+
+  class retry_exception {};
 
   struct node {
+
     /**
      * hdr bits: layout is:
      *
      * <-- low bits
-     * [type | key_slots_used | unused]
-     * [0:1  | 1:5            | 5:64  ]
+     * [type | key_slots_used | locked | modifying | version ]
+     * [0:1  | 1:5            | 5:6    | 6:7       | 7:64    ]
+     *
+     * bit invariants:
+     *   1) modifying => locked
+     *
+     * WARNING: the correctness of our concurrency scheme relies on being able
+     * to do a memory reads/writes from/to hdr atomically. x86 architectures
+     * guarantee that aligned writes are atomic (see intel spec)
+     *
      */
-    uint64_t hdr;
+    volatile uint64_t hdr;
 
     /**
      * Keys are assumed to be stored in contiguous sorted order, so that all
@@ -108,20 +134,22 @@ private:
     inline size_t
     key_slots_used() const
     {
-      return (hdr & HDR_KEY_SLOTS_MASK) >> 1;
+      return (hdr & HDR_KEY_SLOTS_MASK) >> HDR_KEY_SLOTS_SHIFT;
     }
 
     inline void
     set_key_slots_used(size_t n)
     {
       INVARIANT(n <= NKeysPerNode);
+      INVARIANT(is_modifying());
       hdr &= ~HDR_KEY_SLOTS_MASK;
-      hdr |= (n << 1);
+      hdr |= (n << HDR_KEY_SLOTS_SHIFT);
     }
 
     inline void
     inc_key_slots_used()
     {
+      INVARIANT(is_modifying());
       INVARIANT(key_slots_used() < NKeysPerNode);
       set_key_slots_used(key_slots_used() + 1);
     }
@@ -129,8 +157,104 @@ private:
     inline void
     dec_key_slots_used()
     {
+      INVARIANT(is_modifying());
       INVARIANT(key_slots_used() > 0);
       set_key_slots_used(key_slots_used() - 1);
+    }
+
+    inline bool
+    is_locked() const
+    {
+      return IsLocked(hdr);
+    }
+
+    static inline bool
+    IsLocked(uint64_t v)
+    {
+      return (v & HDR_LOCKED_MASK) >> HDR_LOCKED_SHIFT;
+    }
+
+    inline void
+    lock()
+    {
+      uint64_t v = hdr;
+      while (IsLocked(v) || !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK))
+        v = hdr;
+      COMPILER_MEMORY_FENCE;
+    }
+
+    inline void
+    unlock()
+    {
+      uint64_t v = hdr;
+      INVARIANT(IsLocked(v));
+      if (IsModifying(v)) {
+        v &= ~HDR_VERSION_MASK;
+        v |= (((Version(v) + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
+      }
+      // clear locked + modifying bits
+      v &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK);
+      INVARIANT(!IsLocked(v));
+      INVARIANT(!IsModifying(v));
+      COMPILER_MEMORY_FENCE;
+      hdr = v;
+    }
+
+    inline bool
+    is_modifying() const
+    {
+      return IsModifying(hdr);
+    }
+
+    inline void
+    mark_modifying()
+    {
+      uint64_t v = hdr;
+      INVARIANT(IsLocked(v));
+      INVARIANT(!IsModifying(v));
+      v |= HDR_MODIFYING_MASK;
+      COMPILER_MEMORY_FENCE;
+      hdr = v;
+      COMPILER_MEMORY_FENCE;
+    }
+
+    static inline bool
+    IsModifying(uint64_t v)
+    {
+      return (v & HDR_MODIFYING_MASK) >> HDR_MODIFYING_SHIFT;
+    }
+
+    inline uint64_t
+    version() const
+    {
+      return Version(hdr);
+    }
+
+    static inline uint64_t
+    Version(uint64_t v)
+    {
+      return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
+    }
+
+    /**
+     * spin until we get a version which is not modifying (but can be locked)
+     */
+    inline uint64_t
+    stable_version() const
+    {
+      uint64_t v = hdr;
+      while (is_modifying())
+        v = hdr;
+      COMPILER_MEMORY_FENCE;
+      return v;
+    }
+
+    inline bool
+    check_version(uint64_t version) const
+    {
+      COMPILER_MEMORY_FENCE;
+      // are the version the same, modulo the locked bit?
+      return (hdr & ~HDR_LOCKED_MASK) == (version & ~HDR_LOCKED_MASK);
     }
 
     /**
@@ -192,6 +316,8 @@ private:
         const key_type *max_key,
         bool is_root) const
     {
+      ALWAYS_ASSERT(!is_locked());
+      ALWAYS_ASSERT(!is_modifying());
       size_t n = key_slots_used();
       ALWAYS_ASSERT(n <= NKeysPerNode);
       if (is_root) {
@@ -272,8 +398,9 @@ private:
     {
       if (!n)
         return;
-      n->~leaf_node();
-      free(n);
+      // XXX: cannot free yet, need to hook into RCU scheme
+      //n->~leaf_node();
+      //free(n);
     }
 
   } PACKED_CACHE_ALIGNED;
@@ -349,8 +476,9 @@ private:
     {
       if (unlikely(!n))
         return;
-      n->~internal_node();
-      free(n);
+      // XXX: cannot free yet, need to hook into RCU scheme
+      //n->~internal_node();
+      //free(n);
     }
 
   } PACKED_CACHE_ALIGNED;
@@ -432,17 +560,18 @@ public:
   bool
   search(key_type k, value_type &v) const
   {
+  retry:
     node *cur = root;
     while (cur) {
       prefetch_node(cur);
+      uint64_t version = cur->stable_version();
       if (leaf_node *leaf = AsLeafCheck(cur)) {
         ssize_t ret = leaf->key_search(k);
-        if (ret != -1) {
+        if (ret != -1)
           v = leaf->values[ret];
-          return true;
-        } else {
-          return false;
-        }
+        if (!leaf->check_version(version))
+          goto retry;
+        return ret != -1;
       } else {
         internal_node *internal = AsInternal(cur);
         ssize_t ret = internal->key_lower_bound_search(k);
@@ -450,6 +579,8 @@ public:
           cur = internal->children[ret + 1];
         else
           cur = internal->key_slots_used() ? internal->children[0] : NULL;
+        if (!internal->check_version(version))
+          goto retry;
       }
     }
     return false;
@@ -458,16 +589,31 @@ public:
   void
   insert(key_type k, value_type v)
   {
+  retry:
+    std::vector<parent_entry> parents;
     key_type mk;
-    node *ret = insert0(root, k, v, mk);
-    if (ret) {
-      INVARIANT(ret->key_slots_used() > 0);
-      internal_node *new_root = internal_node::alloc();
-      new_root->children[0] = root;
-      new_root->children[1] = ret;
-      new_root->keys[0] = mk;
-      new_root->set_key_slots_used(1);
-      root = new_root;
+    std::vector<node *> locked_nodes;
+    try {
+      node *ret = insert0(root, k, v, parents, mk, locked_nodes);
+      if (ret) {
+        INVARIANT(ret->key_slots_used() > 0);
+        INVARIANT(root->is_modifying());
+        internal_node *new_root = internal_node::alloc();
+#ifdef CHECK_INVARIANTS
+        new_root->lock();
+        new_root->mark_modifying();
+        locked_nodes.push_back(new_root);
+#endif /* CHECK_INVARIANTS */
+        new_root->children[0] = root;
+        new_root->children[1] = ret;
+        new_root->keys[0] = mk;
+        new_root->set_key_slots_used(1);
+        root = new_root;
+      }
+      UnlockNodes(locked_nodes);
+    } catch (const retry_exception &e) {
+      UnlockNodes(locked_nodes);
+      goto retry;
     }
   }
 
@@ -553,6 +699,16 @@ private:
 #endif /* USE_MEMCPY */
   }
 
+  typedef std::pair<node *, uint64_t> parent_entry;
+
+  static inline void
+  UnlockNodes(const std::vector<node *> &locked_nodes)
+  {
+    for (std::vector<node *>::const_iterator it = locked_nodes.begin();
+         it != locked_nodes.end(); ++it)
+      (*it)->unlock();
+  }
+
   /**
    * insert k=>v into node n. if this insert into n causes it to split into two
    * nodes, return the new node (upper half of keys). in this case, min_key is set to the
@@ -563,28 +719,84 @@ private:
    * of code clarity
    */
   node *
-  insert0(node *n, key_type k, value_type v, key_type &min_key)
+  insert0(node *n, key_type k, value_type v,
+          std::vector<parent_entry> &parents,
+          key_type &min_key,
+          std::vector<node *> &locked_nodes)
   {
     prefetch_node(n);
     if (leaf_node *leaf = AsLeafCheck(n)) {
+
+      // locked nodes are acquired bottom to top
+      INVARIANT(locked_nodes.empty());
+
+      leaf->lock();
+      locked_nodes.push_back(leaf);
+
       ssize_t ret = leaf->key_lower_bound_search(k);
       if (ret != -1 && leaf->keys[ret] == k) {
+        // easy case- we don't modify the node itself
         leaf->values[ret] = v;
         return NULL;
       }
+
       size_t n = leaf->key_slots_used();
       // ret + 1 is the slot we want the new key to go into, in the leaf node
       if (n < NKeysPerNode) {
+        // also easy case- we ony need to make local modifications
+        leaf->mark_modifying();
+
         sift_right(leaf->keys, ret + 1, n);
         leaf->keys[ret + 1] = k;
         sift_right(leaf->values, ret + 1, n);
         leaf->values[ret + 1] = v;
         leaf->inc_key_slots_used();
+
         return NULL;
       } else {
         INVARIANT(n == NKeysPerNode);
+
+        // we need to split the current node, potentially causing a bunch of
+        // splits to happen in ancestors. to make this safe w/o
+        // using a very complicated locking protocol, we will first acquire all
+        // locks on nodes which will be modified, in left-to-right,
+        // bottom-to-top order
+
+        for (std::vector<parent_entry>::reverse_iterator rit = parents.rbegin();
+             rit != parents.rend(); ++rit) {
+          // lock the parent
+          node *p = rit->first;
+          p->lock();
+          locked_nodes.push_back(p);
+          if (!p->check_version(rit->second))
+            // in traversing down the tree, an ancestor of this node was
+            // modified- to be safe, we start over
+            throw retry_exception();
+
+          // since the child needs a split, see if we have room in the parent-
+          // if we don't have room, we'll also need to split the parent, in which
+          // case we must grab its parent's lock
+          INVARIANT(p->is_internal_node());
+          size_t parent_n = p->key_slots_used();
+          INVARIANT(parent_n > 0 && parent_n <= NKeysPerNode);
+          if (parent_n < NKeysPerNode)
+            // can stop locking up now, since this node won't split
+            break;
+        }
+
+        // at this point, we have locked all nodes which will be split/modified
+        // modulo the new nodes to be created
+        leaf->mark_modifying();
+
         leaf_node *new_leaf = leaf_node::alloc();
         prefetch_node(new_leaf);
+
+#ifdef CHECK_INVARIANTS
+        new_leaf->lock();
+        new_leaf->mark_modifying();
+        locked_nodes.push_back(new_leaf);
+#endif /* CHECK_INVARIANTS */
+
         if (ret + 1 >= NMinKeysPerNode) {
           // put new key in new leaf
           size_t pos = ret + 1 - NMinKeysPerNode;
@@ -625,15 +837,22 @@ private:
       }
     } else {
       internal_node *internal = AsInternal(n);
+      uint64_t version = internal->stable_version();
       ssize_t ret = internal->key_lower_bound_search(k);
       size_t child_idx = (ret == -1) ? 0 : ret + 1;
+      node *child_ptr = internal->children[child_idx];
+      if (!internal->check_version(version))
+        throw retry_exception();
+      parents.push_back(parent_entry(internal, version));
       key_type mk = 0;
-      node *new_child = insert0(internal->children[child_idx], k, v, mk);
+      node *new_child = insert0(child_ptr, k, v, parents, mk, locked_nodes);
       if (!new_child)
         return NULL;
+      INVARIANT(internal->is_locked()); // previous call to insert0() must lock internal node for insertion
       INVARIANT(new_child->key_slots_used() > 0);
       size_t n = internal->key_slots_used();
       INVARIANT(n > 0);
+      internal->mark_modifying();
       if (n < NKeysPerNode) {
         sift_right(internal->keys, child_idx, n);
         internal->keys[child_idx] = mk;
@@ -647,6 +866,11 @@ private:
 
         internal_node *new_internal = internal_node::alloc();
         prefetch_node(new_internal);
+#ifdef CHECK_INVARIANTS
+        new_internal->lock();
+        new_internal->mark_modifying();
+        locked_nodes.push_back(new_internal);
+#endif /* CHECK_INVARIANTS */
 
         // there are three cases post-split:
         // (1) mk goes in the original node
@@ -1033,7 +1257,7 @@ test1()
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1044,7 +1268,7 @@ test1()
 
   // now make sure we can find everything post split
   for (size_t i = 0; i < btree::NKeysPerNode + 1; i++) {
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1055,7 +1279,7 @@ test1()
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1066,7 +1290,7 @@ test1()
 
   // once again make sure we can find everything
   for (size_t i = 0; i < n + 1; i++) {
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1081,7 +1305,7 @@ test2()
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1090,7 +1314,7 @@ test2()
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1105,7 +1329,7 @@ test3()
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1114,7 +1338,7 @@ test3()
     btr.remove(i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
 
@@ -1122,7 +1346,7 @@ test3()
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1131,7 +1355,7 @@ test3()
     btr.remove(i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
 
@@ -1139,7 +1363,7 @@ test3()
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1148,7 +1372,7 @@ test3()
     btr.remove(i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
 
@@ -1156,7 +1380,7 @@ test3()
     btr.remove(i);
     btr.invariant_checker();
 
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
 }
@@ -1168,7 +1392,7 @@ test4()
   for (size_t i = 0; i < 10000; i++) {
     btr.insert(i, (btree::value_type) i);
     btr.invariant_checker();
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
@@ -1179,14 +1403,14 @@ test4()
     size_t k = rand() % 10000;
     btr.remove(k);
     btr.invariant_checker();
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(k, v));
   }
 
   for (size_t i = 0; i < 10000; i++) {
     btr.remove(i);
     btr.invariant_checker();
-    btree::value_type v;
+    btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(i, v));
   }
 }
@@ -1209,7 +1433,7 @@ test5()
       size_t k = rand() % nkeys;
       btr.insert(k, (btree::value_type) k);
       btr.invariant_checker();
-      btree::value_type v;
+      btree::value_type v = 0;
       ALWAYS_ASSERT(btr.search(k, v));
       ALWAYS_ASSERT(v == (btree::value_type) k);
     }
@@ -1218,7 +1442,7 @@ test5()
       size_t k = rand() % nkeys;
       btr.remove(k);
       btr.invariant_checker();
-      btree::value_type v;
+      btree::value_type v = 0;
       ALWAYS_ASSERT(!btr.search(k, v));
     }
 
@@ -1226,7 +1450,7 @@ test5()
     for (size_t i = 0; i < nkeys; i++) {
       btr.remove(i);
       btr.invariant_checker();
-      btree::value_type v;
+      btree::value_type v = 0;
       ALWAYS_ASSERT(!btr.search(i, v));
     }
   }
@@ -1290,7 +1514,7 @@ perf_test()
       for (size_t i = 0; i < nlookups; i++) {
         //uint64_t key = rand() % nrecs;
         uint64_t key = i;
-        btree::value_type v;
+        btree::value_type v = 0;
         ALWAYS_ASSERT(btr.search(key, v));
       }
     }
