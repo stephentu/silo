@@ -85,10 +85,16 @@ private:
   static const uint64_t HDR_LOCKED_SHIFT = 5;
   static const uint64_t HDR_LOCKED_MASK = 0x1 << HDR_LOCKED_SHIFT;
 
-  static const uint64_t HDR_MODIFYING_SHIFT = 6;
+  static const uint64_t HDR_IS_ROOT_SHIFT = 6;
+  static const uint64_t HDR_IS_ROOT_MASK = 0x1 << HDR_IS_ROOT_SHIFT;
+
+  static const uint64_t HDR_MODIFYING_SHIFT = 7;
   static const uint64_t HDR_MODIFYING_MASK = 0x1 << HDR_MODIFYING_SHIFT;
 
-  static const uint64_t HDR_VERSION_SHIFT = 7;
+  static const uint64_t HDR_DELETING_SHIFT = 8;
+  static const uint64_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
+
+  static const uint64_t HDR_VERSION_SHIFT = 9;
   static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
 
   class retry_exception {};
@@ -101,24 +107,27 @@ private:
      * hdr bits: layout is:
      *
      * <-- low bits
-     * [type | key_slots_used | locked | modifying | version ]
-     * [0:1  | 1:5            | 5:6    | 6:7       | 7:64    ]
+     * [type | key_slots_used | locked | is_root | modifying | deleting | version ]
+     * [0:1  | 1:5            | 5:6    | 6:7     | 7:8       | 8:9      | 9:64    ]
      *
      * bit invariants:
      *   1) modifying => locked
+     *   2) deleting  => locked
      *
      * WARNING: the correctness of our concurrency scheme relies on being able
      * to do a memory reads/writes from/to hdr atomically. x86 architectures
      * guarantee that aligned writes are atomic (see intel spec)
      *
+     * XXX: there's some GCC syntax to make these bit fields easier to define-
+     * we should use it
      */
     volatile uint64_t hdr;
 
     /**
      * Keys are assumed to be stored in contiguous sorted order, so that all
-     * the used slots are grouped together. That is, elems in positions [0,
-     * key_slots_used) are valid, and elems in positions [key_slots_used,
-     * NKeysPerNode) are empty
+     * the used slots are grouped together. That is, elems in positions
+     * [0, key_slots_used) are valid, and elems in positions
+     * [key_slots_used, NKeysPerNode) are empty
      */
     key_type keys[NKeysPerNode];
 
@@ -174,7 +183,7 @@ private:
     static inline bool
     IsLocked(uint64_t v)
     {
-      return (v & HDR_LOCKED_MASK) >> HDR_LOCKED_SHIFT;
+      return v & HDR_LOCKED_MASK;
     }
 
     inline void
@@ -190,21 +199,43 @@ private:
     unlock()
     {
       uint64_t v = hdr;
-      bool mod = false;
+      bool newv = false;
       INVARIANT(IsLocked(v));
-      if (IsModifying(v)) {
-        mod = true;
+      if (IsModifying(v) || IsDeleting(v)) {
+        newv = true;
         uint64_t n = Version(v);
         v &= ~HDR_VERSION_MASK;
         v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       }
       // clear locked + modifying bits
       v &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK);
-      if (mod) INVARIANT(!check_version(v));
+      if (newv) INVARIANT(!check_version(v));
       INVARIANT(!IsLocked(v));
       INVARIANT(!IsModifying(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
+    }
+
+    inline bool
+    is_root() const
+    {
+      return hdr & HDR_IS_ROOT_MASK;
+    }
+
+    inline void
+    set_root()
+    {
+      INVARIANT(is_locked());
+      INVARIANT(!is_root());
+      hdr |= HDR_IS_ROOT_MASK;
+    }
+
+    inline void
+    clear_root()
+    {
+      INVARIANT(is_locked());
+      INVARIANT(is_root());
+      hdr &= ~HDR_IS_ROOT_MASK;
     }
 
     inline bool
@@ -228,7 +259,27 @@ private:
     static inline bool
     IsModifying(uint64_t v)
     {
-      return (v & HDR_MODIFYING_MASK) >> HDR_MODIFYING_SHIFT;
+      return v & HDR_MODIFYING_MASK;
+    }
+
+    inline bool
+    is_deleting() const
+    {
+      return IsDeleting(hdr);
+    }
+
+    static inline bool
+    IsDeleting(uint64_t v)
+    {
+      return v & HDR_DELETING_MASK;
+    }
+
+    inline void
+    mark_deleting()
+    {
+      INVARIANT(is_locked());
+      INVARIANT(!is_deleting());
+      hdr |= HDR_DELETING_MASK;
     }
 
     inline uint64_t
@@ -327,6 +378,7 @@ private:
     {
       ALWAYS_ASSERT(!is_locked());
       ALWAYS_ASSERT(!is_modifying());
+      ALWAYS_ASSERT(this->is_root() == is_root);
       size_t n = key_slots_used();
       ALWAYS_ASSERT(n <= NKeysPerNode);
       if (is_root) {
@@ -407,8 +459,9 @@ private:
     static inline void
     release(leaf_node *n)
     {
-      if (!n)
+      if (unlikely(!n))
         return;
+      n->mark_deleting();
       // XXX: cannot free yet, need to hook into RCU scheme
       //n->~leaf_node();
       //free(n);
@@ -487,6 +540,7 @@ private:
     {
       if (unlikely(!n))
         return;
+      n->mark_deleting();
       // XXX: cannot free yet, need to hook into RCU scheme
       //n->~internal_node();
       //free(n);
@@ -554,6 +608,13 @@ public:
     _static_assert(sizeof(leaf_node) % 64 == 0);
     _static_assert(sizeof(internal_node) <= NodeSize);
     _static_assert(sizeof(internal_node) % 64 == 0);
+#ifdef CHECK_INVARIANTS
+    root->lock();
+    root->set_root();
+    root->unlock();
+#else
+    root->set_root();
+#endif
   }
 
   ~btree()
@@ -577,6 +638,8 @@ public:
     while (cur) {
       prefetch_node(cur);
       uint64_t version = cur->stable_version();
+      if (node::IsDeleting(version))
+        goto retry;
       if (leaf_node *leaf = AsLeafCheck(cur)) {
         key_search_ret kret = leaf->key_search(k);
         ssize_t ret = kret.first;
@@ -660,6 +723,8 @@ public:
         new_root->children[1] = ret;
         new_root->keys[0] = mk;
         new_root->set_key_slots_used(1);
+        new_root->set_root();
+        root->clear_root();
         root = new_root;
       }
       UnlockNodes(locked_nodes);
@@ -692,6 +757,9 @@ public:
       case NONE:
         break;
       case REPLACE_NODE:
+        replace_node->set_root();
+        root->clear_root();
+        INVARIANT(root->is_deleting());
         root = replace_node;
         break;
       default:
@@ -715,6 +783,8 @@ public:
       prefetch_node(cur);
     process:
       uint64_t version = cur->stable_version();
+      if (node::IsDeleting(version))
+        goto retry;
       if (leaf_node *leaf = AsLeafCheck(cur)) {
         size_t n = leaf->key_slots_used();
         leaf_node *next = leaf->next;
@@ -826,6 +896,8 @@ private:
 
       // now we need to ensure that this leaf node still has
       // responsibility for k, before we proceed
+      if (unlikely(leaf->is_deleting()))
+        throw retry_exception();
       if (unlikely(k < leaf->min_key))
         throw retry_exception();
       if (likely(leaf->next)) {
@@ -946,6 +1018,8 @@ private:
     } else {
       internal_node *internal = AsInternal(n);
       uint64_t version = internal->stable_version();
+      if (unlikely(node::IsDeleting(version)))
+        throw retry_exception();
       key_search_ret kret = internal->key_lower_bound_search(k);
       ssize_t ret = kret.first;
       size_t n = kret.second;
@@ -1116,6 +1190,8 @@ private:
       // now we need to ensure that this leaf node still has
       // responsibility for k, before we proceed - note this check
       // is duplicated from insert0()
+      if (unlikely(leaf->is_deleting()))
+        throw retry_exception();
       if (unlikely(k < leaf->min_key))
         throw retry_exception();
       if (likely(leaf->next)) {
@@ -1200,7 +1276,8 @@ private:
             if (unlikely(!p->check_version(p_version)))
               throw retry_exception();
           } else {
-            INVARIANT(p == root);
+            if (unlikely(!p->is_root()))
+              throw new retry_exception();
           }
         }
 
@@ -1286,12 +1363,15 @@ private:
 
         // root node, so we are ok
         INVARIANT(leaf == root);
+        INVARIANT(leaf->is_root());
         remove_pos_from_leaf_node(leaf, ret, n);
         return NONE;
       }
     } else {
       internal_node *internal = AsInternal(np);
       uint64_t version = internal->stable_version();
+      if (unlikely(node::IsDeleting(version)))
+        throw retry_exception();
       key_search_ret kret = internal->key_lower_bound_search(k);
       ssize_t ret = kret.first;
       size_t n = kret.second;
@@ -1441,6 +1521,7 @@ private:
         }
 
         INVARIANT(internal == root);
+        INVARIANT(internal->is_root());
         remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
         INVARIANT(internal->key_slots_used() + 1 == n);
         if ((n - 1) == 0) {
@@ -1757,7 +1838,7 @@ mp_test1()
 
 namespace mp_test2_ns {
 
-  static const size_t nkeys = 2000;
+  static const size_t nkeys = 20000;
 
   static void rm0(btree *btr)
   {
@@ -1798,6 +1879,64 @@ mp_test2()
     ALWAYS_ASSERT(!btr.search(i, v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
+}
+
+namespace mp_test3_ns {
+
+  static const size_t nkeys = 2000;
+
+  static void rm0(btree *btr)
+  {
+    // remove the even keys
+    for (size_t i = 0; i < nkeys; i += 2)
+      btr->remove(i);
+  }
+  WORKER(rm0)
+
+  static void ins0(btree *btr)
+  {
+    // insert the odd keys
+    for (size_t i = 1; i < nkeys; i += 2)
+      btr->insert(i, (btree::value_type) i);
+  }
+  WORKER(ins0)
+}
+
+static void
+mp_test3()
+{
+  using namespace mp_test3_ns;
+
+  // test a bunch of concurrent inserts and removes
+  btree btr;
+
+  // insert the even keys
+  for (size_t i = 0; i < nkeys; i += 2)
+    btr.insert(i, (btree::value_type) i);
+  btr.invariant_checker();
+
+  pthread_t t0, t1;
+  ALWAYS_ASSERT(pthread_create(&t0, NULL, rm0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t1, NULL, ins0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
+  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
+
+  btr.invariant_checker();
+
+  // should find no even keys
+  for (size_t i = 0; i < nkeys; i += 2) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(!btr.search(i, v));
+  }
+
+  // should find all odd keys
+  for (size_t i = 1; i < nkeys; i += 2) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(v == (btree::value_type) i);
+  }
+
+  ALWAYS_ASSERT(btr.size() == nkeys / 2);
 }
 
 class scoped_rate_timer {
@@ -1875,6 +2014,7 @@ main(void)
   test5();
   mp_test1();
   mp_test2();
+  mp_test3();
   //perf_test();
   return 0;
 }
