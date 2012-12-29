@@ -20,7 +20,7 @@
 
 /** options */
 #define NODE_PREFETCH
-//#define CHECK_INVARIANTS
+#define CHECK_INVARIANTS
 //#define LOCK_OWNERSHIP_CHECKING
 //#define USE_MEMMOVE
 //#define USE_MEMCPY
@@ -1704,6 +1704,70 @@ btree::node::invariant_checker(
     AsInternal(this)->invariant_checker_impl(min_key, max_key, left_sibling, right_sibling, is_root) ;
 }
 
+/** end of btree impl - the rest is a bunch of testing code */
+
+// xor-shift:
+// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
+class fast_random {
+public:
+  fast_random(unsigned long seed)
+    : seed(seed == 0 ? 0xABCD1234 : seed)
+  {}
+
+  inline unsigned long
+  next()
+  {
+    seed ^= (seed << 21);
+    seed ^= (seed >> 35);
+    seed ^= (seed << 4);
+    return seed;
+  }
+
+private:
+  unsigned long seed;
+};
+
+class scoped_rate_timer {
+private:
+  util::timer t;
+  std::string region;
+  size_t n;
+
+public:
+  scoped_rate_timer(const std::string &region, size_t n) : region(region), n(n)
+  {}
+
+  ~scoped_rate_timer()
+  {
+    double x = t.lap() / 1000.0; // ms
+    double rate = double(n) / (x / 1000.0);
+    std::cerr << "timed region `" << region << "' took " << x
+              << " ms (" << rate << " events/sec)" << std::endl;
+  }
+};
+
+#define ARRAY_NELEMS(a) (sizeof(a)/sizeof(a[0]))
+
+#define WORKER(name) \
+  static void * \
+  name ## _worker(void *p) \
+  { \
+    btree *btr = (btree *) p; \
+    name(btr); \
+    return NULL; \
+  }
+
+#define WORKER_RET(name) \
+  static void * \
+  name ## _worker(void *p) \
+  { \
+    btree *btr = (btree *) p; \
+    void *ret = name(btr); \
+    pthread_exit(ret); \
+    return NULL; \
+  }
+
+
 static void
 test1()
 {
@@ -1898,7 +1962,6 @@ test5()
     54321, 2013883780, 3028985725, 3058602342, 256561598, 2895653051
   };
 
-#define ARRAY_NELEMS(a) (sizeof(a)/sizeof(a[0]))
   for (size_t iter = 0; iter < ARRAY_NELEMS(seeds); iter++) {
     srand(seeds[iter]);
     const size_t nkeys = 20000;
@@ -1933,25 +1996,6 @@ test5()
     ALWAYS_ASSERT(btr.size() == 0);
   }
 }
-
-#define WORKER(name) \
-  static void * \
-  name ## _worker(void *p) \
-  { \
-    btree *btr = (btree *) p; \
-    name(btr); \
-    return NULL; \
-  }
-
-#define WORKER_RET(name) \
-  static void * \
-  name ## _worker(void *p) \
-  { \
-    btree *btr = (btree *) p; \
-    void *ret = name(btr); \
-    pthread_exit(ret); \
-    return NULL; \
-  }
 
 namespace mp_test1_ns {
 
@@ -2263,24 +2307,78 @@ mp_test5()
   std::cerr << "btr size: " << btr.size() << std::endl;
 }
 
-class scoped_rate_timer {
-private:
-  util::timer t;
-  std::string region;
-  size_t n;
+namespace mp_test6_ns {
+  static const size_t nthreads = 16;
+  static const size_t ninsertkeys_perthread = 10000;
+  static const size_t nremovekeys_perthread = 10000;
 
-public:
-  scoped_rate_timer(const std::string &region, size_t n) : region(region), n(n)
-  {}
+  struct input {
+    btree *btr;
+    std::vector<btree::key_type> keys;
+  };
 
-  ~scoped_rate_timer()
+  static void *
+  insert_worker(void *p)
   {
-    double x = t.lap() / 1000.0; // ms
-    double rate = double(n) / (x / 1000.0);
-    std::cerr << "timed region `" << region << "' took " << x
-              << " ms (" << rate << " events/sec)" << std::endl;
+    input *inp = (input *) p;
+    for (size_t i = 0; i < inp->keys.size(); i++)
+      inp->btr->insert(inp->keys[i], (btree::value_type) inp->keys[i]);
+    return NULL;
   }
-};
+
+  static void *
+  remove_worker(void *p)
+  {
+    input *inp = (input *) p;
+    for (size_t i = 0; i < inp->keys.size(); i++)
+      inp->btr->remove(inp->keys[i]);
+    return NULL;
+  }
+}
+
+static void
+mp_test6()
+{
+  using namespace mp_test6_ns;
+
+  btree btr;
+  std::vector<input> inps;
+  fast_random r(87643982);
+  for (size_t i = 0; i < nthreads / 2; i++) {
+    input inp;
+    inp.btr = &btr;
+    for (size_t j = 0; j < ninsertkeys_perthread; j++)
+      inp.keys.push_back(r.next());
+    inps.push_back(inp);
+  }
+  for (size_t i = nthreads / 2; i < nthreads; i++) {
+    input inp;
+    inp.btr = &btr;
+    for (size_t j = 0; j < nremovekeys_perthread; j++) {
+      unsigned long k = r.next();
+      btr.insert(k, (btree::value_type) k);
+      inp.keys.push_back(k);
+    }
+    inps.push_back(inp);
+  }
+
+  std::vector<pthread_t> ps;
+  for (size_t i = 0; i < nthreads / 2; i++) {
+    pthread_t p;
+    ALWAYS_ASSERT(pthread_create(&p, NULL, insert_worker, &inps[i]) == 0);
+    ps.push_back(p);
+  }
+  for (size_t i = nthreads / 2; i < nthreads; i++) {
+    pthread_t p;
+    ALWAYS_ASSERT(pthread_create(&p, NULL, remove_worker, &inps[i]) == 0);
+    ps.push_back(p);
+  }
+
+  for (size_t i = 0; i < nthreads; i++)
+    ALWAYS_ASSERT(pthread_join(ps[i], NULL) == 0);
+
+  btr.invariant_checker();
+}
 
 static void
 perf_test()
@@ -2327,27 +2425,6 @@ perf_test()
     }
   }
 }
-
-// xor-shift:
-// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
-class fast_random {
-public:
-  fast_random(unsigned long seed)
-    : seed(seed == 0 ? 0xABCD1234 : seed)
-  {}
-
-  inline unsigned long
-  next()
-  {
-    seed ^= (seed << 21);
-    seed ^= (seed >> 35);
-    seed ^= (seed << 4);
-    return seed;
-  }
-
-private:
-  unsigned long seed;
-};
 
 namespace read_only_perf_test_ns {
   const size_t nkeys = 140000000; // 140M
@@ -2526,8 +2603,9 @@ main(void)
   //mp_test3();
   //mp_test4();
   //mp_test5();
-  ////perf_test();
+  mp_test6();
+  //perf_test();
   //read_only_perf_test();
-  write_only_perf_test();
+  //write_only_perf_test();
   return 0;
 }
