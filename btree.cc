@@ -13,7 +13,6 @@
 #include <iostream>
 #include <vector>
 #include <utility>
-#include <stdexcept>
 
 #include "static_assert.h"
 #include "util.h"
@@ -606,13 +605,13 @@ private:
       (*it)->unlock();
   }
 
-  class retry_exception {
-  public:
-    retry_exception(const std::vector<node *> &locked_nodes)
-    {
-      UnlockNodes(locked_nodes);
-    }
-  };
+  template <typename T>
+  static inline T
+  UnlockAndReturn(const std::vector<node *> &locked_nodes, T t)
+  {
+    UnlockNodes(locked_nodes);
+    return t;
+  }
 
 public:
 
@@ -720,30 +719,35 @@ public:
   {
   retry:
     key_type mk;
+    node *ret;
     std::vector<insert_parent_entry> parents;
     std::vector<node *> locked_nodes;
-    try {
-      node *ret = insert0(root, k, v, mk, parents, locked_nodes);
-      if (unlikely(ret)) {
-        INVARIANT(ret->key_slots_used() > 0);
-        INVARIANT(root->is_modifying());
-        internal_node *new_root = internal_node::alloc();
-#ifdef CHECK_INVARIANTS
-        new_root->lock();
-        new_root->mark_modifying();
-        locked_nodes.push_back(new_root);
-#endif /* CHECK_INVARIANTS */
-        new_root->children[0] = root;
-        new_root->children[1] = ret;
-        new_root->keys[0] = mk;
-        new_root->set_key_slots_used(1);
-        new_root->set_root();
-        root->clear_root();
-        root = new_root;
-      }
-      UnlockNodes(locked_nodes);
-    } catch (const retry_exception &e) {
+    insert_status status = insert0(root, k, v, mk, ret, parents, locked_nodes);
+    switch (status) {
+    case I_NONE:
+      break;
+    case I_RETRY:
       goto retry;
+    case I_SPLIT:
+      INVARIANT(ret);
+      INVARIANT(ret->key_slots_used() > 0);
+      INVARIANT(root->is_modifying());
+      internal_node *new_root = internal_node::alloc();
+#ifdef CHECK_INVARIANTS
+      new_root->lock();
+      new_root->mark_modifying();
+      locked_nodes.push_back(new_root);
+#endif /* CHECK_INVARIANTS */
+      new_root->children[0] = root;
+      new_root->children[1] = ret;
+      new_root->keys[0] = mk;
+      new_root->set_key_slots_used(1);
+      new_root->set_root();
+      root->clear_root();
+      root = new_root;
+      // locks are still held here
+      UnlockNodes(locked_nodes);
+      break;
     }
   }
 
@@ -755,33 +759,31 @@ public:
     node *replace_node;
     std::vector<remove_parent_entry> parents;
     std::vector<node *> locked_nodes;
-    try {
-      remove_status status = remove0(root,
-                                     NULL, /* min_key */
-                                     NULL, /* max_key */
-                                     k,
-                                     NULL, /* left_node */
-                                     NULL, /* right_node */
-                                     new_key,
-                                     replace_node,
-                                     parents,
-                                     locked_nodes);
-      switch (status) {
-      case NONE:
-        break;
-      case REPLACE_NODE:
-        replace_node->set_root();
-        root->clear_root();
-        INVARIANT(root->is_deleting());
-        root = replace_node;
-        break;
-      default:
-        ALWAYS_ASSERT(false);
-        break;
-      }
-      UnlockNodes(locked_nodes);
-    } catch (const retry_exception &e) {
+    remove_status status = remove0(root,
+                                   NULL, /* min_key */
+                                   NULL, /* max_key */
+                                   k,
+                                   NULL, /* left_node */
+                                   NULL, /* right_node */
+                                   new_key,
+                                   replace_node,
+                                   parents,
+                                   locked_nodes);
+    switch (status) {
+    case R_NONE:
+      break;
+    case R_RETRY:
       goto retry;
+    case R_REPLACE_NODE:
+      replace_node->set_root();
+      root->clear_root();
+      INVARIANT(root->is_deleting());
+      root = replace_node;
+      UnlockNodes(locked_nodes);
+      break;
+    default:
+      ALWAYS_ASSERT(false);
+      break;
     }
   }
 
@@ -873,6 +875,12 @@ private:
 
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
+  enum insert_status {
+    I_NONE,
+    I_RETRY,
+    I_SPLIT,
+  };
+
   /**
    * insert k=>v into node n. if this insert into n causes it to split into two
    * nodes, return the new node (upper half of keys). in this case, min_key is set to the
@@ -882,11 +890,12 @@ private:
    * NOTE: our implementation of insert0() is not as efficient as possible, in favor
    * of code clarity
    */
-  node *
+  insert_status
   insert0(node *n,
           key_type k,
           value_type v,
           key_type &min_key,
+          node *&new_node,
           std::vector<insert_parent_entry> &parents,
           std::vector<node *> &locked_nodes)
   {
@@ -901,16 +910,16 @@ private:
       // now we need to ensure that this leaf node still has
       // responsibility for k, before we proceed
       if (unlikely(leaf->is_deleting()))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, I_RETRY);
       if (unlikely(k < leaf->min_key))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, I_RETRY);
       if (likely(leaf->next)) {
         uint64_t right_version = leaf->next->stable_version();
         key_type right_min_key = leaf->next->min_key;
         if (unlikely(!leaf->next->check_version(right_version)))
-          throw retry_exception(locked_nodes);
+          return UnlockAndReturn(locked_nodes, I_RETRY);
         if (unlikely(k >= right_min_key))
-          throw retry_exception(locked_nodes);
+          return UnlockAndReturn(locked_nodes, I_RETRY);
       }
 
       // we know now that leaf is responsible for k, so we can proceed
@@ -920,7 +929,7 @@ private:
       if (ret != -1 && leaf->keys[ret] == k) {
         // easy case- we don't modify the node itself
         leaf->values[ret] = v;
-        return NULL;
+        return UnlockAndReturn(locked_nodes, I_NONE);
       }
 
       size_t n = kret.second;
@@ -935,7 +944,7 @@ private:
         leaf->values[ret + 1] = v;
         leaf->inc_key_slots_used();
 
-        return NULL;
+        return UnlockAndReturn(locked_nodes, I_NONE);
       } else {
         INVARIANT(n == NKeysPerNode);
 
@@ -954,7 +963,7 @@ private:
           if (unlikely(!p->check_version(rit->second)))
             // in traversing down the tree, an ancestor of this node was
             // modified- to be safe, we start over
-            throw retry_exception(locked_nodes);
+            return UnlockAndReturn(locked_nodes, I_RETRY);
 
           // since the child needs a split, see if we have room in the parent-
           // if we don't have room, we'll also need to split the parent, in which
@@ -1017,25 +1026,28 @@ private:
 
         min_key = new_leaf->keys[0];
         new_leaf->min_key = min_key;
-        return new_leaf;
+        new_node = new_leaf;
+        return I_SPLIT;
       }
     } else {
       internal_node *internal = AsInternal(n);
       uint64_t version = internal->stable_version();
       if (unlikely(node::IsDeleting(version)))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, I_RETRY);
       key_search_ret kret = internal->key_lower_bound_search(k);
       ssize_t ret = kret.first;
       size_t n = kret.second;
       size_t child_idx = (ret == -1) ? 0 : ret + 1;
       node *child_ptr = internal->children[child_idx];
       if (unlikely(!internal->check_version(version)))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, I_RETRY);
       parents.push_back(insert_parent_entry(internal, version));
       key_type mk = 0;
-      node *new_child = insert0(child_ptr, k, v, mk, parents, locked_nodes);
-      if (!new_child)
-        return NULL;
+      node *new_child = NULL;
+      insert_status status = insert0(child_ptr, k, v, mk, new_child, parents, locked_nodes);
+      if (status != I_SPLIT)
+        return status;
+      INVARIANT(new_child);
       INVARIANT(internal->is_locked()); // previous call to insert0() must lock internal node for insertion
       INVARIANT(internal->check_version(version));
       INVARIANT(new_child->key_slots_used() > 0);
@@ -1047,7 +1059,7 @@ private:
         sift_right(internal->children, child_idx + 1, n + 1);
         internal->children[child_idx + 1] = new_child;
         internal->inc_key_slots_used();
-        return NULL;
+        return UnlockAndReturn(locked_nodes, I_NONE);
       } else {
         INVARIANT(n == NKeysPerNode);
         INVARIANT(ret == internal->key_lower_bound_search(mk).first);
@@ -1108,18 +1120,20 @@ private:
           internal->set_key_slots_used(NMinKeysPerNode);
         }
 
-        return new_internal;
+        new_node = new_internal;
+        return I_SPLIT;
       }
     }
   }
 
   enum remove_status {
-    NONE,
-    STOLE_FROM_LEFT,
-    STOLE_FROM_RIGHT,
-    MERGE_WITH_LEFT,
-    MERGE_WITH_RIGHT,
-    REPLACE_NODE,
+    R_NONE,
+    R_RETRY,
+    R_STOLE_FROM_LEFT,
+    R_STOLE_FROM_RIGHT,
+    R_MERGE_WITH_LEFT,
+    R_MERGE_WITH_RIGHT,
+    R_REPLACE_NODE,
   };
 
   inline ALWAYS_INLINE void
@@ -1195,16 +1209,16 @@ private:
       // responsibility for k, before we proceed - note this check
       // is duplicated from insert0()
       if (unlikely(leaf->is_deleting()))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, R_RETRY);
       if (unlikely(k < leaf->min_key))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, R_RETRY);
       if (likely(leaf->next)) {
         uint64_t right_version = leaf->next->stable_version();
         key_type right_min_key = leaf->next->min_key;
         if (unlikely(!leaf->next->check_version(right_version)))
-          throw retry_exception(locked_nodes);
+          return UnlockAndReturn(locked_nodes, R_RETRY);
         if (unlikely(k >= right_min_key))
-          throw retry_exception(locked_nodes);
+          return UnlockAndReturn(locked_nodes, R_RETRY);
       }
 
       // we know now that leaf is responsible for k, so we can proceed
@@ -1212,12 +1226,12 @@ private:
       key_search_ret kret = leaf->key_search(k);
       ssize_t ret = kret.first;
       if (ret == -1)
-        return NONE;
+        return UnlockAndReturn(locked_nodes, R_NONE);
       size_t n = kret.second;
       if (n > NMinKeysPerNode) {
         leaf->mark_modifying();
         remove_pos_from_leaf_node(leaf, ret, n);
-        return NONE;
+        return UnlockAndReturn(locked_nodes, R_NONE);
       } else {
 
         uint64_t leaf_version = leaf->unstable_version();
@@ -1250,11 +1264,11 @@ private:
           locked_nodes.push_back(left_sibling);
           leaf->lock();
           if (unlikely(!leaf->check_version(leaf_version)))
-            throw retry_exception(locked_nodes);
+            return UnlockAndReturn(locked_nodes, R_RETRY);
         } else {
           INVARIANT(parents.empty());
           if (unlikely(!leaf->is_root()))
-            throw retry_exception(locked_nodes);
+            return UnlockAndReturn(locked_nodes, R_RETRY);
           INVARIANT(leaf == root);
         }
 
@@ -1267,7 +1281,7 @@ private:
           p->lock();
           locked_nodes.push_back(p);
           if (unlikely(!p->check_version(p_version)))
-            throw retry_exception(locked_nodes);
+            return UnlockAndReturn(locked_nodes, R_RETRY);
           size_t p_n = p->key_slots_used();
           if (p_n > NMinKeysPerNode)
             break;
@@ -1280,10 +1294,10 @@ private:
             locked_nodes.push_back(l);
             p->lock();
             if (unlikely(!p->check_version(p_version)))
-              throw retry_exception(locked_nodes);
+              return UnlockAndReturn(locked_nodes, R_RETRY);
           } else {
             if (unlikely(!p->is_root()))
-              throw retry_exception(locked_nodes);
+              return UnlockAndReturn(locked_nodes, R_RETRY);
             INVARIANT(p == root);
           }
         }
@@ -1305,7 +1319,7 @@ private:
             right_sibling->dec_key_slots_used();
             new_key = right_sibling->keys[0];
             right_sibling->min_key = new_key;
-            return STOLE_FROM_RIGHT;
+            return R_STOLE_FROM_RIGHT;
           } else {
             // merge right sibling into this node
             INVARIANT(right_sibling->keys[0] > leaf->keys[n - 1]);
@@ -1326,7 +1340,7 @@ private:
             INVARIANT(!leaf->prev || leaf->prev->next == leaf);
 
             leaf_node::release(right_sibling);
-            return MERGE_WITH_RIGHT;
+            return R_MERGE_WITH_RIGHT;
           }
         }
 
@@ -1343,7 +1357,7 @@ private:
             left_sibling->dec_key_slots_used();
             new_key = leaf->keys[0];
             leaf->min_key = new_key;
-            return STOLE_FROM_LEFT;
+            return R_STOLE_FROM_LEFT;
           } else {
             // merge this node into left sibling
             INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
@@ -1364,7 +1378,7 @@ private:
             INVARIANT(!left_sibling->prev || left_sibling->prev->next == left_sibling);
 
             leaf_node::release(leaf);
-            return MERGE_WITH_LEFT;
+            return R_MERGE_WITH_LEFT;
           }
         }
 
@@ -1372,13 +1386,13 @@ private:
         INVARIANT(leaf == root);
         INVARIANT(leaf->is_root());
         remove_pos_from_leaf_node(leaf, ret, n);
-        return NONE;
+        return UnlockAndReturn(locked_nodes, R_NONE);
       }
     } else {
       internal_node *internal = AsInternal(np);
       uint64_t version = internal->stable_version();
       if (unlikely(node::IsDeleting(version)))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, R_RETRY);
       key_search_ret kret = internal->key_lower_bound_search(k);
       ssize_t ret = kret.first;
       size_t n = kret.second;
@@ -1389,7 +1403,7 @@ private:
       node *child_left_sibling = child_idx == 0 ? NULL : internal->children[child_idx - 1];
       node *child_right_sibling = child_idx == n ? NULL : internal->children[child_idx + 1];
       if (unlikely(!internal->check_version(version)))
-        throw retry_exception(locked_nodes);
+        return UnlockAndReturn(locked_nodes, R_RETRY);
       parents.push_back(remove_parent_entry(internal, left_node, right_node, version));
       INVARIANT(n > 0);
       key_type nk;
@@ -1405,26 +1419,27 @@ private:
                                      parents,
                                      locked_nodes);
       switch (status) {
-      case NONE:
-        return NONE;
+      case R_NONE:
+      case R_RETRY:
+        return status;
 
-      case STOLE_FROM_LEFT:
+      case R_STOLE_FROM_LEFT:
         INVARIANT(internal->is_locked());
         internal->keys[child_idx - 1] = nk;
-        return NONE;
+        return UnlockAndReturn(locked_nodes, R_NONE);
 
-      case STOLE_FROM_RIGHT:
+      case R_STOLE_FROM_RIGHT:
         INVARIANT(internal->is_locked());
         internal->keys[child_idx] = nk;
-        return NONE;
+        return UnlockAndReturn(locked_nodes, R_NONE);
 
-      case MERGE_WITH_LEFT:
-      case MERGE_WITH_RIGHT:
+      case R_MERGE_WITH_LEFT:
+      case R_MERGE_WITH_RIGHT:
       {
         internal->mark_modifying();
 
         size_t del_key_idx, del_child_idx;
-        if (status == MERGE_WITH_LEFT) {
+        if (status == R_MERGE_WITH_LEFT) {
           // need to delete key at position (child_idx - 1), and child at
           // position (child_idx)
           del_key_idx = child_idx - 1;
@@ -1438,7 +1453,7 @@ private:
 
         if (n > NMinKeysPerNode) {
           remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
-          return NONE;
+          return UnlockAndReturn(locked_nodes, R_NONE);
         }
 
         internal_node *left_sibling = AsInternal(left_node);
@@ -1467,7 +1482,7 @@ private:
             sift_left(right_sibling->children, 0, right_n + 1);
             right_sibling->dec_key_slots_used();
 
-            return STOLE_FROM_RIGHT;
+            return R_STOLE_FROM_RIGHT;
           } else {
             // merge with right
             INVARIANT(max_key);
@@ -1481,7 +1496,7 @@ private:
 
             internal->set_key_slots_used(n + right_n);
             internal_node::release(right_sibling);
-            return MERGE_WITH_RIGHT;
+            return R_MERGE_WITH_RIGHT;
           }
         }
 
@@ -1503,7 +1518,7 @@ private:
             new_key = left_sibling->keys[left_n - 1];
             left_sibling->dec_key_slots_used();
 
-            return STOLE_FROM_LEFT;
+            return R_STOLE_FROM_LEFT;
           } else {
             // merge into left sibling
             INVARIANT(min_key);
@@ -1523,7 +1538,7 @@ private:
 
             left_sibling->set_key_slots_used(n + left_n);
             internal_node::release(internal);
-            return MERGE_WITH_LEFT;
+            return R_MERGE_WITH_LEFT;
           }
         }
 
@@ -1534,15 +1549,15 @@ private:
         if ((n - 1) == 0) {
           replace_node = internal->children[0];
           internal_node::release(internal);
-          return REPLACE_NODE;
+          return R_REPLACE_NODE;
         }
 
-        return NONE;
+        return UnlockAndReturn(locked_nodes, R_NONE);
       }
 
       default:
         ALWAYS_ASSERT(false);
-        return NONE;
+        return UnlockAndReturn(locked_nodes, R_NONE);
       }
     }
   }
@@ -2373,18 +2388,18 @@ write_only_perf_test()
 int
 main(void)
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
-  //mp_test4();
-  //mp_test5();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  mp_test1();
+  mp_test2();
+  mp_test3();
+  mp_test4();
+  mp_test5();
   //perf_test();
   //read_only_perf_test();
-  write_only_perf_test();
+  //write_only_perf_test();
   return 0;
 }
