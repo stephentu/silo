@@ -2309,8 +2309,8 @@ mp_test5()
 
 namespace mp_test6_ns {
   static const size_t nthreads = 16;
-  static const size_t ninsertkeys_perthread = 10000;
-  static const size_t nremovekeys_perthread = 10000;
+  static const size_t ninsertkeys_perthread = 100000;
+  static const size_t nremovekeys_perthread = 100000;
 
   struct input {
     btree *btr;
@@ -2343,21 +2343,30 @@ mp_test6()
 
   btree btr;
   std::vector<input> inps;
+  std::set<unsigned long> insert_keys, remove_keys;
+
   fast_random r(87643982);
   for (size_t i = 0; i < nthreads / 2; i++) {
     input inp;
     inp.btr = &btr;
-    for (size_t j = 0; j < ninsertkeys_perthread; j++)
-      inp.keys.push_back(r.next());
+    for (size_t j = 0; j < ninsertkeys_perthread; j++) {
+      unsigned long k = r.next();
+      insert_keys.insert(k);
+      inp.keys.push_back(k);
+    }
     inps.push_back(inp);
   }
   for (size_t i = nthreads / 2; i < nthreads; i++) {
     input inp;
     inp.btr = &btr;
-    for (size_t j = 0; j < nremovekeys_perthread; j++) {
+    for (size_t j = 0; j < nremovekeys_perthread;) {
       unsigned long k = r.next();
+      if (insert_keys.count(k) == 1)
+        continue;
       btr.insert(k, (btree::value_type) k);
+      remove_keys.insert(k);
       inp.keys.push_back(k);
+      j++;
     }
     inps.push_back(inp);
   }
@@ -2378,6 +2387,19 @@ mp_test6()
     ALWAYS_ASSERT(pthread_join(ps[i], NULL) == 0);
 
   btr.invariant_checker();
+
+  ALWAYS_ASSERT(btr.size() == insert_keys.size());
+  for (std::set<unsigned long>::iterator it = insert_keys.begin();
+       it != insert_keys.end(); ++it) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(*it, v));
+    ALWAYS_ASSERT(v == (btree::value_type) *it);
+  }
+  for (std::set<unsigned long>::iterator it = remove_keys.begin();
+       it != remove_keys.end(); ++it) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(!btr.search(*it, v));
+  }
 }
 
 static void
