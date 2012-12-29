@@ -97,8 +97,6 @@ private:
   static const uint64_t HDR_VERSION_SHIFT = 9;
   static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
 
-  class retry_exception {};
-
   typedef std::pair<ssize_t, size_t> key_search_ret;
 
   struct node {
@@ -600,6 +598,22 @@ private:
 
   node *volatile root;
 
+  static inline void
+  UnlockNodes(const std::vector<node *> &locked_nodes)
+  {
+    for (std::vector<node *>::const_iterator it = locked_nodes.begin();
+         it != locked_nodes.end(); ++it)
+      (*it)->unlock();
+  }
+
+  class retry_exception {
+  public:
+    retry_exception(const std::vector<node *> &locked_nodes)
+    {
+      UnlockNodes(locked_nodes);
+    }
+  };
+
 public:
 
   btree() : root(leaf_node::alloc())
@@ -729,7 +743,6 @@ public:
       }
       UnlockNodes(locked_nodes);
     } catch (const retry_exception &e) {
-      UnlockNodes(locked_nodes);
       goto retry;
     }
   }
@@ -768,7 +781,6 @@ public:
       }
       UnlockNodes(locked_nodes);
     } catch (const retry_exception &e) {
-      UnlockNodes(locked_nodes);
       goto retry;
     }
   }
@@ -861,14 +873,6 @@ private:
 
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
-  static inline void
-  UnlockNodes(const std::vector<node *> &locked_nodes)
-  {
-    for (std::vector<node *>::const_iterator it = locked_nodes.begin();
-         it != locked_nodes.end(); ++it)
-      (*it)->unlock();
-  }
-
   /**
    * insert k=>v into node n. if this insert into n causes it to split into two
    * nodes, return the new node (upper half of keys). in this case, min_key is set to the
@@ -897,16 +901,16 @@ private:
       // now we need to ensure that this leaf node still has
       // responsibility for k, before we proceed
       if (unlikely(leaf->is_deleting()))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       if (unlikely(k < leaf->min_key))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       if (likely(leaf->next)) {
         uint64_t right_version = leaf->next->stable_version();
         key_type right_min_key = leaf->next->min_key;
         if (unlikely(!leaf->next->check_version(right_version)))
-          throw retry_exception();
+          throw retry_exception(locked_nodes);
         if (unlikely(k >= right_min_key))
-          throw retry_exception();
+          throw retry_exception(locked_nodes);
       }
 
       // we know now that leaf is responsible for k, so we can proceed
@@ -950,7 +954,7 @@ private:
           if (unlikely(!p->check_version(rit->second)))
             // in traversing down the tree, an ancestor of this node was
             // modified- to be safe, we start over
-            throw retry_exception();
+            throw retry_exception(locked_nodes);
 
           // since the child needs a split, see if we have room in the parent-
           // if we don't have room, we'll also need to split the parent, in which
@@ -1019,14 +1023,14 @@ private:
       internal_node *internal = AsInternal(n);
       uint64_t version = internal->stable_version();
       if (unlikely(node::IsDeleting(version)))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       key_search_ret kret = internal->key_lower_bound_search(k);
       ssize_t ret = kret.first;
       size_t n = kret.second;
       size_t child_idx = (ret == -1) ? 0 : ret + 1;
       node *child_ptr = internal->children[child_idx];
       if (unlikely(!internal->check_version(version)))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       parents.push_back(insert_parent_entry(internal, version));
       key_type mk = 0;
       node *new_child = insert0(child_ptr, k, v, mk, parents, locked_nodes);
@@ -1191,16 +1195,16 @@ private:
       // responsibility for k, before we proceed - note this check
       // is duplicated from insert0()
       if (unlikely(leaf->is_deleting()))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       if (unlikely(k < leaf->min_key))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       if (likely(leaf->next)) {
         uint64_t right_version = leaf->next->stable_version();
         key_type right_min_key = leaf->next->min_key;
         if (unlikely(!leaf->next->check_version(right_version)))
-          throw retry_exception();
+          throw retry_exception(locked_nodes);
         if (unlikely(k >= right_min_key))
-          throw retry_exception();
+          throw retry_exception(locked_nodes);
       }
 
       // we know now that leaf is responsible for k, so we can proceed
@@ -1246,11 +1250,11 @@ private:
           locked_nodes.push_back(left_sibling);
           leaf->lock();
           if (unlikely(!leaf->check_version(leaf_version)))
-            throw retry_exception();
+            throw retry_exception(locked_nodes);
         } else {
           INVARIANT(parents.empty());
           if (unlikely(!leaf->is_root()))
-            throw retry_exception();
+            throw retry_exception(locked_nodes);
           INVARIANT(leaf == root);
         }
 
@@ -1263,7 +1267,7 @@ private:
           p->lock();
           locked_nodes.push_back(p);
           if (unlikely(!p->check_version(p_version)))
-            throw retry_exception();
+            throw retry_exception(locked_nodes);
           size_t p_n = p->key_slots_used();
           if (p_n > NMinKeysPerNode)
             break;
@@ -1276,10 +1280,10 @@ private:
             locked_nodes.push_back(l);
             p->lock();
             if (unlikely(!p->check_version(p_version)))
-              throw retry_exception();
+              throw retry_exception(locked_nodes);
           } else {
             if (unlikely(!p->is_root()))
-              throw new retry_exception();
+              throw retry_exception(locked_nodes);
             INVARIANT(p == root);
           }
         }
@@ -1374,7 +1378,7 @@ private:
       internal_node *internal = AsInternal(np);
       uint64_t version = internal->stable_version();
       if (unlikely(node::IsDeleting(version)))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       key_search_ret kret = internal->key_lower_bound_search(k);
       ssize_t ret = kret.first;
       size_t n = kret.second;
@@ -1385,7 +1389,7 @@ private:
       node *child_left_sibling = child_idx == 0 ? NULL : internal->children[child_idx - 1];
       node *child_right_sibling = child_idx == n ? NULL : internal->children[child_idx + 1];
       if (unlikely(!internal->check_version(version)))
-        throw retry_exception();
+        throw retry_exception(locked_nodes);
       parents.push_back(remove_parent_entry(internal, left_node, right_node, version));
       INVARIANT(n > 0);
       key_type nk;
@@ -2204,8 +2208,8 @@ private:
 };
 
 namespace read_only_perf_test_ns {
-  //const size_t nkeys = 140000000; // 140M
-  const size_t nkeys = 100000; // 100K
+  const size_t nkeys = 140000000; // 140M
+  //const size_t nkeys = 100000; // 100K
 
   unsigned long seeds[] = {
     9576455804445224191ULL,
@@ -2267,6 +2271,7 @@ read_only_perf_test()
 
   for (size_t i = 0; i < nkeys; i++)
     btr.insert(i, (btree::value_type) i);
+  std::cerr << "btree loaded, test starting" << std::endl;
 
   pthread_t pts[ARRAY_NELEMS(seeds)];
   uint64_t ns[ARRAY_NELEMS(seeds)];
@@ -2298,7 +2303,7 @@ read_only_perf_test()
 
 namespace write_only_perf_test_ns {
   //const size_t nkeys = 140000000; // 140M
-  const size_t nkeys = 100000; // 100K
+  const size_t nkeys = 100; // 100K
 
   unsigned long seeds[] = {
     17188055221422272641ULL,
