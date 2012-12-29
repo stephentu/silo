@@ -17,6 +17,14 @@
 #include "static_assert.h"
 #include "util.h"
 
+/** options */
+#define CHECK_INVARIANTS
+#define LOCK_OWNERSHIP_CHECKING
+#define NODE_PREFETCH
+//#define USE_MEMMOVE
+//#define USE_MEMCPY
+
+/** macro helpers */
 #define CACHELINE_SIZE 64
 #define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(CACHELINE_SIZE)))
 #define NEVER_INLINE  __attribute__((noinline))
@@ -33,8 +41,6 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-#define CHECK_INVARIANTS
-
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
 #else
@@ -43,11 +49,6 @@
 
 // XXX: would be nice if we checked these during single threaded execution
 #define SINGLE_THREADED_INVARIANT(expr) ((void)0)
-
-//#define USE_MEMMOVE
-//#define USE_MEMCPY
-
-#define NODE_PREFETCH
 
 #ifdef NODE_PREFETCH
   #define prefetch_node(n) \
@@ -123,6 +124,10 @@ private:
      */
     volatile uint64_t hdr;
 
+#ifdef LOCK_OWNERSHIP_CHECKING
+    pthread_t lock_owner;
+#endif /* LOCK_OWNERSHIP_CHECKING */
+
     /**
      * Keys are assumed to be stored in contiguous sorted order, so that all
      * the used slots are grouped together. That is, elems in positions
@@ -186,12 +191,29 @@ private:
       return v & HDR_LOCKED_MASK;
     }
 
+#ifdef LOCK_OWNERSHIP_CHECKING
+    inline bool
+    is_lock_owner() const
+    {
+      return pthread_equal(pthread_self(), lock_owner);
+    }
+#else
+    inline bool
+    is_lock_owner() const
+    {
+      return true;
+    }
+#endif /* LOCK_OWNERSHIP_CHECKING */
+
     inline void
     lock()
     {
       uint64_t v = hdr;
       while (IsLocked(v) || !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK))
         v = hdr;
+#ifdef LOCK_OWNERSHIP_CHECKING
+      lock_owner = pthread_self();
+#endif
       COMPILER_MEMORY_FENCE;
     }
 
@@ -201,6 +223,7 @@ private:
       uint64_t v = hdr;
       bool newv = false;
       INVARIANT(IsLocked(v));
+      INVARIANT(is_lock_owner());
       if (IsModifying(v) || IsDeleting(v)) {
         newv = true;
         uint64_t n = Version(v);
@@ -226,6 +249,7 @@ private:
     set_root()
     {
       INVARIANT(is_locked());
+      INVARIANT(is_lock_owner());
       INVARIANT(!is_root());
       hdr |= HDR_IS_ROOT_MASK;
     }
@@ -234,6 +258,7 @@ private:
     clear_root()
     {
       INVARIANT(is_locked());
+      INVARIANT(is_lock_owner());
       INVARIANT(is_root());
       hdr &= ~HDR_IS_ROOT_MASK;
     }
@@ -249,6 +274,7 @@ private:
     {
       uint64_t v = hdr;
       INVARIANT(IsLocked(v));
+      INVARIANT(is_lock_owner());
       INVARIANT(!IsModifying(v));
       v |= HDR_MODIFYING_MASK;
       COMPILER_MEMORY_FENCE;
@@ -278,6 +304,7 @@ private:
     mark_deleting()
     {
       INVARIANT(is_locked());
+      INVARIANT(is_lock_owner());
       INVARIANT(!is_deleting());
       hdr |= HDR_DELETING_MASK;
     }
@@ -620,17 +647,22 @@ public:
 
   btree() : root(leaf_node::alloc())
   {
+
+#ifndef LOCK_OWNERSHIP_CHECKING
     _static_assert(sizeof(leaf_node) <= NodeSize);
-    _static_assert(sizeof(leaf_node) % 64 == 0);
     _static_assert(sizeof(internal_node) <= NodeSize);
+#endif /* LOCK_OWNERSHIP_CHECKING */
+
+    _static_assert(sizeof(leaf_node) % 64 == 0);
     _static_assert(sizeof(internal_node) % 64 == 0);
+
 #ifdef CHECK_INVARIANTS
     root->lock();
     root->set_root();
     root->unlock();
 #else
     root->set_root();
-#endif
+#endif /* CHECK_INVARIANTS */
   }
 
   ~btree()
@@ -1063,6 +1095,7 @@ private:
         return status;
       INVARIANT(new_child);
       INVARIANT(internal->is_locked()); // previous call to insert0() must lock internal node for insertion
+      INVARIANT(internal->is_lock_owner());
       INVARIANT(internal->check_version(version));
       INVARIANT(new_child->key_slots_used() > 0);
       INVARIANT(n > 0);
@@ -1447,11 +1480,13 @@ private:
 
       case R_STOLE_FROM_LEFT:
         INVARIANT(internal->is_locked());
+        INVARIANT(internal->is_lock_owner());
         internal->keys[child_idx - 1] = nk;
         return UnlockAndReturn(locked_nodes, R_NONE);
 
       case R_STOLE_FROM_RIGHT:
         INVARIANT(internal->is_locked());
+        INVARIANT(internal->is_lock_owner());
         internal->keys[child_idx] = nk;
         return UnlockAndReturn(locked_nodes, R_NONE);
 
@@ -2410,18 +2445,18 @@ write_only_perf_test()
 int
 main(void)
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
-  //mp_test4();
-  //mp_test5();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  mp_test1();
+  mp_test2();
+  mp_test3();
+  mp_test4();
+  mp_test5();
   //perf_test();
   //read_only_perf_test();
-  write_only_perf_test();
+  //write_only_perf_test();
   return 0;
 }
