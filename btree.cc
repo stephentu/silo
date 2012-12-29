@@ -2292,8 +2292,77 @@ read_only_perf_test()
   double agg_throughput = double(total_n) / (double(t.lap()) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
 
-  std::cerr << "agg_throughput: " << agg_throughput << " gets/sec" << std::endl;
-  std::cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " gets/sec/core" << std::endl;
+  std::cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << std::endl;
+  std::cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << std::endl;
+}
+
+namespace write_only_perf_test_ns {
+  //const size_t nkeys = 140000000; // 140M
+  const size_t nkeys = 100000; // 100K
+
+  unsigned long seeds[] = {
+    17188055221422272641ULL,
+    915721317773011804ULL,
+    11607688859420148202ULL,
+    16566896965529356730ULL,
+    3687473034241167633ULL,
+    1168118474092824592ULL,
+    912212972587845337ULL,
+    890657129662032640ULL,
+    7557640044845923769ULL,
+    9490577770668659131ULL,
+    14081403972130650060ULL,
+    14956552848279294368ULL,
+    8669268465391111275ULL,
+    1904251150166743550ULL,
+    4418832947790992405ULL,
+  };
+
+  struct input {
+    btree *btr;
+    unsigned long seed;
+  };
+
+  static void *
+  worker(void *p)
+  {
+    input *inp = (input *) p;
+    btree *btr = inp->btr;
+    fast_random r(inp->seed);
+    for (size_t i = 0; i < nkeys / ARRAY_NELEMS(seeds); i++) {
+      btree::key_type k = r.next() % nkeys;
+      btr->insert(k, (btree::value_type) k);
+    }
+    return NULL;
+  }
+}
+
+static void
+write_only_perf_test()
+{
+  using namespace write_only_perf_test_ns;
+
+  btree btr;
+  input inps[ARRAY_NELEMS(seeds)];
+
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
+    inps[i].btr = &btr;
+    inps[i].seed = seeds[i];
+  }
+  pthread_t pts[ARRAY_NELEMS(seeds)];
+
+  util::timer t;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
+    ALWAYS_ASSERT(pthread_create(&pts[i], NULL, worker, &inps[i]) == 0);
+
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
+    ALWAYS_ASSERT(pthread_join(pts[i], NULL) == 0);
+
+  double agg_throughput = double(nkeys) / (double(t.lap()) / 1000000.0);
+  double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
+
+  std::cerr << "agg_write_throughput: " << agg_throughput << " puts/sec" << std::endl;
+  std::cerr << "avg_per_core_write_throughput: " << avg_per_core_throughput << " puts/sec/core" << std::endl;
 }
 
 int
@@ -2310,6 +2379,7 @@ main(void)
   //mp_test4();
   //mp_test5();
   //perf_test();
-  read_only_perf_test();
+  //read_only_perf_test();
+  write_only_perf_test();
   return 0;
 }
