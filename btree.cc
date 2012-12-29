@@ -1248,8 +1248,10 @@ private:
           if (unlikely(!leaf->check_version(leaf_version)))
             throw retry_exception();
         } else {
-          INVARIANT(leaf == root);
           INVARIANT(parents.empty());
+          if (unlikely(!leaf->is_root()))
+            throw retry_exception();
+          INVARIANT(leaf == root);
         }
 
         for (std::vector<remove_parent_entry>::reverse_iterator rit = parents.rbegin();
@@ -1278,6 +1280,7 @@ private:
           } else {
             if (unlikely(!p->is_root()))
               throw new retry_exception();
+            INVARIANT(p == root);
           }
         }
 
@@ -1794,6 +1797,16 @@ test5()
     return NULL; \
   }
 
+#define WORKER_RET(name) \
+  static void * \
+  name ## _worker(void *p) \
+  { \
+    btree *btr = (btree *) p; \
+    void *ret = name(btr); \
+    pthread_exit(ret); \
+    return NULL; \
+  }
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2006,6 +2019,104 @@ mp_test4()
   ALWAYS_ASSERT(btr.size() == nkeys);
 }
 
+namespace mp_test5_ns {
+
+  static const size_t niters = 100000;
+  static const btree::key_type max_key = 45;
+
+  typedef std::set<btree::key_type> key_set;
+
+  struct summary {
+    key_set inserts;
+    key_set removes;
+  };
+
+  template <unsigned int seed>
+  static void *
+  worker_impl(btree *btr)
+  {
+    summary *sum = new summary;
+    unsigned int s = seed;
+    // 60% search, 30% insert, 10% remove
+    for (size_t i = 0; i < niters; i++) {
+      double choice = double(rand_r(&s)) / double(RAND_MAX);
+      btree::key_type k = rand_r(&s) % max_key;
+      if (choice < 0.6) {
+        btree::value_type v = 0;
+        if (btr->search(k, v))
+          ALWAYS_ASSERT(v == (btree::value_type) k);
+      } else if (choice < 0.9) {
+        btr->insert(k, (btree::value_type) k);
+        sum->inserts.insert(k);
+      } else {
+        btr->remove(k);
+        sum->removes.insert(k);
+      }
+    }
+    return sum;
+  }
+
+  static inline void* w0(btree *btr) { return worker_impl<2145906155>(btr); }
+  static inline void* w1(btree *btr) { return worker_impl<409088773>(btr);  }
+  static inline void* w2(btree *btr) { return worker_impl<4199288861>(btr); }
+  static inline void* w3(btree *btr) { return worker_impl<496889962>(btr);  }
+
+  WORKER_RET(w0)
+  WORKER_RET(w1)
+  WORKER_RET(w2)
+  WORKER_RET(w3)
+}
+
+static void
+mp_test5()
+{
+  using namespace mp_test5_ns;
+
+  // bombs away
+  btree btr;
+
+  pthread_t t0, t1, t2, t3;
+  void *p0, *p1, *p2, *p3;
+  ALWAYS_ASSERT(pthread_create(&t0, NULL, w0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t1, NULL, w1_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t2, NULL, w2_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t3, NULL, w3_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_join(t0, &p0) == 0);
+  ALWAYS_ASSERT(pthread_join(t1, &p1) == 0);
+  ALWAYS_ASSERT(pthread_join(t2, &p2) == 0);
+  ALWAYS_ASSERT(pthread_join(t3, &p3) == 0);
+
+  summary *s0, *s1, *s2, *s3;
+  s0 = (summary *) p0;
+  s1 = (summary *) p1;
+  s2 = (summary *) p2;
+  s3 = (summary *) p3;
+
+  key_set inserts;
+  key_set removes;
+
+  summary *sums[] = { s0, s1, s2, s3 };
+  for (size_t i = 0; i < ARRAY_NELEMS(sums); i++) {
+    inserts.insert(sums[i]->inserts.begin(), sums[i]->inserts.end());
+    removes.insert(sums[i]->removes.begin(), sums[i]->removes.end());
+    delete sums[i];
+  }
+
+  std::cerr << "num_inserts: " << inserts.size() << std::endl;
+  std::cerr << "num_removes: " << removes.size() << std::endl;
+
+  for (key_set::iterator it = inserts.begin(); it != inserts.end(); ++it) {
+    if (removes.count(*it) == 1)
+      continue;
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(*it, v));
+    ALWAYS_ASSERT(v == (btree::value_type) *it);
+  }
+
+  btr.invariant_checker();
+  std::cerr << "btr size: " << btr.size() << std::endl;
+}
+
 class scoped_rate_timer {
 private:
   util::timer t;
@@ -2074,15 +2185,16 @@ perf_test()
 int
 main(void)
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  mp_test1();
+  mp_test2();
+  mp_test3();
   mp_test4();
+  mp_test5();
   //perf_test();
   return 0;
 }
