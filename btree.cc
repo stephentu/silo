@@ -1883,7 +1883,7 @@ mp_test2()
 
 namespace mp_test3_ns {
 
-  static const size_t nkeys = 2000;
+  static const size_t nkeys = 20000;
 
   static void rm0(btree *btr)
   {
@@ -1937,6 +1937,73 @@ mp_test3()
   }
 
   ALWAYS_ASSERT(btr.size() == nkeys / 2);
+}
+
+namespace mp_test4_ns {
+
+  static const size_t nkeys = 20000;
+
+  static void search0(btree *btr)
+  {
+    // search the even keys
+    for (size_t i = 0; i < nkeys; i += 2) {
+      btree::value_type v = 0;
+      ALWAYS_ASSERT(btr->search(i, v));
+      ALWAYS_ASSERT(v == (btree::value_type) i);
+    }
+  }
+  WORKER(search0)
+
+  static void ins0(btree *btr)
+  {
+    // insert the odd keys
+    for (size_t i = 1; i < nkeys; i += 2)
+      btr->insert(i, (btree::value_type) i);
+  }
+  WORKER(ins0)
+
+  static void re0(btree *btr)
+  {
+    // remove and reinsert odd keys
+    for (size_t i = 1; i < nkeys; i += 2) {
+      btr->remove(i);
+      btr->insert(i, (btree::value_type) i);
+    }
+  }
+  WORKER(re0)
+}
+
+static void
+mp_test4()
+{
+  using namespace mp_test4_ns;
+
+  // test a bunch of concurrent inserts and removes
+  btree btr;
+
+  // insert the even keys
+  for (size_t i = 0; i < nkeys; i += 2)
+    btr.insert(i, (btree::value_type) i);
+  btr.invariant_checker();
+
+  pthread_t t0, t1, t2;
+  ALWAYS_ASSERT(pthread_create(&t0, NULL, search0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t1, NULL, ins0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_create(&t2, NULL, re0_worker, &btr) == 0);
+  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
+  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
+  ALWAYS_ASSERT(pthread_join(t2, NULL) == 0);
+
+  btr.invariant_checker();
+
+  // should find all keys
+  for (size_t i = 0; i < nkeys; i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(v == (btree::value_type) i);
+  }
+
+  ALWAYS_ASSERT(btr.size() == nkeys);
 }
 
 class scoped_rate_timer {
@@ -2007,14 +2074,15 @@ perf_test()
 int
 main(void)
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  mp_test1();
-  mp_test2();
-  mp_test3();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  mp_test4();
   //perf_test();
   return 0;
 }
