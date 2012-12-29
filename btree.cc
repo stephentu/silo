@@ -33,7 +33,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-//#define CHECK_INVARIANTS
+#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
