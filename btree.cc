@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 #include <vector>
 #include <utility>
 
@@ -18,9 +19,9 @@
 #include "util.h"
 
 /** options */
-#define CHECK_INVARIANTS
-#define LOCK_OWNERSHIP_CHECKING
 #define NODE_PREFETCH
+//#define CHECK_INVARIANTS
+//#define LOCK_OWNERSHIP_CHECKING
 //#define USE_MEMMOVE
 //#define USE_MEMCPY
 
@@ -139,7 +140,13 @@ private:
     inline bool
     is_leaf_node() const
     {
-      return (hdr & HDR_TYPE_MASK) == 0;
+      return IsLeafNode(hdr);
+    }
+
+    static inline bool
+    IsLeafNode(uint64_t v)
+    {
+      return (v & HDR_TYPE_MASK) == 0;
     }
 
     inline bool
@@ -151,7 +158,13 @@ private:
     inline size_t
     key_slots_used() const
     {
-      return (hdr & HDR_KEY_SLOTS_MASK) >> HDR_KEY_SLOTS_SHIFT;
+      return KeySlotsUsed(hdr);
+    }
+
+    static inline size_t
+    KeySlotsUsed(uint64_t v)
+    {
+      return (v & HDR_KEY_SLOTS_MASK) >> HDR_KEY_SLOTS_SHIFT;
     }
 
     inline void
@@ -242,7 +255,13 @@ private:
     inline bool
     is_root() const
     {
-      return hdr & HDR_IS_ROOT_MASK;
+      return IsRoot(hdr);
+    }
+
+    static inline bool
+    IsRoot(uint64_t v)
+    {
+      return v & HDR_IS_ROOT_MASK;
     }
 
     inline void
@@ -340,6 +359,50 @@ private:
       COMPILER_MEMORY_FENCE;
       // are the version the same, modulo the locked bit?
       return (hdr & ~HDR_LOCKED_MASK) == (version & ~HDR_LOCKED_MASK);
+    }
+
+    static std::string
+    VersionInfoStr(uint64_t v)
+    {
+      std::stringstream buf;
+      buf << "[";
+
+      if (IsLeafNode(v))
+        buf << "LEAF";
+      else
+        buf << "INT";
+      buf << " | ";
+
+      buf << KeySlotsUsed(v) << " | ";
+
+      if (IsLocked(v))
+        buf << "LOCKED";
+      else
+        buf << "-";
+      buf << " | ";
+
+      if (IsRoot(v))
+        buf << "ROOT";
+      else
+        buf << "-";
+      buf << " | ";
+
+      if (IsModifying(v))
+        buf << "MOD";
+      else
+        buf << "-";
+      buf << " | ";
+
+      if (IsDeleting(v))
+        buf << "DEL";
+      else
+        buf << "-";
+      buf << " | ";
+
+      buf << Version(v);
+
+      buf << "]";
+      return buf.str();
     }
 
     /**
@@ -767,8 +830,9 @@ public:
     case I_SPLIT:
       INVARIANT(ret);
       INVARIANT(ret->key_slots_used() > 0);
-      INVARIANT(local_root->is_root());
       INVARIANT(local_root->is_modifying());
+      INVARIANT(local_root->is_lock_owner());
+      INVARIANT(local_root->is_root());
       INVARIANT(local_root == root);
       internal_node *new_root = internal_node::alloc();
 #ifdef CHECK_INVARIANTS
@@ -994,32 +1058,38 @@ private:
         // locks on nodes which will be modified, in left-to-right,
         // bottom-to-top order
 
-        for (std::vector<insert_parent_entry>::reverse_iterator rit = parents.rbegin();
-             rit != parents.rend(); ++rit) {
-          // lock the parent
-          node *p = rit->first;
-          p->lock();
-          locked_nodes.push_back(p);
-          if (unlikely(!p->check_version(rit->second)))
-            // in traversing down the tree, an ancestor of this node was
-            // modified- to be safe, we start over
+        if (parents.empty()) {
+          if (unlikely(!leaf->is_root()))
             return UnlockAndReturn(locked_nodes, I_RETRY);
-          if ((rit + 1) == parents.rend()) {
-            // did the root change?
-            if (unlikely(!p->is_root()))
+          INVARIANT(leaf == root);
+        } else {
+          for (std::vector<insert_parent_entry>::reverse_iterator rit = parents.rbegin();
+               rit != parents.rend(); ++rit) {
+            // lock the parent
+            node *p = rit->first;
+            p->lock();
+            locked_nodes.push_back(p);
+            if (unlikely(!p->check_version(rit->second)))
+              // in traversing down the tree, an ancestor of this node was
+              // modified- to be safe, we start over
               return UnlockAndReturn(locked_nodes, I_RETRY);
-            INVARIANT(p == root);
-          }
+            if ((rit + 1) == parents.rend()) {
+              // did the root change?
+              if (unlikely(!p->is_root()))
+                return UnlockAndReturn(locked_nodes, I_RETRY);
+              INVARIANT(p == root);
+            }
 
-          // since the child needs a split, see if we have room in the parent-
-          // if we don't have room, we'll also need to split the parent, in which
-          // case we must grab its parent's lock
-          INVARIANT(p->is_internal_node());
-          size_t parent_n = p->key_slots_used();
-          INVARIANT(parent_n > 0 && parent_n <= NKeysPerNode);
-          if (parent_n < NKeysPerNode)
-            // can stop locking up now, since this node won't split
-            break;
+            // since the child needs a split, see if we have room in the parent-
+            // if we don't have room, we'll also need to split the parent, in which
+            // case we must grab its parent's lock
+            INVARIANT(p->is_internal_node());
+            size_t parent_n = p->key_slots_used();
+            INVARIANT(parent_n > 0 && parent_n <= NKeysPerNode);
+            if (parent_n < NKeysPerNode)
+              // can stop locking up now, since this node won't split
+              break;
+          }
         }
 
         // at this point, we have locked all nodes which will be split/modified
@@ -2374,8 +2444,8 @@ read_only_perf_test()
 }
 
 namespace write_only_perf_test_ns {
-  //const size_t nkeys = 140000000; // 140M
-  const size_t nkeys = 100; // 100K
+  const size_t nkeys = 140000000; // 140M
+  //const size_t nkeys = 100000; // 100K
 
   unsigned long seeds[] = {
     17188055221422272641ULL,
@@ -2445,18 +2515,18 @@ write_only_perf_test()
 int
 main(void)
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  mp_test1();
-  mp_test2();
-  mp_test3();
-  mp_test4();
-  mp_test5();
-  //perf_test();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  //mp_test4();
+  //mp_test5();
+  ////perf_test();
   //read_only_perf_test();
-  //write_only_perf_test();
+  write_only_perf_test();
   return 0;
 }
