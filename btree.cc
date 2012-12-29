@@ -41,6 +41,9 @@
   #define INVARIANT(expr) ((void)0)
 #endif /* CHECK_INVARIANTS */
 
+// XXX: would be nice if we checked these during single threaded execution
+#define SINGLE_THREADED_INVARIANT(expr) ((void)0)
+
 //#define USE_MEMMOVE
 //#define USE_MEMCPY
 
@@ -722,7 +725,8 @@ public:
     node *ret;
     std::vector<insert_parent_entry> parents;
     std::vector<node *> locked_nodes;
-    insert_status status = insert0(root, k, v, mk, ret, parents, locked_nodes);
+    node *local_root = root;
+    insert_status status = insert0(local_root, k, v, mk, ret, parents, locked_nodes);
     switch (status) {
     case I_NONE:
       break;
@@ -731,19 +735,22 @@ public:
     case I_SPLIT:
       INVARIANT(ret);
       INVARIANT(ret->key_slots_used() > 0);
-      INVARIANT(root->is_modifying());
+      INVARIANT(local_root->is_root());
+      INVARIANT(local_root->is_modifying());
+      INVARIANT(local_root == root);
       internal_node *new_root = internal_node::alloc();
 #ifdef CHECK_INVARIANTS
       new_root->lock();
       new_root->mark_modifying();
       locked_nodes.push_back(new_root);
 #endif /* CHECK_INVARIANTS */
-      new_root->children[0] = root;
+      new_root->children[0] = local_root;
       new_root->children[1] = ret;
       new_root->keys[0] = mk;
       new_root->set_key_slots_used(1);
       new_root->set_root();
-      root->clear_root();
+      local_root->clear_root();
+      COMPILER_MEMORY_FENCE;
       root = new_root;
       // locks are still held here
       UnlockNodes(locked_nodes);
@@ -778,6 +785,7 @@ public:
       replace_node->set_root();
       root->clear_root();
       INVARIANT(root->is_deleting());
+      COMPILER_MEMORY_FENCE;
       root = replace_node;
       UnlockNodes(locked_nodes);
       break;
@@ -964,6 +972,12 @@ private:
             // in traversing down the tree, an ancestor of this node was
             // modified- to be safe, we start over
             return UnlockAndReturn(locked_nodes, I_RETRY);
+          if ((rit + 1) == parents.rend()) {
+            // did the root change?
+            if (unlikely(!p->is_root()))
+              return UnlockAndReturn(locked_nodes, I_RETRY);
+            INVARIANT(p == root);
+          }
 
           // since the child needs a split, see if we have room in the parent-
           // if we don't have room, we'll also need to split the parent, in which
@@ -1202,8 +1216,8 @@ private:
       leaf->lock();
       locked_nodes.push_back(leaf);
 
-      //INVARIANT(!left_node || (leaf->prev == left_node && AsLeaf(left_node)->next == leaf));
-      //INVARIANT(!right_node || (leaf->next == right_node && AsLeaf(right_node)->prev == leaf));
+      SINGLE_THREADED_INVARIANT(!left_node || (leaf->prev == left_node && AsLeaf(left_node)->next == leaf));
+      SINGLE_THREADED_INVARIANT(!right_node || (leaf->next == right_node && AsLeaf(right_node)->prev == leaf));
 
       // now we need to ensure that this leaf node still has
       // responsibility for k, before we proceed - note this check
@@ -1336,8 +1350,14 @@ private:
             if (right_sibling->next)
               right_sibling->next->prev = leaf;
 
+            // leaf->next->prev won't change because we hold lock for both leaf
+            // and right_sibling
             INVARIANT(!leaf->next || leaf->next->prev == leaf);
-            INVARIANT(!leaf->prev || leaf->prev->next == leaf);
+
+            // leaf->prev->next might change, however, since the left node could be
+            // splitting (and we might hold a pointer to the left-split of the left node,
+            // before it gets updated)
+            SINGLE_THREADED_INVARIANT(!leaf->prev || leaf->prev->next == leaf);
 
             leaf_node::release(right_sibling);
             return R_MERGE_WITH_RIGHT;
@@ -1374,8 +1394,10 @@ private:
             if (leaf->next)
               leaf->next->prev = left_sibling;
 
+            // see comments in right_sibling case above, for why one of them is INVARIANT and
+            // the other is SINGLE_THREADED_INVARIANT
             INVARIANT(!left_sibling->next || left_sibling->next->prev == left_sibling);
-            INVARIANT(!left_sibling->prev || left_sibling->prev->next == left_sibling);
+            SINGLE_THREADED_INVARIANT(!left_sibling->prev || left_sibling->prev->next == left_sibling);
 
             leaf_node::release(leaf);
             return R_MERGE_WITH_LEFT;
@@ -2388,18 +2410,18 @@ write_only_perf_test()
 int
 main(void)
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  mp_test1();
-  mp_test2();
-  mp_test3();
-  mp_test4();
-  mp_test5();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  //mp_test4();
+  //mp_test5();
   //perf_test();
   //read_only_perf_test();
-  //write_only_perf_test();
+  write_only_perf_test();
   return 0;
 }
