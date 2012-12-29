@@ -1,5 +1,5 @@
 CXXFLAGS := -Wall -g -O2
-LDFLAGS  := -lpthread
+LDFLAGS  := -lpthread -ljemalloc
 
 all: btree
 

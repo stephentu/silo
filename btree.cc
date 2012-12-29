@@ -2463,6 +2463,7 @@ namespace write_only_perf_test_ns {
     8669268465391111275ULL,
     1904251150166743550ULL,
     4418832947790992405ULL,
+    9558684485283258563ULL,
   };
 
   struct input {
