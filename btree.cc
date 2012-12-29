@@ -34,7 +34,7 @@
   #define ALWAYS_ASSERT(expr) assert(expr)
 #endif /* NDEBUG */
 
-#define CHECK_INVARIANTS
+//#define CHECK_INVARIANTS
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -2182,19 +2182,134 @@ perf_test()
   }
 }
 
+// xor-shift:
+// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
+class fast_random {
+public:
+  fast_random(unsigned long seed)
+    : seed(seed == 0 ? 0xABCD1234 : seed)
+  {}
+
+  inline unsigned long
+  next()
+  {
+    seed ^= (seed << 21);
+    seed ^= (seed >> 35);
+    seed ^= (seed << 4);
+    return seed;
+  }
+
+private:
+  unsigned long seed;
+};
+
+namespace read_only_perf_test_ns {
+  //const size_t nkeys = 140000000; // 140M
+  const size_t nkeys = 100000; // 100K
+
+  unsigned long seeds[] = {
+    9576455804445224191ULL,
+    3303315688255411629ULL,
+    3116364238170296072ULL,
+    641702699332002535ULL,
+    17755947590284612420ULL,
+    13349066465957081273ULL,
+    16389054441777092823ULL,
+    2687412585397891607ULL,
+    16665670053534306255ULL,
+    5166823197462453937ULL,
+    1252059952779729626ULL,
+    17962022827457676982ULL,
+    940911318964853784ULL,
+    479878990529143738ULL,
+    250864516707124695ULL,
+    8507722621803716653ULL,
+  };
+
+  volatile bool running = false;
+
+  struct input {
+    btree *btr;
+    unsigned long seed;
+  };
+
+  static void *
+  worker(void *p)
+  {
+    input *inp = (input *) p;
+    btree *btr = inp->btr;
+    fast_random r(inp->seed);
+    uint64_t n = 0;
+    while (running) {
+      btree::key_type k = r.next() % nkeys;
+      btree::value_type v = 0;
+      ALWAYS_ASSERT(btr->search(k, v));
+      ALWAYS_ASSERT(v == (btree::value_type) k);
+      n++;
+    }
+    pthread_exit(new uint64_t(n));
+    return NULL;
+  }
+}
+
+static void
+read_only_perf_test()
+{
+  using namespace read_only_perf_test_ns;
+
+  btree btr;
+  input inps[ARRAY_NELEMS(seeds)];
+
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
+    inps[i].btr = &btr;
+    inps[i].seed = seeds[i];
+  }
+
+  for (size_t i = 0; i < nkeys; i++)
+    btr.insert(i, (btree::value_type) i);
+
+  pthread_t pts[ARRAY_NELEMS(seeds)];
+  uint64_t ns[ARRAY_NELEMS(seeds)];
+
+  running = true;
+  util::timer t;
+  COMPILER_MEMORY_FENCE;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
+    ALWAYS_ASSERT(pthread_create(&pts[i], NULL, worker, &inps[i]) == 0);
+  sleep(30);
+  COMPILER_MEMORY_FENCE;
+  running = false;
+  COMPILER_MEMORY_FENCE;
+  uint64_t total_n = 0;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
+    void *p;
+    ALWAYS_ASSERT(pthread_join(pts[i], &p) == 0);
+    ns[i] = *((uint64_t *)p);
+    total_n += ns[i];
+    delete (uint64_t *)p;
+  }
+
+  double agg_throughput = double(total_n) / (double(t.lap()) / 1000000.0);
+  double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
+
+  std::cerr << "agg_throughput: " << agg_throughput << " gets/sec" << std::endl;
+  std::cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " gets/sec/core" << std::endl;
+}
+
 int
 main(void)
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  mp_test1();
-  mp_test2();
-  mp_test3();
-  mp_test4();
-  mp_test5();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  //mp_test4();
+  //mp_test5();
   //perf_test();
+  read_only_perf_test();
   return 0;
 }
