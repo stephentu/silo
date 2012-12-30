@@ -15,8 +15,11 @@
 #include <vector>
 #include <utility>
 
+#include "rcu.h"
 #include "static_assert.h"
+#include "macros.h"
 #include "util.h"
+#include "thread.h"
 
 /** options */
 #define NODE_PREFETCH
@@ -27,20 +30,6 @@
 
 /** macro helpers */
 #define CACHELINE_SIZE 64
-#define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(CACHELINE_SIZE)))
-#define NEVER_INLINE  __attribute__((noinline))
-#define ALWAYS_INLINE __attribute__((always_inline))
-
-#define likely(x)   __builtin_expect(!!(x), 1)
-#define unlikely(x) __builtin_expect(!!(x), 0)
-
-#define COMPILER_MEMORY_FENCE asm volatile("" ::: "memory")
-
-#ifdef NDEBUG
-  #define ALWAYS_ASSERT(expr) (likely(e) ? (void)0 : abort())
-#else
-  #define ALWAYS_ASSERT(expr) assert(expr)
-#endif /* NDEBUG */
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -67,7 +56,7 @@
  * This btree maps keys of type key_type -> value_type, where key_type is
  * uint64_t and value_type is a pointer to un-interpreted byte string
  */
-class btree {
+class btree : public rcu_enabled {
 public:
   typedef uint64_t key_type;
   typedef uint8_t* value_type;
@@ -1746,8 +1735,6 @@ public:
   }
 };
 
-#define ARRAY_NELEMS(a) (sizeof(a)/sizeof(a[0]))
-
 #define WORKER(name) \
   static void * \
   name ## _worker(void *p) \
@@ -2612,22 +2599,49 @@ write_only_perf_test()
   std::cerr << "avg_per_core_write_throughput: " << avg_per_core_throughput << " puts/sec/core" << std::endl;
 }
 
+class main_thread : public ndb_thread {
+public:
+  main_thread(int argc, char **argv)
+    : argc(argc), argv(argv), ret(0)
+  {}
+
+  virtual void
+  run()
+  {
+    test1();
+    //test2();
+    //test3();
+    //test4();
+    //test5();
+    //mp_test1();
+    //mp_test2();
+    //mp_test3();
+    //mp_test4();
+    //mp_test5();
+    //mp_test6();
+    //perf_test();
+    //read_only_perf_test();
+    //write_only_perf_test();
+
+    ret = 0;
+  }
+
+  inline int
+  retval() const
+  {
+    return ret;
+  }
+private:
+  int argc;
+  char **argv;
+  volatile int ret;
+};
+
 int
-main(void)
+main(int argc, char **argv)
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
-  //mp_test4();
-  //mp_test5();
-  mp_test6();
-  //perf_test();
-  //read_only_perf_test();
-  //write_only_perf_test();
-  return 0;
+  main_thread t(argc, argv);
+  t.start();
+  t.join();
+  return t.retval();
 }

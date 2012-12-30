@@ -5,7 +5,10 @@
 #include <sstream>
 #include <string>
 
+#include <pthread.h>
 #include <sys/time.h>
+
+#include "macros.h"
 
 namespace util {
 
@@ -72,6 +75,21 @@ public:
     double x = t.lap() / 1000.0; // ms
     std::cerr << "timed region `" << region << "' took " << x << " ms" << std::endl;
   }
+};
+
+class scoped_spinlock {
+public:
+  inline scoped_spinlock(pthread_spinlock_t *l)
+    : l(l)
+  {
+    ALWAYS_ASSERT(pthread_spin_lock(l) == 0);
+  }
+  inline ~scoped_spinlock()
+  {
+    ALWAYS_ASSERT(pthread_spin_unlock(l) == 0);
+  }
+private:
+  pthread_spinlock_t *const l;
 };
 
 }

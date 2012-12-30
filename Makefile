@@ -1,11 +1,18 @@
 CXXFLAGS := -Wall -g -O2
 LDFLAGS  := -lpthread -ljemalloc
 
+HEADERS = macros.h rcu.h spinlock.h static_assert.h thread.h util.h
+SRCFILES = btree.cc rcu.cc thread.cc
+OBJFILES = $(SRCFILES:.cc=.o)
+
 all: btree
 
-btree: btree.cc static_assert.h util.h
-	$(CXX) $(CXXFLAGS) -o btree btree.cc $(LDFLAGS)
+%.o: %.cc
+	$(CXX) $(CXXFLAGS) -c $^ -o $@
+
+btree: $(OBJFILES) 
+	$(CXX) $(CXXFLAGS) -o btree $^ $(LDFLAGS)
 
 .PHONY: clean
 clean:
-	rm -f btree
+	rm -f *.o btree
