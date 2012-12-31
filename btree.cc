@@ -2274,7 +2274,7 @@ mp_test2()
 {
   using namespace mp_test2_ns;
 
-  // test a bunch of concurrent inserts
+  // test a bunch of concurrent removes
   btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
@@ -2407,7 +2407,7 @@ mp_test4()
 {
   using namespace mp_test4_ns;
 
-  // test a bunch of concurrent inserts and removes
+  // test a bunch of concurrent searches, inserts, and removes
   btree btr;
 
   // insert the even keys
@@ -2614,6 +2614,84 @@ mp_test6()
 
   for (size_t i = 0; i < nthreads; i++)
     delete workers[i];
+}
+
+namespace mp_test7_ns {
+  static const size_t nkeys = 50;
+  static volatile bool running = false;
+
+  typedef std::vector<btree::key_type> key_vec;
+
+  class lookup_worker : public btree_worker {
+  public:
+    lookup_worker(unsigned long seed, const key_vec &keys, btree &btr)
+      : btree_worker(btr), seed(seed), keys(keys)
+    {}
+    virtual void run()
+    {
+      fast_random r(seed);
+      while (running) {
+        btree::key_type k = keys[r.next() % keys.size()];
+        btree::value_type v = NULL;
+        ALWAYS_ASSERT(btr->search(k, v));
+        ALWAYS_ASSERT(v == (btree::value_type) k);
+      }
+    }
+    unsigned long seed;
+    key_vec keys;
+  };
+
+  class mod_worker : public btree_worker {
+  public:
+    mod_worker(const key_vec &keys, btree &btr)
+      : btree_worker(btr), keys(keys)
+    {}
+    virtual void run()
+    {
+      bool insert = true;
+      for (size_t i = 0; running; i = (i + 1) % keys.size(), insert = !insert){
+        if (insert)
+          btr->insert(keys[i], (btree::value_type) keys[i]);
+        else
+          btr->remove(keys[i]);
+      }
+    }
+    key_vec keys;
+  };
+}
+
+static void
+mp_test7()
+{
+  using namespace mp_test7_ns;
+  fast_random r(904380439);
+  key_vec lookup_keys;
+  key_vec mod_keys;
+  for (size_t i = 0; i < nkeys; i++) {
+    if (r.next() % 2)
+      mod_keys.push_back(i);
+    else
+      lookup_keys.push_back(i);
+  }
+
+  btree btr;
+  for (size_t i = 0; i < lookup_keys.size(); i++)
+    btr.insert(lookup_keys[i], (btree::value_type) lookup_keys[i]);
+
+  lookup_worker w0(2398430, lookup_keys, btr);
+  lookup_worker w1(8532, lookup_keys, btr);
+  lookup_worker w2(23, lookup_keys, btr);
+  lookup_worker w3(1328209843, lookup_keys, btr);
+  mod_worker w4(mod_keys, btr);
+
+  running = true;
+  COMPILER_MEMORY_FENCE;
+  w0.start(); w1.start(); w2.start(); w3.start(); w4.start();
+  sleep(10);
+  COMPILER_MEMORY_FENCE;
+  running = false;
+  COMPILER_MEMORY_FENCE;
+  w0.join(); w1.join(); w2.join(); w3.join(); w4.join();
 }
 
 static void
@@ -2831,6 +2909,7 @@ public:
     mp_test4();
     mp_test5();
     mp_test6();
+    mp_test7();
     //perf_test();
     //read_only_perf_test();
     //write_only_perf_test();
