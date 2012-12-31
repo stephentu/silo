@@ -775,15 +775,16 @@ public:
     root->invariant_checker(NULL, NULL, NULL, NULL, true);
   }
 
+private:
+
   bool
-  search(key_type k, value_type &v) const
+  search_impl(key_type k, value_type &v, leaf_node *&n) const
   {
   retry:
-    scoped_rcu_region rcu_region;
     node *cur = root;
-  process:
-    while (cur) {
+    while (true) {
       prefetch_node(cur);
+    process:
       uint64_t version = cur->stable_version();
       if (node::IsDeleting(version))
         goto retry;
@@ -794,7 +795,8 @@ public:
           // found
           v = leaf->values[ret];
           if (unlikely(!leaf->check_version(version)))
-            goto retry;
+            goto process;
+          n = leaf;
           return true;
         }
 
@@ -804,10 +806,10 @@ public:
           // try to go left
           leaf_node *left_sibling = leaf->prev;
           if (unlikely(!leaf->check_version(version)))
-            goto retry;
+            goto process;
           if (likely(left_sibling)) {
             cur = left_sibling;
-            goto process;
+            continue;
           } else {
             // XXX: this case shouldn't be possible...
             goto retry;
@@ -815,22 +817,24 @@ public:
         } else {
           // try to go right
           leaf_node *right_sibling = leaf->next;
+          if (unlikely(!leaf->check_version(version)))
+            goto process;
           prefetch_node(right_sibling);
-          if (unlikely(!right_sibling))
+          if (unlikely(!right_sibling)) {
+            n = leaf;
             return false;
-
+          }
           uint64_t right_version = right_sibling->stable_version();
           key_type right_min_key = right_sibling->min_key;
-          if (unlikely(!leaf->check_version(version)))
-            goto retry;
           if (unlikely(!right_sibling->check_version(right_version)))
-            goto retry;
+            goto process;
           if (unlikely(k >= right_min_key)) {
             cur = right_sibling;
-            goto process;
+            continue;
           }
         }
 
+        n = leaf;
         return false;
       } else {
         internal_node *internal = AsInternal(cur);
@@ -840,12 +844,114 @@ public:
         if (ret != -1)
           cur = internal->children[ret + 1];
         else
-          cur = n ? internal->children[0] : NULL;
+          cur = internal->children[0];
         if (unlikely(!internal->check_version(version)))
-          goto retry;
+          goto process;
+        INVARIANT(n);
       }
     }
-    return false;
+  }
+
+public:
+
+  inline bool
+  search(key_type k, value_type &v) const
+  {
+    leaf_node *n;
+    scoped_rcu_region rcu_region;
+    return search_impl(k, v, n);
+  }
+
+  /**
+   * For all keys in [lower, *upper), invoke callback in ascending order.
+   * If upper is NULL, then there is no upper bound
+   *
+   * Callback is expected to implement bool operator()(key_type k, value_type v),
+   * where the callback returns true if it wants to keep going, false otherwise
+   *
+   * This function by default provides a weakly consistent view of the b-tree. For
+   * instance, consider the following tree, where n = 3 is the max number of
+   * keys in a node:
+   *
+   *              [D|G]
+   *             /  |  \
+   *            /   |   \
+   *           /    |    \
+   *          /     |     \
+   *   [A|B|C]<->[D|E|F]<->[G|H|I]
+   *
+   * Suppose we want to scan [A, inf), so we traverse to the leftmost leaf node
+   * and start a left-to-right walk. Suppose we have emitted keys A, B, and C,
+   * and we are now just about to scan the middle leaf node.  Now suppose
+   * another thread concurrently does delete(A), followed by a delete(H).  Now
+   * the scaning thread resumes and emits keys D, E, F, G, and I, omitting H
+   * because H was deleted. This is an inconsistent view of the b-tree, since
+   * the scanning thread has observed the deletion of H but did not observe the
+   * deletion of A, but we know that delete(A) happens before delete(H).
+   *
+   * Note that scans within a single node are consistent
+   *
+   * XXX: add other modes which provide better consistency:
+   * A) locking mode
+   * B) optimistic validation mode
+   */
+  template <typename T>
+  void
+  search_range(key_type lower, key_type *upper, T callback)
+  {
+    if (unlikely(upper && *upper <= lower))
+      return;
+    leaf_node *n = NULL;
+    value_type v = 0;
+    scoped_rcu_region rcu_region;
+    search_impl(lower, v, n);
+    INVARIANT(n != NULL);
+    key_type next_key = lower;
+    key_type last_key = 0;
+    bool emitted_last_key = false;
+    while (!upper || next_key < *upper) {
+      prefetch_node(n);
+      std::vector< std::pair<key_type, value_type> > buf;
+
+      uint64_t version = n->stable_version();
+      key_type leaf_min_key = n->min_key;
+      if (leaf_min_key > next_key) {
+        // go left
+        leaf_node *left_sibling = n->prev;
+        if (unlikely(!n->check_version(version)))
+          // try this node again
+          continue;
+        // try from left_sibling
+        n = left_sibling;
+        INVARIANT(n);
+        continue;
+      }
+
+      for (size_t i = 0; i < n->key_slots_used(); i++)
+        if (n->keys[i] >= lower && (!upper || n->keys[i] < *upper))
+          buf.push_back(std::make_pair(n->keys[i], n->values[i]));
+
+      leaf_node *right_sibling = n->next;
+      key_type leaf_max_key = right_sibling ? right_sibling->min_key : 0;
+      if (unlikely(!n->check_version(version)))
+        continue;
+
+      for (size_t i = 0; i < buf.size(); i++) {
+        if (emitted_last_key && buf[i].first <= last_key)
+          continue;
+        if (!callback(buf[i].first, buf[i].second))
+          return;
+        last_key = buf[i].first;
+        emitted_last_key = true;
+      }
+
+      if (!right_sibling)
+        // we're done
+        return;
+
+      next_key = leaf_max_key;
+      n = right_sibling;
+    }
   }
 
   void
@@ -2045,6 +2151,51 @@ test5()
   }
 }
 
+namespace test6_ns {
+  struct scan_callback {
+    typedef std::vector<
+      std::pair< btree::key_type, btree::value_type > > kv_vec;
+    scan_callback(kv_vec *data) : data(data) {}
+    inline bool
+    operator()(btree::key_type k, btree::value_type v) const
+    {
+      data->push_back(std::make_pair(k, v));
+      return true;
+    }
+    kv_vec *data;
+  };
+}
+
+static void
+test6()
+{
+  btree btr;
+  const size_t nkeys = 1000;
+  for (size_t i = 0; i < nkeys; i++)
+    btr.insert(i, (btree::value_type) i);
+  btr.invariant_checker();
+  ALWAYS_ASSERT(btr.size() == nkeys);
+
+  using namespace test6_ns;
+
+  scan_callback::kv_vec data;
+  btree::key_type max_key = 600;
+  btr.search_range(500, &max_key, scan_callback(&data));
+  ALWAYS_ASSERT(data.size() == 100);
+  for (size_t i = 0; i < 100; i++) {
+    ALWAYS_ASSERT(data[i].first == 500 + i);
+    ALWAYS_ASSERT(data[i].second == (btree::value_type) (500 + i));
+  }
+
+  data.clear();
+  btr.search_range(500, NULL, scan_callback(&data));
+  ALWAYS_ASSERT(data.size() == 500);
+  for (size_t i = 0; i < 500; i++) {
+    ALWAYS_ASSERT(data[i].first == 500 + i);
+    ALWAYS_ASSERT(data[i].second == (btree::value_type) (500 + i));
+  }
+}
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2673,6 +2824,7 @@ public:
     test3();
     test4();
     test5();
+    test6();
     mp_test1();
     mp_test2();
     mp_test3();
