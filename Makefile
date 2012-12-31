@@ -1,7 +1,7 @@
 CXXFLAGS := -Wall -g -O2
 LDFLAGS  := -lpthread -ljemalloc
 
-HEADERS = macros.h rcu.h spinlock.h static_assert.h thread.h util.h
+HEADERS = macros.h rcu.h static_assert.h thread.h util.h
 SRCFILES = btree.cc rcu.cc thread.cc
 OBJFILES = $(SRCFILES:.cc=.o)
 
