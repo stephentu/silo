@@ -1,4 +1,7 @@
 #include <unistd.h>
+#include <time.h>
+#include <string.h>
+#include <iostream>
 
 #include "rcu.h"
 #include "macros.h"
@@ -9,10 +12,13 @@ using namespace std;
 using namespace util;
 
 volatile rcu::epoch_t rcu::global_epoch = 0;
+vector<rcu::delete_entry> rcu::global_queues[2];
+
 volatile bool rcu::gc_thread_started = false;
 pthread_t rcu::gc_thread_p;
-pthread_spinlock_t *rcu::rcu_mutex = rcu_mutex_init_and_get();
+
 map<pthread_t, rcu::sync *> rcu::sync_map;
+
 __thread rcu::sync *rcu::tl_sync = NULL;
 __thread bool rcu::tl_in_crit_section = false;
 
@@ -28,33 +34,64 @@ rcu::sync::~sync()
 }
 
 pthread_spinlock_t *
-rcu::rcu_mutex_init_and_get()
+rcu::rcu_mutex()
 {
-  static bool called = false;
-  static pthread_spinlock_t l;
-  ALWAYS_ASSERT(!called);
-  called = true;
-  ALWAYS_ASSERT(pthread_spin_init(&l, PTHREAD_PROCESS_PRIVATE) == 0);
-  return &l;
+  static pthread_spinlock_t *volatile l = NULL;
+  if (!l) {
+    pthread_spinlock_t *sl = new pthread_spinlock_t;
+    ALWAYS_ASSERT(pthread_spin_init(sl, PTHREAD_PROCESS_PRIVATE) == 0);
+    if (!__sync_bool_compare_and_swap(&l, NULL, sl)) {
+      ALWAYS_ASSERT(pthread_spin_destroy(sl) == 0);
+      delete sl;
+    }
+  }
+  assert(l);
+  return l;
 }
 
 void
 rcu::register_sync(pthread_t p, sync *s)
 {
-  scoped_spinlock l(rcu_mutex);
+  scoped_spinlock l(rcu_mutex());
   map<pthread_t, sync *>::iterator it = sync_map.find(p);
   ALWAYS_ASSERT(it == sync_map.end());
   sync_map[p] = s;
 }
 
-void
+rcu::sync *
 rcu::unregister_sync(pthread_t p)
 {
-  scoped_spinlock l(rcu_mutex);
+  scoped_spinlock l(rcu_mutex());
   map<pthread_t, sync *>::iterator it = sync_map.find(p);
   if (it == sync_map.end())
-    return;
+    return NULL;
+  sync *s = it->second;
+  epoch_t local_epoch = s->local_epoch;
+  assert(local_epoch == global_epoch || local_epoch == (global_epoch - 1));
+  if (local_epoch == global_epoch) {
+    // move both local_queue entries
+    global_queues[0].insert(
+        global_queues[0].end(),
+        s->local_queues[0].begin(),
+        s->local_queues[0].end());
+    global_queues[1].insert(
+        global_queues[1].end(),
+        s->local_queues[1].begin(),
+        s->local_queues[1].end());
+  } else {
+    // only move local_queue[s->local_epoch % 2] entries
+
+    // should have no entries in the global epoch, since it isn't there yet
+    assert(s->local_queues[(local_epoch + 1) % 2].empty());
+    global_queues[local_epoch % 2].insert(
+        global_queues[local_epoch % 2].end(),
+        s->local_queues[local_epoch % 2].begin(),
+        s->local_queues[local_epoch % 2].end());
+  }
+  s->local_queues[0].clear();
+  s->local_queues[1].clear();
   sync_map.erase(it);
+  return s;
 }
 
 void
@@ -63,7 +100,7 @@ rcu::enable()
   if (gc_thread_started)
     return;
   {
-    scoped_spinlock l(rcu_mutex);
+    scoped_spinlock l(rcu_mutex());
     if (gc_thread_started)
       return;
     gc_thread_started = true;
@@ -116,32 +153,31 @@ rcu::gc_thread_loop(void *p)
   // runs as daemon thread
   while (true) {
     // increment global epoch
-    global_epoch += 1;
+    epoch_t cleaning_epoch = global_epoch++;
     COMPILER_MEMORY_FENCE;
 
     vector<delete_entry> elems;
 
     // now wait for each thread to finish any outstanding critical sections
-    // from the previous epoch
+    // from the previous epoch, and advance it forward to the global epoch
     {
-      scoped_spinlock l(rcu_mutex);
+      scoped_spinlock l(rcu_mutex());
       for (map<pthread_t, sync *>::iterator it = sync_map.begin();
            it != sync_map.end(); ++it) {
         sync *s = it->second;
         epoch_t local_epoch = s->local_epoch;
-        if (local_epoch == global_epoch)
-          continue;
-        assert(local_epoch == (global_epoch - 1));
-        {
+        if (local_epoch != global_epoch) {
+          assert(local_epoch == cleaning_epoch);
           scoped_spinlock l0(&s->local_critical_mutex);
+          s->local_epoch = global_epoch;
         }
         // now the next time the thread enters a critical section, it
         // *must* get the new global_epoch, so we can now claim its
         // deleted pointers from global_epoch - 1
         elems.insert(elems.end(),
-                     s->local_queues[local_epoch % 2].begin(),
-                     s->local_queues[local_epoch % 2].end());
-        s->local_queues[local_epoch % 2].clear();
+                     s->local_queues[cleaning_epoch % 2].begin(),
+                     s->local_queues[cleaning_epoch % 2].end());
+        s->local_queues[cleaning_epoch % 2].clear();
       }
     }
 
@@ -149,14 +185,21 @@ rcu::gc_thread_loop(void *p)
          it != elems.end(); ++it)
       it->second(it->first);
 
+    cerr << "deleted " << elems.size() << " elements" << endl;
+
     // XXX: better solution for GC intervals?
-    sleep(2);
+    struct timespec t;
+    memset(&t, 0, sizeof(t));
+    t.tv_sec = 2;
+    nanosleep(&t, NULL);
   }
   return NULL;
 }
 
 static void rcu_completion_callback(ndb_thread *t)
 {
-  rcu::unregister_sync(t->pthread_id());
+  rcu::sync *s = rcu::unregister_sync(t->pthread_id());
+  if (s)
+    delete s;
 }
 NDB_THREAD_REGISTER_COMPLETION_CALLBACK(rcu_completion_callback)

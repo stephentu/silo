@@ -1,9 +1,9 @@
 #include "macros.h"
 #include "thread.h"
 
-using namespace std;
+#include <iostream>
 
-vector<ndb_thread::callback_t> ndb_thread::completion_callbacks;
+using namespace std;
 
 void
 ndb_thread::start()
@@ -27,15 +27,24 @@ ndb_thread::run()
 bool
 ndb_thread::register_completion_callback(callback_t callback)
 {
-  completion_callbacks.push_back(callback);
+  completion_callbacks().push_back(callback);
   return true;
+}
+
+vector<ndb_thread::callback_t>&
+ndb_thread::completion_callbacks()
+{
+  static vector<callback_t> *callbacks = NULL;
+  if (!callbacks)
+    callbacks = new vector<callback_t>;
+  return *callbacks;
 }
 
 void
 ndb_thread::on_complete()
 {
-  for (vector<callback_t>::iterator it = completion_callbacks.begin();
-       it != completion_callbacks.end(); ++it)
+  for (vector<callback_t>::iterator it = completion_callbacks().begin();
+       it != completion_callbacks().end(); ++it)
     (*it)(this);
 }
 

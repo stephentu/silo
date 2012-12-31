@@ -535,15 +535,23 @@ private:
       return new (p) leaf_node;
     }
 
+    static void
+    deleter(void *p)
+    {
+      leaf_node *n = (leaf_node *) p;
+      INVARIANT(n->is_deleting());
+      INVARIANT(!n->is_locked());
+      n->~leaf_node();
+      free(n);
+    }
+
     static inline void
     release(leaf_node *n)
     {
       if (unlikely(!n))
         return;
       n->mark_deleting();
-      // XXX: cannot free yet, need to hook into RCU scheme
-      //n->~leaf_node();
-      //free(n);
+      rcu::free(n, deleter);
     }
 
   } PACKED_CACHE_ALIGNED;
@@ -605,6 +613,9 @@ private:
       }
     }
 
+    // XXX: alloc(), deleter(), and release() are copied from leaf_node-
+    // we should templatize them to avoid code duplication
+
     static inline internal_node*
     alloc()
     {
@@ -614,15 +625,23 @@ private:
       return new (p) internal_node;
     }
 
+    static void
+    deleter(void *p)
+    {
+      internal_node *n = (internal_node *) p;
+      INVARIANT(n->is_deleting());
+      INVARIANT(!n->is_locked());
+      n->~internal_node();
+      free(n);
+    }
+
     static inline void
     release(internal_node *n)
     {
       if (unlikely(!n))
         return;
       n->mark_deleting();
-      // XXX: cannot free yet, need to hook into RCU scheme
-      //n->~internal_node();
-      //free(n);
+      rcu::free(n, deleter);
     }
 
   } PACKED_CACHE_ALIGNED;
@@ -695,6 +714,29 @@ private:
     return t;
   }
 
+  static void recursive_delete(node *n)
+  {
+    if (leaf_node *leaf = AsLeafCheck(n)) {
+#ifdef CHECK_INVARIANTS
+      leaf->lock();
+      leaf->mark_deleting();
+      leaf->unlock();
+#endif
+      leaf_node::deleter(leaf);
+    } else {
+      internal_node *internal = AsInternal(n);
+      size_t n = internal->key_slots_used();
+      for (size_t i = 0; i < n + 1; i++)
+        recursive_delete(internal->children[i]);
+#ifdef CHECK_INVARIANTS
+      internal->lock();
+      internal->mark_deleting();
+      internal->unlock();
+#endif
+      internal_node::deleter(internal);
+    }
+  }
+
 public:
 
   btree() : root(leaf_node::alloc())
@@ -719,10 +761,14 @@ public:
 
   ~btree()
   {
-    // XXX: cleanup
-
+    // NOTE: it is assumed on deletion time there are no
+    // outstanding requests to the btree, so deletion proceeds
+    // in a non-threadsafe manner
+    recursive_delete(root);
+    root = NULL;
   }
 
+  /** Note: invariant checking is not thread safe */
   void
   invariant_checker() const
   {
@@ -733,6 +779,7 @@ public:
   search(key_type k, value_type &v) const
   {
   retry:
+    scoped_rcu_region rcu_region;
     node *cur = root;
   process:
     while (cur) {
@@ -809,6 +856,7 @@ public:
     node *ret;
     std::vector<insert_parent_entry> parents;
     std::vector<node *> locked_nodes;
+    scoped_rcu_region rcu_region;
     node *local_root = root;
     insert_status status = insert0(local_root, k, v, mk, ret, parents, locked_nodes);
     switch (status) {
@@ -851,7 +899,9 @@ public:
     node *replace_node;
     std::vector<remove_parent_entry> parents;
     std::vector<node *> locked_nodes;
-    remove_status status = remove0(root,
+    scoped_rcu_region rcu_region;
+    node *local_root = root;
+    remove_status status = remove0(local_root,
                                    NULL, /* min_key */
                                    NULL, /* max_key */
                                    k,
@@ -867,11 +917,15 @@ public:
     case R_RETRY:
       goto retry;
     case R_REPLACE_NODE:
+      INVARIANT(local_root->is_deleting());
+      INVARIANT(local_root->is_lock_owner());
+      INVARIANT(local_root->is_root());
+      INVARIANT(local_root == root);
       replace_node->set_root();
-      root->clear_root();
-      INVARIANT(root->is_deleting());
+      local_root->clear_root();
       COMPILER_MEMORY_FENCE;
       root = replace_node;
+      // locks are still held here
       UnlockNodes(locked_nodes);
       break;
     default:
@@ -1754,6 +1808,13 @@ public:
     return NULL; \
   }
 
+class btree_worker : public ndb_thread {
+public:
+  btree_worker(btree *btr) : btr(btr)  {}
+  btree_worker(btree &btr) : btr(&btr) {}
+protected:
+  btree *const btr;
+};
 
 static void
 test1()
@@ -1988,19 +2049,25 @@ namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
 
-  static void ins0(btree *btr)
-  {
-    for (size_t i = 0; i < nkeys / 2; i++)
-      btr->insert(i, (btree::value_type) i);
-  }
-  WORKER(ins0)
+  class ins0_worker : public btree_worker {
+  public:
+    ins0_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < nkeys / 2; i++)
+        btr->insert(i, (btree::value_type) i);
+    }
+  };
 
-  static void ins1(btree *btr)
-  {
-    for (size_t i = nkeys / 2; i < nkeys; i++)
-      btr->insert(i, (btree::value_type) i);
-  }
-  WORKER(ins1)
+  class ins1_worker : public btree_worker {
+  public:
+    ins1_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      for (size_t i = nkeys / 2; i < nkeys; i++)
+        btr->insert(i, (btree::value_type) i);
+    }
+  };
 }
 
 static void
@@ -2011,11 +2078,11 @@ mp_test1()
   // test a bunch of concurrent inserts
   btree btr;
 
-  pthread_t t0, t1;
-  ALWAYS_ASSERT(pthread_create(&t0, NULL, ins0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t1, NULL, ins1_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
-  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
+  ins0_worker w0(btr);
+  ins1_worker w1(btr);
+
+  w0.start(); w1.start();
+  w0.join(); w1.join();
 
   btr.invariant_checker();
   for (size_t i = 0; i < nkeys; i++) {
@@ -2030,19 +2097,25 @@ namespace mp_test2_ns {
 
   static const size_t nkeys = 20000;
 
-  static void rm0(btree *btr)
-  {
-    for (size_t i = 0; i < nkeys / 2; i++)
-      btr->remove(i);
-  }
-  WORKER(rm0)
+  class rm0_worker : public btree_worker {
+  public:
+    rm0_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < nkeys / 2; i++)
+        btr->remove(i);
+    }
+  };
 
-  static void rm1(btree *btr)
-  {
-    for (size_t i = nkeys / 2; i < nkeys; i++)
-      btr->remove(i);
-  }
-  WORKER(rm1)
+  class rm1_worker : public btree_worker {
+  public:
+    rm1_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      for (size_t i = nkeys / 2; i < nkeys; i++)
+        btr->remove(i);
+    }
+  };
 }
 
 static void
@@ -2057,11 +2130,11 @@ mp_test2()
     btr.insert(i, (btree::value_type) i);
   btr.invariant_checker();
 
-  pthread_t t0, t1;
-  ALWAYS_ASSERT(pthread_create(&t0, NULL, rm0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t1, NULL, rm1_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
-  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
+  rm0_worker w0(btr);
+  rm1_worker w1(btr);
+
+  w0.start(); w1.start();
+  w0.join(); w1.join();
 
   btr.invariant_checker();
   for (size_t i = 0; i < nkeys; i++) {
@@ -2075,21 +2148,27 @@ namespace mp_test3_ns {
 
   static const size_t nkeys = 20000;
 
-  static void rm0(btree *btr)
-  {
-    // remove the even keys
-    for (size_t i = 0; i < nkeys; i += 2)
-      btr->remove(i);
-  }
-  WORKER(rm0)
+  class rm0_worker : public btree_worker {
+  public:
+    rm0_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      // remove the even keys
+      for (size_t i = 0; i < nkeys; i += 2)
+        btr->remove(i);
+    }
+  };
 
-  static void ins0(btree *btr)
-  {
-    // insert the odd keys
-    for (size_t i = 1; i < nkeys; i += 2)
-      btr->insert(i, (btree::value_type) i);
-  }
-  WORKER(ins0)
+  class ins0_worker : public btree_worker {
+  public:
+    ins0_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      // insert the odd keys
+      for (size_t i = 1; i < nkeys; i += 2)
+        btr->insert(i, (btree::value_type) i);
+    }
+  };
 }
 
 static void
@@ -2105,11 +2184,11 @@ mp_test3()
     btr.insert(i, (btree::value_type) i);
   btr.invariant_checker();
 
-  pthread_t t0, t1;
-  ALWAYS_ASSERT(pthread_create(&t0, NULL, rm0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t1, NULL, ins0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
-  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
+  rm0_worker w0(btr);
+  ins0_worker w1(btr);
+
+  w0.start(); w1.start();
+  w0.join(); w1.join();
 
   btr.invariant_checker();
 
@@ -2133,34 +2212,43 @@ namespace mp_test4_ns {
 
   static const size_t nkeys = 20000;
 
-  static void search0(btree *btr)
-  {
-    // search the even keys
-    for (size_t i = 0; i < nkeys; i += 2) {
-      btree::value_type v = 0;
-      ALWAYS_ASSERT(btr->search(i, v));
-      ALWAYS_ASSERT(v == (btree::value_type) i);
+  class search0_worker : public btree_worker {
+  public:
+    search0_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      // search the even keys
+      for (size_t i = 0; i < nkeys; i += 2) {
+        btree::value_type v = 0;
+        ALWAYS_ASSERT(btr->search(i, v));
+        ALWAYS_ASSERT(v == (btree::value_type) i);
+      }
     }
-  }
-  WORKER(search0)
+  };
 
-  static void ins0(btree *btr)
-  {
-    // insert the odd keys
-    for (size_t i = 1; i < nkeys; i += 2)
-      btr->insert(i, (btree::value_type) i);
-  }
-  WORKER(ins0)
-
-  static void re0(btree *btr)
-  {
-    // remove and reinsert odd keys
-    for (size_t i = 1; i < nkeys; i += 2) {
-      btr->remove(i);
-      btr->insert(i, (btree::value_type) i);
+  class ins0_worker : public btree_worker {
+  public:
+    ins0_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      // insert the odd keys
+      for (size_t i = 1; i < nkeys; i += 2)
+        btr->insert(i, (btree::value_type) i);
     }
-  }
-  WORKER(re0)
+  };
+
+  class rm0_worker : public btree_worker {
+  public:
+    rm0_worker(btree &btr) : btree_worker(btr) {}
+    virtual void run()
+    {
+      // remove and reinsert odd keys
+      for (size_t i = 1; i < nkeys; i += 2) {
+        btr->remove(i);
+        btr->insert(i, (btree::value_type) i);
+      }
+    }
+  };
 }
 
 static void
@@ -2176,13 +2264,12 @@ mp_test4()
     btr.insert(i, (btree::value_type) i);
   btr.invariant_checker();
 
-  pthread_t t0, t1, t2;
-  ALWAYS_ASSERT(pthread_create(&t0, NULL, search0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t1, NULL, ins0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t2, NULL, re0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_join(t0, NULL) == 0);
-  ALWAYS_ASSERT(pthread_join(t1, NULL) == 0);
-  ALWAYS_ASSERT(pthread_join(t2, NULL) == 0);
+  search0_worker w0(btr);
+  ins0_worker w1(btr);
+  rm0_worker w2(btr);
+
+  w0.start(); w1.start(); w2.start();
+  w0.join(); w1.join(); w2.join();
 
   btr.invariant_checker();
 
@@ -2208,40 +2295,33 @@ namespace mp_test5_ns {
     key_set removes;
   };
 
-  template <unsigned int seed>
-  static void *
-  worker_impl(btree *btr)
-  {
-    summary *sum = new summary;
-    unsigned int s = seed;
-    // 60% search, 30% insert, 10% remove
-    for (size_t i = 0; i < niters; i++) {
-      double choice = double(rand_r(&s)) / double(RAND_MAX);
-      btree::key_type k = rand_r(&s) % max_key;
-      if (choice < 0.6) {
-        btree::value_type v = 0;
-        if (btr->search(k, v))
-          ALWAYS_ASSERT(v == (btree::value_type) k);
-      } else if (choice < 0.9) {
-        btr->insert(k, (btree::value_type) k);
-        sum->inserts.insert(k);
-      } else {
-        btr->remove(k);
-        sum->removes.insert(k);
+  class worker : public btree_worker {
+  public:
+    worker(unsigned int seed, btree &btr) : btree_worker(btr), seed(seed) {}
+    virtual void run()
+    {
+      unsigned int s = seed;
+      // 60% search, 30% insert, 10% remove
+      for (size_t i = 0; i < niters; i++) {
+        double choice = double(rand_r(&s)) / double(RAND_MAX);
+        btree::key_type k = rand_r(&s) % max_key;
+        if (choice < 0.6) {
+          btree::value_type v = 0;
+          if (btr->search(k, v))
+            ALWAYS_ASSERT(v == (btree::value_type) k);
+        } else if (choice < 0.9) {
+          btr->insert(k, (btree::value_type) k);
+          sum.inserts.insert(k);
+        } else {
+          btr->remove(k);
+          sum.removes.insert(k);
+        }
       }
     }
-    return sum;
-  }
-
-  static inline void* w0(btree *btr) { return worker_impl<2145906155>(btr); }
-  static inline void* w1(btree *btr) { return worker_impl<409088773>(btr);  }
-  static inline void* w2(btree *btr) { return worker_impl<4199288861>(btr); }
-  static inline void* w3(btree *btr) { return worker_impl<496889962>(btr);  }
-
-  WORKER_RET(w0)
-  WORKER_RET(w1)
-  WORKER_RET(w2)
-  WORKER_RET(w3)
+    summary sum;
+  private:
+    unsigned int seed;
+  };
 }
 
 static void
@@ -2249,25 +2329,21 @@ mp_test5()
 {
   using namespace mp_test5_ns;
 
-  // bombs away
   btree btr;
 
-  pthread_t t0, t1, t2, t3;
-  void *p0, *p1, *p2, *p3;
-  ALWAYS_ASSERT(pthread_create(&t0, NULL, w0_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t1, NULL, w1_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t2, NULL, w2_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_create(&t3, NULL, w3_worker, &btr) == 0);
-  ALWAYS_ASSERT(pthread_join(t0, &p0) == 0);
-  ALWAYS_ASSERT(pthread_join(t1, &p1) == 0);
-  ALWAYS_ASSERT(pthread_join(t2, &p2) == 0);
-  ALWAYS_ASSERT(pthread_join(t3, &p3) == 0);
+  worker w0(2145906155, btr);
+  worker w1(409088773, btr);
+  worker w2(4199288861, btr);
+  worker w3(496889962, btr);
+
+  w0.start(); w1.start(); w2.start(); w3.start();
+  w0.join(); w1.join(); w2.join(); w3.join();
 
   summary *s0, *s1, *s2, *s3;
-  s0 = (summary *) p0;
-  s1 = (summary *) p1;
-  s2 = (summary *) p2;
-  s3 = (summary *) p3;
+  s0 = (summary *) &w0.sum;
+  s1 = (summary *) &w1.sum;
+  s2 = (summary *) &w2.sum;
+  s3 = (summary *) &w3.sum;
 
   key_set inserts;
   key_set removes;
@@ -2276,7 +2352,6 @@ mp_test5()
   for (size_t i = 0; i < ARRAY_NELEMS(sums); i++) {
     inserts.insert(sums[i]->inserts.begin(), sums[i]->inserts.end());
     removes.insert(sums[i]->removes.begin(), sums[i]->removes.end());
-    delete sums[i];
   }
 
   std::cerr << "num_inserts: " << inserts.size() << std::endl;
@@ -2609,15 +2684,15 @@ public:
   run()
   {
     test1();
-    //test2();
-    //test3();
-    //test4();
-    //test5();
-    //mp_test1();
-    //mp_test2();
-    //mp_test3();
-    //mp_test4();
-    //mp_test5();
+    test2();
+    test3();
+    test4();
+    test5();
+    mp_test1();
+    mp_test2();
+    mp_test3();
+    mp_test4();
+    mp_test5();
     //mp_test6();
     //perf_test();
     //read_only_perf_test();

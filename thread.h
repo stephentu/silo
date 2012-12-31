@@ -46,7 +46,7 @@ public:
 private:
   pthread_t p;
   run_t body;
-  static std::vector<callback_t> completion_callbacks;
+  static std::vector<callback_t>& completion_callbacks();
 
   void on_complete();
   static void *pthread_bootstrap(void *p);

@@ -38,7 +38,7 @@ public:
    */
   static void register_sync(pthread_t p, sync *s);
 
-  static void unregister_sync(pthread_t p);
+  static sync *unregister_sync(pthread_t p);
 
   static void enable();
 
@@ -57,14 +57,16 @@ public:
 
 private:
   static void *gc_thread_loop(void *p);
+  static pthread_spinlock_t *rcu_mutex();
 
   static volatile epoch_t global_epoch;
+  static std::vector<delete_entry> global_queues[2];
+
   static volatile bool gc_thread_started;
   static pthread_t gc_thread_p;
 
-  static pthread_spinlock_t *rcu_mutex_init_and_get();
-  static pthread_spinlock_t *rcu_mutex;
   static std::map<pthread_t, sync *> sync_map; // protected by rcu_mutex
+
   static __thread sync *tl_sync;
   static __thread bool tl_in_crit_section;
 };
