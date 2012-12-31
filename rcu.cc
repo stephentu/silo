@@ -179,6 +179,13 @@ rcu::gc_thread_loop(void *p)
                      s->local_queues[cleaning_epoch % 2].end());
         s->local_queues[cleaning_epoch % 2].clear();
       }
+
+      // pull the ones from the global queue
+      elems.insert(
+          elems.end(),
+          global_queues[cleaning_epoch % 2].begin(),
+          global_queues[cleaning_epoch % 2].end());
+      global_queues[cleaning_epoch % 2].clear();
     }
 
     for (vector<delete_entry>::iterator it = elems.begin();

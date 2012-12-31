@@ -2374,28 +2374,33 @@ namespace mp_test6_ns {
   static const size_t ninsertkeys_perthread = 100000;
   static const size_t nremovekeys_perthread = 100000;
 
-  struct input {
-    btree *btr;
+  typedef std::vector<btree::key_type> key_vec;
+
+  class insert_worker : public btree_worker {
+  public:
+    insert_worker(const std::vector<btree::key_type> &keys, btree &btr)
+      : btree_worker(btr), keys(keys) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < keys.size(); i++)
+        btr->insert(keys[i], (btree::value_type) keys[i]);
+    }
+  private:
     std::vector<btree::key_type> keys;
   };
 
-  static void *
-  insert_worker(void *p)
-  {
-    input *inp = (input *) p;
-    for (size_t i = 0; i < inp->keys.size(); i++)
-      inp->btr->insert(inp->keys[i], (btree::value_type) inp->keys[i]);
-    return NULL;
-  }
-
-  static void *
-  remove_worker(void *p)
-  {
-    input *inp = (input *) p;
-    for (size_t i = 0; i < inp->keys.size(); i++)
-      inp->btr->remove(inp->keys[i]);
-    return NULL;
-  }
+  class remove_worker : public btree_worker {
+  public:
+    remove_worker(const std::vector<btree::key_type> &keys, btree &btr)
+      : btree_worker(btr), keys(keys) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < keys.size(); i++)
+        btr->remove(keys[i]);
+    }
+  private:
+    std::vector<btree::key_type> keys;
+  };
 }
 
 static void
@@ -2404,49 +2409,42 @@ mp_test6()
   using namespace mp_test6_ns;
 
   btree btr;
-  std::vector<input> inps;
+  std::vector<key_vec> inps;
   std::set<unsigned long> insert_keys, remove_keys;
 
   fast_random r(87643982);
   for (size_t i = 0; i < nthreads / 2; i++) {
-    input inp;
-    inp.btr = &btr;
+    key_vec inp;
     for (size_t j = 0; j < ninsertkeys_perthread; j++) {
       unsigned long k = r.next();
       insert_keys.insert(k);
-      inp.keys.push_back(k);
+      inp.push_back(k);
     }
     inps.push_back(inp);
   }
   for (size_t i = nthreads / 2; i < nthreads; i++) {
-    input inp;
-    inp.btr = &btr;
+    key_vec inp;
     for (size_t j = 0; j < nremovekeys_perthread;) {
       unsigned long k = r.next();
       if (insert_keys.count(k) == 1)
         continue;
       btr.insert(k, (btree::value_type) k);
       remove_keys.insert(k);
-      inp.keys.push_back(k);
+      inp.push_back(k);
       j++;
     }
     inps.push_back(inp);
   }
 
-  std::vector<pthread_t> ps;
-  for (size_t i = 0; i < nthreads / 2; i++) {
-    pthread_t p;
-    ALWAYS_ASSERT(pthread_create(&p, NULL, insert_worker, &inps[i]) == 0);
-    ps.push_back(p);
-  }
-  for (size_t i = nthreads / 2; i < nthreads; i++) {
-    pthread_t p;
-    ALWAYS_ASSERT(pthread_create(&p, NULL, remove_worker, &inps[i]) == 0);
-    ps.push_back(p);
-  }
-
+  std::vector<btree_worker*> workers;
+  for (size_t i = 0; i < nthreads / 2; i++)
+    workers.push_back(new insert_worker(inps[i], btr));
+  for (size_t i = nthreads / 2; i < nthreads; i++)
+    workers.push_back(new remove_worker(inps[i], btr));
   for (size_t i = 0; i < nthreads; i++)
-    ALWAYS_ASSERT(pthread_join(ps[i], NULL) == 0);
+    workers[i]->start();
+  for (size_t i = 0; i < nthreads; i++)
+    workers[i]->join();
 
   btr.invariant_checker();
 
@@ -2462,6 +2460,9 @@ mp_test6()
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(*it, v));
   }
+
+  for (size_t i = 0; i < nthreads; i++)
+    delete workers[i];
 }
 
 static void
@@ -2535,28 +2536,24 @@ namespace read_only_perf_test_ns {
 
   volatile bool running = false;
 
-  struct input {
-    btree *btr;
-    unsigned long seed;
-  };
-
-  static void *
-  worker(void *p)
-  {
-    input *inp = (input *) p;
-    btree *btr = inp->btr;
-    fast_random r(inp->seed);
-    uint64_t n = 0;
-    while (running) {
-      btree::key_type k = r.next() % nkeys;
-      btree::value_type v = 0;
-      ALWAYS_ASSERT(btr->search(k, v));
-      ALWAYS_ASSERT(v == (btree::value_type) k);
-      n++;
+  class worker : public btree_worker {
+  public:
+    worker(unsigned int seed, btree &btr) : btree_worker(btr), n(0), seed(seed) {}
+    virtual void run()
+    {
+      fast_random r(seed);
+      while (running) {
+        btree::key_type k = r.next() % nkeys;
+        btree::value_type v = 0;
+        ALWAYS_ASSERT(btr->search(k, v));
+        ALWAYS_ASSERT(v == (btree::value_type) k);
+        n++;
+      }
     }
-    pthread_exit(new uint64_t(n));
-    return NULL;
-  }
+    uint64_t n;
+  private:
+    unsigned int seed;
+  };
 }
 
 static void
@@ -2565,36 +2562,29 @@ read_only_perf_test()
   using namespace read_only_perf_test_ns;
 
   btree btr;
-  input inps[ARRAY_NELEMS(seeds)];
-
-  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
-    inps[i].btr = &btr;
-    inps[i].seed = seeds[i];
-  }
 
   for (size_t i = 0; i < nkeys; i++)
     btr.insert(i, (btree::value_type) i);
   std::cerr << "btree loaded, test starting" << std::endl;
 
-  pthread_t pts[ARRAY_NELEMS(seeds)];
-  uint64_t ns[ARRAY_NELEMS(seeds)];
+  std::vector<worker *> workers;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
+    workers.push_back(new worker(seeds[i], btr));
 
   running = true;
   util::timer t;
   COMPILER_MEMORY_FENCE;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
-    ALWAYS_ASSERT(pthread_create(&pts[i], NULL, worker, &inps[i]) == 0);
+    workers[i]->start();
   sleep(30);
   COMPILER_MEMORY_FENCE;
   running = false;
   COMPILER_MEMORY_FENCE;
   uint64_t total_n = 0;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
-    void *p;
-    ALWAYS_ASSERT(pthread_join(pts[i], &p) == 0);
-    ns[i] = *((uint64_t *)p);
-    total_n += ns[i];
-    delete (uint64_t *)p;
+    workers[i]->join();
+    total_n += workers[i]->n;
+    delete workers[i];
   }
 
   double agg_throughput = double(total_n) / (double(t.lap()) / 1000000.0);
@@ -2627,23 +2617,20 @@ namespace write_only_perf_test_ns {
     9558684485283258563ULL,
   };
 
-  struct input {
-    btree *btr;
-    unsigned long seed;
-  };
-
-  static void *
-  worker(void *p)
-  {
-    input *inp = (input *) p;
-    btree *btr = inp->btr;
-    fast_random r(inp->seed);
-    for (size_t i = 0; i < nkeys / ARRAY_NELEMS(seeds); i++) {
-      btree::key_type k = r.next() % nkeys;
-      btr->insert(k, (btree::value_type) k);
+  class worker : public btree_worker {
+  public:
+    worker(unsigned int seed, btree &btr) : btree_worker(btr), seed(seed) {}
+    virtual void run()
+    {
+      fast_random r(seed);
+      for (size_t i = 0; i < nkeys / ARRAY_NELEMS(seeds); i++) {
+        btree::key_type k = r.next() % nkeys;
+        btr->insert(k, (btree::value_type) k);
+      }
     }
-    return NULL;
-  }
+  private:
+    unsigned int seed;
+  };
 }
 
 static void
@@ -2652,20 +2639,18 @@ write_only_perf_test()
   using namespace write_only_perf_test_ns;
 
   btree btr;
-  input inps[ARRAY_NELEMS(seeds)];
 
-  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
-    inps[i].btr = &btr;
-    inps[i].seed = seeds[i];
-  }
-  pthread_t pts[ARRAY_NELEMS(seeds)];
+  std::vector<worker *> workers;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
+    workers.push_back(new worker(seeds[i], btr));
 
   util::timer t;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
-    ALWAYS_ASSERT(pthread_create(&pts[i], NULL, worker, &inps[i]) == 0);
-
-  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
-    ALWAYS_ASSERT(pthread_join(pts[i], NULL) == 0);
+    workers[i]->start();
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
+    workers[i]->join();
+    delete workers[i];
+  }
 
   double agg_throughput = double(nkeys) / (double(t.lap()) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
@@ -2693,7 +2678,7 @@ public:
     mp_test3();
     mp_test4();
     mp_test5();
-    //mp_test6();
+    mp_test6();
     //perf_test();
     //read_only_perf_test();
     //write_only_perf_test();
