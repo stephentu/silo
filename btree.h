@@ -2,27 +2,18 @@
 #define _NDB_BTREE_H_
 
 #include <assert.h>
-#include <string.h>
-#include <stdint.h>
-#include <unistd.h>
 #include <malloc.h>
-#include <stdio.h>
 #include <pthread.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include <map>
-#include <set>
-#include <cstddef>
-#include <cstdlib>
-#include <iostream>
-#include <sstream>
 #include <vector>
 #include <utility>
 
+#include "macros.h"
 #include "rcu.h"
 #include "static_assert.h"
-#include "macros.h"
-#include "util.h"
-#include "thread.h"
 
 /** options */
 #define NODE_PREFETCH

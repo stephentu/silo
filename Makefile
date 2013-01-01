@@ -7,7 +7,7 @@ OBJFILES = $(SRCFILES:.cc=.o)
 
 all: btree
 
-%.o: %.cc
+%.o: %.cc 
 	$(CXX) $(CXXFLAGS) -c $^ -o $@
 
 btree: $(OBJFILES) 

@@ -1,4 +1,13 @@
+#include <unistd.h>
+
+#include <iostream>
+#include <map>
+#include <set>
+#include <sstream>
+
 #include "btree.h"
+#include "thread.h"
+#include "util.h"
 
 std::string
 btree::node::VersionInfoStr(uint64_t v)
