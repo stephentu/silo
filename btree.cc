@@ -1049,6 +1049,7 @@ public:
   size() const
   {
   retry:
+    scoped_rcu_region rcu_region;
     node *cur = root;
     size_t count = 0;
     while (cur) {
