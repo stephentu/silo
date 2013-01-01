@@ -889,6 +889,11 @@ public:
    * the scanning thread has observed the deletion of H but did not observe the
    * deletion of A, but we know that delete(A) happens before delete(H).
    *
+   * The weakly consistent guarantee provided is the following: all keys
+   * which, at the time of invocation, are known to exist in the btree
+   * will be discovered on a scan (provided the key falls within the scan's range),
+   * and provided there are no concurrent modifications/removals of that key
+   *
    * Note that scans within a single node are consistent
    *
    * XXX: add other modes which provide better consistency:
@@ -2622,6 +2627,19 @@ namespace mp_test7_ns {
 
   typedef std::vector<btree::key_type> key_vec;
 
+  struct scan_callback {
+    typedef std::vector<
+      std::pair< btree::key_type, btree::value_type > > kv_vec;
+    scan_callback(kv_vec *data) : data(data) {}
+    inline bool
+    operator()(btree::key_type k, btree::value_type v) const
+    {
+      data->push_back(std::make_pair(k, v));
+      return true;
+    }
+    kv_vec *data;
+  };
+
   class lookup_worker : public btree_worker {
   public:
     lookup_worker(unsigned long seed, const key_vec &keys, btree &btr)
@@ -2638,6 +2656,34 @@ namespace mp_test7_ns {
       }
     }
     unsigned long seed;
+    key_vec keys;
+  };
+
+  class scan_worker : public btree_worker {
+  public:
+    scan_worker(const key_vec &keys, btree &btr)
+      : btree_worker(btr), keys(keys)
+    {}
+    virtual void run()
+    {
+      while (running) {
+        scan_callback::kv_vec data;
+        btr->search_range(nkeys / 2, NULL, scan_callback(&data));
+        std::set<btree::key_type> scan_keys;
+        btree::key_type prev = 0;
+        for (size_t i = 0; i < data.size(); i++) {
+          if (i != 0)
+            ALWAYS_ASSERT(data[i].first > prev);
+          scan_keys.insert(data[i].first);
+          prev = data[i].first;
+        }
+        for (size_t i = 0; i < keys.size(); i++) {
+          if (keys[i] < (nkeys / 2))
+            continue;
+          ALWAYS_ASSERT(scan_keys.count(keys[i]) == 1);
+        }
+      }
+    }
     key_vec keys;
   };
 
@@ -2682,16 +2728,18 @@ mp_test7()
   lookup_worker w1(8532, lookup_keys, btr);
   lookup_worker w2(23, lookup_keys, btr);
   lookup_worker w3(1328209843, lookup_keys, btr);
-  mod_worker w4(mod_keys, btr);
+  scan_worker w4(lookup_keys, btr);
+  scan_worker w5(lookup_keys, btr);
+  mod_worker w6(mod_keys, btr);
 
   running = true;
   COMPILER_MEMORY_FENCE;
-  w0.start(); w1.start(); w2.start(); w3.start(); w4.start();
+  w0.start(); w1.start(); w2.start(); w3.start(); w4.start(); w5.start(); w6.start();
   sleep(10);
   COMPILER_MEMORY_FENCE;
   running = false;
   COMPILER_MEMORY_FENCE;
-  w0.join(); w1.join(); w2.join(); w3.join(); w4.join();
+  w0.join(); w1.join(); w2.join(); w3.join(); w4.join(); w5.join(); w6.join();
 }
 
 static void
