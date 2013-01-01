@@ -20,7 +20,7 @@ pthread_t rcu::gc_thread_p;
 map<pthread_t, rcu::sync *> rcu::sync_map;
 
 __thread rcu::sync *rcu::tl_sync = NULL;
-__thread bool rcu::tl_in_crit_section = false;
+__thread unsigned int rcu::tl_crit_section_depth = 0;
 
 rcu::sync::sync(epoch_t local_epoch)
   : local_epoch(local_epoch)
@@ -117,22 +117,23 @@ void
 rcu::region_begin()
 {
   if (!tl_sync) {
+    assert(!tl_crit_section_depth);
     enable();
     tl_sync = new sync(global_epoch);
     register_sync(pthread_self(), tl_sync);
   }
-  assert(!tl_in_crit_section);
   assert(gc_thread_started);
-  tl_sync->local_epoch = global_epoch;
-  ALWAYS_ASSERT(pthread_spin_lock(&tl_sync->local_critical_mutex) == 0);
-  tl_in_crit_section = true;
+  if (!tl_crit_section_depth++) {
+    tl_sync->local_epoch = global_epoch;
+    ALWAYS_ASSERT(pthread_spin_lock(&tl_sync->local_critical_mutex) == 0);
+  }
 }
 
 void
 rcu::free(void *p, deleter_t fn)
 {
   assert(tl_sync);
-  assert(tl_in_crit_section);
+  assert(tl_crit_section_depth);
   assert(gc_thread_started);
   tl_sync->local_queues[tl_sync->local_epoch % 2].push_back(delete_entry(p, fn));
 }
@@ -141,10 +142,10 @@ void
 rcu::region_end()
 {
   assert(tl_sync);
-  assert(tl_in_crit_section);
+  assert(tl_crit_section_depth);
   assert(gc_thread_started);
-  ALWAYS_ASSERT(pthread_spin_unlock(&tl_sync->local_critical_mutex) == 0);
-  tl_in_crit_section = false;
+  if (!--tl_crit_section_depth)
+    ALWAYS_ASSERT(pthread_spin_unlock(&tl_sync->local_critical_mutex) == 0);
 }
 
 void *
