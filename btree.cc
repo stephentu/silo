@@ -260,8 +260,8 @@ process:
   }
 }
 
-void
-btree::insert(key_type k, value_type v)
+bool
+btree::insert_impl(key_type k, value_type v, bool only_if_absent)
 {
 retry:
   key_type mk;
@@ -270,10 +270,13 @@ retry:
   std::vector<node *> locked_nodes;
   scoped_rcu_region rcu_region;
   node *local_root = root;
-  insert_status status = insert0(local_root, k, v, mk, ret, parents, locked_nodes);
+  insert_status status =
+    insert0(local_root, k, v, only_if_absent, mk, ret, parents, locked_nodes);
   switch (status) {
-    case I_NONE:
-      break;
+    case I_NONE_NOMOD:
+      return false;
+    case I_NONE_MOD:
+      return true;
     case I_RETRY:
       goto retry;
     case I_SPLIT:
@@ -299,11 +302,13 @@ retry:
       root = new_root;
       // locks are still held here
       UnlockNodes(locked_nodes);
-      break;
+      return true;
   }
+  ALWAYS_ASSERT(false);
+  return false;
 }
 
-void
+bool
 btree::remove(key_type k)
 {
 retry:
@@ -324,8 +329,10 @@ retry:
       parents,
       locked_nodes);
   switch (status) {
-    case R_NONE:
-      break;
+    case R_NONE_NOMOD:
+      return false;
+    case R_NONE_MOD:
+      return true;
     case R_RETRY:
       goto retry;
     case R_REPLACE_NODE:
@@ -339,11 +346,13 @@ retry:
       root = replace_node;
       // locks are still held here
       UnlockNodes(locked_nodes);
-      break;
+      return true;
     default:
       ALWAYS_ASSERT(false);
-      break;
+      return false;
   }
+  ALWAYS_ASSERT(false);
+  return false;
 }
 
 size_t
@@ -380,6 +389,7 @@ btree::insert_status
 btree::insert0(node *n,
                key_type k,
                value_type v,
+               bool only_if_absent,
                key_type &min_key,
                node *&new_node,
                std::vector<insert_parent_entry> &parents,
@@ -413,9 +423,10 @@ btree::insert0(node *n,
     key_search_ret kret = leaf->key_lower_bound_search(k);
     ssize_t ret = kret.first;
     if (ret != -1 && leaf->keys[ret] == k) {
+      if (!only_if_absent)
+        leaf->values[ret] = v;
       // easy case- we don't modify the node itself
-      leaf->values[ret] = v;
-      return UnlockAndReturn(locked_nodes, I_NONE);
+      return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
     }
 
     size_t n = kret.second;
@@ -430,7 +441,7 @@ btree::insert0(node *n,
       leaf->values[ret + 1] = v;
       leaf->inc_key_slots_used();
 
-      return UnlockAndReturn(locked_nodes, I_NONE);
+      return UnlockAndReturn(locked_nodes, I_NONE_MOD);
     } else {
       INVARIANT(n == NKeysPerNode);
 
@@ -542,7 +553,8 @@ btree::insert0(node *n,
     parents.push_back(insert_parent_entry(internal, version));
     key_type mk = 0;
     node *new_child = NULL;
-    insert_status status = insert0(child_ptr, k, v, mk, new_child, parents, locked_nodes);
+    insert_status status =
+      insert0(child_ptr, k, v, only_if_absent, mk, new_child, parents, locked_nodes);
     if (status != I_SPLIT)
       return status;
     INVARIANT(new_child);
@@ -558,7 +570,7 @@ btree::insert0(node *n,
       sift_right(internal->children, child_idx + 1, n + 1);
       internal->children[child_idx + 1] = new_child;
       internal->inc_key_slots_used();
-      return UnlockAndReturn(locked_nodes, I_NONE);
+      return UnlockAndReturn(locked_nodes, I_NONE_MOD);
     } else {
       INVARIANT(n == NKeysPerNode);
       INVARIANT(ret == internal->key_lower_bound_search(mk).first);
@@ -671,12 +683,12 @@ btree::remove0(node *np,
     key_search_ret kret = leaf->key_search(k);
     ssize_t ret = kret.first;
     if (ret == -1)
-      return UnlockAndReturn(locked_nodes, R_NONE);
+      return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
     size_t n = kret.second;
     if (n > NMinKeysPerNode) {
       leaf->mark_modifying();
       remove_pos_from_leaf_node(leaf, ret, n);
-      return UnlockAndReturn(locked_nodes, R_NONE);
+      return UnlockAndReturn(locked_nodes, R_NONE_MOD);
     } else {
 
       uint64_t leaf_version = leaf->unstable_version();
@@ -839,7 +851,7 @@ btree::remove0(node *np,
       INVARIANT(leaf == root);
       INVARIANT(leaf->is_root());
       remove_pos_from_leaf_node(leaf, ret, n);
-      return UnlockAndReturn(locked_nodes, R_NONE);
+      return UnlockAndReturn(locked_nodes, R_NONE_MOD);
     }
   } else {
     internal_node *internal = AsInternal(np);
@@ -872,7 +884,8 @@ btree::remove0(node *np,
         parents,
         locked_nodes);
     switch (status) {
-      case R_NONE:
+      case R_NONE_NOMOD:
+      case R_NONE_MOD:
       case R_RETRY:
         return status;
 
@@ -880,13 +893,13 @@ btree::remove0(node *np,
         INVARIANT(internal->is_locked());
         INVARIANT(internal->is_lock_owner());
         internal->keys[child_idx - 1] = nk;
-        return UnlockAndReturn(locked_nodes, R_NONE);
+        return UnlockAndReturn(locked_nodes, R_NONE_MOD);
 
       case R_STOLE_FROM_RIGHT:
         INVARIANT(internal->is_locked());
         INVARIANT(internal->is_lock_owner());
         internal->keys[child_idx] = nk;
-        return UnlockAndReturn(locked_nodes, R_NONE);
+        return UnlockAndReturn(locked_nodes, R_NONE_MOD);
 
       case R_MERGE_WITH_LEFT:
       case R_MERGE_WITH_RIGHT:
@@ -908,7 +921,7 @@ btree::remove0(node *np,
 
           if (n > NMinKeysPerNode) {
             remove_pos_from_internal_node(internal, del_key_idx, del_child_idx, n);
-            return UnlockAndReturn(locked_nodes, R_NONE);
+            return UnlockAndReturn(locked_nodes, R_NONE_MOD);
           }
 
           internal_node *left_sibling = AsInternal(left_node);
@@ -1007,12 +1020,12 @@ btree::remove0(node *np,
             return R_REPLACE_NODE;
           }
 
-          return UnlockAndReturn(locked_nodes, R_NONE);
+          return UnlockAndReturn(locked_nodes, R_NONE_MOD);
         }
 
       default:
         ALWAYS_ASSERT(false);
-        return UnlockAndReturn(locked_nodes, R_NONE);
+        return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
     }
   }
 }
@@ -1058,25 +1071,6 @@ public:
               << " ms (" << rate << " events/sec)" << std::endl;
   }
 };
-
-#define WORKER(name) \
-  static void * \
-  name ## _worker(void *p) \
-  { \
-    btree *btr = (btree *) p; \
-    name(btr); \
-    return NULL; \
-  }
-
-#define WORKER_RET(name) \
-  static void * \
-  name ## _worker(void *p) \
-  { \
-    btree *btr = (btree *) p; \
-    void *ret = name(btr); \
-    pthread_exit(ret); \
-    return NULL; \
-  }
 
 class btree_worker : public ndb_thread {
 public:

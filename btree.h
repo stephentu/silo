@@ -730,9 +730,27 @@ public:
     }
   }
 
-  void insert(key_type k, value_type v);
+  /**
+   * returns true if key k did not already exist, false otherwise
+   * If k exists with a different mapping, still returns false
+   */
+  inline bool
+  insert(key_type k, value_type v)
+  {
+    return insert_impl(k, v, false);
+  }
 
-  void remove(key_type k);
+  /**
+   * Only puts k=>v if k does not exist in map. returns true
+   * if k inserted, false otherwise (k exists already)
+   */
+  inline bool
+  insert_if_absent(key_type k, value_type v)
+  {
+    return insert_impl(k, v, true);
+  }
+
+  bool remove(key_type k);
 
   size_t size() const;
 
@@ -795,10 +813,13 @@ private:
 
   bool search_impl(key_type k, value_type &v, leaf_node *&n) const;
 
+  bool insert_impl(key_type k, value_type v, bool only_if_absent);
+
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
   enum insert_status {
-    I_NONE,
+    I_NONE_NOMOD,
+    I_NONE_MOD,
     I_RETRY,
     I_SPLIT,
   };
@@ -816,13 +837,15 @@ private:
   insert0(node *n,
           key_type k,
           value_type v,
+          bool only_if_absent,
           key_type &min_key,
           node *&new_node,
           std::vector<insert_parent_entry> &parents,
           std::vector<node *> &locked_nodes);
 
   enum remove_status {
-    R_NONE,
+    R_NONE_NOMOD,
+    R_NONE_MOD,
     R_RETRY,
     R_STOLE_FROM_LEFT,
     R_STOLE_FROM_RIGHT,
