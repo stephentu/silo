@@ -1354,6 +1354,25 @@ test6()
   }
 }
 
+static void
+test7()
+{
+  btree btr;
+  ALWAYS_ASSERT(!btr.remove(0));
+  ALWAYS_ASSERT(btr.insert(0, (btree::value_type) 0));
+  ALWAYS_ASSERT(!btr.insert(0, (btree::value_type) 1));
+  btree::value_type v;
+  ALWAYS_ASSERT(btr.search(0, v));
+  ALWAYS_ASSERT(v == (btree::value_type) 1);
+  ALWAYS_ASSERT(!btr.insert_if_absent(0, (btree::value_type) 2));
+  ALWAYS_ASSERT(btr.search(0, v));
+  ALWAYS_ASSERT(v == (btree::value_type) 1);
+  ALWAYS_ASSERT(btr.remove(0));
+  ALWAYS_ASSERT(btr.insert_if_absent(0, (btree::value_type) 2));
+  ALWAYS_ASSERT(btr.search(0, v));
+  ALWAYS_ASSERT(v == (btree::value_type) 2);
+}
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2104,6 +2123,7 @@ public:
     test4();
     test5();
     test6();
+    test7();
     mp_test1();
     mp_test2();
     mp_test3();
