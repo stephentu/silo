@@ -77,6 +77,12 @@ txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
   return ret;
 }
 
+bool
+txn_btree::absent_range_validation_callback::invoke(key_type k, value_type v)
+{
+  return failed_flag;
+}
+
 void
 txn_btree::search_range_call(transaction &t,
                              key_type lower,

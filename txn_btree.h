@@ -64,13 +64,22 @@ private:
         invoked(false), caller_callback(caller_callback),
         caller_stopped(false) {}
     virtual bool invoke(key_type k, value_type v);
-    transaction *t;
-    key_type lower;
-    key_type *upper;
+    transaction *const t;
+    const key_type lower;
+    const key_type *const upper;
     key_type prev_key;
     bool invoked;
-    search_range_callback *caller_callback;
+    search_range_callback *const caller_callback;
     bool caller_stopped;
+  };
+
+  struct absent_range_validation_callback : public search_range_callback {
+    absent_range_validation_callback(transaction *t)
+      : t(t), failed_flag(false) {}
+    inline bool failed() const { return failed_flag; }
+    virtual bool invoke(key_type k, value_type v);
+    transaction *const t;
+    bool failed_flag;
   };
 
   // remove() is just insert_impl() with NULL value

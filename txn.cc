@@ -68,9 +68,22 @@ transaction::commit()
     }
     if (!ln)
       continue;
+    // An optimization to be made:
+    // if the latest version is > commit_tid, and the next latest version is <
+    // snapshot_tid, then it is also ok because the latest version will be ordered
+    // after this txn, and we know its read set does not depend on our write set
+    // (since it has a txn id higher than we do)
     if ((did_write ? ln->is_latest_version(snapshot_tid) : ln->stable_is_latest_version(snapshot_tid)))
       continue;
     goto do_abort;
+  }
+
+  for (vector<key_range_t>::iterator it = absent_range_set.begin();
+       it != absent_range_set.end(); ++it) {
+    txn_btree::absent_range_validation_callback c(this);
+    btree->underlying_btree.search_range_call(it->a, it->has_b ? &it->b : NULL, c);
+    if (c.failed())
+      goto do_abort;
   }
 
   // commit actual records
