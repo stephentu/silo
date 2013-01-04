@@ -117,3 +117,40 @@ txn_btree::insert_impl(transaction &t, key_type k, value_type v)
   t.btree = this;
   t.write_set[k] = v;
 }
+
+void
+txn_btree::Test()
+{
+  txn_btree btr;
+
+  struct rec { uint64_t v; };
+  rec recs[5];
+  for (size_t i = 0; i < 5; i++)
+    recs[i].v = i;
+
+  {
+    transaction t;
+    txn_btree::value_type v;
+    ALWAYS_ASSERT(!btr.search(t, 0, v));
+    btr.insert(t, 0, (txn_btree::value_type) &recs[0]);
+    ALWAYS_ASSERT(btr.search(t, 0, v));
+    ALWAYS_ASSERT(v == (txn_btree::value_type) &recs[0]);
+    t.commit();
+  }
+
+  {
+    transaction t0, t1;
+    txn_btree::value_type v0, v1;
+
+    ALWAYS_ASSERT(btr.search(t0, 0, v0));
+    ALWAYS_ASSERT(v0 == (txn_btree::value_type) &recs[0]);
+
+    btr.insert(t0, 0, (txn_btree::value_type) &recs[1]);
+
+    ALWAYS_ASSERT(btr.search(t1, 0, v1));
+    ALWAYS_ASSERT(v1 == (txn_btree::value_type) &recs[0]);
+
+    t0.commit();
+    t1.commit();
+  }
+}

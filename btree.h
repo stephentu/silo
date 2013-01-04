@@ -734,6 +734,8 @@ public:
 
   size_t size() const;
 
+  static void Test();
+
 private:
 
   /**

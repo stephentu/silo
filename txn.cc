@@ -317,4 +317,4 @@ transaction::local_search(key_type k, record_t &v) const
   return false;
 }
 
-volatile transaction::tid_t transaction::global_tid = 0;
+volatile transaction::tid_t transaction::global_tid = 1;

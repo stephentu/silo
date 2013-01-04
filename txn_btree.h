@@ -51,6 +51,8 @@ public:
     insert_impl(t, k, NULL);
   }
 
+  static void Test();
+
 private:
 
   struct txn_search_range_callback : public search_range_callback {

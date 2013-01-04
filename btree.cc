@@ -3,9 +3,8 @@
 #include <iostream>
 #include <map>
 #include <set>
+
 #include <sstream>
-
-
 #include "btree.h"
 #include "thread.h"
 #include "txn.h"
@@ -2168,55 +2167,24 @@ write_only_perf_test()
   std::cerr << "avg_per_core_write_throughput: " << avg_per_core_throughput << " puts/sec/core" << std::endl;
 }
 
-class main_thread : public ndb_thread {
-public:
-  main_thread(int argc, char **argv)
-    : argc(argc), argv(argv), ret(0)
-  {}
-
-  virtual void
-  run()
-  {
-
-    transaction::Test();
-
-    //test1();
-    //test2();
-    //test3();
-    //test4();
-    //test5();
-    //test6();
-    //test7();
-    //mp_test1();
-    //mp_test2();
-    //mp_test3();
-    //mp_test4();
-    //mp_test5();
-    //mp_test6();
-    //mp_test7();
-    //perf_test();
-    //read_only_perf_test();
-    //write_only_perf_test();
-
-    ret = 0;
-  }
-
-  inline int
-  retval() const
-  {
-    return ret;
-  }
-private:
-  int argc;
-  char **argv;
-  volatile int ret;
-};
-
-int
-main(int argc, char **argv)
+void
+btree::Test()
 {
-  main_thread t(argc, argv);
-  t.start();
-  t.join();
-  return t.retval();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //test6();
+  //test7();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  //mp_test4();
+  //mp_test5();
+  //mp_test6();
+  //mp_test7();
+  //perf_test();
+  //read_only_perf_test();
+  //write_only_perf_test();
 }
