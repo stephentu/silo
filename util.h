@@ -12,6 +12,26 @@
 
 namespace util {
 
+// xor-shift:
+// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
+class fast_random {
+public:
+  fast_random(unsigned long seed)
+    : seed(seed == 0 ? 0xABCD1234 : seed)
+  {}
+
+  inline unsigned long
+  next()
+  {
+    seed ^= (seed << 21);
+    seed ^= (seed >> 35);
+    seed ^= (seed << 4);
+    return seed;
+  }
+
+private:
+  unsigned long seed;
+};
 
 template <typename ForwardIterator>
 std::string

@@ -27,12 +27,12 @@ public:
   void
   search_range_call(transaction &t,
                     key_type lower,
-                    key_type *upper,
+                    const key_type *upper,
                     search_range_callback &callback);
 
   template <typename T>
   inline void
-  search_range(transaction &t, key_type lower, key_type *upper, T callback)
+  search_range(transaction &t, key_type lower, const key_type *upper, T callback)
   {
     btree::type_callback_wrapper<T> w(&callback);
     search_range_call(t, lower, upper, w);
@@ -58,7 +58,7 @@ private:
   struct txn_search_range_callback : public search_range_callback {
     txn_search_range_callback(transaction *t,
                               key_type lower,
-                              key_type *upper,
+                              const key_type *upper,
                               search_range_callback *caller_callback)
       : t(t), lower(lower), upper(upper), prev_key(),
         invoked(false), caller_callback(caller_callback),

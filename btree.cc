@@ -10,6 +10,8 @@
 #include "txn.h"
 #include "util.h"
 
+using namespace util;
+
 std::string
 btree::node::VersionInfoStr(uint64_t v)
 {
@@ -262,7 +264,7 @@ process:
 }
 
 void
-btree::search_range_call(key_type lower, key_type *upper, search_range_callback &callback) const
+btree::search_range_call(key_type lower, const key_type *upper, search_range_callback &callback) const
 {
   if (unlikely(upper && *upper <= lower))
     return;
@@ -1090,27 +1092,6 @@ btree::remove0(node *np,
 }
 
 /** end of btree impl - the rest is a bunch of testing code */
-
-// xor-shift:
-// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
-class fast_random {
-public:
-  fast_random(unsigned long seed)
-    : seed(seed == 0 ? 0xABCD1234 : seed)
-  {}
-
-  inline unsigned long
-  next()
-  {
-    seed ^= (seed << 21);
-    seed ^= (seed >> 35);
-    seed ^= (seed << 4);
-    return seed;
-  }
-
-private:
-  unsigned long seed;
-};
 
 class scoped_rate_timer {
 private:

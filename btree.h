@@ -694,7 +694,7 @@ public:
    * B) optimistic validation mode
    */
   void
-  search_range_call(key_type lower, key_type *upper, search_range_callback &callback) const;
+  search_range_call(key_type lower, const key_type *upper, search_range_callback &callback) const;
 
 
   /**
@@ -704,7 +704,7 @@ public:
    */
   template <typename T>
   inline void
-  search_range(key_type lower, key_type *upper, T callback) const
+  search_range(key_type lower, const key_type *upper, T callback) const
   {
     type_callback_wrapper<T> w(&callback);
     search_range_call(lower, upper, w);

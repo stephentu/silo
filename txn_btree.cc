@@ -1,7 +1,11 @@
+#include <unistd.h>
+
 #include "txn_btree.h"
 #include "thread.h"
+#include "util.h"
 
 using namespace std;
+using namespace util;
 
 bool
 txn_btree::search(transaction &t, key_type k, value_type &v)
@@ -96,7 +100,7 @@ txn_btree::absent_range_validation_callback::invoke(key_type k, value_type v)
 void
 txn_btree::search_range_call(transaction &t,
                              key_type lower,
-                             key_type *upper,
+                             const key_type *upper,
                              search_range_callback &callback)
 {
   assert(!t.btree || t.btree == this);
@@ -329,10 +333,107 @@ mp_test1()
 
 }
 
+namespace mp_test2_ns {
+
+  static const size_t ctr_key     = 0;
+
+  static const txn_btree::key_type range_begin = 100;
+  static const txn_btree::key_type range_end   = 200;
+
+  static volatile bool running = true;
+
+  class mutate_worker : public txn_btree_worker {
+  public:
+    mutate_worker(txn_btree &btr) : txn_btree_worker(btr) {}
+    virtual void run()
+    {
+      while (running) {
+        for (size_t i = range_begin; running && i < range_end; i++) {
+        retry:
+          transaction t;
+          try {
+            txn_btree::value_type v = 0, v_ctr = 0;
+            ALWAYS_ASSERT(btr->search(t, ctr_key, v_ctr));
+            ALWAYS_ASSERT(size_t(v_ctr) > 1);
+            if (btr->search(t, i, v)) {
+              btr->remove(t, i);
+              v_ctr = (txn_btree::value_type)(size_t(v_ctr) - 1);
+            } else {
+              btr->insert(t, i, (txn_btree::value_type) i);
+              v_ctr = (txn_btree::value_type)(size_t(v_ctr) + 1);
+            }
+            btr->insert(t, ctr_key, v_ctr);
+            t.commit();
+          } catch (transaction_abort_exception &e) {
+            goto retry;
+          }
+        }
+      }
+    }
+  };
+
+  class reader_worker : public txn_btree_worker, public txn_btree::search_range_callback {
+  public:
+    reader_worker(txn_btree &btr) : txn_btree_worker(btr), ctr(0) {}
+    virtual bool invoke(txn_btree::key_type k, txn_btree::value_type v)
+    {
+      ctr++;
+      return true;
+    }
+    virtual void run()
+    {
+      while (running) {
+        try {
+          transaction t;
+          txn_btree::value_type v_ctr = 0;
+          ALWAYS_ASSERT(btr->search(t, ctr_key, v_ctr));
+          ctr = 0;
+          btr->search_range_call(t, range_begin, &range_end, *this);
+          t.commit();
+          ALWAYS_ASSERT(ctr == size_t(v_ctr));
+        } catch (transaction_abort_exception &e) {
+
+        }
+      }
+    }
+  private:
+    size_t ctr;
+  };
+}
+
+static void
+mp_test2()
+{
+  using namespace mp_test2_ns;
+
+  txn_btree btr;
+  {
+    transaction t;
+    size_t n = 0;
+    for (size_t i = range_begin; i < range_end; i++)
+      if ((i % 2) == 0) {
+        btr.insert(t, i, (txn_btree::value_type) i);
+        n++;
+      }
+    btr.insert(t, ctr_key, (txn_btree::value_type) n);
+    t.commit();
+  }
+
+  mutate_worker w0(btr);
+  reader_worker w1(btr);
+
+  running = true;
+  w0.start(); w1.start();
+  sleep(10);
+  running = false;
+  w0.join(); w1.join();
+}
+
 void
 txn_btree::Test()
 {
   //test1();
   //test2();
-  mp_test1();
+  //mp_test1();
+  mp_test2();
 }
