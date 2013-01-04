@@ -5,8 +5,10 @@
 #include <set>
 #include <sstream>
 
+
 #include "btree.h"
 #include "thread.h"
+#include "txn.h"
 #include "util.h"
 
 std::string
@@ -257,6 +259,64 @@ process:
         goto process;
       INVARIANT(n);
     }
+  }
+}
+
+void
+btree::search_range_call(key_type lower, key_type *upper, search_range_callback &callback) const
+{
+  if (unlikely(upper && *upper <= lower))
+    return;
+  leaf_node *n = NULL;
+  value_type v = 0;
+  scoped_rcu_region rcu_region;
+  search_impl(lower, v, n);
+  INVARIANT(n != NULL);
+  key_type next_key = lower;
+  key_type last_key = 0;
+  bool emitted_last_key = false;
+  while (!upper || next_key < *upper) {
+    prefetch_node(n);
+    std::vector< std::pair<key_type, value_type> > buf;
+
+    uint64_t version = n->stable_version();
+    key_type leaf_min_key = n->min_key;
+    if (leaf_min_key > next_key) {
+      // go left
+      leaf_node *left_sibling = n->prev;
+      if (unlikely(!n->check_version(version)))
+        // try this node again
+        continue;
+      // try from left_sibling
+      n = left_sibling;
+      INVARIANT(n);
+      continue;
+    }
+
+    for (size_t i = 0; i < n->key_slots_used(); i++)
+      if (n->keys[i] >= lower && (!upper || n->keys[i] < *upper))
+        buf.push_back(std::make_pair(n->keys[i], n->values[i]));
+
+    leaf_node *right_sibling = n->next;
+    key_type leaf_max_key = right_sibling ? right_sibling->min_key : 0;
+    if (unlikely(!n->check_version(version)))
+      continue;
+
+    for (size_t i = 0; i < buf.size(); i++) {
+      if (emitted_last_key && buf[i].first <= last_key)
+        continue;
+      if (!callback.invoke(buf[i].first, buf[i].second))
+        return;
+      last_key = buf[i].first;
+      emitted_last_key = true;
+    }
+
+    if (!right_sibling)
+      // we're done
+      return;
+
+    next_key = leaf_max_key;
+    n = right_sibling;
   }
 }
 
@@ -2117,20 +2177,23 @@ public:
   virtual void
   run()
   {
-    test1();
-    test2();
-    test3();
-    test4();
-    test5();
-    test6();
-    test7();
-    mp_test1();
-    mp_test2();
-    mp_test3();
-    mp_test4();
-    mp_test5();
-    mp_test6();
-    mp_test7();
+
+    transaction::Test();
+
+    //test1();
+    //test2();
+    //test3();
+    //test4();
+    //test5();
+    //test6();
+    //test7();
+    //mp_test1();
+    //mp_test2();
+    //mp_test3();
+    //mp_test4();
+    //mp_test5();
+    //mp_test6();
+    //mp_test7();
     //perf_test();
     //read_only_perf_test();
     //write_only_perf_test();

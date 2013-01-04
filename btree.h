@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <string>
 #include <vector>
 #include <utility>
 
@@ -23,7 +24,6 @@
 //#define USE_MEMCPY
 
 /** macro helpers */
-#define CACHELINE_SIZE 64
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
@@ -54,6 +54,7 @@
  * This btree does not manage the memory pointed to by value_type
  */
 class btree : public rcu_enabled {
+  friend class txn_btree;
 public:
   typedef uint64_t key_type;
   typedef uint8_t* value_type;
@@ -633,13 +634,34 @@ public:
     return search_impl(k, v, n);
   }
 
+
+  class search_range_callback {
+  public:
+    virtual ~search_range_callback() {}
+    virtual bool invoke(key_type k, value_type v) = 0;
+  };
+
+private:
+  template <typename T>
+  class type_callback_wrapper : public search_range_callback {
+  public:
+    type_callback_wrapper(T *callback) : callback(callback) {}
+    virtual bool
+    invoke(key_type k, value_type v)
+    {
+      return callback->operator()(k, v);
+    }
+  private:
+    T *callback;
+  };
+
+public:
+
   /**
    * For all keys in [lower, *upper), invoke callback in ascending order.
    * If upper is NULL, then there is no upper bound
    *
-   * Callback is expected to implement bool operator()(key_type k, value_type v),
-   * where the callback returns true if it wants to keep going, false otherwise
-   *
+
    * This function by default provides a weakly consistent view of the b-tree. For
    * instance, consider the following tree, where n = 3 is the max number of
    * keys in a node:
@@ -671,63 +693,21 @@ public:
    * A) locking mode
    * B) optimistic validation mode
    */
-  template <typename T>
   void
-  search_range(key_type lower, key_type *upper, T callback)
+  search_range_call(key_type lower, key_type *upper, search_range_callback &callback) const;
+
+
+  /**
+   * Callback is expected to implement bool operator()(key_type k, value_type v),
+   * where the callback returns true if it wants to keep going, false otherwise
+   *
+   */
+  template <typename T>
+  inline void
+  search_range(key_type lower, key_type *upper, T callback) const
   {
-    if (unlikely(upper && *upper <= lower))
-      return;
-    leaf_node *n = NULL;
-    value_type v = 0;
-    scoped_rcu_region rcu_region;
-    search_impl(lower, v, n);
-    INVARIANT(n != NULL);
-    key_type next_key = lower;
-    key_type last_key = 0;
-    bool emitted_last_key = false;
-    while (!upper || next_key < *upper) {
-      prefetch_node(n);
-      std::vector< std::pair<key_type, value_type> > buf;
-
-      uint64_t version = n->stable_version();
-      key_type leaf_min_key = n->min_key;
-      if (leaf_min_key > next_key) {
-        // go left
-        leaf_node *left_sibling = n->prev;
-        if (unlikely(!n->check_version(version)))
-          // try this node again
-          continue;
-        // try from left_sibling
-        n = left_sibling;
-        INVARIANT(n);
-        continue;
-      }
-
-      for (size_t i = 0; i < n->key_slots_used(); i++)
-        if (n->keys[i] >= lower && (!upper || n->keys[i] < *upper))
-          buf.push_back(std::make_pair(n->keys[i], n->values[i]));
-
-      leaf_node *right_sibling = n->next;
-      key_type leaf_max_key = right_sibling ? right_sibling->min_key : 0;
-      if (unlikely(!n->check_version(version)))
-        continue;
-
-      for (size_t i = 0; i < buf.size(); i++) {
-        if (emitted_last_key && buf[i].first <= last_key)
-          continue;
-        if (!callback(buf[i].first, buf[i].second))
-          return;
-        last_key = buf[i].first;
-        emitted_last_key = true;
-      }
-
-      if (!right_sibling)
-        // we're done
-        return;
-
-      next_key = leaf_max_key;
-      n = right_sibling;
-    }
+    type_callback_wrapper<T> w(&callback);
+    search_range_call(lower, upper, w);
   }
 
   /**

@@ -3,6 +3,8 @@
 
 #include <assert.h>
 
+#define CACHELINE_SIZE 64 // XXX: don't assume x86
+
 #define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(CACHELINE_SIZE)))
 #define NEVER_INLINE  __attribute__((noinline))
 #define ALWAYS_INLINE __attribute__((always_inline))
