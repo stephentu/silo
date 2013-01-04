@@ -339,8 +339,7 @@ mp_test1()
 
 namespace mp_test2_ns {
 
-  static const size_t ctr_key     = 0;
-
+  static const txn_btree::key_type ctr_key     = 0;
   static const txn_btree::key_type range_begin = 100;
   static const txn_btree::key_type range_end   = 200;
 
@@ -348,7 +347,7 @@ namespace mp_test2_ns {
 
   class mutate_worker : public txn_btree_worker {
   public:
-    mutate_worker(txn_btree &btr) : txn_btree_worker(btr) {}
+    mutate_worker(txn_btree &btr) : txn_btree_worker(btr), naborts(0) {}
     virtual void run()
     {
       while (running) {
@@ -370,16 +369,18 @@ namespace mp_test2_ns {
             btr->insert(t, ctr_key, v_ctr);
             t.commit();
           } catch (transaction_abort_exception &e) {
+            naborts++;
             goto retry;
           }
         }
       }
     }
+    size_t naborts;
   };
 
   class reader_worker : public txn_btree_worker, public txn_btree::search_range_callback {
   public:
-    reader_worker(txn_btree &btr) : txn_btree_worker(btr), validations(0), ctr(0) {}
+    reader_worker(txn_btree &btr) : txn_btree_worker(btr), validations(0), naborts(0), ctr(0) {}
     virtual bool invoke(txn_btree::key_type k, txn_btree::value_type v)
     {
       ctr++;
@@ -398,11 +399,12 @@ namespace mp_test2_ns {
           ALWAYS_ASSERT(ctr == size_t(v_ctr));
           validations++;
         } catch (transaction_abort_exception &e) {
-
+          naborts++;
         }
       }
     }
     size_t validations;
+    size_t naborts;
   private:
     size_t ctr;
   };
@@ -435,6 +437,8 @@ mp_test2()
   running = false;
   w0.join(); w1.join();
 
+  cerr << "mutate naborts: " << w0.naborts << endl;
+  cerr << "reader naborts: " << w1.naborts << endl;
   cerr << "validations: " << w1.validations << endl;
 }
 
