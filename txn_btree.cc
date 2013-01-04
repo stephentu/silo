@@ -4,6 +4,8 @@
 #include "thread.h"
 #include "util.h"
 
+#define VERBOSE(expr) ((void)0)
+
 using namespace std;
 using namespace util;
 
@@ -53,7 +55,8 @@ txn_btree::search(transaction &t, key_type k, value_type &v)
 bool
 txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
 {
-  transaction::key_range_t r(invoked ? prev_key : lower);
+  VERBOSE(cerr << "search range k: " << k << endl);
+  transaction::key_range_t r(invoked ? prev_key : lower, k);
   if (!r.is_empty_range())
     t->add_absent_range(r);
   prev_key = k;
@@ -78,6 +81,7 @@ txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
     read_rec->t = start_t;
     read_rec->r = r;
     read_rec->ln = ln;
+    VERBOSE(cerr << "read <t=" << start_t << ", r=" << size_t(r) << "> (local_read=" << local_read << ")" << endl);
     if (!local_read && r)
       ret = caller_callback->invoke(k, r);
   }
@@ -169,7 +173,7 @@ test1()
     ALWAYS_ASSERT(btr.search(t, 0, v));
     ALWAYS_ASSERT(v == (txn_btree::value_type) &recs[0]);
     t.commit();
-    cout << "------" << endl;
+    VERBOSE(cout << "------" << endl);
   }
 
   {
@@ -186,7 +190,7 @@ test1()
 
     t0.commit();
     t1.commit();
-    cout << "------" << endl;
+    VERBOSE(cout << "------" << endl);
   }
 
   {
@@ -210,7 +214,7 @@ test1()
     } catch (transaction_abort_exception &e) {
 
     }
-    cout << "------" << endl;
+    VERBOSE(cout << "------" << endl);
   }
 
   {
@@ -232,7 +236,7 @@ test1()
     } catch (transaction_abort_exception &e) {
 
     }
-    cout << "------" << endl;
+    VERBOSE(cout << "------" << endl);
   }
 
   {
@@ -243,7 +247,7 @@ test1()
     ALWAYS_ASSERT(ctr == 0);
     btr.insert(t, 15, (txn_btree::value_type) &recs[5]);
     t.commit();
-    cout << "------" << endl;
+    VERBOSE(cout << "------" << endl);
   }
 }
 
@@ -356,6 +360,7 @@ namespace mp_test2_ns {
             ALWAYS_ASSERT(btr->search(t, ctr_key, v_ctr));
             ALWAYS_ASSERT(size_t(v_ctr) > 1);
             if (btr->search(t, i, v)) {
+              ALWAYS_ASSERT(v = (txn_btree::value_type) i);
               btr->remove(t, i);
               v_ctr = (txn_btree::value_type)(size_t(v_ctr) - 1);
             } else {
@@ -374,7 +379,7 @@ namespace mp_test2_ns {
 
   class reader_worker : public txn_btree_worker, public txn_btree::search_range_callback {
   public:
-    reader_worker(txn_btree &btr) : txn_btree_worker(btr), ctr(0) {}
+    reader_worker(txn_btree &btr) : txn_btree_worker(btr), validations(0), ctr(0) {}
     virtual bool invoke(txn_btree::key_type k, txn_btree::value_type v)
     {
       ctr++;
@@ -391,11 +396,13 @@ namespace mp_test2_ns {
           btr->search_range_call(t, range_begin, &range_end, *this);
           t.commit();
           ALWAYS_ASSERT(ctr == size_t(v_ctr));
+          validations++;
         } catch (transaction_abort_exception &e) {
 
         }
       }
     }
+    size_t validations;
   private:
     size_t ctr;
   };
@@ -427,13 +434,15 @@ mp_test2()
   sleep(10);
   running = false;
   w0.join(); w1.join();
+
+  cerr << "validations: " << w1.validations << endl;
 }
 
 void
 txn_btree::Test()
 {
-  //test1();
-  //test2();
-  //mp_test1();
+  test1();
+  test2();
+  mp_test1();
   mp_test2();
 }
