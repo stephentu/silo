@@ -193,7 +193,7 @@ rcu::gc_thread_loop(void *p)
          it != elems.end(); ++it)
       it->second(it->first);
 
-    cerr << "deleted " << elems.size() << " elements" << endl;
+    //cerr << "deleted " << elems.size() << " elements" << endl;
 
     // XXX: better solution for GC intervals?
     struct timespec t;

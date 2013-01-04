@@ -70,14 +70,20 @@ public:
     inline bool
     is_locked() const
     {
-      return hdr & HDR_LOCKED_MASK;
+      return IsLocked(hdr);
+    }
+
+    static inline bool
+    IsLocked(uint64_t v)
+    {
+      return v & HDR_LOCKED_MASK;
     }
 
     inline void
     lock()
     {
-      uint8_t v = hdr;
-      while ((v & HDR_LOCKED_MASK) ||
+      uint64_t v = hdr;
+      while (IsLocked(v) ||
              !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK))
         v = hdr;
       COMPILER_MEMORY_FENCE;
@@ -86,12 +92,13 @@ public:
     inline void
     unlock()
     {
-      assert(is_locked());
       uint64_t v = hdr;
+      assert(IsLocked(v));
       uint64_t n = Version(v);
       v &= ~HDR_VERSION_MASK;
       v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       v &= ~HDR_LOCKED_MASK;
+      assert(!IsLocked(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
     }
@@ -99,7 +106,13 @@ public:
     inline size_t
     size() const
     {
-      return (hdr & HDR_SIZE_MASK) >> HDR_SIZE_SHIFT;
+      return Size(hdr);
+    }
+
+    static inline size_t
+    Size(uint64_t v)
+    {
+      return (v & HDR_SIZE_MASK) >> HDR_SIZE_SHIFT;
     }
 
     inline void
@@ -120,7 +133,7 @@ public:
     stable_version() const
     {
       uint64_t v = hdr;
-      while (is_locked())
+      while (IsLocked(v))
         v = hdr;
       COMPILER_MEMORY_FENCE;
       return v;
@@ -139,12 +152,13 @@ public:
      * record_at()'s return values must be validated using versions.
      */
     inline bool
-    record_at(tid_t t, tid_t &start_t, record_t &r)
+    record_at(tid_t t, tid_t &start_t, record_t &r) const
     {
       // because we expect t's to be relatively recent, instead of
       // doing binary search, we simply do a linear scan from the
       // end- most of the time we should find a match on the first try
       size_t n = size();
+      assert(n > 0 && n <= NVersions);
       for (ssize_t i = n - 1; i >= 0; i--)
         if (versions[i] <= t) {
           start_t = versions[i];
@@ -155,7 +169,7 @@ public:
     }
 
     inline bool
-    stable_read(tid_t t, tid_t &start_t, record_t &r)
+    stable_read(tid_t t, tid_t &start_t, record_t &r) const
     {
       while (true) {
         uint64_t v = stable_version();
@@ -172,7 +186,7 @@ public:
     is_latest_version(tid_t t) const
     {
       size_t n = size();
-      assert(n > 0);
+      assert(n > 0 && n <= NVersions);
       return versions[n - 1] <= t;
     }
 
@@ -192,7 +206,7 @@ public:
     {
       assert(is_locked());
       size_t n = size();
-      assert(n > 0);
+      assert(n > 0 && n <= NVersions);
       assert(versions[n - 1] < t);
       if (n == NVersions) {
         // drop oldest version
@@ -200,10 +214,13 @@ public:
           versions[i] = versions[i + 1];
           values[i] = values[i + 1];
         }
+        versions[NVersions - 1] = t;
+        values[NVersions - 1] = r;
+      } else {
+        versions[n] = t;
+        values[n] = r;
+        set_size(n + 1);
       }
-      versions[n] = t;
-      values[n] = r;
-      set_size((n == NVersions) ? n : (n + 1));
     }
 
     static inline logical_node *
@@ -223,6 +240,9 @@ public:
       free(n);
     }
 
+    static std::string
+    VersionInfoStr(uint64_t v);
+
   } PACKED_CACHE_ALIGNED;
 
   transaction();
@@ -233,8 +253,8 @@ public:
   // abort() always succeeds
   void abort();
 
-  static tid_t current_global_tid();
-  static tid_t get_and_incr_global_tid();
+  static tid_t current_global_tid(); // tid of the last commit
+  static tid_t incr_and_get_global_tid();
 
   static void Test();
 

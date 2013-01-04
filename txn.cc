@@ -8,7 +8,25 @@
 #include <vector>
 #include <utility>
 
+#define VERBOSE(expr) ((void)0)
+
 using namespace std;
+
+string
+transaction::logical_node::VersionInfoStr(uint64_t v)
+{
+  stringstream buf;
+  buf << "[";
+  if (IsLocked(v))
+    buf << "LOCKED";
+  else
+    buf << "-";
+  buf << " | ";
+  buf << Size(v) << " | ";
+  buf << Version(v);
+  buf << "]";
+  return buf.str();
+}
 
 transaction::transaction()
   : snapshot_tid(current_global_tid()),
@@ -35,6 +53,7 @@ transaction::commit()
   retry:
     btree::value_type v = 0;
     if (btree->underlying_btree.search(it->first, v)) {
+      VERBOSE(cout << "key " << it->first << " : logical_node " << intptr_t(v) << endl);
       logical_nodes[(logical_node *) v] = it->second;
     } else {
       logical_node *ln = logical_node::alloc();
@@ -42,55 +61,65 @@ transaction::commit()
         logical_node::release(ln);
         goto retry;
       }
+      VERBOSE(cout << "key " << it->first << " : logical_node " << intptr_t(ln) << endl);
       logical_nodes[ln] = it->second;
     }
   }
 
-  // lock the logical nodes in sort order
-  for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
-       it != logical_nodes.end(); ++it)
-    it->first->lock();
+  if (!logical_nodes.empty()) {
+    // not a read-only txn
 
-  // acquire commit tid
-  tid_t commit_tid = get_and_incr_global_tid();
-
-  // do read validation
-  for (map<key_type, read_record_t>::iterator it = read_set.begin();
-       it != read_set.end(); ++it) {
-    bool did_write = write_set.find(it->first) != write_set.end();
-    transaction::logical_node *ln = NULL;
-    if (it->second.ln) {
-      ln = it->second.ln;
-    } else {
-      btree::value_type v = 0;
-      if (btree->underlying_btree.search(it->first, v))
-        ln = (transaction::logical_node *) v;
+    // lock the logical nodes in sort order
+    for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
+         it != logical_nodes.end(); ++it) {
+      VERBOSE(cout << "locking node " << intptr_t(it->first) << endl);
+      it->first->lock();
     }
-    if (!ln)
-      continue;
-    // An optimization to be made:
-    // if the latest version is > commit_tid, and the next latest version is <
-    // snapshot_tid, then it is also ok because the latest version will be ordered
-    // after this txn, and we know its read set does not depend on our write set
-    // (since it has a txn id higher than we do)
-    if ((did_write ? ln->is_latest_version(snapshot_tid) : ln->stable_is_latest_version(snapshot_tid)))
-      continue;
-    goto do_abort;
-  }
 
-  for (vector<key_range_t>::iterator it = absent_range_set.begin();
-       it != absent_range_set.end(); ++it) {
-    txn_btree::absent_range_validation_callback c(this);
-    btree->underlying_btree.search_range_call(it->a, it->has_b ? &it->b : NULL, c);
-    if (c.failed())
+    // acquire commit tid
+    tid_t commit_tid = incr_and_get_global_tid();
+
+    // do read validation
+    for (map<key_type, read_record_t>::iterator it = read_set.begin();
+         it != read_set.end(); ++it) {
+      bool did_write = write_set.find(it->first) != write_set.end();
+      transaction::logical_node *ln = NULL;
+      if (it->second.ln) {
+        ln = it->second.ln;
+      } else {
+        btree::value_type v = 0;
+        if (btree->underlying_btree.search(it->first, v))
+          ln = (transaction::logical_node *) v;
+      }
+      if (!ln)
+        continue;
+      VERBOSE(cout << "validating key " << it->first << " @ logical_node " << intptr_t(ln) << " at snapshot_tid " << snapshot_tid << endl);
+      // An optimization to be made:
+      // if the latest version is > commit_tid, and the next latest version is <
+      // snapshot_tid, then it is also ok because the latest version will be ordered
+      // after this txn, and we know its read set does not depend on our write set
+      // (since it has a txn id higher than we do)
+      if ((did_write ? ln->is_latest_version(snapshot_tid) : ln->stable_is_latest_version(snapshot_tid)))
+        continue;
       goto do_abort;
-  }
+    }
 
-  // commit actual records
-  for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
-       it != logical_nodes.end(); ++it) {
-    it->first->write_record_at(commit_tid, it->second);
-    it->first->unlock();
+    for (vector<key_range_t>::iterator it = absent_range_set.begin();
+         it != absent_range_set.end(); ++it) {
+      VERBOSE(cout << "checking absent range: " << *it << endl);
+      txn_btree::absent_range_validation_callback c(this);
+      btree->underlying_btree.search_range_call(it->a, it->has_b ? &it->b : NULL, c);
+      if (c.failed())
+        goto do_abort;
+    }
+
+    // commit actual records
+    for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
+         it != logical_nodes.end(); ++it) {
+      VERBOSE(cout << "writing logical_node " << intptr_t(it->first) << " at commit_tid " << commit_tid << endl);
+      it->first->write_record_at(commit_tid, it->second);
+      it->first->unlock();
+    }
   }
 
   resolved = true;
@@ -98,6 +127,7 @@ transaction::commit()
   return;
 
 do_abort:
+  VERBOSE(cout << "aborting txn @ snapshot_tid " << snapshot_tid << endl);
   for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
        it != logical_nodes.end(); ++it)
     it->first->unlock();
@@ -130,9 +160,9 @@ transaction::current_global_tid()
 }
 
 transaction::tid_t
-transaction::get_and_incr_global_tid()
+transaction::incr_and_get_global_tid()
 {
-  return __sync_fetch_and_add(&global_tid, 1);
+  return __sync_add_and_fetch(&global_tid, 1);
 }
 
 bool
@@ -330,4 +360,4 @@ transaction::local_search(key_type k, record_t &v) const
   return false;
 }
 
-volatile transaction::tid_t transaction::global_tid = 1;
+volatile transaction::tid_t transaction::global_tid = MIN_TID;

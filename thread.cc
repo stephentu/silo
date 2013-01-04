@@ -55,6 +55,7 @@ ndb_thread::pthread_bootstrap(void *p)
   try {
     self->run();
   } catch (...) {
+    cerr << "[Thread " << self->p << "] - terminating due to uncaught exception" << endl;
     self->on_complete();
     throw;
   }
