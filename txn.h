@@ -93,12 +93,12 @@ public:
     unlock()
     {
       uint64_t v = hdr;
-      assert(IsLocked(v));
+      INVARIANT(IsLocked(v));
       uint64_t n = Version(v);
       v &= ~HDR_VERSION_MASK;
       v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       v &= ~HDR_LOCKED_MASK;
-      assert(!IsLocked(v));
+      INVARIANT(!IsLocked(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
     }
@@ -118,7 +118,7 @@ public:
     inline void
     set_size(size_t n)
     {
-      assert(n <= NVersions);
+      INVARIANT(n <= NVersions);
       hdr &= ~HDR_SIZE_MASK;
       hdr |= (n << HDR_SIZE_SHIFT);
     }
@@ -158,7 +158,7 @@ public:
       // doing binary search, we simply do a linear scan from the
       // end- most of the time we should find a match on the first try
       size_t n = size();
-      assert(n > 0 && n <= NVersions);
+      INVARIANT(n > 0 && n <= NVersions);
       for (ssize_t i = n - 1; i >= 0; i--)
         if (versions[i] <= t) {
           start_t = versions[i];
@@ -186,7 +186,7 @@ public:
     is_latest_version(tid_t t) const
     {
       size_t n = size();
-      assert(n > 0 && n <= NVersions);
+      INVARIANT(n > 0 && n <= NVersions);
       return versions[n - 1] <= t;
     }
 
@@ -201,13 +201,50 @@ public:
       }
     }
 
+    /**
+     * Is the valid read at snapshot_tid still consistent at commit_tid
+     */
+    inline bool
+    is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid) const
+    {
+      size_t n = size();
+      INVARIANT(n > 0 && n <= NVersions);
+
+      // fast path
+      if (likely(versions[n - 1] <= snapshot_tid))
+        return true;
+
+      // slow path
+      for (ssize_t i = n - 2 /* we already checked @ (n-1) */; i >= 0; i--)
+        if (versions[i] <= snapshot_tid) {
+          // see if theres any conflict between the version we read, and
+          // the next modification. there is no conflict (conservatively)
+          // if the next modification happens *after* our commit tid
+          INVARIANT(versions[i + 1] != commit_tid);
+          return versions[i + 1] > commit_tid;
+        }
+
+      return false;
+    }
+
+    inline bool
+    stable_is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid) const
+    {
+      while (true) {
+        uint64_t v = stable_version();
+        bool ret = is_snapshot_consistent(snapshot_tid, commit_tid);
+        if (likely(check_version(v)))
+          return ret;
+      }
+    }
+
     inline void
     write_record_at(tid_t t, record_t r)
     {
-      assert(is_locked());
+      INVARIANT(is_locked());
       size_t n = size();
-      assert(n > 0 && n <= NVersions);
-      assert(versions[n - 1] < t);
+      INVARIANT(n > 0 && n <= NVersions);
+      INVARIANT(versions[n - 1] < t);
       if (n == NVersions) {
         // drop oldest version
         for (size_t i = 0; i < NVersions - 1; i++) {
@@ -327,8 +364,13 @@ private:
 
   void add_absent_range(const key_range_t &range);
 
-  static void AssertValidRangeSet(
-      const std::vector<key_range_t> &range_set);
+#ifdef CHECK_INVARIANTS
+  static void AssertValidRangeSet(const std::vector<key_range_t> &range_set);
+#else
+  static inline ALWAYS_INLINE void
+  AssertValidRangeSet(const std::vector<key_range_t> &range_set)
+  { }
+#endif /* CHECK_INVARIANTS */
 
   static std::string PrintRangeSet(
       const std::vector<key_range_t> &range_set);
@@ -336,8 +378,11 @@ private:
   const tid_t snapshot_tid;
   bool resolved;
   txn_btree *btree;
+
+  // XXX: use hash tables for the read/write set
   std::map<key_type, read_record_t> read_set;
   std::map<key_type, record_t> write_set;
+
   std::vector<key_range_t> absent_range_set; // ranges do not overlap
 
   volatile static tid_t global_tid;

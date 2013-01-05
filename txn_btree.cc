@@ -3,8 +3,8 @@
 #include "txn_btree.h"
 #include "thread.h"
 #include "util.h"
+#include "macros.h"
 
-#define VERBOSE(expr) ((void)0)
 
 using namespace std;
 using namespace util;
@@ -12,7 +12,7 @@ using namespace util;
 bool
 txn_btree::search(transaction &t, key_type k, value_type &v)
 {
-  assert(!t.btree || t.btree == this);
+  INVARIANT(!t.btree || t.btree == this);
   t.btree = this;
 
   // priority is
@@ -36,7 +36,7 @@ txn_btree::search(transaction &t, key_type k, value_type &v)
     return false;
   } else {
     transaction::logical_node *ln = (transaction::logical_node *) underlying_v;
-    assert(ln);
+    INVARIANT(ln);
     transaction::tid_t start_t;
     transaction::record_t r;
     if (unlikely(!ln->stable_read(t.snapshot_tid, start_t, r))) {
@@ -70,7 +70,7 @@ txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
     t->read_set.find(k);
   if (it == t->read_set.end()) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
-    assert(ln);
+    INVARIANT(ln);
     transaction::tid_t start_t;
     transaction::record_t r;
     if (unlikely(!ln->stable_read(t->snapshot_tid, start_t, r))) {
@@ -81,7 +81,8 @@ txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
     read_rec->t = start_t;
     read_rec->r = r;
     read_rec->ln = ln;
-    VERBOSE(cerr << "read <t=" << start_t << ", r=" << size_t(r) << "> (local_read=" << local_read << ")" << endl);
+    VERBOSE(cerr << "read <t=" << start_t << ", r=" << size_t(r)
+                 << "> (local_read=" << local_read << ")" << endl);
     if (!local_read && r)
       ret = caller_callback->invoke(k, r);
   }
@@ -94,10 +95,17 @@ bool
 txn_btree::absent_range_validation_callback::invoke(key_type k, value_type v)
 {
   transaction::logical_node *ln = (transaction::logical_node *) v;
-  assert(ln);
-  //cout << "absent_range_validation_callback: key " << k << " found ln " << intptr_t(ln) << endl;
+  INVARIANT(ln);
+  VERBOSE(cout << "absent_range_validation_callback: key " << k
+               << " found ln " << intptr_t(ln) << endl);
   bool did_write = t->write_set.find(k) != t->write_set.end();
-  failed_flag = did_write ? !ln->is_latest_version(0) : !ln->stable_is_latest_version(0);
+  // XXX: I don't think it matters here whether or not we use snapshot_tid or
+  // MIN_TID, since this record did not exist @ snapshot_tid, so any new
+  // entries must be > snapshot_tid, and therefore using MIN_TID or
+  // snapshot_tid gives equivalent results.
+  failed_flag = did_write ?
+    !ln->is_snapshot_consistent(transaction::MIN_TID, commit_tid) :
+    !ln->stable_is_snapshot_consistent(transaction::MIN_TID, commit_tid);
   return !failed_flag;
 }
 
@@ -107,7 +115,7 @@ txn_btree::search_range_call(transaction &t,
                              const key_type *upper,
                              search_range_callback &callback)
 {
-  assert(!t.btree || t.btree == this);
+  INVARIANT(!t.btree || t.btree == this);
   t.btree = this;
 
   // many cases to consider:
@@ -120,13 +128,14 @@ txn_btree::search_range_call(transaction &t,
   // 2) for each logical_node node *not* returned from the scan, we need
   //    to record its absense. we optimize this by recording the absense
   //    of contiguous ranges
-  if (upper && *upper <= lower)
+  if (unlikely(upper && *upper <= lower))
     return;
   txn_search_range_callback c(&t, lower, upper, &callback);
   underlying_btree.search_range_call(lower, upper, c);
   if (c.caller_stopped)
     return;
-  if (c.invoked && c.prev_key == (key_type)-1)
+  // stupid special case for the max key
+  if (unlikely(c.invoked && c.prev_key == (key_type)-1))
     return;
   if (upper)
     t.add_absent_range(transaction::key_range_t(c.invoked ? (c.prev_key + 1): lower, *upper));
@@ -137,15 +146,13 @@ txn_btree::search_range_call(transaction &t,
 void
 txn_btree::insert_impl(transaction &t, key_type k, value_type v)
 {
-  assert(!t.btree || t.btree == this);
+  INVARIANT(!t.btree || t.btree == this);
   t.btree = this;
   t.write_set[k] = v;
 }
 
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
-
-
   inline bool
   operator()(txn_btree::key_type k, txn_btree::value_type v) const
   {

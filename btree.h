@@ -17,34 +17,10 @@
 #include "static_assert.h"
 
 /** options */
-#define NODE_PREFETCH
-#define CHECK_INVARIANTS
+
 //#define LOCK_OWNERSHIP_CHECKING
 //#define USE_MEMMOVE
 //#define USE_MEMCPY
-
-/** macro helpers */
-
-#ifdef CHECK_INVARIANTS
-  #define INVARIANT(expr) ALWAYS_ASSERT(expr)
-#else
-  #define INVARIANT(expr) ((void)0)
-#endif /* CHECK_INVARIANTS */
-
-// XXX: would be nice if we checked these during single threaded execution
-#define SINGLE_THREADED_INVARIANT(expr) ((void)0)
-
-#ifdef NODE_PREFETCH
-  #define prefetch_node(n) \
-    do { \
-      __builtin_prefetch((uint8_t *)n); \
-      __builtin_prefetch(((uint8_t *)n) + CACHELINE_SIZE); \
-      __builtin_prefetch(((uint8_t *)n) + 2 * CACHELINE_SIZE); \
-      __builtin_prefetch(((uint8_t *)n) + 3 * CACHELINE_SIZE); \
-    } while (0)
-#else
-  #define prefetch_node(n) ((void)0)
-#endif /* NODE_PREFETCH */
 
 /**
  * This btree maps fixed-size keys of type key_type -> value_type, where

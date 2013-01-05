@@ -41,7 +41,7 @@ public:
   inline void
   insert(transaction &t, key_type k, value_type v)
   {
-    assert(v);
+    INVARIANT(v);
     insert_impl(t, k, v);
   }
 
@@ -74,11 +74,12 @@ private:
   };
 
   struct absent_range_validation_callback : public search_range_callback {
-    absent_range_validation_callback(transaction *t)
-      : t(t), failed_flag(false) {}
+    absent_range_validation_callback(transaction *t, transaction::tid_t commit_tid)
+      : t(t), commit_tid(commit_tid), failed_flag(false) {}
     inline bool failed() const { return failed_flag; }
     virtual bool invoke(key_type k, value_type v);
     transaction *const t;
+    const transaction::tid_t commit_tid;
     bool failed_flag;
   };
 

@@ -8,8 +8,6 @@
 #include <vector>
 #include <utility>
 
-#define VERBOSE(expr) ((void)0)
-
 using namespace std;
 
 string
@@ -38,13 +36,13 @@ transaction::transaction()
 transaction::~transaction()
 {
   // transaction shouldn't fall out of scope w/o resolution
-  assert(resolved);
+  INVARIANT(resolved);
 }
 
 void
 transaction::commit()
 {
-  assert(!resolved);
+  INVARIANT(!resolved);
 
   // fetch logical_nodes for insert
   map<logical_node *, record_t> logical_nodes;
@@ -57,6 +55,8 @@ transaction::commit()
       logical_nodes[(logical_node *) v] = it->second;
     } else {
       logical_node *ln = logical_node::alloc();
+      // XXX: underlying btree api should return the existing value if
+      // insert fails- this allows us to avoid having to do another search
       if (!btree->underlying_btree.insert_if_absent(it->first, (btree::value_type) ln)) {
         logical_node::release(ln);
         goto retry;
@@ -84,22 +84,26 @@ transaction::commit()
          it != read_set.end(); ++it) {
       bool did_write = write_set.find(it->first) != write_set.end();
       transaction::logical_node *ln = NULL;
-      if (it->second.ln) {
+      if (likely(it->second.ln)) {
         ln = it->second.ln;
       } else {
         btree::value_type v = 0;
         if (btree->underlying_btree.search(it->first, v))
           ln = (transaction::logical_node *) v;
       }
-      if (!ln)
+      if (unlikely(!ln))
         continue;
-      VERBOSE(cout << "validating key " << it->first << " @ logical_node " << intptr_t(ln) << " at snapshot_tid " << snapshot_tid << endl);
-      // An optimization to be made:
+      VERBOSE(cout << "validating key " << it->first << " @ logical_node "
+                   << intptr_t(ln) << " at snapshot_tid " << snapshot_tid << endl);
+
+      // An optimization:
       // if the latest version is > commit_tid, and the next latest version is <
       // snapshot_tid, then it is also ok because the latest version will be ordered
       // after this txn, and we know its read set does not depend on our write set
       // (since it has a txn id higher than we do)
-      if ((did_write ? ln->is_latest_version(snapshot_tid) : ln->stable_is_latest_version(snapshot_tid)))
+      if (likely(did_write ?
+            ln->is_snapshot_consistent(snapshot_tid, commit_tid) :
+            ln->stable_is_snapshot_consistent(snapshot_tid, commit_tid)))
         continue;
       goto do_abort;
     }
@@ -107,16 +111,17 @@ transaction::commit()
     for (vector<key_range_t>::iterator it = absent_range_set.begin();
          it != absent_range_set.end(); ++it) {
       VERBOSE(cout << "checking absent range: " << *it << endl);
-      txn_btree::absent_range_validation_callback c(this);
+      txn_btree::absent_range_validation_callback c(this, commit_tid);
       btree->underlying_btree.search_range_call(it->a, it->has_b ? &it->b : NULL, c);
-      if (c.failed())
+      if (unlikely(c.failed()))
         goto do_abort;
     }
 
     // commit actual records
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      VERBOSE(cout << "writing logical_node " << intptr_t(it->first) << " at commit_tid " << commit_tid << endl);
+      VERBOSE(cout << "writing logical_node " << intptr_t(it->first)
+                   << " at commit_tid " << commit_tid << endl);
       it->first->write_record_at(commit_tid, it->second);
       it->first->unlock();
     }
@@ -148,7 +153,7 @@ transaction::clear()
 void
 transaction::abort()
 {
-  assert(!resolved);
+  INVARIANT(!resolved);
   resolved = true;
   clear();
 }
@@ -201,7 +206,7 @@ transaction::add_absent_range(const key_range_t &range)
 
   if (it == absent_range_set.end()) {
     if (!absent_range_set.empty() && absent_range_set.back().b == range.a) {
-      assert(absent_range_set.back().has_b);
+      INVARIANT(absent_range_set.back().has_b);
       absent_range_set.back().has_b = range.has_b;
       absent_range_set.back().b = range.b;
     } else {
@@ -271,20 +276,22 @@ transaction::add_absent_range(const key_range_t &range)
   swap(absent_range_set, new_absent_range_set);
 }
 
+#ifdef CHECK_INVARIANTS
 void
 transaction::AssertValidRangeSet(const vector<key_range_t> &range_set)
 {
   if (range_set.empty())
     return;
   key_range_t last = range_set.front();
-  assert(!last.is_empty_range());
+  INVARIANT(!last.is_empty_range());
   for (vector<key_range_t>::const_iterator it = range_set.begin() + 1;
        it != range_set.end(); ++it) {
-    assert(!it->is_empty_range());
-    assert(last.has_b);
-    assert(last.b < it->a);
+    INVARIANT(!it->is_empty_range());
+    INVARIANT(last.has_b);
+    INVARIANT(last.b < it->a);
   }
 }
+#endif /* CHECK_INVARIANTS */
 
 string
 transaction::PrintRangeSet(const vector<key_range_t> &range_set)
