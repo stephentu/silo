@@ -45,7 +45,7 @@ rcu::rcu_mutex()
       delete sl;
     }
   }
-  assert(l);
+  INVARIANT(l);
   return l;
 }
 
@@ -67,7 +67,7 @@ rcu::unregister_sync(pthread_t p)
     return NULL;
   sync *s = it->second;
   epoch_t local_epoch = s->local_epoch;
-  assert(local_epoch == global_epoch || local_epoch == (global_epoch - 1));
+  INVARIANT(local_epoch == global_epoch || local_epoch == (global_epoch - 1));
   if (local_epoch == global_epoch) {
     // move both local_queue entries
     global_queues[0].insert(
@@ -82,7 +82,7 @@ rcu::unregister_sync(pthread_t p)
     // only move local_queue[s->local_epoch % 2] entries
 
     // should have no entries in the global epoch, since it isn't there yet
-    assert(s->local_queues[(local_epoch + 1) % 2].empty());
+    INVARIANT(s->local_queues[(local_epoch + 1) % 2].empty());
     global_queues[local_epoch % 2].insert(
         global_queues[local_epoch % 2].end(),
         s->local_queues[local_epoch % 2].begin(),
@@ -116,14 +116,14 @@ rcu::enable()
 void
 rcu::region_begin()
 {
-  if (!tl_sync) {
-    assert(!tl_crit_section_depth);
+  if (unlikely(!tl_sync)) {
+    INVARIANT(!tl_crit_section_depth);
     enable();
     tl_sync = new sync(global_epoch);
     register_sync(pthread_self(), tl_sync);
   }
-  assert(gc_thread_started);
-  if (!tl_crit_section_depth++) {
+  INVARIANT(gc_thread_started);
+  if (likely(!tl_crit_section_depth++)) {
     tl_sync->local_epoch = global_epoch;
     ALWAYS_ASSERT(pthread_spin_lock(&tl_sync->local_critical_mutex) == 0);
   }
@@ -132,19 +132,19 @@ rcu::region_begin()
 void
 rcu::free(void *p, deleter_t fn)
 {
-  assert(tl_sync);
-  assert(tl_crit_section_depth);
-  assert(gc_thread_started);
+  INVARIANT(tl_sync);
+  INVARIANT(tl_crit_section_depth);
+  INVARIANT(gc_thread_started);
   tl_sync->local_queues[tl_sync->local_epoch % 2].push_back(delete_entry(p, fn));
 }
 
 void
 rcu::region_end()
 {
-  assert(tl_sync);
-  assert(tl_crit_section_depth);
-  assert(gc_thread_started);
-  if (!--tl_crit_section_depth)
+  INVARIANT(tl_sync);
+  INVARIANT(tl_crit_section_depth);
+  INVARIANT(gc_thread_started);
+  if (likely(!--tl_crit_section_depth))
     ALWAYS_ASSERT(pthread_spin_unlock(&tl_sync->local_critical_mutex) == 0);
 }
 
@@ -168,7 +168,7 @@ rcu::gc_thread_loop(void *p)
         sync *s = it->second;
         epoch_t local_epoch = s->local_epoch;
         if (local_epoch != global_epoch) {
-          assert(local_epoch == cleaning_epoch);
+          INVARIANT(local_epoch == cleaning_epoch);
           scoped_spinlock l0(&s->local_critical_mutex);
           s->local_epoch = global_epoch;
         }

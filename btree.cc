@@ -2165,6 +2165,6 @@ btree::Test()
   //mp_test6();
   //mp_test7();
   //perf_test();
-  //read_only_perf_test();
+  read_only_perf_test();
   //write_only_perf_test();
 }

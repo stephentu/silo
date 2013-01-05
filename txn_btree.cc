@@ -602,8 +602,8 @@ mp_test3()
 }
 
 namespace read_only_perf_ns {
-  const size_t nkeys = 140000000; // 140M
-  //const size_t nkeys = 100000; // 100K
+  //const size_t nkeys = 140000000; // 140M
+  const size_t nkeys = 100000; // 100K
 
   unsigned long seeds[] = {
     9576455804445224191ULL,
