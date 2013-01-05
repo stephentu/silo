@@ -442,6 +442,156 @@ mp_test2()
   cerr << "validations: " << w1.validations << endl;
 }
 
+namespace mp_test3_ns {
+
+  static const size_t amount_per_person = 100;
+  static const size_t naccounts = 100;
+  struct record { uint64_t v; };
+
+  class transfer_worker : public txn_btree_worker {
+  public:
+    transfer_worker(txn_btree &btr, unsigned long seed) : txn_btree_worker(btr), seed(seed) {}
+    ~transfer_worker()
+    {
+      for (vector<record *>::iterator it = recs.begin();
+           it != recs.end(); ++it)
+        delete *it;
+    }
+    virtual void run()
+    {
+      fast_random r(seed);
+      for (size_t i = 0; i < 300000; i++) {
+        record *arec_new = new record;
+        record *brec_new = new record;
+        recs.push_back(arec_new);
+        recs.push_back(brec_new);
+      retry:
+        try {
+          transaction t;
+          txn_btree::key_type a = r.next() % naccounts;
+          txn_btree::key_type b = r.next() % naccounts;
+          while (unlikely(a == b))
+            b = r.next() % naccounts;
+          txn_btree::value_type arecv, brecv;
+          ALWAYS_ASSERT(btr->search(t, a, arecv));
+          ALWAYS_ASSERT(btr->search(t, b, brecv));
+          record *arec = (record *) arecv;
+          record *brec = (record *) brecv;
+          if (arec->v == 0) {
+            t.abort();
+          } else {
+            uint64_t xfer = (arec->v > 1) ? (r.next() % (arec->v - 1) + 1) : 1;
+            arec_new->v = arec->v - xfer;
+            brec_new->v = brec->v + xfer;
+            btr->insert(t, a, (txn_btree::value_type) arec_new);
+            btr->insert(t, b, (txn_btree::value_type) brec_new);
+            t.commit();
+          }
+        } catch (transaction_abort_exception &e) {
+          goto retry;
+        }
+      }
+    }
+  private:
+    const unsigned long seed;
+    vector<record *> recs;
+  };
+
+  class invariant_worker_scan : public txn_btree_worker, public txn_btree::search_range_callback {
+  public:
+    invariant_worker_scan(txn_btree &btr)
+      : txn_btree_worker(btr), running(true), validations(0), naborts(0), sum(0) {}
+    virtual void run()
+    {
+      while (running) {
+        try {
+          transaction t;
+          sum = 0;
+          btr->search_range_call(t, 0, NULL, *this);
+          t.commit();
+          ALWAYS_ASSERT(sum == (naccounts * amount_per_person));
+          validations++;
+        } catch (transaction_abort_exception &e) {
+          naborts++;
+        }
+      }
+    }
+    virtual bool invoke(txn_btree::key_type k, txn_btree::value_type v)
+    {
+      sum += ((record *) v)->v;
+      return true;
+    }
+    volatile bool running;
+    size_t validations;
+    size_t naborts;
+    uint64_t sum;
+  };
+
+  class invariant_worker_1by1 : public txn_btree_worker {
+  public:
+    invariant_worker_1by1(txn_btree &btr)
+      : txn_btree_worker(btr), running(true), validations(0), naborts(0) {}
+    virtual void run()
+    {
+      while (running) {
+        try {
+          transaction t;
+          uint64_t sum = 0;
+          for (txn_btree::key_type i = 0; i < naccounts; i++) {
+            txn_btree::value_type v = 0;
+            ALWAYS_ASSERT(btr->search(t, i, v));
+            sum += ((record *) v)->v;
+          }
+          t.commit();
+          ALWAYS_ASSERT(sum == (naccounts * amount_per_person));
+          validations++;
+        } catch (transaction_abort_exception &e) {
+          naborts++;
+        }
+      }
+    }
+    volatile bool running;
+    size_t validations;
+    size_t naborts;
+  };
+
+}
+
+static void
+mp_test3()
+{
+  using namespace mp_test3_ns;
+
+  vector<record *> recs;
+  txn_btree btr;
+  {
+    transaction t;
+    for (txn_btree::key_type i = 0; i < naccounts; i++) {
+      record *r = new record;
+      recs.push_back(r);
+      r->v = amount_per_person;
+      btr.insert(t, i, (txn_btree::value_type) r);
+    }
+    t.commit();
+  }
+
+  transfer_worker w0(btr, 342), w1(btr, 93852), w2(btr, 23085), w3(btr, 859438989);
+  invariant_worker_scan w4(btr);
+  invariant_worker_1by1 w5(btr);
+
+  w0.start(); w1.start(); w2.start(); w3.start(); w4.start(); w5.start();
+  w0.join(); w1.join(); w2.join(); w3.join();
+  w4.running = false; w5.running = false;
+  w4.join(); w5.join();
+
+  cerr << "scan validations: " << w4.validations << ", scan aborts: " << w4.naborts << endl;
+  cerr << "1by1 validations: " << w5.validations << ", 1by1 aborts: " << w5.naborts << endl;
+
+  for (vector<record *>::iterator it = recs.begin();
+      it != recs.end(); ++it)
+    delete *it;
+}
+
 void
 txn_btree::Test()
 {
@@ -449,4 +599,5 @@ txn_btree::Test()
   test2();
   mp_test1();
   mp_test2();
+  mp_test3();
 }
