@@ -52,6 +52,7 @@ transaction::commit()
     btree::value_type v = 0;
     if (btree->underlying_btree.search(it->first, v)) {
       VERBOSE(cout << "key " << it->first << " : logical_node " << intptr_t(v) << endl);
+      prefetch_node(v);
       logical_nodes[(logical_node *) v] = it->second;
     } else {
       logical_node *ln = logical_node::alloc();
@@ -62,6 +63,7 @@ transaction::commit()
         goto retry;
       }
       VERBOSE(cout << "key " << it->first << " : logical_node " << intptr_t(ln) << endl);
+      prefetch_node(ln);
       logical_nodes[ln] = it->second;
     }
   }

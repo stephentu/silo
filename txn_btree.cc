@@ -5,7 +5,6 @@
 #include "util.h"
 #include "macros.h"
 
-
 using namespace std;
 using namespace util;
 
@@ -37,6 +36,7 @@ txn_btree::search(transaction &t, key_type k, value_type &v)
   } else {
     transaction::logical_node *ln = (transaction::logical_node *) underlying_v;
     INVARIANT(ln);
+    prefetch_node(ln);
     transaction::tid_t start_t;
     transaction::record_t r;
     if (unlikely(!ln->stable_read(t.snapshot_tid, start_t, r))) {
@@ -71,6 +71,7 @@ txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
   if (it == t->read_set.end()) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
     INVARIANT(ln);
+    prefetch_node(ln);
     transaction::tid_t start_t;
     transaction::record_t r;
     if (unlikely(!ln->stable_read(t->snapshot_tid, start_t, r))) {
@@ -96,6 +97,7 @@ txn_btree::absent_range_validation_callback::invoke(key_type k, value_type v)
 {
   transaction::logical_node *ln = (transaction::logical_node *) v;
   INVARIANT(ln);
+  prefetch_node(ln);
   VERBOSE(cout << "absent_range_validation_callback: key " << k
                << " found ln " << intptr_t(ln) << endl);
   bool did_write = t->write_set.find(k) != t->write_set.end();
@@ -159,7 +161,7 @@ struct test_callback_ctr {
     (*ctr)++;
     return true;
   }
-  size_t *ctr;
+  size_t *const ctr;
 };
 
 static void
