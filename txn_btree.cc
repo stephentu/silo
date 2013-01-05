@@ -601,12 +601,109 @@ mp_test3()
     delete *it;
 }
 
+namespace read_only_perf_ns {
+  const size_t nkeys = 140000000; // 140M
+  //const size_t nkeys = 100000; // 100K
+
+  unsigned long seeds[] = {
+    9576455804445224191ULL,
+    3303315688255411629ULL,
+    3116364238170296072ULL,
+    641702699332002535ULL,
+    17755947590284612420ULL,
+    13349066465957081273ULL,
+    16389054441777092823ULL,
+    2687412585397891607ULL,
+    16665670053534306255ULL,
+    5166823197462453937ULL,
+    1252059952779729626ULL,
+    17962022827457676982ULL,
+    940911318964853784ULL,
+    479878990529143738ULL,
+    250864516707124695ULL,
+    8507722621803716653ULL,
+  };
+
+  volatile bool running = false;
+
+  class worker : public txn_btree_worker {
+  public:
+    worker(unsigned int seed, txn_btree &btr) : txn_btree_worker(btr), n(0), seed(seed) {}
+    virtual void run()
+    {
+      fast_random r(seed);
+      while (running) {
+        btree::key_type k = r.next() % nkeys;
+      retry:
+        try {
+          transaction t;
+          btree::value_type v = 0;
+          bool found = btr->search(t, k, v);
+          t.commit();
+          ALWAYS_ASSERT(found);
+          ALWAYS_ASSERT(v == (btree::value_type) (k + 1));
+        } catch (transaction_abort_exception &e) {
+          goto retry;
+        }
+        n++;
+      }
+    }
+    uint64_t n;
+  private:
+    unsigned int seed;
+  };
+}
+
+static void
+read_only_perf()
+{
+  using namespace read_only_perf_ns;
+
+  txn_btree btr;
+
+  {
+    transaction t;
+    for (size_t i = 0; i < nkeys; i++)
+      btr.insert(t, i, (btree::value_type) (i + 1));
+    t.commit();
+    std::cerr << "btree loaded, test starting" << std::endl;
+  }
+
+  std::vector<worker *> workers;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
+    workers.push_back(new worker(seeds[i], btr));
+
+  running = true;
+  util::timer t;
+  COMPILER_MEMORY_FENCE;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
+    workers[i]->start();
+  sleep(30);
+  COMPILER_MEMORY_FENCE;
+  running = false;
+  COMPILER_MEMORY_FENCE;
+  uint64_t total_n = 0;
+  for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++) {
+    workers[i]->join();
+    total_n += workers[i]->n;
+    delete workers[i];
+  }
+
+  double agg_throughput = double(total_n) / (double(t.lap()) / 1000000.0);
+  double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
+
+  std::cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << std::endl;
+  std::cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << std::endl;
+}
+
 void
 txn_btree::Test()
 {
-  test1();
-  test2();
-  mp_test1();
-  mp_test2();
-  mp_test3();
+  //test1();
+  //test2();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+
+  read_only_perf();
 }

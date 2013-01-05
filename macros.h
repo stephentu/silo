@@ -5,7 +5,7 @@
 
 /** options */
 #define NODE_PREFETCH
-#define CHECK_INVARIANTS
+//#define CHECK_INVARIANTS
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 

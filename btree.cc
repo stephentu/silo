@@ -251,14 +251,13 @@ process:
       internal_node *internal = AsInternal(cur);
       key_search_ret kret = internal->key_lower_bound_search(k);
       ssize_t ret = kret.first;
-      size_t n = kret.second;
       if (ret != -1)
         cur = internal->children[ret + 1];
       else
         cur = internal->children[0];
       if (unlikely(!internal->check_version(version)))
         goto process;
-      INVARIANT(n);
+      INVARIANT(kret.second);
     }
   }
 }
