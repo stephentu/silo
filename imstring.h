@@ -3,11 +3,15 @@
 
 #include <stdint.h>
 #include <string.h>
+
+#include <algorithm>
 #include <string>
 
+#include "rcu.h"
+
 /**
- * Semi-immutable string- It is not fully immutable in order to
- * support assignment and swapping
+ * Not-really-immutable string, for perf reasons. Also uses
+ * RCU for GC
  */
 class imstring {
 public:
@@ -30,6 +34,13 @@ public:
     replaceWith(that);
   }
 
+  inline void
+  swap(imstring &that)
+  {
+    std::swap(p, that.p);
+    std::swap(l, that.l);
+  }
+
   imstring &
   operator=(const imstring &that)
   {
@@ -40,7 +51,7 @@ public:
   ~imstring()
   {
     if (p)
-      delete []p;
+      rcu::free_array(p);
   }
 
   inline const uint8_t *
@@ -56,14 +67,9 @@ public:
   }
 
   inline void
-  swap(imstring &that)
+  reset()
   {
-    uint8_t *ptemp = p;
-    size_t ltemp = l;
-    p = that.p;
-    l = that.l;
-    that.p = ptemp;
-    that.l = ltemp;
+
   }
 
 private:
@@ -72,7 +78,7 @@ private:
   replaceWith(const imstring &that)
   {
     if (p)
-      delete [] p;
+      rcu::free_array(p);
     p = new uint8_t[that.size()];
     l = that.size();
     memcpy(p, that.data(), l);
@@ -81,5 +87,14 @@ private:
   uint8_t *p;
   size_t l;
 };
+
+namespace std {
+  template <>
+  inline void
+  swap(imstring &a, imstring &b)
+  {
+    a.swap(b);
+  }
+}
 
 #endif /* _NDB_IMSTRING_H_ */

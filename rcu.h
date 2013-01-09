@@ -22,6 +22,13 @@ public:
     delete p;
   }
 
+  template <typename T>
+  static inline void
+  deleter_array(T *p)
+  {
+    delete p;
+  }
+
   // all RCU threads interact w/ the RCU subsystem via
   // a sync struct
   struct sync {
@@ -51,6 +58,13 @@ public:
   free(T *p)
   {
     free(p, deleter<T>);
+  }
+
+  template <typename T>
+  static inline void
+  free_array(T *p)
+  {
+    free(p, deleter_array<T>);
   }
 
   static void region_end();
