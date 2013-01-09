@@ -12,6 +12,7 @@
 #include <vector>
 #include <utility>
 
+#include "varkey.h"
 #include "macros.h"
 #include "rcu.h"
 #include "static_assert.h"
@@ -19,20 +20,15 @@
 /** options */
 
 //#define LOCK_OWNERSHIP_CHECKING
-//#define USE_MEMMOVE
-//#define USE_MEMCPY
 
 /**
- * This btree maps fixed-size keys of type key_type -> value_type, where
- * key_type is uint64_t and value_type is a pointer to un-interpreted byte
- * string
- *
  * This btree does not manage the memory pointed to by value_type
  */
 class btree : public rcu_enabled {
   friend class txn_btree;
 public:
-  typedef uint64_t key_type;
+  typedef varkey key_type;
+  typedef uint64_t key_slice;
   typedef uint8_t* value_type;
 
   // public to assist in testing
@@ -98,7 +94,7 @@ private:
      * [0, key_slots_used) are valid, and elems in positions
      * [key_slots_used, NKeysPerNode) are empty
      */
-    key_type keys[NKeysPerNode];
+    key_slice keys[NKeysPerNode];
 
     inline bool
     is_leaf_node() const
@@ -326,34 +322,39 @@ private:
 
     static std::string VersionInfoStr(uint64_t v);
 
+
+
+
     /**
      * keys[key_search(k).first] == k if key_search(k).first != -1
-     * key does not exist otherwise
+     * key does not exist otherwise. considers key length also
      */
     inline key_search_ret
-    key_search(key_type k) const
+    key_search(key_slice k, size_t len) const
     {
       size_t n = key_slots_used();
       ssize_t lower = 0;
       ssize_t upper = n;
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
-        key_type k0 = keys[i];
-        if (k0 == k)
-          return key_search_ret(i, n);
-        else if (k0 > k)
-          upper = i;
-        else
+        key_slice k0 = keys[i];
+        size_t len0 = keyslice_length(i);
+        if (k0 < k || (k0 == k && len0 < len))
           lower = i + 1;
+        else if (k0 == k && len0 == len)
+          return key_search_ret(i, n);
+        else
+          return upper = i;
       }
       return key_search_ret(-1, n);
     }
 
     /**
-     * tightest lower bound key, -1 if no such key exists
+     * tightest lower bound key, -1 if no such key exists. operates only
+     * on key slices (internal nodes have unique key slices)
      */
     inline key_search_ret
-    key_lower_bound_search(key_type k) const
+    key_lower_bound_search(key_slice k, size_t len) const
     {
       ssize_t ret = -1;
       size_t n = key_slots_used();
@@ -361,14 +362,15 @@ private:
       ssize_t upper = n;
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
-        key_type k0 = keys[i];
-        if (k0 == k)
-          return key_search_ret(i, n);
-        else if (k0 > k)
-          upper = i;
-        else {
+        key_slice k0 = keys[i];
+        size_t len0 = keyslice_length(i);
+        if (k0 < k || (k0 == k && len0 < len)) {
           ret = i;
           lower = i + 1;
+        } else if (k0 == k && len0 == len) {
+          return key_search_ret(i, n);
+        } else {
+          return upper = i;
         }
       }
       return key_search_ret(ret, n);
@@ -376,24 +378,40 @@ private:
 
     // [min_key, max_key)
     void
-    base_invariant_checker(const key_type *min_key,
-                           const key_type *max_key,
+    base_invariant_checker(const key_slice *min_key,
+                           const key_slice *max_key,
                            bool is_root) const;
 
     /** manually simulated virtual function (so we don't make node virtual) */
     void
-    invariant_checker(const key_type *min_key,
-                      const key_type *max_key,
+    invariant_checker(const key_slice *min_key,
+                      const key_slice *max_key,
                       const node *left_sibling,
                       const node *right_sibling,
                       bool is_root) const;
   };
 
   struct leaf_node : public node {
-    key_type min_key;
-    value_type values[NKeysPerNode];
+    union value_or_node_ptr {
+      value_type v;
+      node *n;
+    };
+
+    key_slice min_key; // really is min_key's key slice
+    value_or_node_ptr values[NKeysPerNode];
+
+    // format is:
+    // [ slice_length | type | unused ]
+    // [    0:4       |  4:5 |  5:8   ]
+    uint8_t lengths[NKeysPerNode];
+
     leaf_node *prev;
     leaf_node *next;
+
+    // fields below here are not expected to fit in
+    // 4-cachelines, and are thus not prefetched with the node
+
+    imstring suffixes[NKeysPerNode];
 
     leaf_node()
       : min_key(0), prev(NULL), next(NULL)
@@ -401,9 +419,38 @@ private:
       hdr = 0;
     }
 
+    static const uint64_t LEN_LEN_MASK = 0xf;
+
+    static const uint64_t LEN_TYPE_SHIFT = 4;
+    static const uint64_t LEN_TYPE_MASK = 0x1 << LEN_TYPE_SHIFT;
+
+    inline size_t
+    keyslice_length(size_t n) const
+    {
+      INVARIANT(n < NKeysPerNode);
+      return lengths[n] & LEN_LEN_MASK;
+    }
+
+    inline bool
+    value_is_layer(size_t n) const
+    {
+      INVARIANT(n < NKeysPerNode);
+      return lengths[n] & LEN_TYPE_MASK;
+    }
+
+    inline void
+    value_set_layer(size_t n)
+    {
+      INVARIANT(n < NKeysPerNode);
+      INVARIANT(is_modifying());
+      INVARIANT(keyslice_length(n) == 9);
+      INVARIANT(!value_is_layer(n));
+      lengths[n] |= LEN_TYPE_MASK;
+    }
+
     void
-    invariant_checker_impl(const key_type *min_key,
-                           const key_type *max_key,
+    invariant_checker_impl(const key_slice *min_key,
+                           const key_slice *max_key,
                            const node *left_sibling,
                            const node *right_sibling,
                            bool is_root) const;
@@ -454,9 +501,59 @@ private:
       hdr = 1;
     }
 
+    /**
+     * keys[key_search(k).first] == k if key_search(k).first != -1
+     * key does not exist otherwise. operates ony on key slices
+     * (internal nodes have unique key slices)
+     */
+    inline key_search_ret
+    key_search(key_slice k) const
+    {
+      size_t n = key_slots_used();
+      ssize_t lower = 0;
+      ssize_t upper = n;
+      while (lower < upper) {
+        ssize_t i = (lower + upper) / 2;
+        key_slice k0 = keys[i];
+        if (k0 == k)
+          return key_search_ret(i, n);
+        else if (k0 > k)
+          upper = i;
+        else
+          lower = i + 1;
+      }
+      return key_search_ret(-1, n);
+    }
+
+    /**
+     * tightest lower bound key, -1 if no such key exists. operates only
+     * on key slices (internal nodes have unique key slices)
+     */
+    inline key_search_ret
+    key_lower_bound_search(key_slice k) const
+    {
+      ssize_t ret = -1;
+      size_t n = key_slots_used();
+      ssize_t lower = 0;
+      ssize_t upper = n;
+      while (lower < upper) {
+        ssize_t i = (lower + upper) / 2;
+        key_slice k0 = keys[i];
+        if (k0 == k)
+          return key_search_ret(i, n);
+        else if (k0 > k)
+          upper = i;
+        else {
+          ret = i;
+          lower = i + 1;
+        }
+      }
+      return key_search_ret(ret, n);
+    }
+
     void
-    invariant_checker_impl(const key_type *min_key,
-                           const key_type *max_key,
+    invariant_checker_impl(const key_slice *min_key,
+                           const key_slice *max_key,
                            const node *left_sibling,
                            const node *right_sibling,
                            bool is_root) const;
@@ -574,6 +671,7 @@ public:
     _static_assert(sizeof(internal_node) <= NodeSize);
 #endif /* LOCK_OWNERSHIP_CHECKING */
 
+    _static_assert(NKeysPerNode > 10); // so we can always do a split
     _static_assert(sizeof(leaf_node) % 64 == 0);
     _static_assert(sizeof(internal_node) % 64 == 0);
 
@@ -603,18 +701,16 @@ public:
   }
 
   inline bool
-  search(key_type k, value_type &v) const
+  search(const key_type &k, value_type &v) const
   {
-    leaf_node *n;
     scoped_rcu_region rcu_region;
-    return search_impl(k, v, n);
+    return search_impl(k, v);
   }
-
 
   class search_range_callback {
   public:
     virtual ~search_range_callback() {}
-    virtual bool invoke(key_type k, value_type v) = 0;
+    virtual bool invoke(const key_type &k, value_type v) = 0;
   };
 
 private:
@@ -623,12 +719,12 @@ private:
   public:
     type_callback_wrapper(T *callback) : callback(callback) {}
     virtual bool
-    invoke(key_type k, value_type v)
+    invoke(const key_type &k, value_type v)
     {
       return callback->operator()(k, v);
     }
   private:
-    T *callback;
+    T *const callback;
   };
 
 public:
@@ -670,17 +766,18 @@ public:
    * B) optimistic validation mode
    */
   void
-  search_range_call(key_type lower, const key_type *upper, search_range_callback &callback) const;
-
+  search_range_call(const key_type &lower,
+                    const key_type *upper,
+                    search_range_callback &callback) const;
 
   /**
-   * Callback is expected to implement bool operator()(key_type k, value_type v),
+   * Callback is expected to implement bool operator()(key_slice k, value_type v),
    * where the callback returns true if it wants to keep going, false otherwise
    *
    */
   template <typename T>
   inline void
-  search_range(key_type lower, const key_type *upper, T callback) const
+  search_range(const key_type &lower, const key_slice *upper, T callback) const
   {
     type_callback_wrapper<T> w(&callback);
     search_range_call(lower, upper, w);
@@ -691,9 +788,9 @@ public:
    * If k exists with a different mapping, still returns false
    */
   inline bool
-  insert(key_type k, value_type v)
+  insert(const key_type &k, value_type v)
   {
-    return insert_impl(k, v, false);
+    return insert_impl(&root, k, v, false);
   }
 
   /**
@@ -701,12 +798,18 @@ public:
    * if k inserted, false otherwise (k exists already)
    */
   inline bool
-  insert_if_absent(key_type k, value_type v)
+  insert_if_absent(const key_type &k, value_type v)
   {
-    return insert_impl(k, v, true);
+    return insert_impl(&root, k, v, true);
   }
 
-  bool remove(key_type k);
+  inline bool
+  remove(const key_type &k)
+  {
+    return remove_impl(&root);
+  }
+
+  bool remove_impl(node **root_location, const key_type &k);
 
   size_t size() const;
 
@@ -724,14 +827,18 @@ private:
   static inline ALWAYS_INLINE void
   sift_right(T *array, size_t p, size_t n)
   {
-#ifdef USE_MEMMOVE
-    if (unlikely(p >= n))
-      return;
-    memmove(&array[p + 1], &array[p], (n - p) * sizeof(T));
-#else
     for (size_t i = n; i > p; i--)
       array[i] = array[i - 1];
-#endif /* USE_MEMMOVE */
+  }
+
+  // use swap() to do moves, for efficiency- avoid this
+  // variant when using primitive arrays
+  template <typename T>
+  static inline ALWAYS_INLINE void
+  sift_swap_right(T *array, size_t p, size_t n)
+  {
+    for (size_t i = n; i > p; i--)
+      std::swap(array[i], array[i - 1]);
   }
 
   /**
@@ -744,12 +851,18 @@ private:
   {
     if (unlikely(p + 1 >= n))
       return;
-#ifdef USE_MEMMOVE
-    memmove(&array[p], &array[p + 1], (n - 1 - p) * sizeof(T));
-#else
     for (size_t i = p; i < n - 1; i++)
       array[i] = array[i + 1];
-#endif /* USE_MEMMOVE */
+  }
+
+  template <typename T>
+  static inline ALWAYS_INLINE void
+  sift_swap_left(T *array, size_t p, size_t n)
+  {
+    if (unlikely(p + 1 >= n))
+      return;
+    for (size_t i = p; i < n - 1; i++)
+      std::swap(array[i], array[i + 1]);
   }
 
   /**
@@ -759,19 +872,21 @@ private:
   static inline ALWAYS_INLINE void
   copy_into(T *dest, T *source, size_t p, size_t n)
   {
-#ifdef USE_MEMCPY
-    if (unlikely(p >= n))
-      return;
-    memcpy(dest, &source[p], (n - p) * sizeof(T));
-#else
     for (size_t i = p; i < n; i++)
       *dest++ = source[i];
-#endif /* USE_MEMCPY */
   }
 
-  bool search_impl(key_type k, value_type &v, leaf_node *&n) const;
+  template <typename T>
+  static inline ALWAYS_INLINE void
+  swap_with(T *dest, T *source, size_t p, size_t n)
+  {
+    for (size_t i = p; i < n; i++)
+      std::swap(*dest++, source[i]);
+  }
 
-  bool insert_impl(key_type k, value_type v, bool only_if_absent);
+  bool search_impl(node **root_location, const key_type &k, value_type &v) const;
+
+  bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent);
 
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
@@ -793,10 +908,10 @@ private:
    */
   insert_status
   insert0(node *n,
-          key_type k,
+          const key_type &k,
           value_type v,
           bool only_if_absent,
-          key_type &min_key,
+          key_slice &min_key,
           node *&new_node,
           std::vector<insert_parent_entry> &parents,
           std::vector<node *> &locked_nodes);
@@ -817,8 +932,22 @@ private:
   {
     INVARIANT(leaf->key_slots_used() == n);
     INVARIANT(pos < n);
+    if (leaf->value_is_layer(n)) {
+#ifdef CHECK_INVARIANTS
+      leaf->values[n].lock():
+#endif
+      leaf->values[n].mark_deleting();
+      INVARIANT(leaf->values[n].is_leaf_node());
+      INVARIANT(leaf->values[n].key_slots_used == 0);
+      leaf_node::release((leaf_node *) leaf->values[n]);
+#ifdef CHECK_INVARIANTS
+      leaf->values[n].unlock():
+#endif
+    }
     sift_left(leaf->keys, pos, n);
     sift_left(leaf->values, pos, n);
+    sift_left(leaf->lengths, pos, n);
+    sift_swap_left(leaf->suffixes, pos, n);
     leaf->dec_key_slots_used();
   }
 
@@ -858,12 +987,12 @@ private:
 
   remove_status
   remove0(node *np,
-          key_type *min_key,
-          key_type *max_key,
-          key_type k,
+          key_slice *min_key,
+          key_slice *max_key,
+          const key_type &k,
           node *left_node,
           node *right_node,
-          key_type &new_key,
+          key_slice &new_key,
           btree::node *&replace_node,
           std::vector<remove_parent_entry> &parents,
           std::vector<node *> &locked_nodes);

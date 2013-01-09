@@ -57,8 +57,8 @@ btree::node::VersionInfoStr(uint64_t v)
 }
 
 void
-btree::node::base_invariant_checker(const key_type *min_key,
-                                    const key_type *max_key,
+btree::node::base_invariant_checker(const key_slice *min_key,
+                                    const key_slice *max_key,
                                     bool is_root) const
 {
   ALWAYS_ASSERT(!is_locked());
@@ -78,7 +78,7 @@ btree::node::base_invariant_checker(const key_type *min_key,
     ALWAYS_ASSERT(!min_key || keys[i] >= *min_key);
     ALWAYS_ASSERT(!max_key || keys[i] < *max_key);
   }
-  key_type prev = keys[0];
+  key_slice prev = keys[0];
   for (size_t i = 1; i < n; i++) {
     ALWAYS_ASSERT(keys[i] > prev);
     prev = keys[i];
@@ -86,8 +86,8 @@ btree::node::base_invariant_checker(const key_type *min_key,
 }
 
 void
-btree::node::invariant_checker(const key_type *min_key,
-                               const key_type *max_key,
+btree::node::invariant_checker(const key_slice *min_key,
+                               const key_slice *max_key,
                                const node *left_sibling,
                                const node *right_sibling,
                                bool is_root) const
@@ -98,8 +98,8 @@ btree::node::invariant_checker(const key_type *min_key,
 }
 
 void
-btree::leaf_node::invariant_checker_impl(const key_type *min_key,
-                                         const key_type *max_key,
+btree::leaf_node::invariant_checker_impl(const key_slice *min_key,
+                                         const key_slice *max_key,
                                          const node *left_sibling,
                                          const node *right_sibling,
                                          bool is_root) const
@@ -110,7 +110,7 @@ btree::leaf_node::invariant_checker_impl(const key_type *min_key,
     return;
   ALWAYS_ASSERT(key_slots_used() > 0);
   bool first = true;
-  key_type k = keys[0];
+  key_slice k = keys[0];
   const leaf_node *cur = this;
   while (cur) {
     size_t n = cur->key_slots_used();
@@ -124,8 +124,8 @@ btree::leaf_node::invariant_checker_impl(const key_type *min_key,
 }
 
 void
-btree::internal_node::invariant_checker_impl(const key_type *min_key,
-                                             const key_type *max_key,
+btree::internal_node::invariant_checker_impl(const key_slice *min_key,
+                                             const key_slice *max_key,
                                              const node *left_sibling,
                                              const node *right_sibling,
                                              bool is_root) const
@@ -189,31 +189,55 @@ btree::recursive_delete(node *n)
 }
 
 bool
-btree::search_impl(key_type k, value_type &v, leaf_node *&n) const
+btree::search_impl(const key_type &k, value_type &v) const
 {
+  // use the retry label to completely start over from the
+  // root of the entire b-tree
 retry:
+  key_type kcur(k);
+  uint64_t kslice = kcur.slice();
+  size_t kslicelen = std::min(kcur.size(), 9);
   node *cur = root;
   while (true) {
+
+    // each iteration of this while loop tries to descend
+    // down node "cur", looking for key kcur
     prefetch_node(cur);
+
+    // use the process label to skip node prefetch
 process:
     uint64_t version = cur->stable_version();
     if (node::IsDeleting(version))
+      // XXX: maybe we can only retry at the parent of this node...
       goto retry;
     if (leaf_node *leaf = AsLeafCheck(cur)) {
-      key_search_ret kret = leaf->key_search(k);
+      key_search_ret kret = leaf->key_search(kslice, kslicelen);
       ssize_t ret = kret.first;
       if (ret != -1) {
         // found
-        v = leaf->values[ret];
+        leaf_node::value_or_node_ptr vn = leaf->values[ret];
+        bool is_layer = kslicelen == 9 && leaf->value_is_layer(ret);
         if (unlikely(!leaf->check_version(version)))
           goto process;
-        n = leaf;
-        return true;
+        if (!is_layer) {
+          // check suffixes
+          if (kslicelen == 9 && varkey(suffixes[ret]) != kcur.shift())
+            return false;
+          v = vn.v;
+          return true;
+        }
+
+        // search the next layer
+        cur = vn.n;
+        kcur = kcur.shift();
+        kslice = kcur.slice();
+        kslicelen = std::min(kcur.size(), 9);
+        continue;
       }
 
       // leaf might have lost responsibility for key k during the descend. we
       // need to check this and adjust accordingly
-      if (unlikely(k < leaf->min_key)) {
+      if (unlikely(kslice < leaf->min_key)) {
         // try to go left
         leaf_node *left_sibling = leaf->prev;
         if (unlikely(!leaf->check_version(version)))
@@ -231,25 +255,22 @@ process:
         if (unlikely(!leaf->check_version(version)))
           goto process;
         prefetch_node(right_sibling);
-        if (unlikely(!right_sibling)) {
-          n = leaf;
+        if (unlikely(!right_sibling))
           return false;
-        }
         uint64_t right_version = right_sibling->stable_version();
-        key_type right_min_key = right_sibling->min_key;
+        key_slice right_min_key = right_sibling->min_key;
         if (unlikely(!right_sibling->check_version(right_version)))
           goto process;
-        if (unlikely(k >= right_min_key)) {
+        if (unlikely(kslice >= right_min_key)) {
           cur = right_sibling;
           continue;
         }
       }
 
-      n = leaf;
       return false;
     } else {
       internal_node *internal = AsInternal(cur);
-      key_search_ret kret = internal->key_lower_bound_search(k);
+      key_search_ret kret = internal->key_lower_bound_search(kslice);
       ssize_t ret = kret.first;
       if (ret != -1)
         cur = internal->children[ret + 1];
@@ -263,7 +284,7 @@ process:
 }
 
 void
-btree::search_range_call(key_type lower, const key_type *upper, search_range_callback &callback) const
+btree::search_range_call(const key_type &lower, const key_type *upper, search_range_callback &callback) const
 {
   if (unlikely(upper && *upper <= lower))
     return;
@@ -272,15 +293,15 @@ btree::search_range_call(key_type lower, const key_type *upper, search_range_cal
   scoped_rcu_region rcu_region;
   search_impl(lower, v, n);
   INVARIANT(n != NULL);
-  key_type next_key = lower;
-  key_type last_key = 0;
+  key_slice next_key = lower;
+  key_slice last_key = 0;
   bool emitted_last_key = false;
   while (!upper || next_key < *upper) {
     prefetch_node(n);
-    std::vector< std::pair<key_type, value_type> > buf;
+    std::vector< std::pair<key_slice, value_type> > buf;
 
     uint64_t version = n->stable_version();
-    key_type leaf_min_key = n->min_key;
+    key_slice leaf_min_key = n->min_key;
     if (leaf_min_key > next_key) {
       // go left
       leaf_node *left_sibling = n->prev;
@@ -298,7 +319,7 @@ btree::search_range_call(key_type lower, const key_type *upper, search_range_cal
         buf.push_back(std::make_pair(n->keys[i], n->values[i]));
 
     leaf_node *right_sibling = n->next;
-    key_type leaf_max_key = right_sibling ? right_sibling->min_key : 0;
+    key_slice leaf_max_key = right_sibling ? right_sibling->min_key : 0;
     if (unlikely(!n->check_version(version)))
       continue;
 
@@ -320,16 +341,17 @@ btree::search_range_call(key_type lower, const key_type *upper, search_range_cal
   }
 }
 
+// XXX: requires that root_location is a stable memory location
 bool
-btree::insert_impl(key_type k, value_type v, bool only_if_absent)
+btree::insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent)
 {
 retry:
-  key_type mk;
+  key_slice mk;
   node *ret;
   std::vector<insert_parent_entry> parents;
   std::vector<node *> locked_nodes;
   scoped_rcu_region rcu_region;
-  node *local_root = root;
+  node *local_root = *root_location;
   insert_status status =
     insert0(local_root, k, v, only_if_absent, mk, ret, parents, locked_nodes);
   switch (status) {
@@ -345,7 +367,7 @@ retry:
       INVARIANT(local_root->is_modifying());
       INVARIANT(local_root->is_lock_owner());
       INVARIANT(local_root->is_root());
-      INVARIANT(local_root == root);
+      INVARIANT(local_root == *root_location);
       internal_node *new_root = internal_node::alloc();
 #ifdef CHECK_INVARIANTS
       new_root->lock();
@@ -359,7 +381,7 @@ retry:
       new_root->set_root();
       local_root->clear_root();
       COMPILER_MEMORY_FENCE;
-      root = new_root;
+      *root_location = new_root;
       // locks are still held here
       UnlockNodes(locked_nodes);
       return true;
@@ -368,16 +390,17 @@ retry:
   return false;
 }
 
+// XXX: like insert(), requires a stable memory location
 bool
-btree::remove(key_type k)
+btree::remove_impl(node **root_location, const key_type &k)
 {
 retry:
-  key_type new_key;
+  key_slice new_key;
   node *replace_node;
   std::vector<remove_parent_entry> parents;
   std::vector<node *> locked_nodes;
   scoped_rcu_region rcu_region;
-  node *local_root = root;
+  node *local_root = *root_location;
   remove_status status = remove0(local_root,
       NULL, /* min_key */
       NULL, /* max_key */
@@ -399,11 +422,11 @@ retry:
       INVARIANT(local_root->is_deleting());
       INVARIANT(local_root->is_lock_owner());
       INVARIANT(local_root->is_root());
-      INVARIANT(local_root == root);
+      INVARIANT(local_root == *root_location);
       replace_node->set_root();
       local_root->clear_root();
       COMPILER_MEMORY_FENCE;
-      root = replace_node;
+      *root_location = replace_node;
       // locks are still held here
       UnlockNodes(locked_nodes);
       return true;
@@ -447,14 +470,17 @@ process:
 
 btree::insert_status
 btree::insert0(node *n,
-               key_type k,
+               const key_type &k,
                value_type v,
                bool only_if_absent,
-               key_type &min_key,
+               key_slice &min_key,
                node *&new_node,
                std::vector<insert_parent_entry> &parents,
                std::vector<node *> &locked_nodes)
 {
+  uint64_t kslice = k.slice();
+  size_t kslicelen = std::min(k.size(), 9);
+
   prefetch_node(n);
   if (leaf_node *leaf = AsLeafCheck(n)) {
     // locked nodes are acquired bottom to top
@@ -467,38 +493,110 @@ btree::insert0(node *n,
     // responsibility for k, before we proceed
     if (unlikely(leaf->is_deleting()))
       return UnlockAndReturn(locked_nodes, I_RETRY);
-    if (unlikely(k < leaf->min_key))
+    if (unlikely(kslice < leaf->min_key))
       return UnlockAndReturn(locked_nodes, I_RETRY);
     if (likely(leaf->next)) {
       uint64_t right_version = leaf->next->stable_version();
-      key_type right_min_key = leaf->next->min_key;
+      key_slice right_min_key = leaf->next->min_key;
       if (unlikely(!leaf->next->check_version(right_version)))
         return UnlockAndReturn(locked_nodes, I_RETRY);
-      if (unlikely(k >= right_min_key))
+      if (unlikely(kslice >= right_min_key))
         return UnlockAndReturn(locked_nodes, I_RETRY);
     }
 
-    // we know now that leaf is responsible for k, so we can proceed
+    // we know now that leaf is responsible for kslice, so we can proceed
 
-    key_search_ret kret = leaf->key_lower_bound_search(k);
+    // use 0 for slice length, so we can a pointer <= all elements
+    // with the same slice
+    key_search_ret kret = leaf->key_lower_bound_search(kslice, 0);
     ssize_t ret = kret.first;
-    if (ret != -1 && leaf->keys[ret] == k) {
-      if (!only_if_absent)
-        leaf->values[ret] = v;
-      // easy case- we don't modify the node itself
-      return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
+    size_t n = kret.second;
+
+    // count the number of values already here with the same kslice.
+    size_t nslice = 0;
+    ssize_t lenmatch = -1;
+    ssize_t lenlowerbound = ret;
+    if (ret != -1) {
+      for (size_t i = ret; i < n; i++) {
+        INVARIANT(leaf->keys[i] >= kslice);
+        if (leaf->keys[i] == kslice) {
+          nslice++;
+          size_t kslicelen0 = leaf->keyslice_length(l);
+          if (kslicelen0 <= kslicelen) {
+            INVARIANT(lenmatch == -1);
+            lenlowerbound = i;
+            if (kslicelen0 == kslicelen)
+              lenmatch = i;
+          }
+        } else {
+          break;
+        }
+      }
     }
 
-    size_t n = kret.second;
-    // ret + 1 is the slot we want the new key to go into, in the leaf node
+    // len match case
+    if (lenmatch != -1) {
+      // exact match case
+      if (kslicelen <= 8 ||
+          (!leaf->value_is_layer(lenmatch) && varkey(leaf->suffixes[lenmatch]) == k.shift())) {
+        if (!only_if_absent)
+          leaf->values[lenmatch].v = v;
+        // easy case- we don't modify the node itself
+        return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
+      }
+      INVARIANT(kslicelen == 9);
+      if (leaf->value_is_layer(lenmatch)) {
+        // need to insert in next level btree (using insert_impl())
+        node **root_location = &leaf->values[lenmatch].n;
+        insert_impl(root_location, k.shift(), v, only_if_absent);
+        return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
+      } else {
+        // need to create a new btree layer, and add both existing key and
+        // new key to it
+
+        // XXX: need to mark modifying because we cannot change both the
+        // value and the type atomically
+        leaf->mark_modifying();
+
+        leaf_node *new_root = leaf_node::alloc();
+#ifdef CHECK_INVARIANTS
+        new_root->lock();
+        new_root->mark_modifying();
+        locked_nodes.push_back(new_root);
+#endif /* CHECK_INVARIANTS */
+        new_root->set_root();
+        key_type old_slice(leaf->suffixes[lenmatch]);
+        new_root->keys[0] = old_slice.slice();
+        new_root->values[0] = leaf->values[lenmatch];
+        new_root->lengths[0] = std::min(old_slice.size(), 9);
+        if (new_root->lengths[0] == 9)
+          new_root->suffixes[0].swap(imstring(old_slice.data() + 8, old_slice.size() - 8));
+        leaf->values[lenmatch].n = new_root;
+        leaf->suffixes[lenmatch].swap(imstring());
+        leaf->value_set_layer(lenmatch);
+        node **root_location = &leaf->values[lenmatch].n;
+        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent);
+        if (!ret)
+          INVARIANT(false);
+        return UnlockAndReturn(locked_nodes, I_NONE_MOD);
+    }
+
+    // lenlowerbound + 1 is the slot we want the new key to go into, in the leaf node
     if (n < NKeysPerNode) {
       // also easy case- we only need to make local modifications
       leaf->mark_modifying();
 
-      sift_right(leaf->keys, ret + 1, n);
-      leaf->keys[ret + 1] = k;
-      sift_right(leaf->values, ret + 1, n);
-      leaf->values[ret + 1] = v;
+      sift_right(leaf->keys, lenlowerbound + 1, n);
+      leaf->keys[lenlowerbound + 1] = k;
+      sift_right(leaf->values, lenlowerbound + 1, n);
+      leaf->values[lenlowerbound + 1] = v;
+      sift_right(leaf->lengths, lenlowerbound + 1, n);
+      leaf->lengths[lenlowerbound + 1] = kslicelen;
+      sift_right(leaf->suffixes, lenlowerbound + 1, n);
+      if (kslicelen == 9)
+        leaf->suffixes[lenlowerbound + 1].swap(imstring(k.data() + 8, k.size() - 8));
+      else
+        leaf->suffixes[lenlowerbound + 1].swap(imstring());
       leaf->inc_key_slots_used();
 
       return UnlockAndReturn(locked_nodes, I_NONE_MOD);
@@ -558,32 +656,70 @@ btree::insert0(node *n,
       locked_nodes.push_back(new_leaf);
 #endif /* CHECK_INVARIANTS */
 
-      if (ret + 1 >= NMinKeysPerNode) {
-        // put new key in new leaf
-        size_t pos = ret + 1 - NMinKeysPerNode;
+      // compute how many keys the smaller node would have if we put the
+      // new key in the left (old) or right (new) side of the split.
+      // then choose the split which maximizes the mininum.
+      //
+      // XXX: do this in a more elegant way
 
-        copy_into(&new_leaf->keys[0], leaf->keys, NMinKeysPerNode, ret + 1);
-        new_leaf->keys[pos] = k;
-        copy_into(&new_leaf->keys[pos + 1], leaf->keys, ret + 1, NKeysPerNode);
+      pair<size_t, size_t> new_in_left, new_in_right;
 
-        copy_into(&new_leaf->values[0], leaf->values, NMinKeysPerNode, ret + 1);
+      // at this point, [ret, ret + nslice) contains the indices
+      // which all share the same keyslice
+
+      // compute new_in_left
+      new_in_left.first = std::max(NMinKeysPerNode, nslice ? ret + nslice : lenlowerbound + 1) + 1;
+      new_in_left.second = (NKeysPerNode + 1) - new_in_left.first;
+
+      // compute new_in_right
+      new_in_right.first = std::min(NMinKeysPerNode, nslice ? ret : lenlowerbound + 1);
+      new_in_right.second = (NKeysPerNode + 1) - new_in_right.first;
+
+      size_t new_in_left_min = std::min(new_in_left.first, new_in_left.second);
+      size_t new_in_right_min = std::min(new_in_right.first, new_in_right.second);
+
+      if (new_in_left_min < new_in_right_min) {
+        // put new key in new leaf (right)
+        size_t pos = lenlowerbound + 1 - new_in_right.first;
+
+        copy_into(&new_leaf->keys[0], leaf->keys, new_in_right.first, lenlowerbound + 1);
+        new_leaf->keys[pos] = kslice;
+        copy_into(&new_leaf->keys[pos + 1], leaf->keys, lenlowerbound + 1, NKeysPerNode);
+
+        copy_into(&new_leaf->values[0], leaf->values, new_in_right.first, lenlowerbound + 1);
         new_leaf->values[pos] = v;
-        copy_into(&new_leaf->values[pos + 1], leaf->values, ret + 1, NKeysPerNode);
+        copy_into(&new_leaf->values[pos + 1], leaf->values, lenlowerbound + 1, NKeysPerNode);
 
-        leaf->set_key_slots_used(NMinKeysPerNode);
-        new_leaf->set_key_slots_used(NKeysPerNode - NMinKeysPerNode + 1);
+        copy_into(&new_leaf->lengths[0], leaf->lengths, new_in_right.first, lenlowerbound + 1);
+        new_leaf->lengths[pos] = kslicelen;
+        copy_into(&new_leaf->lengths[pos + 1], leaf->lengths, lenlowerbound + 1, NKeysPerNode);
+
+        swap_with(&new_leaf->suffixes[0], leaf->suffixes, new_in_right.first, lenlowerbound + 1);
+        new_leaf->suffixes[pos].swap(
+            (kslicelen == 9) ? imstring(k.data() + 8, k.size() - 8) : imstring());
+        swap_with(&new_leaf->suffixes[pos + 1], leaf->suffixes, lenlowerbound + 1, NKeysPerNode);
+
+        leaf->set_key_slots_used(new_in_right.first);
+        new_leaf->set_key_slots_used(new_in_right.second);
       } else {
         // put new key in original leaf
-        copy_into(&new_leaf->keys[0], leaf->keys, NMinKeysPerNode, NKeysPerNode);
-        copy_into(&new_leaf->values[0], leaf->values, NMinKeysPerNode, NKeysPerNode);
+        copy_into(&new_leaf->keys[0], leaf->keys, new_in_left.first - 1, NKeysPerNode);
+        copy_into(&new_leaf->values[0], leaf->values, new_in_left.first - 1, NKeysPerNode);
+        copy_into(&new_leaf->lengths[0], leaf->lengths, new_in_left.first - 1, NKeysPerNode);
+        swap_with(&new_leaf->suffixes[0], leaf->suffixes, new_in_left.first - 1, NKeysPerNode);
 
-        sift_right(leaf->keys, ret + 1, NMinKeysPerNode);
-        leaf->keys[ret + 1] = k;
-        sift_right(leaf->values, ret + 1, NMinKeysPerNode);
-        leaf->values[ret + 1] = v;
+        sift_right(leaf->keys, lenlowerbound + 1, new_in_left.first - 1);
+        leaf->keys[lenlowerbound + 1] = kslice;
+        sift_right(leaf->values, lenlowerbound + 1, new_in_left.first - 1);
+        leaf->values[lenlowerbound + 1] = v;
+        sift_right(leaf->lengths, lenlowerbound + 1, new_in_left.first - 1);
+        leaf->lengths[lenlowerbound + 1] = kslicelen;
+        sift_swap_right(leaf->suffixes, lenlowerbound + 1, new_in_left.first - 1);
+        leaf->suffixes[lenlowerbound + 1].swap(
+            (kslicelen == 9) ? imstring(k.data() + 8, k.size() - 8) : imstring());
 
-        leaf->set_key_slots_used(NMinKeysPerNode + 1);
-        new_leaf->set_key_slots_used(NKeysPerNode - NMinKeysPerNode);
+        leaf->set_key_slots_used(new_in_left.first);
+        new_leaf->set_key_slots_used(new_in_left.second);
       }
 
       // pointer adjustment
@@ -603,7 +739,7 @@ btree::insert0(node *n,
     uint64_t version = internal->stable_version();
     if (unlikely(node::IsDeleting(version)))
       return UnlockAndReturn(locked_nodes, I_RETRY);
-    key_search_ret kret = internal->key_lower_bound_search(k);
+    key_search_ret kret = internal->key_lower_bound_search(kslice);
     ssize_t ret = kret.first;
     size_t n = kret.second;
     size_t child_idx = (ret == -1) ? 0 : ret + 1;
@@ -611,7 +747,7 @@ btree::insert0(node *n,
     if (unlikely(!internal->check_version(version)))
       return UnlockAndReturn(locked_nodes, I_RETRY);
     parents.push_back(insert_parent_entry(internal, version));
-    key_type mk = 0;
+    key_slice mk = 0;
     node *new_child = NULL;
     insert_status status =
       insert0(child_ptr, k, v, only_if_absent, mk, new_child, parents, locked_nodes);
@@ -702,16 +838,19 @@ btree::insert0(node *n,
  */
 btree::remove_status
 btree::remove0(node *np,
-               key_type *min_key,
-               key_type *max_key,
-               key_type k,
+               key_slice *min_key,
+               key_slice *max_key,
+               const key_type &k,
                node *left_node,
                node *right_node,
-               key_type &new_key,
+               key_slice &new_key,
                btree::node *&replace_node,
                std::vector<remove_parent_entry> &parents,
                std::vector<node *> &locked_nodes)
 {
+  uint64_t kslice = k.slice();
+  size_t kslicelen = std::min(k.size(), 9);
+
   prefetch_node(np);
   if (leaf_node *leaf = AsLeafCheck(np)) {
 
@@ -731,7 +870,7 @@ btree::remove0(node *np,
       return UnlockAndReturn(locked_nodes, R_RETRY);
     if (likely(leaf->next)) {
       uint64_t right_version = leaf->next->stable_version();
-      key_type right_min_key = leaf->next->min_key;
+      key_slice right_min_key = leaf->next->min_key;
       if (unlikely(!leaf->next->check_version(right_version)))
         return UnlockAndReturn(locked_nodes, R_RETRY);
       if (unlikely(k >= right_min_key))
@@ -740,10 +879,26 @@ btree::remove0(node *np,
 
     // we know now that leaf is responsible for k, so we can proceed
 
-    key_search_ret kret = leaf->key_search(k);
+    key_search_ret kret = leaf->key_search(kslice, kslicelen);
     ssize_t ret = kret.first;
     if (ret == -1)
       return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
+    if (kslicelen == 9) {
+      if (leaf->value_is_layer(ret)) {
+        node **root_location = &leaf->values[ret].n;
+        remove_impl(root_location, k.shift());
+        node *layer_n = *root_location;
+        bool layer_leaf = layef_n->is_leaf_node();
+        // XXX: could also re-merge back when layer size becomes 1, but
+        // no need for now
+        if (!layer_leaf || layer_n)
+          return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
+      } else {
+        // suffix check
+        if (varkey(leaf->suffixes[ret]) != k.shift())
+          return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
+      }
+    }
     size_t n = kret.second;
     if (n > NMinKeysPerNode) {
       leaf->mark_modifying();
@@ -831,6 +986,11 @@ btree::remove0(node *np,
           leaf->keys[n - 1] = right_sibling->keys[0];
           sift_left(leaf->values, ret, n);
           leaf->values[n - 1] = right_sibling->values[0];
+          sift_left(leaf->lengths, ret, n);
+          leaf->lengths[n - 1] = right_sibling->lengths[0];
+          sift_left(leaf->lengths, ret, n);
+          leaf->lengths[n - 1] = right_sibling->lengths[0];
+
           sift_left(right_sibling->keys, 0, right_n);
           sift_left(right_sibling->values, 0, right_n);
           right_sibling->dec_key_slots_used();
@@ -923,15 +1083,15 @@ btree::remove0(node *np,
     size_t n = kret.second;
     size_t child_idx = (ret == -1) ? 0 : ret + 1;
     node *child_ptr = internal->children[child_idx];
-    key_type *child_min_key = child_idx == 0 ? NULL : &internal->keys[child_idx - 1];
-    key_type *child_max_key = child_idx == n ? NULL : &internal->keys[child_idx];
+    key_slice *child_min_key = child_idx == 0 ? NULL : &internal->keys[child_idx - 1];
+    key_slice *child_max_key = child_idx == n ? NULL : &internal->keys[child_idx];
     node *child_left_sibling = child_idx == 0 ? NULL : internal->children[child_idx - 1];
     node *child_right_sibling = child_idx == n ? NULL : internal->children[child_idx + 1];
     if (unlikely(!internal->check_version(version)))
       return UnlockAndReturn(locked_nodes, R_RETRY);
     parents.push_back(remove_parent_entry(internal, left_node, right_node, version));
     INVARIANT(n > 0);
-    key_type nk;
+    key_slice nk;
     node *rn;
     remove_status status = remove0(child_ptr,
         child_min_key,
@@ -1351,10 +1511,10 @@ test5()
 namespace test6_ns {
   struct scan_callback {
     typedef std::vector<
-      std::pair< btree::key_type, btree::value_type > > kv_vec;
+      std::pair< btree::key_slice, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(btree::key_type k, btree::value_type v) const
+    operator()(btree::key_slice k, btree::value_type v) const
     {
       data->push_back(std::make_pair(k, v));
       return true;
@@ -1376,7 +1536,7 @@ test6()
   using namespace test6_ns;
 
   scan_callback::kv_vec data;
-  btree::key_type max_key = 600;
+  btree::key_slice max_key = 600;
   btr.search_range(500, &max_key, scan_callback(&data));
   ALWAYS_ASSERT(data.size() == 100);
   for (size_t i = 0; i < 100; i++) {
@@ -1653,9 +1813,9 @@ mp_test4()
 namespace mp_test5_ns {
 
   static const size_t niters = 100000;
-  static const btree::key_type max_key = 45;
+  static const btree::key_slice max_key = 45;
 
-  typedef std::set<btree::key_type> key_set;
+  typedef std::set<btree::key_slice> key_set;
 
   struct summary {
     key_set inserts;
@@ -1671,7 +1831,7 @@ namespace mp_test5_ns {
       // 60% search, 30% insert, 10% remove
       for (size_t i = 0; i < niters; i++) {
         double choice = double(rand_r(&s)) / double(RAND_MAX);
-        btree::key_type k = rand_r(&s) % max_key;
+        btree::key_slice k = rand_r(&s) % max_key;
         if (choice < 0.6) {
           btree::value_type v = 0;
           if (btr->search(k, v))
@@ -1741,11 +1901,11 @@ namespace mp_test6_ns {
   static const size_t ninsertkeys_perthread = 100000;
   static const size_t nremovekeys_perthread = 100000;
 
-  typedef std::vector<btree::key_type> key_vec;
+  typedef std::vector<btree::key_slice> key_vec;
 
   class insert_worker : public btree_worker {
   public:
-    insert_worker(const std::vector<btree::key_type> &keys, btree &btr)
+    insert_worker(const std::vector<btree::key_slice> &keys, btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -1753,12 +1913,12 @@ namespace mp_test6_ns {
         btr->insert(keys[i], (btree::value_type) keys[i]);
     }
   private:
-    std::vector<btree::key_type> keys;
+    std::vector<btree::key_slice> keys;
   };
 
   class remove_worker : public btree_worker {
   public:
-    remove_worker(const std::vector<btree::key_type> &keys, btree &btr)
+    remove_worker(const std::vector<btree::key_slice> &keys, btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -1766,7 +1926,7 @@ namespace mp_test6_ns {
         btr->remove(keys[i]);
     }
   private:
-    std::vector<btree::key_type> keys;
+    std::vector<btree::key_slice> keys;
   };
 }
 
@@ -1836,14 +1996,14 @@ namespace mp_test7_ns {
   static const size_t nkeys = 50;
   static volatile bool running = false;
 
-  typedef std::vector<btree::key_type> key_vec;
+  typedef std::vector<btree::key_slice> key_vec;
 
   struct scan_callback {
     typedef std::vector<
-      std::pair< btree::key_type, btree::value_type > > kv_vec;
+      std::pair< btree::key_slice, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(btree::key_type k, btree::value_type v) const
+    operator()(btree::key_slice k, btree::value_type v) const
     {
       data->push_back(std::make_pair(k, v));
       return true;
@@ -1860,7 +2020,7 @@ namespace mp_test7_ns {
     {
       fast_random r(seed);
       while (running) {
-        btree::key_type k = keys[r.next() % keys.size()];
+        btree::key_slice k = keys[r.next() % keys.size()];
         btree::value_type v = NULL;
         ALWAYS_ASSERT(btr->search(k, v));
         ALWAYS_ASSERT(v == (btree::value_type) k);
@@ -1880,8 +2040,8 @@ namespace mp_test7_ns {
       while (running) {
         scan_callback::kv_vec data;
         btr->search_range(nkeys / 2, NULL, scan_callback(&data));
-        std::set<btree::key_type> scan_keys;
-        btree::key_type prev = 0;
+        std::set<btree::key_slice> scan_keys;
+        btree::key_slice prev = 0;
         for (size_t i = 0; i < data.size(); i++) {
           if (i != 0)
             ALWAYS_ASSERT(data[i].first > prev);
@@ -2031,7 +2191,7 @@ namespace read_only_perf_test_ns {
     {
       fast_random r(seed);
       while (running) {
-        btree::key_type k = r.next() % nkeys;
+        btree::key_slice k = r.next() % nkeys;
         btree::value_type v = 0;
         ALWAYS_ASSERT(btr->search(k, v));
         ALWAYS_ASSERT(v == (btree::value_type) k);
@@ -2112,7 +2272,7 @@ namespace write_only_perf_test_ns {
     {
       fast_random r(seed);
       for (size_t i = 0; i < nkeys / ARRAY_NELEMS(seeds); i++) {
-        btree::key_type k = r.next() % nkeys;
+        btree::key_slice k = r.next() % nkeys;
         btr->insert(k, (btree::value_type) k);
       }
     }

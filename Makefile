@@ -7,8 +7,8 @@ OBJFILES = $(SRCFILES:.cc=.o)
 
 all: test
 
-%.o: %.cc 
-	$(CXX) $(CXXFLAGS) -c $^ -o $@
+%.o: %.cc $(HEADERS)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 test: $(OBJFILES) 
 	$(CXX) $(CXXFLAGS) -o test $^ $(LDFLAGS)
