@@ -22,31 +22,31 @@ public:
   typedef btree::value_type value_type;
   typedef btree::search_range_callback search_range_callback;
 
-  bool search(transaction &t, key_type k, value_type &v);
+  bool search(transaction &t, const key_type &k, value_type &v);
 
   void
   search_range_call(transaction &t,
-                    key_type lower,
+                    const key_type &lower,
                     const key_type *upper,
                     search_range_callback &callback);
 
   template <typename T>
   inline void
-  search_range(transaction &t, key_type lower, const key_type *upper, T callback)
+  search_range(transaction &t, const key_type &lower, const key_type *upper, T callback)
   {
     btree::type_callback_wrapper<T> w(&callback);
     search_range_call(t, lower, upper, w);
   }
 
   inline void
-  insert(transaction &t, key_type k, value_type v)
+  insert(transaction &t, const key_type &k, value_type v)
   {
     INVARIANT(v);
     insert_impl(t, k, v);
   }
 
   inline void
-  remove(transaction &t, key_type k)
+  remove(transaction &t, const key_type &k)
   {
     insert_impl(t, k, NULL);
   }
@@ -57,17 +57,17 @@ private:
 
   struct txn_search_range_callback : public search_range_callback {
     txn_search_range_callback(transaction *t,
-                              key_type lower,
+                              const key_type &lower,
                               const key_type *upper,
                               search_range_callback *caller_callback)
       : t(t), lower(lower), upper(upper), prev_key(),
         invoked(false), caller_callback(caller_callback),
         caller_stopped(false) {}
-    virtual bool invoke(key_type k, value_type v);
+    virtual bool invoke(const key_type &k, value_type v);
     transaction *const t;
     const key_type lower;
     const key_type *const upper;
-    key_type prev_key;
+    std::string prev_key;
     bool invoked;
     search_range_callback *const caller_callback;
     bool caller_stopped;
@@ -77,14 +77,14 @@ private:
     absent_range_validation_callback(transaction *t, transaction::tid_t commit_tid)
       : t(t), commit_tid(commit_tid), failed_flag(false) {}
     inline bool failed() const { return failed_flag; }
-    virtual bool invoke(key_type k, value_type v);
+    virtual bool invoke(const key_type &k, value_type v);
     transaction *const t;
     const transaction::tid_t commit_tid;
     bool failed_flag;
   };
 
   // remove() is just insert_impl() with NULL value
-  void insert_impl(transaction  &t, key_type k, value_type v);
+  void insert_impl(transaction &t, const key_type &k, value_type v);
 
   btree underlying_btree;
 };

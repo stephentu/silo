@@ -11,6 +11,7 @@
 #include <string>
 
 #include "macros.h"
+#include "varkey.h"
 
 class transaction_abort_exception {};
 class txn_btree;
@@ -26,7 +27,7 @@ public:
 
   static const tid_t MIN_TID = 0;
 
-  typedef uint64_t key_type;
+  typedef varkey key_type;
 
   /**
    * A logical_node is the type of value which we stick
@@ -299,7 +300,16 @@ private:
 
   void clear();
 
-  bool local_search(key_type k, record_t &v) const;
+  bool local_search_str(const std::string &k, record_t &v) const;
+
+  inline bool
+  local_search(const key_type &k, record_t &v) const
+  {
+    // XXX: we have to make an un-necessary copy of the key each time we search
+    // the write/read set- we need to find a way to avoid this
+    string sk(k.data(), k.size());
+    return local_search_str(sk, v);
+  }
 
   struct read_record_t {
     tid_t t;
@@ -310,19 +320,33 @@ private:
   // [a, b)
   struct key_range_t {
     key_range_t() : a(), has_b(true), b() {}
-    key_range_t(key_type a) : a(a), has_b(false) {}
-    key_range_t(key_type a, key_type b)
-      : a(a), has_b(true), b(b)
-    {
-    }
-    key_range_t(key_type a, bool has_b, key_type b)
-      : a(a), has_b(has_b), b(b)
-    {
-    }
 
-    key_type a;
+    key_range_t(const key_type &a) : a(a), has_b(false), b() {}
+    key_range_t(const key_type &a, const key_type &b)
+      : a(a.data(), a.size()), has_b(true), b(b.data(), b.size())
+    { }
+    key_range_t(const key_type &a, bool has_b, const key_type &b)
+      : a(a.data(), a.size()), has_b(has_b), b(b.data(), b.size())
+    { }
+
+    key_range_t(const std::string &a) : a(a), has_b(false), b() {}
+    key_range_t(const std::string &a, const key_type &b)
+      : a(a), has_b(true), b(b.data(), b.size())
+    { }
+    key_range_t(const std::string &a, bool has_b, const key_type &b)
+      : a(a), has_b(has_b), b(b.data(), b.size())
+    { }
+
+    key_range_t(const std::string &a, const std::string &b)
+      : a(a), has_b(true), b(b)
+    { }
+    key_range_t(const std::string &a, bool has_b, const std::string &b)
+      : a(a), has_b(has_b), b(b)
+    { }
+
+    std::string a;
     bool has_b; // false indicates infinity, true indicates use b
-    key_type b; // has meaning only if !has_b
+    std::string b; // has meaning only if !has_b
 
     inline bool
     is_empty_range() const
@@ -343,9 +367,9 @@ private:
     }
 
     inline bool
-    key_in_range(key_type k) const
+    key_in_range(const key_type &k) const
     {
-      return a <= k && (!has_b || k < b);
+      return a <= varkey(k) && (!has_b || varkey(k) < b);
     }
   };
 
@@ -354,13 +378,13 @@ private:
   // guarantee that the range returned has a lower bound <= k
   struct key_range_search_less_cmp {
     inline bool
-    operator()(key_type k, const key_range_t &range) const
+    operator()(const key_type &k, const key_range_t &range) const
     {
-      return !range.has_b || k < range.b;
+      return !range.has_b || k < varkey(range.b);
     }
   };
 
-  bool key_in_absent_set(key_type k) const;
+  bool key_in_absent_set(const key_type &k) const;
 
   void add_absent_range(const key_range_t &range);
 
@@ -380,8 +404,8 @@ private:
   txn_btree *btree;
 
   // XXX: use hash tables for the read/write set
-  std::map<key_type, read_record_t> read_set;
-  std::map<key_type, record_t> write_set;
+  std::map<std::string, read_record_t> read_set;
+  std::map<std::string, record_t> write_set;
 
   std::vector<key_range_t> absent_range_set; // ranges do not overlap
 

@@ -12,6 +12,32 @@
 
 namespace util {
 
+template <typename T>
+inline std::string
+hexify(const T &t)
+{
+  std::ostringstream buf;
+  buf << std::hex << t << std::endl;
+  return buf.str();
+}
+
+template <>
+inline std::string
+hexify(const std::string &input)
+{
+  size_t len = input.length();
+  const char *const lut = "0123456789ABCDEF";
+
+  std::string output;
+  output.reserve(2 * len);
+  for (size_t i = 0; i < len; ++i) {
+    const unsigned char c = (unsigned char) input[i];
+    output.push_back(lut[c >> 4]);
+    output.push_back(lut[c & 15]);
+  }
+  return output;
+}
+
 // xor-shift:
 // http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
 class fast_random {

@@ -9,7 +9,7 @@ using namespace std;
 using namespace util;
 
 bool
-txn_btree::search(transaction &t, key_type k, value_type &v)
+txn_btree::search(transaction &t, const key_type &k, value_type &v)
 {
   INVARIANT(!t.btree || t.btree == this);
   t.btree = this;
@@ -22,13 +22,14 @@ txn_btree::search(transaction &t, key_type k, value_type &v)
   //
   // note (1)-(3) are served by transaction::local_search()
 
-  if (t.local_search(k, v))
+  string sk(k.str());
+  if (t.local_search_str(sk, v))
     return (bool) v;
 
   btree::value_type underlying_v;
   if (!underlying_btree.search(k, underlying_v)) {
     // all records exist in the system at MIN_TID with no value
-    transaction::read_record_t *read_rec = &t.read_set[k];
+    transaction::read_record_t *read_rec = &t.read_set[sk];
     read_rec->t = transaction::MIN_TID;
     read_rec->r = NULL;
     read_rec->ln = NULL;
@@ -43,7 +44,7 @@ txn_btree::search(transaction &t, key_type k, value_type &v)
       t.abort();
       throw transaction_abort_exception();
     }
-    transaction::read_record_t *read_rec = &t.read_set[k];
+    transaction::read_record_t *read_rec = &t.read_set[sk];
     read_rec->t = start_t;
     read_rec->r = r;
     read_rec->ln = ln;
@@ -53,21 +54,23 @@ txn_btree::search(transaction &t, key_type k, value_type &v)
 }
 
 bool
-txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
+txn_btree::txn_search_range_callback::invoke(const key_type &k, value_type v)
 {
   VERBOSE(cerr << "search range k: " << k << endl);
-  transaction::key_range_t r(invoked ? prev_key : lower, k);
+  string sk(k.str());
+  transaction::key_range_t r =
+    invoked ? key_range_t(prev_key, sk) : key_range_t(lower, sk);
   if (!r.is_empty_range())
     t->add_absent_range(r);
-  prev_key = k;
+  prev_key = sk;
   invoked = true;
   value_type local_v = 0;
-  bool local_read = t->local_search(k, local_v);
+  bool local_read = t->local_search_str(sk, local_v);
   bool ret = true;
   if (local_read && local_v)
     ret = caller_callback->invoke(k, local_v);
-  map<key_type, transaction::read_record_t>::const_iterator it =
-    t->read_set.find(k);
+  map<string, transaction::read_record_t>::const_iterator it =
+    t->read_set.find(sk);
   if (it == t->read_set.end()) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
     INVARIANT(ln);
@@ -78,7 +81,7 @@ txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
       t->abort();
       throw transaction_abort_exception();
     }
-    transaction::read_record_t *read_rec = &t->read_set[k];
+    transaction::read_record_t *read_rec = &t->read_set[sk];
     read_rec->t = start_t;
     read_rec->r = r;
     read_rec->ln = ln;
@@ -93,14 +96,14 @@ txn_btree::txn_search_range_callback::invoke(key_type k, value_type v)
 }
 
 bool
-txn_btree::absent_range_validation_callback::invoke(key_type k, value_type v)
+txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_type v)
 {
   transaction::logical_node *ln = (transaction::logical_node *) v;
   INVARIANT(ln);
   prefetch_node(ln);
   VERBOSE(cout << "absent_range_validation_callback: key " << k
-               << " found ln " << intptr_t(ln) << endl);
-  bool did_write = t->write_set.find(k) != t->write_set.end();
+               << " found logical_node 0x" << hexify(ln) << endl);
+  bool did_write = t->write_set.find(string(k.str())) != t->write_set.end();
   // XXX: I don't think it matters here whether or not we use snapshot_tid or
   // MIN_TID, since this record did not exist @ snapshot_tid, so any new
   // entries must be > snapshot_tid, and therefore using MIN_TID or
@@ -111,9 +114,15 @@ txn_btree::absent_range_validation_callback::invoke(key_type k, value_type v)
   return !failed_flag;
 }
 
+static inline
+string next_key(const std::string &s)
+{
+
+}
+
 void
 txn_btree::search_range_call(transaction &t,
-                             key_type lower,
+                             const key_type &lower,
                              const key_type *upper,
                              search_range_callback &callback)
 {
@@ -136,27 +145,28 @@ txn_btree::search_range_call(transaction &t,
   underlying_btree.search_range_call(lower, upper, c);
   if (c.caller_stopped)
     return;
-  // stupid special case for the max key
-  if (unlikely(c.invoked && c.prev_key == (key_type)-1))
-    return;
   if (upper)
-    t.add_absent_range(transaction::key_range_t(c.invoked ? (c.prev_key + 1): lower, *upper));
+    t.add_absent_range(
+        transaction::key_range_t(
+          c.invoked ? next_key(c.prev_key) : lower.str(), *upper));
   else
-    t.add_absent_range(transaction::key_range_t(c.invoked ? c.prev_key : lower));
+    t.add_absent_range(
+        transaction::key_range_t(
+          c.invoked ? c.prev_key : lower.str()));
 }
 
 void
-txn_btree::insert_impl(transaction &t, key_type k, value_type v)
+txn_btree::insert_impl(transaction &t, const key_type &k, value_type v)
 {
   INVARIANT(!t.btree || t.btree == this);
   t.btree = this;
-  t.write_set[k] = v;
+  t.write_set[string(k.str())] = v;
 }
 
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
   inline bool
-  operator()(txn_btree::key_type k, txn_btree::value_type v) const
+  operator()(const txn_btree::key_type &k, txn_btree::value_type v) const
   {
     (*ctr)++;
     return true;
@@ -177,9 +187,9 @@ test1()
   {
     transaction t;
     txn_btree::value_type v;
-    ALWAYS_ASSERT(!btr.search(t, 0, v));
-    btr.insert(t, 0, (txn_btree::value_type) &recs[0]);
-    ALWAYS_ASSERT(btr.search(t, 0, v));
+    ALWAYS_ASSERT(!btr.search(t, u64_varkey(0), v));
+    btr.insert(t, u64_varkey(0), (txn_btree::value_type) &recs[0]);
+    ALWAYS_ASSERT(btr.search(t, u64_varkey(0), v));
     ALWAYS_ASSERT(v == (txn_btree::value_type) &recs[0]);
     t.commit();
     VERBOSE(cout << "------" << endl);
@@ -189,12 +199,12 @@ test1()
     transaction t0, t1;
     txn_btree::value_type v0, v1;
 
-    ALWAYS_ASSERT(btr.search(t0, 0, v0));
+    ALWAYS_ASSERT(btr.search(t0, u64_varkey(0), v0));
     ALWAYS_ASSERT(v0 == (txn_btree::value_type) &recs[0]);
 
-    btr.insert(t0, 0, (txn_btree::value_type) &recs[1]);
+    btr.insert(t0, u64_varkey(0), (txn_btree::value_type) &recs[1]);
 
-    ALWAYS_ASSERT(btr.search(t1, 0, v1));
+    ALWAYS_ASSERT(btr.search(t1, u64_varkey(0), v1));
     ALWAYS_ASSERT(v1 == (txn_btree::value_type) &recs[0]);
 
     t0.commit();
@@ -207,13 +217,13 @@ test1()
     transaction t0, t1;
     txn_btree::value_type v0, v1;
 
-    ALWAYS_ASSERT(btr.search(t0, 0, v0));
+    ALWAYS_ASSERT(btr.search(t0, u64_varkey(0), v0));
     ALWAYS_ASSERT(v0 == (txn_btree::value_type) &recs[1]);
-    btr.insert(t0, 0, (txn_btree::value_type) &recs[2]);
+    btr.insert(t0, u64_varkey(0), (txn_btree::value_type) &recs[2]);
 
-    ALWAYS_ASSERT(btr.search(t1, 0, v1));
+    ALWAYS_ASSERT(btr.search(t1, u64_varkey(0), v1));
     ALWAYS_ASSERT(v1 == (txn_btree::value_type) &recs[1]);
-    btr.insert(t1, 0, (txn_btree::value_type) &recs[3]);
+    btr.insert(t1, u64_varkey(0), (txn_btree::value_type) &recs[3]);
 
     t0.commit(); // succeeds
 
@@ -235,10 +245,10 @@ test1()
     btr.search_range(t0, 1, &vend, test_callback_ctr(&ctr));
     ALWAYS_ASSERT(ctr == 0);
 
-    btr.insert(t1, 2, (txn_btree::value_type) &recs[4]);
+    btr.insert(t1, u64_varkey(2), (txn_btree::value_type) &recs[4]);
     t1.commit();
 
-    btr.insert(t0, 0, (txn_btree::value_type) &recs[0]);
+    btr.insert(t0, u64_varkey(0), (txn_btree::value_type) &recs[0]);
     try {
       t0.commit(); // fails
       ALWAYS_ASSERT(false);
@@ -254,7 +264,7 @@ test1()
     size_t ctr = 0;
     btr.search_range(t, 10, &vend, test_callback_ctr(&ctr));
     ALWAYS_ASSERT(ctr == 0);
-    btr.insert(t, 15, (txn_btree::value_type) &recs[5]);
+    btr.insert(t, u64_varkey(15), (txn_btree::value_type) &recs[5]);
     t.commit();
     VERBOSE(cout << "------" << endl);
   }
@@ -266,7 +276,7 @@ test2()
   txn_btree btr;
   for (size_t i = 0; i < 100; i++) {
     transaction t;
-    btr.insert(t, 0, (txn_btree::value_type) 123);
+    btr.insert(t, u64_varkey(0), (txn_btree::value_type) 123);
     t.commit();
   }
 }
@@ -306,13 +316,13 @@ namespace mp_test1_ns {
         recs.push_back(rec);
         try {
           txn_btree::value_type v = 0;
-          if (!btr->search(t, 0, v)) {
+          if (!btr->search(t, u64_varkey(0), v)) {
             rec->v = 1;
           } else {
             *rec = *((record *)v);
             rec->v++;
           }
-          btr->insert(t, 0, (txn_btree::value_type) rec);
+          btr->insert(t, u64_varkey(0), (txn_btree::value_type) rec);
           t.commit();
         } catch (transaction_abort_exception &e) {
           goto retry;
@@ -340,7 +350,7 @@ mp_test1()
 
   transaction t;
   txn_btree::value_type v = 0;
-  ALWAYS_ASSERT(btr.search(t, 0, v));
+  ALWAYS_ASSERT(btr.search(t, u64_varkey(0), v));
   ALWAYS_ASSERT( ((record *) v)->v == (niters * 2) );
   t.commit();
 
@@ -348,9 +358,9 @@ mp_test1()
 
 namespace mp_test2_ns {
 
-  static const txn_btree::key_type ctr_key     = 0;
-  static const txn_btree::key_type range_begin = 100;
-  static const txn_btree::key_type range_end   = 200;
+  static const uint64_t ctr_key = 0;
+  static const uint64_t range_begin = 100;
+  static const uint64_t range_end = 200;
 
   static volatile bool running = true;
 
@@ -367,12 +377,12 @@ namespace mp_test2_ns {
             txn_btree::value_type v = 0, v_ctr = 0;
             ALWAYS_ASSERT(btr->search(t, ctr_key, v_ctr));
             ALWAYS_ASSERT(size_t(v_ctr) > 1);
-            if (btr->search(t, i, v)) {
+            if (btr->search(t, u64_varkey(i), v)) {
               ALWAYS_ASSERT(v = (txn_btree::value_type) i);
-              btr->remove(t, i);
+              btr->remove(t, u64_varkey(i));
               v_ctr = (txn_btree::value_type)(size_t(v_ctr) - 1);
             } else {
-              btr->insert(t, i, (txn_btree::value_type) i);
+              btr->insert(t, u64_varkey(i), (txn_btree::value_type) i);
               v_ctr = (txn_btree::value_type)(size_t(v_ctr) + 1);
             }
             btr->insert(t, ctr_key, v_ctr);
@@ -390,7 +400,7 @@ namespace mp_test2_ns {
   class reader_worker : public txn_btree_worker, public txn_btree::search_range_callback {
   public:
     reader_worker(txn_btree &btr) : txn_btree_worker(btr), validations(0), naborts(0), ctr(0) {}
-    virtual bool invoke(txn_btree::key_type k, txn_btree::value_type v)
+    virtual bool invoke(txn_btree::const key_type &k, txn_btree::value_type v)
     {
       ctr++;
       return true;
@@ -403,7 +413,8 @@ namespace mp_test2_ns {
           txn_btree::value_type v_ctr = 0;
           ALWAYS_ASSERT(btr->search(t, ctr_key, v_ctr));
           ctr = 0;
-          btr->search_range_call(t, range_begin, &range_end, *this);
+          u64_kend(range_end);
+          btr->search_range_call(t, u64_varkey(range_begin), &kend, *this);
           t.commit();
           ALWAYS_ASSERT(ctr == size_t(v_ctr));
           validations++;
@@ -430,7 +441,7 @@ mp_test2()
     size_t n = 0;
     for (size_t i = range_begin; i < range_end; i++)
       if ((i % 2) == 0) {
-        btr.insert(t, i, (txn_btree::value_type) i);
+        btr.insert(t, u64_varkey(i), (txn_btree::value_type) i);
         n++;
       }
     btr.insert(t, ctr_key, (txn_btree::value_type) n);
@@ -477,13 +488,13 @@ namespace mp_test3_ns {
       retry:
         try {
           transaction t;
-          txn_btree::key_type a = r.next() % naccounts;
-          txn_btree::key_type b = r.next() % naccounts;
+          uint64_t a = r.next() % naccounts;
+          uint64_t b = r.next() % naccounts;
           while (unlikely(a == b))
             b = r.next() % naccounts;
           txn_btree::value_type arecv, brecv;
-          ALWAYS_ASSERT(btr->search(t, a, arecv));
-          ALWAYS_ASSERT(btr->search(t, b, brecv));
+          ALWAYS_ASSERT(btr->search(t, u64_varkey(a), arecv));
+          ALWAYS_ASSERT(btr->search(t, u64_varkey(b), brecv));
           record *arec = (record *) arecv;
           record *brec = (record *) brecv;
           if (arec->v == 0) {
@@ -492,8 +503,8 @@ namespace mp_test3_ns {
             uint64_t xfer = (arec->v > 1) ? (r.next() % (arec->v - 1) + 1) : 1;
             arec_new->v = arec->v - xfer;
             brec_new->v = brec->v + xfer;
-            btr->insert(t, a, (txn_btree::value_type) arec_new);
-            btr->insert(t, b, (txn_btree::value_type) brec_new);
+            btr->insert(t, u64_varkey(a), (txn_btree::value_type) arec_new);
+            btr->insert(t, u64_varkey(b), (txn_btree::value_type) brec_new);
             t.commit();
           }
         } catch (transaction_abort_exception &e) {
@@ -516,7 +527,7 @@ namespace mp_test3_ns {
         try {
           transaction t;
           sum = 0;
-          btr->search_range_call(t, 0, NULL, *this);
+          btr->search_range_call(t, u64_varkey(0), NULL, *this);
           t.commit();
           ALWAYS_ASSERT(sum == (naccounts * amount_per_person));
           validations++;
@@ -525,7 +536,7 @@ namespace mp_test3_ns {
         }
       }
     }
-    virtual bool invoke(txn_btree::key_type k, txn_btree::value_type v)
+    virtual bool invoke(const txn_btree::key_type &k, txn_btree::value_type v)
     {
       sum += ((record *) v)->v;
       return true;
@@ -546,9 +557,9 @@ namespace mp_test3_ns {
         try {
           transaction t;
           uint64_t sum = 0;
-          for (txn_btree::key_type i = 0; i < naccounts; i++) {
+          for (uint64_t i = 0; i < naccounts; i++) {
             txn_btree::value_type v = 0;
-            ALWAYS_ASSERT(btr->search(t, i, v));
+            ALWAYS_ASSERT(btr->search(t, u64_varkey(i), v));
             sum += ((record *) v)->v;
           }
           t.commit();
@@ -575,11 +586,11 @@ mp_test3()
   txn_btree btr;
   {
     transaction t;
-    for (txn_btree::key_type i = 0; i < naccounts; i++) {
+    for (uint64_t i = 0; i < naccounts; i++) {
       record *r = new record;
       recs.push_back(r);
       r->v = amount_per_person;
-      btr.insert(t, i, (txn_btree::value_type) r);
+      btr.insert(t, u64_varkey(i), (txn_btree::value_type) r);
     }
     t.commit();
   }
@@ -638,7 +649,7 @@ namespace read_only_perf_ns {
         try {
           transaction t;
           btree::value_type v = 0;
-          bool found = btr->search(t, k, v);
+          bool found = btr->search(t, u64_varkey(k), v);
           t.commit();
           ALWAYS_ASSERT(found);
           ALWAYS_ASSERT(v == (btree::value_type) (k + 1));
@@ -664,7 +675,7 @@ read_only_perf()
   {
     transaction t;
     for (size_t i = 0; i < nkeys; i++)
-      btr.insert(t, i, (btree::value_type) (i + 1));
+      btr.insert(t, u64_varkey(i), (btree::value_type) (i + 1));
     t.commit();
     std::cerr << "btree loaded, test starting" << std::endl;
   }
@@ -699,11 +710,11 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  //test1();
-  //test2();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
+  test1();
+  test2();
+  mp_test1();
+  mp_test2();
+  mp_test3();
 
   read_only_perf();
 }

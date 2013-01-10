@@ -1,6 +1,7 @@
 #ifndef _NDB_VARKEY_H_
 #define _NDB_VARKEY_H_
 
+#include <iostream>
 #include <stdint.h>
 #include <string>
 
@@ -8,6 +9,7 @@
 #include "macros.h"
 
 class varkey {
+  friend std::ostream &operator<<(std::ostream &o, const varkey &k);
 public:
   inline varkey() : p(NULL), l(0) {}
 
@@ -102,10 +104,22 @@ public:
     return p;
   }
 
+  inline
+  std::string str() const
+  {
+    return std::string(p, l);
+  }
+
 private:
   const uint8_t *p;
   size_t l;
 };
+
+std::ostream &operator<<(std::ostream &o, const varkey &k)
+{
+  o << util::hexify(std::string(p, l));
+  return o;
+}
 
 template <typename T>
 class obj_varkey : public varkey {

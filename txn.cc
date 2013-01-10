@@ -9,6 +9,7 @@
 #include <utility>
 
 using namespace std;
+using namespace util;
 
 string
 transaction::logical_node::VersionInfoStr(uint64_t v)
@@ -46,23 +47,23 @@ transaction::commit()
 
   // fetch logical_nodes for insert
   map<logical_node *, record_t> logical_nodes;
-  for (map<key_type, record_t>::iterator it = write_set.begin();
+  for (map<string, record_t>::iterator it = write_set.begin();
        it != write_set.end(); ++it) {
   retry:
     btree::value_type v = 0;
-    if (btree->underlying_btree.search(it->first, v)) {
-      VERBOSE(cout << "key " << it->first << " : logical_node " << intptr_t(v) << endl);
+    if (btree->underlying_btree.search(varkey(it->first), v)) {
+      VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(v) << endl);
       prefetch_node(v);
       logical_nodes[(logical_node *) v] = it->second;
     } else {
       logical_node *ln = logical_node::alloc();
       // XXX: underlying btree api should return the existing value if
-      // insert fails- this allows us to avoid having to do another search
-      if (!btree->underlying_btree.insert_if_absent(it->first, (btree::value_type) ln)) {
+      // insert fails- this would allow us to avoid having to do another search
+      if (!btree->underlying_btree.insert_if_absent(varkey(it->first), (btree::value_type) ln)) {
         logical_node::release(ln);
         goto retry;
       }
-      VERBOSE(cout << "key " << it->first << " : logical_node " << intptr_t(ln) << endl);
+      VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(ln) << endl);
       prefetch_node(ln);
       logical_nodes[ln] = it->second;
     }
@@ -74,7 +75,7 @@ transaction::commit()
     // lock the logical nodes in sort order
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      VERBOSE(cout << "locking node " << intptr_t(it->first) << endl);
+      VERBOSE(cout << "locking node 0x" << hexify(it->first) << endl);
       it->first->lock();
     }
 
@@ -82,7 +83,7 @@ transaction::commit()
     tid_t commit_tid = incr_and_get_global_tid();
 
     // do read validation
-    for (map<key_type, read_record_t>::iterator it = read_set.begin();
+    for (map<string, read_record_t>::iterator it = read_set.begin();
          it != read_set.end(); ++it) {
       bool did_write = write_set.find(it->first) != write_set.end();
       transaction::logical_node *ln = NULL;
@@ -90,13 +91,13 @@ transaction::commit()
         ln = it->second.ln;
       } else {
         btree::value_type v = 0;
-        if (btree->underlying_btree.search(it->first, v))
+        if (btree->underlying_btree.search(varkey(it->first), v))
           ln = (transaction::logical_node *) v;
       }
       if (unlikely(!ln))
         continue;
-      VERBOSE(cout << "validating key " << it->first << " @ logical_node "
-                   << intptr_t(ln) << " at snapshot_tid " << snapshot_tid << endl);
+      VERBOSE(cout << "validating key " << hexify(it->first) << " @ logical_node 0x"
+                   << hexify(ln) << " at snapshot_tid " << snapshot_tid << endl);
 
       // An optimization:
       // if the latest version is > commit_tid, and the next latest version is <
@@ -114,7 +115,8 @@ transaction::commit()
          it != absent_range_set.end(); ++it) {
       VERBOSE(cout << "checking absent range: " << *it << endl);
       txn_btree::absent_range_validation_callback c(this, commit_tid);
-      btree->underlying_btree.search_range_call(it->a, it->has_b ? &it->b : NULL, c);
+      varkey upper(it->b);
+      btree->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
       if (unlikely(c.failed()))
         goto do_abort;
     }
@@ -122,7 +124,7 @@ transaction::commit()
     // commit actual records
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      VERBOSE(cout << "writing logical_node " << intptr_t(it->first)
+      VERBOSE(cout << "writing logical_node 0x" << hexify(it->first)
                    << " at commit_tid " << commit_tid << endl);
       it->first->write_record_at(commit_tid, it->second);
       it->first->unlock();
@@ -173,7 +175,7 @@ transaction::incr_and_get_global_tid()
 }
 
 bool
-transaction::key_in_absent_set(key_type k) const
+transaction::key_in_absent_set(const key_type &k) const
 {
   vector<key_range_t>::const_iterator it =
     upper_bound(absent_range_set.begin(), absent_range_set.end(), k,
@@ -186,11 +188,11 @@ transaction::key_in_absent_set(key_type k) const
 inline ostream &
 operator<<(ostream &o, const transaction::key_range_t &range)
 {
-  o << "[" << range.a << ", ";
+  o << "[" << hexify(range.a) << ", ";
   if (range.has_b)
-    o << range.b;
+    o << hexify(range.b);
   else
-    o << "infty";
+    o << "+inf";
   o << ")";
   return o;
 }
@@ -203,7 +205,7 @@ transaction::add_absent_range(const key_range_t &range)
     return;
 
   vector<key_range_t>::iterator it =
-    upper_bound(absent_range_set.begin(), absent_range_set.end(), range.a,
+    upper_bound(absent_range_set.begin(), absent_range_set.end(), varkey(range.a),
                 key_range_search_less_cmp());
 
   if (it == absent_range_set.end()) {
@@ -230,7 +232,7 @@ transaction::add_absent_range(const key_range_t &range)
       new_absent_range_set.end(),
       absent_range_set.begin(),
       merge_left ? (it - 1) : it);
-  key_type left_key = merge_left ? (it - 1)->a : min(it->a, range.a);
+  string left_key = merge_left ? (it - 1)->a : min(it->a, range.a);
 
   if (range.has_b) {
     if (!it->has_b || it->b >= range.b) {
@@ -337,15 +339,14 @@ transaction::Test()
   cout << PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(50, 212));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-
 }
 
 bool
-transaction::local_search(key_type k, record_t &v) const
+transaction::local_search(const key_type &k, record_t &v) const
 {
   {
-    map<key_type, transaction::record_t>::const_iterator it =
-      write_set.find(k);
+    map<string, transaction::record_t>::const_iterator it =
+      write_set.find(sk);
     if (it != write_set.end()) {
       v = it->second;
       return true;
@@ -354,7 +355,7 @@ transaction::local_search(key_type k, record_t &v) const
 
   {
     map<key_type, transaction::read_record_t>::const_iterator it =
-      read_set.find(k);
+      read_set.find(sk);
     if (it != read_set.end()) {
       v = it->second.r;
       return true;
