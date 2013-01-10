@@ -620,11 +620,12 @@ btree::size() const
   while (!q.empty()) {
     node *cur = q.back();
     q.pop_back();
-    while (cur) {
-      prefetch_node(cur);
+    prefetch_node(cur);
+    leaf_node *leaf = leftmost_descend_layer(cur);
+    while (leaf) {
+      prefetch_node(leaf);
     process:
-      leaf_node *leaf = leftmost_descend_layer(cur);
-      uint64_t version = cur->stable_version();
+      uint64_t version = leaf->stable_version();
       size_t n = leaf->key_slots_used();
       size_t values = 0;
       vector<node *> layers;
@@ -637,7 +638,7 @@ btree::size() const
       if (unlikely(!leaf->check_version(version)))
         goto process;
       count += values;
-      cur = next;
+      leaf = next;
       q.insert(q.end(), layers.begin(), layers.end());
     }
   }
@@ -1520,8 +1521,6 @@ test1()
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode);
-
-  return;
 
   // induce a split
   btr.insert(u64_varkey(btree::NKeysPerNode), (btree::value_type) (btree::NKeysPerNode));
