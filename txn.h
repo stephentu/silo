@@ -324,8 +324,14 @@ private:
     key_range_t(const key_type &a, const key_type &b)
       : a(a.str()), has_b(true), b(b.str())
     { }
+    key_range_t(const key_type &a, const std::string &b)
+      : a(a.str()), has_b(true), b(b)
+    { }
     key_range_t(const key_type &a, bool has_b, const key_type &b)
       : a(a.str()), has_b(has_b), b(b.str())
+    { }
+    key_range_t(const key_type &a, bool has_b, const std::string &b)
+      : a(a.str()), has_b(has_b), b(b)
     { }
 
     key_range_t(const std::string &a) : a(a), has_b(false), b() {}

@@ -59,7 +59,7 @@ txn_btree::txn_search_range_callback::invoke(const key_type &k, value_type v)
   VERBOSE(cerr << "search range k: " << k << endl);
   string sk(k.str());
   transaction::key_range_t r =
-    invoked ? key_range_t(prev_key, sk) : key_range_t(lower, sk);
+    invoked ? transaction::key_range_t(prev_key, sk) : transaction::key_range_t(lower, sk);
   if (!r.is_empty_range())
     t->add_absent_range(r);
   prev_key = sk;
@@ -115,9 +115,11 @@ txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_typ
 }
 
 static inline
-string next_key(const std::string &s)
+string next_key(const string &s)
 {
-
+  string s0(s);
+  s0.resize(s.size() + 1);
+  return s0;
 }
 
 void
@@ -240,9 +242,9 @@ test1()
     // racy scan
     transaction t0, t1;
 
-    txn_btree::key_type vend = 5;
+    u64_varkey vend(5);
     size_t ctr = 0;
-    btr.search_range(t0, 1, &vend, test_callback_ctr(&ctr));
+    btr.search_range(t0, u64_varkey(1), &vend, test_callback_ctr(&ctr));
     ALWAYS_ASSERT(ctr == 0);
 
     btr.insert(t1, u64_varkey(2), (txn_btree::value_type) &recs[4]);
@@ -260,9 +262,9 @@ test1()
 
   {
     transaction t;
-    txn_btree::key_type vend = 20;
+    u64_varkey vend (20);
     size_t ctr = 0;
-    btr.search_range(t, 10, &vend, test_callback_ctr(&ctr));
+    btr.search_range(t, u64_varkey(10), &vend, test_callback_ctr(&ctr));
     ALWAYS_ASSERT(ctr == 0);
     btr.insert(t, u64_varkey(15), (txn_btree::value_type) &recs[5]);
     t.commit();
@@ -375,7 +377,7 @@ namespace mp_test2_ns {
           transaction t;
           try {
             txn_btree::value_type v = 0, v_ctr = 0;
-            ALWAYS_ASSERT(btr->search(t, ctr_key, v_ctr));
+            ALWAYS_ASSERT(btr->search(t, u64_varkey(ctr_key), v_ctr));
             ALWAYS_ASSERT(size_t(v_ctr) > 1);
             if (btr->search(t, u64_varkey(i), v)) {
               ALWAYS_ASSERT(v = (txn_btree::value_type) i);
@@ -385,7 +387,7 @@ namespace mp_test2_ns {
               btr->insert(t, u64_varkey(i), (txn_btree::value_type) i);
               v_ctr = (txn_btree::value_type)(size_t(v_ctr) + 1);
             }
-            btr->insert(t, ctr_key, v_ctr);
+            btr->insert(t, u64_varkey(ctr_key), v_ctr);
             t.commit();
           } catch (transaction_abort_exception &e) {
             naborts++;
@@ -400,7 +402,7 @@ namespace mp_test2_ns {
   class reader_worker : public txn_btree_worker, public txn_btree::search_range_callback {
   public:
     reader_worker(txn_btree &btr) : txn_btree_worker(btr), validations(0), naborts(0), ctr(0) {}
-    virtual bool invoke(txn_btree::const key_type &k, txn_btree::value_type v)
+    virtual bool invoke(const txn_btree::key_type &k, txn_btree::value_type v)
     {
       ctr++;
       return true;
@@ -411,9 +413,9 @@ namespace mp_test2_ns {
         try {
           transaction t;
           txn_btree::value_type v_ctr = 0;
-          ALWAYS_ASSERT(btr->search(t, ctr_key, v_ctr));
+          ALWAYS_ASSERT(btr->search(t, u64_varkey(ctr_key), v_ctr));
           ctr = 0;
-          u64_kend(range_end);
+          u64_varkey kend(range_end);
           btr->search_range_call(t, u64_varkey(range_begin), &kend, *this);
           t.commit();
           ALWAYS_ASSERT(ctr == size_t(v_ctr));
@@ -444,7 +446,7 @@ mp_test2()
         btr.insert(t, u64_varkey(i), (txn_btree::value_type) i);
         n++;
       }
-    btr.insert(t, ctr_key, (txn_btree::value_type) n);
+    btr.insert(t, u64_varkey(ctr_key), (txn_btree::value_type) n);
     t.commit();
   }
 
@@ -644,7 +646,7 @@ namespace read_only_perf_ns {
     {
       fast_random r(seed);
       while (running) {
-        btree::key_type k = r.next() % nkeys;
+        uint64_t k = r.next() % nkeys;
       retry:
         try {
           transaction t;

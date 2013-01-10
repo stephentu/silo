@@ -319,34 +319,34 @@ transaction::Test()
   transaction t;
   t.resolved = true;
 
-  t.add_absent_range(key_range_t(10, 20));
+  t.add_absent_range(key_range_t(u64_varkey(10), u64_varkey(20)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(20, 30));
+  t.add_absent_range(key_range_t(u64_varkey(20), u64_varkey(30)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(50, 60));
+  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(60)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(31, 40));
+  t.add_absent_range(key_range_t(u64_varkey(31), u64_varkey(40)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(49, 50));
+  t.add_absent_range(key_range_t(u64_varkey(49), u64_varkey(50)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(47, 50));
+  t.add_absent_range(key_range_t(u64_varkey(47), u64_varkey(50)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(39, 50));
+  t.add_absent_range(key_range_t(u64_varkey(39), u64_varkey(50)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(100, 200));
+  t.add_absent_range(key_range_t(u64_varkey(100), u64_varkey(200)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(300, 400));
+  t.add_absent_range(key_range_t(u64_varkey(300), u64_varkey(400)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(50, 212));
+  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(212)));
   cout << PrintRangeSet(t.absent_range_set) << endl;
 }
 
 bool
-transaction::local_search(const key_type &k, record_t &v) const
+transaction::local_search_str(const string &k, record_t &v) const
 {
   {
     map<string, transaction::record_t>::const_iterator it =
-      write_set.find(sk);
+      write_set.find(k);
     if (it != write_set.end()) {
       v = it->second;
       return true;
@@ -354,15 +354,15 @@ transaction::local_search(const key_type &k, record_t &v) const
   }
 
   {
-    map<key_type, transaction::read_record_t>::const_iterator it =
-      read_set.find(sk);
+    map<string, transaction::read_record_t>::const_iterator it =
+      read_set.find(k);
     if (it != read_set.end()) {
       v = it->second.r;
       return true;
     }
   }
 
-  if (key_in_absent_set(k)) {
+  if (key_in_absent_set(varkey(k))) {
     v = NULL;
     return true;
   }

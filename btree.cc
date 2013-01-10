@@ -434,6 +434,8 @@ btree::search_range_at_layer(
     next_key = leaf_max_key;
     leaf = right_sibling;
   }
+
+  return true;
 }
 
 template <typename T>
