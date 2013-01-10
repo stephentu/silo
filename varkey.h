@@ -2,6 +2,7 @@
 #define _NDB_VARKEY_H_
 
 #include <stdint.h>
+#include <string>
 
 #include "imstring.h"
 #include "macros.h"
@@ -12,6 +13,11 @@ public:
 
   inline varkey(const uint8_t *p, size_t l)
     : p(p), l(p)
+  {
+  }
+
+  explicit inline varkey(const std::string &s)
+    : p(s.data()), l(s.size())
   {
   }
 

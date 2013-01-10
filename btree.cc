@@ -1488,20 +1488,20 @@ test1()
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode);
 
   // induce a split
-  btr.insert(btree::NKeysPerNode, (btree::value_type) (btree::NKeysPerNode));
+  btr.insert(u64_varkey(btree::NKeysPerNode), (btree::value_type) (btree::NKeysPerNode));
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode + 1);
 
   // now make sure we can find everything post split
   for (size_t i = 0; i < btree::NKeysPerNode + 1; i++) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
 
@@ -1512,20 +1512,20 @@ test1()
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == n);
 
   // cause the root node to split
-  btr.insert(n, (btree::value_type) n);
+  btr.insert(u64_varkey(n), (btree::value_type) n);
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == n + 1);
 
   // once again make sure we can find everything
   for (size_t i = 0; i < n + 1; i++) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
 }
@@ -1540,7 +1540,7 @@ test2()
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
 
@@ -1549,7 +1549,7 @@ test2()
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
 
@@ -1566,17 +1566,17 @@ test3()
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode * 2);
 
   for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
-    btr.remove(i);
+    btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
 
@@ -1585,17 +1585,17 @@ test3()
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode * 2);
 
   for (ssize_t i = btree::NKeysPerNode * 2 - 1; i >= 0; i--) {
-    btr.remove(i);
+    btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
 
@@ -1604,25 +1604,25 @@ test3()
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == btree::NKeysPerNode * 2);
 
   for (ssize_t i = btree::NKeysPerNode; i >= 0; i--) {
-    btr.remove(i);
+    btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
 
   for (size_t i = btree::NKeysPerNode + 1; i < btree::NKeysPerNode * 2; i++) {
-    btr.remove(i);
+    btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
 }
@@ -1636,7 +1636,7 @@ test4()
     btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == nkeys);
@@ -1645,17 +1645,17 @@ test4()
 
   for (size_t i = 0; i < nkeys; i++) {
     size_t k = rand() % nkeys;
-    btr.remove(k);
+    btr.remove(u64_varkey(k));
     btr.invariant_checker();
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(k, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(k), v));
   }
 
   for (size_t i = 0; i < nkeys; i++) {
-    btr.remove(i);
+    btr.remove(u64_varkey(i));
     btr.invariant_checker();
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
 }
@@ -1677,28 +1677,28 @@ test5()
     for (size_t i = 0; i < nkeys; i++) {
       size_t k = rand() % nkeys;
       s.insert(k);
-      btr.insert(k, (btree::value_type) k);
+      btr.insert(u64_varkey(k), (btree::value_type) k);
       btr.invariant_checker();
       btree::value_type v = 0;
-      ALWAYS_ASSERT(btr.search(k, v));
+      ALWAYS_ASSERT(btr.search(u64_varkey(k), v));
       ALWAYS_ASSERT(v == (btree::value_type) k);
     }
     ALWAYS_ASSERT(btr.size() == s.size());
 
     for (size_t i = 0; i < nkeys * 2; i++) {
       size_t k = rand() % nkeys;
-      btr.remove(k);
+      btr.remove(u64_varkey(k));
       btr.invariant_checker();
       btree::value_type v = 0;
-      ALWAYS_ASSERT(!btr.search(k, v));
+      ALWAYS_ASSERT(!btr.search(u64_varkey(k), v));
     }
 
     // clean it up
     for (size_t i = 0; i < nkeys; i++) {
-      btr.remove(i);
+      btr.remove(u64_varkey(i));
       btr.invariant_checker();
       btree::value_type v = 0;
-      ALWAYS_ASSERT(!btr.search(i, v));
+      ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
     }
 
     ALWAYS_ASSERT(btr.size() == 0);
@@ -1708,12 +1708,12 @@ test5()
 namespace test6_ns {
   struct scan_callback {
     typedef std::vector<
-      std::pair< btree::key_slice, btree::value_type > > kv_vec;
+      std::pair< std::string, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(btree::key_slice k, btree::value_type v) const
+    operator()(const btree::key_type &k, btree::value_type v) const
     {
-      data->push_back(std::make_pair(k, v));
+      data->push_back(std::make_pair(std::string(k.data(), k.size()), v));
       return true;
     }
     kv_vec *data;
@@ -1726,26 +1726,26 @@ test6()
   btree btr;
   const size_t nkeys = 1000;
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(i), (btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == nkeys);
 
   using namespace test6_ns;
 
   scan_callback::kv_vec data;
-  btree::key_slice max_key = 600;
-  btr.search_range(500, &max_key, scan_callback(&data));
+  u64_varkey max_key(600);
+  btr.search_range(u64_varkey(500), &max_key, scan_callback(&data));
   ALWAYS_ASSERT(data.size() == 100);
   for (size_t i = 0; i < 100; i++) {
-    ALWAYS_ASSERT(data[i].first == 500 + i);
+    ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
     ALWAYS_ASSERT(data[i].second == (btree::value_type) (500 + i));
   }
 
   data.clear();
-  btr.search_range(500, NULL, scan_callback(&data));
+  btr.search_range(u64_varkey(500), NULL, scan_callback(&data));
   ALWAYS_ASSERT(data.size() == 500);
   for (size_t i = 0; i < 500; i++) {
-    ALWAYS_ASSERT(data[i].first == 500 + i);
+    ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
     ALWAYS_ASSERT(data[i].second == (btree::value_type) (500 + i));
   }
 }
@@ -1754,18 +1754,18 @@ static void
 test7()
 {
   btree btr;
-  ALWAYS_ASSERT(!btr.remove(0));
-  ALWAYS_ASSERT(btr.insert(0, (btree::value_type) 0));
-  ALWAYS_ASSERT(!btr.insert(0, (btree::value_type) 1));
+  ALWAYS_ASSERT(!btr.remove(u64_varkey(0)));
+  ALWAYS_ASSERT(btr.insert(u64_varkey(0), (btree::value_type) 0));
+  ALWAYS_ASSERT(!btr.insert(u64_varkey(0), (btree::value_type) 1));
   btree::value_type v;
-  ALWAYS_ASSERT(btr.search(0, v));
+  ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
   ALWAYS_ASSERT(v == (btree::value_type) 1);
-  ALWAYS_ASSERT(!btr.insert_if_absent(0, (btree::value_type) 2));
-  ALWAYS_ASSERT(btr.search(0, v));
+  ALWAYS_ASSERT(!btr.insert_if_absent(u64_varkey(0), (btree::value_type) 2));
+  ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
   ALWAYS_ASSERT(v == (btree::value_type) 1);
-  ALWAYS_ASSERT(btr.remove(0));
-  ALWAYS_ASSERT(btr.insert_if_absent(0, (btree::value_type) 2));
-  ALWAYS_ASSERT(btr.search(0, v));
+  ALWAYS_ASSERT(btr.remove(u64_varkey(0)));
+  ALWAYS_ASSERT(btr.insert_if_absent(u64_varkey(0), (btree::value_type) 2));
+  ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
   ALWAYS_ASSERT(v == (btree::value_type) 2);
 }
 
@@ -1779,7 +1779,7 @@ namespace mp_test1_ns {
     virtual void run()
     {
       for (size_t i = 0; i < nkeys / 2; i++)
-        btr->insert(i, (btree::value_type) i);
+        btr->insert(u64_varkey(i), (btree::value_type) i);
     }
   };
 
@@ -1789,7 +1789,7 @@ namespace mp_test1_ns {
     virtual void run()
     {
       for (size_t i = nkeys / 2; i < nkeys; i++)
-        btr->insert(i, (btree::value_type) i);
+        btr->insert(u64_varkey(i), (btree::value_type) i);
     }
   };
 }
@@ -1811,7 +1811,7 @@ mp_test1()
   btr.invariant_checker();
   for (size_t i = 0; i < nkeys; i++) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == nkeys);
@@ -1827,7 +1827,7 @@ namespace mp_test2_ns {
     virtual void run()
     {
       for (size_t i = 0; i < nkeys / 2; i++)
-        btr->remove(i);
+        btr->remove(u64_varkey(i));
     }
   };
 
@@ -1837,7 +1837,7 @@ namespace mp_test2_ns {
     virtual void run()
     {
       for (size_t i = nkeys / 2; i < nkeys; i++)
-        btr->remove(i);
+        btr->remove(u64_varkey(i));
     }
   };
 }
@@ -1851,7 +1851,7 @@ mp_test2()
   btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(i), (btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
   btr.invariant_checker();
 
   rm0_worker w0(btr);
@@ -1863,7 +1863,7 @@ mp_test2()
   btr.invariant_checker();
   for (size_t i = 0; i < nkeys; i++) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
 }
@@ -1879,7 +1879,7 @@ namespace mp_test3_ns {
     {
       // remove the even keys
       for (size_t i = 0; i < nkeys; i += 2)
-        btr->remove(i);
+        btr->remove(u64_varkey(i));
     }
   };
 
@@ -1890,7 +1890,7 @@ namespace mp_test3_ns {
     {
       // insert the odd keys
       for (size_t i = 1; i < nkeys; i += 2)
-        btr->insert(i, (btree::value_type) i);
+        btr->insert(u64_varkey(i), (btree::value_type) i);
     }
   };
 }
@@ -1905,7 +1905,7 @@ mp_test3()
 
   // insert the even keys
   for (size_t i = 0; i < nkeys; i += 2)
-    btr.insert(u64_varkey(i), (btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
   btr.invariant_checker();
 
   rm0_worker w0(btr);
@@ -1919,13 +1919,13 @@ mp_test3()
   // should find no even keys
   for (size_t i = 0; i < nkeys; i += 2) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(i, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
 
   // should find all odd keys
   for (size_t i = 1; i < nkeys; i += 2) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
 
@@ -1944,7 +1944,7 @@ namespace mp_test4_ns {
       // search the even keys
       for (size_t i = 0; i < nkeys; i += 2) {
         btree::value_type v = 0;
-        ALWAYS_ASSERT(btr->search(i, v));
+        ALWAYS_ASSERT(btr->search(u64_varkey(i), v));
         ALWAYS_ASSERT(v == (btree::value_type) i);
       }
     }
@@ -1957,7 +1957,7 @@ namespace mp_test4_ns {
     {
       // insert the odd keys
       for (size_t i = 1; i < nkeys; i += 2)
-        btr->insert(i, (btree::value_type) i);
+        btr->insert(u64_varkey(i), (btree::value_type) i);
     }
   };
 
@@ -1968,8 +1968,8 @@ namespace mp_test4_ns {
     {
       // remove and reinsert odd keys
       for (size_t i = 1; i < nkeys; i += 2) {
-        btr->remove(i);
-        btr->insert(i, (btree::value_type) i);
+        btr->remove(u64_varkey(i));
+        btr->insert(u64_varkey(i), (btree::value_type) i);
       }
     }
   };
@@ -1985,7 +1985,7 @@ mp_test4()
 
   // insert the even keys
   for (size_t i = 0; i < nkeys; i += 2)
-    btr.insert(u64_varkey(i), (btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
   btr.invariant_checker();
 
   search0_worker w0(btr);
@@ -2000,7 +2000,7 @@ mp_test4()
   // should find all keys
   for (size_t i = 0; i < nkeys; i++) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(i, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
 
@@ -2010,7 +2010,7 @@ mp_test4()
 namespace mp_test5_ns {
 
   static const size_t niters = 100000;
-  static const btree::key_slice max_key = 45;
+  static const u64_varkey max_key = 45;
 
   typedef std::set<btree::key_slice> key_set;
 
@@ -2031,13 +2031,13 @@ namespace mp_test5_ns {
         btree::key_slice k = rand_r(&s) % max_key;
         if (choice < 0.6) {
           btree::value_type v = 0;
-          if (btr->search(k, v))
+          if (btr->search(u64_varkey(k), v))
             ALWAYS_ASSERT(v == (btree::value_type) k);
         } else if (choice < 0.9) {
-          btr->insert(k, (btree::value_type) k);
+          btr->insert(u64_varkey(k), (btree::value_type) k);
           sum.inserts.insert(k);
         } else {
-          btr->remove(k);
+          btr->remove(u64_varkey(k));
           sum.removes.insert(k);
         }
       }
@@ -2085,7 +2085,7 @@ mp_test5()
     if (removes.count(*it) == 1)
       continue;
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(*it, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(*it), v));
     ALWAYS_ASSERT(v == (btree::value_type) *it);
   }
 
@@ -2107,7 +2107,7 @@ namespace mp_test6_ns {
     virtual void run()
     {
       for (size_t i = 0; i < keys.size(); i++)
-        btr->insert(keys[i], (btree::value_type) keys[i]);
+        btr->insert(u64_varkey(keys[i]), (btree::value_type) keys[i]);
     }
   private:
     std::vector<btree::key_slice> keys;
@@ -2120,7 +2120,7 @@ namespace mp_test6_ns {
     virtual void run()
     {
       for (size_t i = 0; i < keys.size(); i++)
-        btr->remove(keys[i]);
+        btr->remove(u64_varkey(keys)[i]);
     }
   private:
     std::vector<btree::key_slice> keys;
@@ -2152,7 +2152,7 @@ mp_test6()
       unsigned long k = r.next();
       if (insert_keys.count(k) == 1)
         continue;
-      btr.insert(k, (btree::value_type) k);
+      btr.insert(u64_varkey(k), (btree::value_type) k);
       remove_keys.insert(k);
       inp.push_back(k);
       j++;
@@ -2176,13 +2176,13 @@ mp_test6()
   for (std::set<unsigned long>::iterator it = insert_keys.begin();
        it != insert_keys.end(); ++it) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(btr.search(*it, v));
+    ALWAYS_ASSERT(btr.search(u64_varkey(*it), v));
     ALWAYS_ASSERT(v == (btree::value_type) *it);
   }
   for (std::set<unsigned long>::iterator it = remove_keys.begin();
        it != remove_keys.end(); ++it) {
     btree::value_type v = 0;
-    ALWAYS_ASSERT(!btr.search(*it, v));
+    ALWAYS_ASSERT(!btr.search(u64_varkey(*it), v));
   }
 
   for (size_t i = 0; i < nthreads; i++)
@@ -2197,12 +2197,12 @@ namespace mp_test7_ns {
 
   struct scan_callback {
     typedef std::vector<
-      std::pair< btree::key_slice, btree::value_type > > kv_vec;
+      std::pair< std::string, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(btree::key_slice k, btree::value_type v) const
+    operator()(const btree::key_type &k, btree::value_type v) const
     {
-      data->push_back(std::make_pair(k, v));
+      data->push_back(std::make_pair(std::string(k.data(), k.size()), v));
       return true;
     }
     kv_vec *data;
@@ -2219,7 +2219,7 @@ namespace mp_test7_ns {
       while (running) {
         btree::key_slice k = keys[r.next() % keys.size()];
         btree::value_type v = NULL;
-        ALWAYS_ASSERT(btr->search(k, v));
+        ALWAYS_ASSERT(btr->search(u64_varkey(k), v));
         ALWAYS_ASSERT(v == (btree::value_type) k);
       }
     }
@@ -2236,7 +2236,7 @@ namespace mp_test7_ns {
     {
       while (running) {
         scan_callback::kv_vec data;
-        btr->search_range(nkeys / 2, NULL, scan_callback(&data));
+        btr->search_range(u64_varkey(nkeys / 2), NULL, scan_callback(&data));
         std::set<btree::key_slice> scan_keys;
         btree::key_slice prev = 0;
         for (size_t i = 0; i < data.size(); i++) {
@@ -2265,9 +2265,9 @@ namespace mp_test7_ns {
       bool insert = true;
       for (size_t i = 0; running; i = (i + 1) % keys.size(), insert = !insert){
         if (insert)
-          btr->insert(keys[i], (btree::value_type) keys[i]);
+          btr->insert(u64_varkey(keys[i]), (btree::value_type) keys[i]);
         else
-          btr->remove(keys[i]);
+          btr->remove(u64_varkey(keys)[i]);
       }
     }
     key_vec keys;
@@ -2290,7 +2290,7 @@ mp_test7()
 
   btree btr;
   for (size_t i = 0; i < lookup_keys.size(); i++)
-    btr.insert(lookup_keys[i], (btree::value_type) lookup_keys[i]);
+    btr.insert(u64_varkey(lookup_keys[i]), (btree::value_type) lookup_keys[i]);
 
   lookup_worker w0(2398430, lookup_keys, btr);
   lookup_worker w1(8532, lookup_keys, btr);
@@ -2342,7 +2342,7 @@ perf_test()
     {
       scoped_rate_timer t("btree insert", nrecs);
       for (size_t i = 0; i < nrecs; i++)
-        btr.insert(u64_varkey(i), (btree::value_type) i);
+        btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
     }
     {
       scoped_rate_timer t("btree random lookups", nlookups);
@@ -2350,7 +2350,7 @@ perf_test()
         //uint64_t key = rand() % nrecs;
         uint64_t key = i;
         btree::value_type v = 0;
-        ALWAYS_ASSERT(btr.search(key, v));
+        ALWAYS_ASSERT(btr.search(u64_varkey(key), v));
       }
     }
   }
@@ -2390,7 +2390,7 @@ namespace read_only_perf_test_ns {
       while (running) {
         btree::key_slice k = r.next() % nkeys;
         btree::value_type v = 0;
-        ALWAYS_ASSERT(btr->search(k, v));
+        ALWAYS_ASSERT(btr->search(u64_varkey(k), v));
         ALWAYS_ASSERT(v == (btree::value_type) k);
         n++;
       }
@@ -2409,7 +2409,7 @@ read_only_perf_test()
   btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(i), (btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
   std::cerr << "btree loaded, test starting" << std::endl;
 
   std::vector<worker *> workers;
@@ -2470,7 +2470,7 @@ namespace write_only_perf_test_ns {
       fast_random r(seed);
       for (size_t i = 0; i < nkeys / ARRAY_NELEMS(seeds); i++) {
         btree::key_slice k = r.next() % nkeys;
-        btr->insert(k, (btree::value_type) k);
+        btr->insert(u64_varkey(k), (btree::value_type) k);
       }
     }
   private:
@@ -2507,21 +2507,21 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //test6();
-  //test7();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
-  //mp_test4();
-  //mp_test5();
-  //mp_test6();
-  //mp_test7();
-  //perf_test();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  test6();
+  test7();
+  mp_test1();
+  mp_test2();
+  mp_test3();
+  mp_test4();
+  mp_test5();
+  mp_test6();
+  mp_test7();
+  perf_test();
   read_only_perf_test();
-  //write_only_perf_test();
+  write_only_perf_test();
 }

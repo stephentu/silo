@@ -684,14 +684,15 @@ public:
   btree() : root(leaf_node::alloc())
   {
 
+    // leaf nodes cannot fit into 4-cachelines exactly,
+    // even w/o suffixes
+
 #ifndef LOCK_OWNERSHIP_CHECKING
-    _static_assert(sizeof(leaf_node) <= NodeSize);
     _static_assert(sizeof(internal_node) <= NodeSize);
 #endif /* LOCK_OWNERSHIP_CHECKING */
 
-    _static_assert(NKeysPerNode > 10); // so we can always do a split
-    _static_assert(sizeof(leaf_node) % 64 == 0);
-    _static_assert(sizeof(internal_node) % 64 == 0);
+    _static_assert(NKeysPerNode > (sizeof(key_slice) + 2)); // so we can always do a split
+    _static_assert(sizeof(internal_node) % CACHELINE_SIZE == 0);
 
 #ifdef CHECK_INVARIANTS
     root->lock();
