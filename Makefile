@@ -1,4 +1,4 @@
-CXXFLAGS := -Wall -g -O2
+CXXFLAGS := -Wall -g
 LDFLAGS  := -lpthread -ljemalloc
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h util.h
