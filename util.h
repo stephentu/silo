@@ -112,6 +112,53 @@ private:
   pthread_spinlock_t *const l;
 };
 
+//  The following is taken from:
+//  Boost noncopyable.hpp header file  --------------------------------------//
+
+//  (C) Copyright Beman Dawes 1999-2003. Distributed under the Boost
+//  Software License, Version 1.0. (See accompanying file
+//  LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
+
+//  See http://www.boost.org/libs/utility for documentation.
+
+
+//  Private copy constructor and copy assignment ensure classes derived from
+//  class noncopyable cannot be copied.
+
+//  Contributed by Dave Abrahams
+
+namespace noncopyable_  // protection from unintended ADL
+{
+  class noncopyable
+  {
+   protected:
+      noncopyable() {}
+      ~noncopyable() {}
+   private:  // emphasize the following members are private
+      noncopyable( const noncopyable& );
+      const noncopyable& operator=( const noncopyable& );
+  };
+}
+
+typedef noncopyable_::noncopyable noncopyable;
+
+/**
+ * unsafe_share_with has the semantics of dst = src, except
+ * done cheaply (but safely) if possible.
+ *
+ * For instance, suppose T manages some underlying memory pointer, and T's dtor
+ * frees this memory pointer.  If we guarantee that dst will outlive src, then
+ * instead of allocating new memory for dst and copying the contents of memory
+ * into dst, we can simply have dst and src share the memory pointer, and have
+ * src not delete the underlying pointer.
+ */
+template <typename T>
+inline void
+unsafe_share_with(T &dst, T &src)
+{
+  dst.unsafe_share_with(src);
+}
+
 }
 
 #endif /* _UTIL_H_ */

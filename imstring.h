@@ -8,50 +8,42 @@
 #include <string>
 
 #include "rcu.h"
+#include "util.h"
 
 /**
- * Not-really-immutable string, for perf reasons. Also uses
+ * Not-really-immutable string, for perf reasons. Also can use
  * RCU for GC
  */
-class imstring {
+template <bool RCU>
+class base_imstring : public util::noncopyable {
 public:
-  imstring() : p(NULL), l(0) {}
+  inline base_imstring() : p(NULL), l(0), xfer(false) {}
 
-  imstring(const uint8_t *src, size_t l)
-    : p(new uint8_t[l]), l(l)
+  base_imstring(const uint8_t *src, size_t l)
+    : p(new uint8_t[l]), l(l), xfer(false)
   {
     memcpy(p, src, l);
   }
 
-  imstring(const std::string &s)
-    : p(new uint8_t[s.size()]), l(s.size())
+  base_imstring(const std::string &s)
+    : p(new uint8_t[s.size()]), l(s.size()), xfer(false)
   {
     memcpy(p, s.data(), l);
   }
 
-  imstring(const imstring &that)
-  {
-    replaceWith(that);
-  }
-
+  template <typename R>
   inline void
-  swap(imstring &that)
+  swap(base_imstring<R> &that)
   {
     std::swap(p, that.p);
     std::swap(l, that.l);
+    std::swap(xfer, that.xfer);
   }
 
-  imstring &
-  operator=(const imstring &that)
+  inline
+  ~base_imstring()
   {
-    replaceWith(that);
-    return *this;
-  }
-
-  ~imstring()
-  {
-    if (p)
-      rcu::free_array(p);
+    release();
   }
 
   inline const uint8_t *
@@ -67,31 +59,63 @@ public:
   }
 
   inline void
-  reset()
+  unsafe_dup_into(base_imstring &that)
   {
-
+    release();
+    p = that.p;
+    l = that.l;
+    xfer = that.xfer;
+    that.xfer = true;
   }
 
 private:
 
   inline void
-  replaceWith(const imstring &that)
+  release()
   {
-    if (p)
-      rcu::free_array(p);
-    p = new uint8_t[that.size()];
-    l = that.size();
-    memcpy(p, that.data(), l);
+    if (p && xfer) {
+      if (RCU)
+        rcu::free_array(p);
+      else
+        delete [] p;
+    }
   }
 
   uint8_t *p;
   size_t l;
+  bool xfer; // if xfer is true, no longer has ownership of p
+};
+
+class imstring : public base_imstring<false> {
+public:
+  imstring() : base_imstring<false>() {}
+
+  imstring(const uint8_t *src, size_t l)
+    : base_imstring<false>(src, l)
+  {}
+
+  imstring(const std::string &s)
+    : base_imstring<false>(s)
+  {}
+};
+
+class rcu_imstring : public base_imstring<true> {
+public:
+  rcu_imstring() : base_imstring<true>() {}
+
+  rcu_imstring(const uint8_t *src, size_t l)
+    : base_imstring<true>(src, l)
+  {}
+
+  rcu_imstring(const std::string &s)
+    : base_imstring<true>(s)
+  {}
 };
 
 namespace std {
-  template <>
+  template <bool A, bool B>
   inline void
-  swap(imstring &a, imstring &b)
+  swap(base_imstring<A> &a, base_imstring<B> &b)
   {
     a.swap(b);
   }

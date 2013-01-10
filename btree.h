@@ -16,6 +16,7 @@
 #include "macros.h"
 #include "rcu.h"
 #include "static_assert.h"
+#include "util.h"
 
 /** options */
 
@@ -321,9 +322,6 @@ private:
     }
 
     static std::string VersionInfoStr(uint64_t v);
-
-
-
 
     /**
      * keys[key_search(k).first] == k if key_search(k).first != -1
@@ -657,6 +655,12 @@ private:
     return t;
   }
 
+  /**
+   * Is not thread safe, and does not use RCU to free memory
+   *
+   * Should only be called when there are no outstanding operations on
+   * any nodes reachable from n
+   */
   static void recursive_delete(node *n);
 
   node *volatile root;
@@ -703,8 +707,9 @@ public:
   inline bool
   search(const key_type &k, value_type &v) const
   {
+    vector<leaf_node *> ns
     scoped_rcu_region rcu_region;
-    return search_impl(k, v);
+    return search_impl(k, v, ns);
   }
 
   class search_range_callback {
@@ -811,6 +816,9 @@ public:
 
   bool remove_impl(node **root_location, const key_type &k);
 
+  /** Is thread-safe, but not really designed to perform well
+   * with concurrent modifications. also the value returned is not
+   * consistent given concurrent modifications */
   size_t size() const;
 
   static void Test();
@@ -884,7 +892,18 @@ private:
       std::swap(*dest++, source[i]);
   }
 
-  bool search_impl(node **root_location, const key_type &k, value_type &v) const;
+  template <typename T>
+  static inline ALWAYS_INLINE void
+  unsafe_dup_into(T *dest, T *source, size_t p, size_t n)
+  {
+    for (size_t i = p; i < n; i++)
+      util::unsafe_dup_into(*dest++, source[i]);
+  }
+
+  /**
+   * Assumes RCU region scope is held
+   */
+  bool search_impl(const key_type &k, value_type &v, std::vector<leaf_node *> &leaf_nodes) const;
 
   bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent);
 

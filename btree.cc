@@ -3,6 +3,7 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <stack>
 
 #include <sstream>
 #include "btree.h"
@@ -173,6 +174,10 @@ btree::recursive_delete(node *n)
     leaf->mark_deleting();
     leaf->unlock();
 #endif
+    size_t n = leaf->key_slots_used();
+    for (size_t i = 0; i < n; i++)
+      if (leaf->value_is_layer(i))
+        recursive_delete(leaf->values[i].n);
     leaf_node::deleter(leaf);
   } else {
     internal_node *internal = AsInternal(n);
@@ -189,15 +194,28 @@ btree::recursive_delete(node *n)
 }
 
 bool
-btree::search_impl(const key_type &k, value_type &v) const
+btree::search_impl(const key_type &k, value_type &v,
+                   std::vector<leaf_node *> &leaf_nodes) const
 {
-  // use the retry label to completely start over from the
-  // root of the entire b-tree
+
 retry:
-  key_type kcur(k);
-  uint64_t kslice = kcur.slice();
-  size_t kslicelen = std::min(kcur.size(), 9);
-  node *cur = root;
+  node *cur;
+  key_type kcur;
+  uint64_t kslice;
+  size_t kslicelen;
+  if (likely(leaf_nodes.empty())) {
+    kcur = k;
+    cur = root;
+    kslice = k.slice();
+    kslicelen = std::min(k.size(), 9);
+  } else {
+    kcur = k.shift_many(leaf_nodes.size() - 1);
+    cur = leaf_nodes.back();
+    kslice = kcur.slice();
+    kslicelen = std::min(kcur.size(), 9);
+    leaf_nodes.pop_back();
+  }
+
   while (true) {
 
     // each iteration of this while loop tries to descend
@@ -208,7 +226,8 @@ retry:
 process:
     uint64_t version = cur->stable_version();
     if (node::IsDeleting(version))
-      // XXX: maybe we can only retry at the parent of this node...
+      // XXX: maybe we can only retry at the parent of this node, not the
+      // root node of the b-tree *layer*
       goto retry;
     if (leaf_node *leaf = AsLeafCheck(cur)) {
       key_search_ret kret = leaf->key_search(kslice, kslicelen);
@@ -227,6 +246,8 @@ process:
           v = vn.v;
           return true;
         }
+
+        leaf_nodes.push_back(leaf);
 
         // search the next layer
         cur = vn.n;
@@ -284,61 +305,169 @@ process:
   }
 }
 
+// recursively read the range from the layer down
+//
+// all args relative to prefix
+//
+// returns true if we keep going
+bool
+btree::search_range_at_layer(
+    leaf_node *leaf,
+    const std::string &prefix,
+    key_slice lower,
+    bool inc_lower,
+    const key_type *upper,
+    search_range_callback &callback) const
+{
+
+  key_slice last_keyslice;
+  size_t last_keyslice_len;
+  bool emitted_last_keyslice = false;
+  if (inc_lower) {
+    last_keyslice = lower.slice();
+    last_keyslice_len = std::min(lower.size(), 9);
+    emitted_last_keyslice = true;
+  }
+
+  key_slice next_key = lower;
+  size_t prefix_size = prefix.size();
+  std::string slice_buffer(prefix);
+  slice_buffer.reserve(slice_buffer.size() + 8);
+  uint64_t upper_slice = upper ? upper->slice() : 0;
+  while (!upper || next_key <= upper_slice) {
+    prefetch_node(leaf);
+    struct leaf_kvinfo {
+      key_slice key;
+      value_or_node_ptr vn;
+      bool layer;
+      size_t length;
+      varkey suffix;
+      leaf_kvinfo() {} // for STL
+      leaf_kvinfo(key_slice key,
+                  value_or_node_ptr vn,
+                  bool layer,
+                  size_t length,
+                  varkey suffix)
+        : key(key), vn(vn), layer(layer), length(length), suffix(suffix)
+      {}
+
+      inline const char *
+      keyslice() const
+      {
+        return (const char *) &key;
+      }
+    };
+    std::vector<leaf_kvinfo> buf;
+    uint64_t version = leaf->stable_version();
+    key_slice leaf_min_key = leaf->min_key;
+    if (leaf_min_key > next_key) {
+      // go left
+      leaf_node *left_sibling = leaf->prev;
+      if (unlikely(!leaf->check_version(version)))
+        // try this node again
+        continue;
+      // try from left_sibling
+      leaf = left_sibling;
+      INVARIANT(leaf);
+      continue;
+    }
+
+    for (size_t i = 0; i < leaf->key_slots_used(); i++)
+      if (leaf->keys[i] >= lower && (!upper || leaf->keys[i] <= upper_slice))
+        buf.push_back(
+            leaf_kvinfo(
+              leaf->keys[i],
+              leaf->values[i],
+              leaf->value_is_layer(i),
+              leaf->keyslice_length(i),
+              varkey(leaf->suffixes[i])));
+
+    leaf_node *right_sibling = leaf->next;
+    key_slice leaf_max_key = right_sibling ? right_sibling->min_key : 0;
+    if (unlikely(!leaf->check_version(version)))
+      continue;
+
+    for (size_t i = 0; i < buf.size(); i++) {
+      if (emitted_last_keyslice &&
+          (buf[i].key < last_keyslice ||
+           (buf[i].key == last_keyslice && buf[i].length <= last_keyslice_len)))
+        continue;
+      size_t ncpy = std::min(buf[i].length, 8);
+      slice_buffer.resize(prefix_size + ncpy);
+      memcpy(slice_buffer.data() + prefix_size, buf[i].keyslice(), ncpy);
+      if (buf[i].layer) {
+        // recurse into layer
+        leaf *next_layer = leftmost_descend_layer(buf[i].values.n);
+        if (!search_range_at_layer(next_layer, slice_buffer, 0, true, NULL, callback))
+          return false;
+      } else {
+        if (upper && buf[i].key == upper_slice) {
+          if (buf[i].length == 9) {
+            if (8 + buf[i].suffix.size() > upper->size())
+              break;
+            if (8 + buf[i].suffix.size() == upper->size() &&
+                buf[i].suffix >= upper->slice)
+              break;
+            // need to add suffix to slice_buffer
+            slice_buffer.insert(slice_buffer.end(), buf[i].suffix.data(),
+                buf[i].suffix.data() + buf[i].suffix.size());
+          } else if (buf[i].length >= upper->size()) {
+            break;
+          }
+        }
+        if (!callback.invoke(varkey(slice_buffer.data(), slice_buffer.size()), buf[i].values.v))
+          return false;
+      }
+      last_keyslice = buf[i].key;
+      last_keyslice_len = buf[i].length;
+      emitted_last_keyslice = true;
+    }
+
+    if (!right_sibling)
+      // we're done
+      return true;
+
+    next_key = leaf_max_key;
+    leaf = right_sibling;
+  }
+}
+
+template <typename T>
+static inline T
+round_up(T n, T div)
+{
+  if ((n % div) == 0)
+    return n / div;
+  return n / div + 1;
+}
+
 void
 btree::search_range_call(const key_type &lower, const key_type *upper, search_range_callback &callback) const
 {
   if (unlikely(upper && *upper <= lower))
     return;
-  leaf_node *n = NULL;
+  std::vector<leaf_node *> leaf_nodes;
   value_type v = 0;
   scoped_rcu_region rcu_region;
-  search_impl(lower, v, n);
-  INVARIANT(n != NULL);
-  key_slice next_key = lower;
-  key_slice last_key = 0;
-  bool emitted_last_key = false;
-  while (!upper || next_key < *upper) {
-    prefetch_node(n);
-    std::vector< std::pair<key_slice, value_type> > buf;
-
-    uint64_t version = n->stable_version();
-    key_slice leaf_min_key = n->min_key;
-    if (leaf_min_key > next_key) {
-      // go left
-      leaf_node *left_sibling = n->prev;
-      if (unlikely(!n->check_version(version)))
-        // try this node again
-        continue;
-      // try from left_sibling
-      n = left_sibling;
-      INVARIANT(n);
-      continue;
+  search_impl(lower, v, leaf_nodes);
+  INVARIANT(!leaf_nodes.empty());
+  bool first = true;
+  while (!leaf_nodes.empty()) {
+    leaf_node *cur = leaf_nodes.back();
+    leaf_nodes.pop_back();
+    std::string prefix;
+    prefix.insert(prefix.end(), lower.data(), lower.data() + 8 * leaf_nodes.size());
+    key_type layer_upper;
+    bool layer_has_upper = false;
+    if (upper && round_up(upper->size(), 8) >= round_up(lower.size(), 8)) {
+      layer_upper = upper.shift_many(leaf_nodes.size());
+      layer_has_upper = true;
     }
-
-    for (size_t i = 0; i < n->key_slots_used(); i++)
-      if (n->keys[i] >= lower && (!upper || n->keys[i] < *upper))
-        buf.push_back(std::make_pair(n->keys[i], n->values[i]));
-
-    leaf_node *right_sibling = n->next;
-    key_slice leaf_max_key = right_sibling ? right_sibling->min_key : 0;
-    if (unlikely(!n->check_version(version)))
-      continue;
-
-    for (size_t i = 0; i < buf.size(); i++) {
-      if (emitted_last_key && buf[i].first <= last_key)
-        continue;
-      if (!callback.invoke(buf[i].first, buf[i].second))
-        return;
-      last_key = buf[i].first;
-      emitted_last_key = true;
-    }
-
-    if (!right_sibling)
-      // we're done
+    if (!search_range_at_layer(
+          cur, prefix, lower.shift_many(leaf_nodes.size()).slice(),
+          first, layer_has_upper ? &layer_upper : NULL, callback))
       return;
-
-    next_key = leaf_max_key;
-    n = right_sibling;
+    first = false;
   }
 }
 
@@ -439,32 +568,51 @@ retry:
   return false;
 }
 
+btree::leaf_node *
+btree::leftmost_descend_layer(node *n) const
+{
+  node *cur = n;
+  while (true) {
+    if (leaf_node *leaf = AsLeafCheck(cur))
+      return leaf;
+    internal_node *internal = AsInternal(cur);
+    uint64_t version = cur->stable_version();
+    node *child = internal->children[0];
+    if (unlikely(!internal->check_version(version)))
+      continue;
+    cur = child;
+  }
+}
+
 size_t
 btree::size() const
 {
 retry:
   scoped_rcu_region rcu_region;
-  node *cur = root;
   size_t count = 0;
-  while (cur) {
+  std::vector<node *> q;
+  q.push_back(root);
+  while (!q.empty()) {
+    node *cur = q.back();
+    q.pop_back();
     prefetch_node(cur);
 process:
+    leaf_node *leaf = leftmost_descend_layer(cur);
     uint64_t version = cur->stable_version();
-    if (node::IsDeleting(version))
-      goto retry;
-    if (leaf_node *leaf = AsLeafCheck(cur)) {
-      size_t n = leaf->key_slots_used();
-      leaf_node *next = leaf->next;
-      if (unlikely(!leaf->check_version(version)))
-        goto process;
-      count += n;
-      cur = next;
-    } else {
-      internal_node *internal = AsInternal(cur);
-      cur = internal->children[0];
-      if (unlikely(!internal->check_version(version)))
-        goto retry;
-    }
+    size_t n = leaf->key_slots_used();
+    size_t values = 0;
+    vector<node *> layers;
+    for (size_t i = 0; i < n; i++)
+      if (leaf->value_is_layer(i))
+        layers.push_back(leaf->values[i].n);
+      else
+        values++;
+    leaf_node *next = leaf->next;
+    if (unlikely(!leaf->check_version(version)))
+      goto process;
+    count += values;
+    cur = next;
+    q.insert(q.end(), layers.begin(), layers.end());
   }
   return count;
 }
@@ -571,11 +719,14 @@ btree::insert0(node *n,
         new_root->values[0] = leaf->values[lenmatch];
         new_root->lengths[0] = std::min(old_slice.size(), 9);
         if (new_root->lengths[0] == 9) {
-          imstring i(old_slice.data() + 8, old_slice.size() - 8);
+          rcu_imstring i(old_slice.data() + 8, old_slice.size() - 8);
           new_root->suffixes[0].swap(i);
         }
         leaf->values[lenmatch].n = new_root;
-        leaf->suffixes[lenmatch].reset();
+        {
+          rcu_imstring i;
+          leaf->suffixes[lenmatch].swap(i);
+        }
         leaf->value_set_layer(lenmatch);
         node **root_location = &leaf->values[lenmatch].n;
         bool ret = insert_impl(root_location, k.shift(), v, only_if_absent);
@@ -597,10 +748,11 @@ btree::insert0(node *n,
       leaf->lengths[lenlowerbound + 1] = kslicelen;
       sift_right(leaf->suffixes, lenlowerbound + 1, n);
       if (kslicelen == 9) {
-        imstring i(k.data() + 8, k.size() - 8);
+        rcu_imstring i(k.data() + 8, k.size() - 8);
         leaf->suffixes[lenlowerbound + 1].swap(i);
       } else {
-        leaf->suffixes[lenlowerbound + 1].reset();
+        rcu_imstring i;
+        leaf->suffixes[lenlowerbound + 1].swap(i);
       }
       leaf->inc_key_slots_used();
 
@@ -701,10 +853,11 @@ btree::insert0(node *n,
 
         swap_with(&new_leaf->suffixes[0], leaf->suffixes, new_in_right.first, lenlowerbound + 1);
         if (kslicelen == 9) {
-          imstring i(k.data() + 8, k.size() - 8);
+          rcu_imstring i(k.data() + 8, k.size() - 8);
           new_leaf->suffixes[pos].swap(i);
         } else {
-          new_leaf->suffixes[pos].reset();
+          rcu_imstring i;
+          new_leaf->suffixes[pos].swap(i);
         }
         swap_with(&new_leaf->suffixes[pos + 1], leaf->suffixes, lenlowerbound + 1, NKeysPerNode);
 
@@ -725,10 +878,11 @@ btree::insert0(node *n,
         leaf->lengths[lenlowerbound + 1] = kslicelen;
         sift_swap_right(leaf->suffixes, lenlowerbound + 1, new_in_left.first - 1);
         if (kslicelen == 9) {
-          imstring i(k.data() + 8, k.size() - 8);
+          rcu_imstring i(k.data() + 8, k.size() - 8);
           leaf->suffixes[lenlowerbound + 1].swap(i);
         } else {
-          leaf->suffixes[lenlowerbound + 1].reset();
+          rcu_imstring i;
+          leaf->suffixes[lenlowerbound + 1].swap(i);
         }
 
         leaf->set_key_slots_used(new_in_left.first);
@@ -1003,7 +1157,10 @@ btree::remove0(node *np,
           leaf->lengths[n - 1] = right_sibling->lengths[0];
           sift_swap_left(leaf->suffixes, ret, n);
           leaf->suffixes[n - 1].swap(right_sibling->suffixes[0]);
-          right_sibling->suffixes[0].reset();
+          {
+            rcu_imstring i;
+            right_sibling->suffixes[0].swap(i);
+          }
 
           sift_left(right_sibling->keys, 0, right_n);
           sift_left(right_sibling->values, 0, right_n);
@@ -1028,7 +1185,11 @@ btree::remove0(node *np,
           copy_into(&leaf->lengths[n - 1], right_sibling->lengths, 0, right_n);
 
           sift_swap_left(leaf->suffixes, ret, n);
-          swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
+          for (size_t i = 0; i < right_n; i++) {
+            rcu_imstring im;
+            leaf->suffixes[n - 1 + i].swap(im);
+          }
+          unsafe_dup_into(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
 
           leaf->set_key_slots_used(right_n + (n - 1));
           leaf->next = right_sibling->next;
@@ -1077,6 +1238,16 @@ btree::remove0(node *np,
 
           copy_into(&left_sibling->values[left_n], leaf->values, 0, ret);
           copy_into(&left_sibling->values[left_n + ret], leaf->values, ret + 1, n);
+
+          copy_into(&left_sibling->lengths[left_n], leaf->lengths, 0, ret);
+          copy_into(&left_sibling->lengths[left_n + ret], leaf->lengths, ret + 1, n);
+
+          for (size_t i = left_n; i < n - 1; i++) {
+            rcu_imstring im;
+            left_sibling->suffixes[i].swap(im);
+          }
+          unsafe_dup_into(&left_sibling->lengths[left_n], leaf->lengths, 0, ret);
+          unsafe_dup_into(&left_sibling->lengths[left_n + ret], leaf->lengths, ret + 1, n);
 
           left_sibling->set_key_slots_used(left_n + (n - 1));
           left_sibling->next = leaf->next;

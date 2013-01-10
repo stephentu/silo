@@ -77,6 +77,13 @@ public:
     return varkey(p + 8, l - 8);
   }
 
+  inline varkey
+  shift_many(size_t n) const
+  {
+    INVARIANT(l >= 8 * n);
+    return varkey(p + 8 * n, l - 8 * n);
+  }
+
   inline size_t
   size() const
   {
