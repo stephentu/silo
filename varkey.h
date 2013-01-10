@@ -101,4 +101,27 @@ private:
   size_t l;
 };
 
+template <typename T>
+class obj_varkey : public varkey {
+public:
+  inline obj_varkey() : varkey() {}
+
+  inline obj_varkey(T t)
+    : varkey(&obj, sizeof(T)), obj(t)
+  {
+  }
+
+private:
+  T obj;
+};
+
+typedef obj_varkey<uint8_t>  u8_varkey;
+typedef obj_varkey<int8_t>   s8_varkey;
+typedef obj_varkey<uint16_t> u16_varkey;
+typedef obj_varkey<int16_t>  s16_varkey;
+typedef obj_varkey<uint32_t> u32_varkey;
+typedef obj_varkey<int32_t>  s32_varkey;
+typedef obj_varkey<uint64_t> u64_varkey;
+typedef obj_varkey<int64_t>  s64_varkey;
+
 #endif /* _NDB_VARKEY_H_ */

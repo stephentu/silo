@@ -23,7 +23,21 @@
 //#define LOCK_OWNERSHIP_CHECKING
 
 /**
- * This btree does not manage the memory pointed to by value_type
+ * A concurrent, variable key length b+-tree, optimized for read heavy
+ * workloads.
+ *
+ * This b+-tree maps uninterpreted binary strings (key_type) of arbitrary
+ * length to a single pointer (value_type). Binary string values are copied
+ * into the b+-tree, so the caller does not have to worry about preserving
+ * memory for key values.
+ *
+ * This b+-tree does not manage the memory pointed to by value_type. The
+ * pointer is treated completely opaquely.
+ *
+ * So far, this b+-tree has only been tested on 64-bit intel x86 processors.
+ * It's correctness, as it is implemented (not conceptually), requires the
+ * semantics of total store order (TSO) for correctness. To fix this, we would
+ * change compiler fences into actual memory fences, at the very least.
  */
 class btree : public rcu_enabled {
   friend class txn_btree;

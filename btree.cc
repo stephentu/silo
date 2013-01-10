@@ -1484,7 +1484,7 @@ test1()
 
   // fill up root leaf node
   for (size_t i = 0; i < btree::NKeysPerNode; i++) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
 
     btree::value_type v = 0;
@@ -1508,7 +1508,7 @@ test1()
   // now fill up the new root node
   const size_t n = (btree::NKeysPerNode + btree::NKeysPerNode * (btree::NMinKeysPerNode));
   for (size_t i = btree::NKeysPerNode + 1; i < n; i++) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
 
     btree::value_type v = 0;
@@ -1536,7 +1536,7 @@ test2()
   btree btr;
   const size_t n = 1000;
   for (size_t i = 0; i < n; i += 2) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
 
     btree::value_type v = 0;
@@ -1545,7 +1545,7 @@ test2()
   }
 
   for (size_t i = 1; i < n; i += 2) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
 
     btree::value_type v = 0;
@@ -1562,7 +1562,7 @@ test3()
   btree btr;
 
   for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
 
     btree::value_type v = 0;
@@ -1581,7 +1581,7 @@ test3()
   ALWAYS_ASSERT(btr.size() == 0);
 
   for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
 
     btree::value_type v = 0;
@@ -1600,7 +1600,7 @@ test3()
   ALWAYS_ASSERT(btr.size() == 0);
 
   for (size_t i = 0; i < btree::NKeysPerNode * 2; i++) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
 
     btree::value_type v = 0;
@@ -1633,7 +1633,7 @@ test4()
   btree btr;
   const size_t nkeys = 10000;
   for (size_t i = 0; i < nkeys; i++) {
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
     btr.invariant_checker();
     btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(i, v));
@@ -1726,7 +1726,7 @@ test6()
   btree btr;
   const size_t nkeys = 1000;
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == nkeys);
 
@@ -1851,7 +1851,7 @@ mp_test2()
   btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
   btr.invariant_checker();
 
   rm0_worker w0(btr);
@@ -1905,7 +1905,7 @@ mp_test3()
 
   // insert the even keys
   for (size_t i = 0; i < nkeys; i += 2)
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
   btr.invariant_checker();
 
   rm0_worker w0(btr);
@@ -1985,7 +1985,7 @@ mp_test4()
 
   // insert the even keys
   for (size_t i = 0; i < nkeys; i += 2)
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
   btr.invariant_checker();
 
   search0_worker w0(btr);
@@ -2342,7 +2342,7 @@ perf_test()
     {
       scoped_rate_timer t("btree insert", nrecs);
       for (size_t i = 0; i < nrecs; i++)
-        btr.insert(i, (btree::value_type) i);
+        btr.insert(u64_varkey(i), (btree::value_type) i);
     }
     {
       scoped_rate_timer t("btree random lookups", nlookups);
@@ -2409,7 +2409,7 @@ read_only_perf_test()
   btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(i, (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
   std::cerr << "btree loaded, test starting" << std::endl;
 
   std::vector<worker *> workers;
