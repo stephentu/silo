@@ -307,8 +307,7 @@ private:
   {
     // XXX: we have to make an un-necessary copy of the key each time we search
     // the write/read set- we need to find a way to avoid this
-    string sk(k.data(), k.size());
-    return local_search_str(sk, v);
+    return local_search_str(k.str(), v);
   }
 
   struct read_record_t {
@@ -321,20 +320,20 @@ private:
   struct key_range_t {
     key_range_t() : a(), has_b(true), b() {}
 
-    key_range_t(const key_type &a) : a(a), has_b(false), b() {}
+    key_range_t(const key_type &a) : a(a.str()), has_b(false), b() {}
     key_range_t(const key_type &a, const key_type &b)
-      : a(a.data(), a.size()), has_b(true), b(b.data(), b.size())
+      : a(a.str()), has_b(true), b(b.str())
     { }
     key_range_t(const key_type &a, bool has_b, const key_type &b)
-      : a(a.data(), a.size()), has_b(has_b), b(b.data(), b.size())
+      : a(a.str()), has_b(has_b), b(b.str())
     { }
 
     key_range_t(const std::string &a) : a(a), has_b(false), b() {}
     key_range_t(const std::string &a, const key_type &b)
-      : a(a), has_b(true), b(b.data(), b.size())
+      : a(a), has_b(true), b(b.str())
     { }
     key_range_t(const std::string &a, bool has_b, const key_type &b)
-      : a(a), has_b(has_b), b(b.data(), b.size())
+      : a(a), has_b(has_b), b(b.str())
     { }
 
     key_range_t(const std::string &a, const std::string &b)
@@ -369,7 +368,7 @@ private:
     inline bool
     key_in_range(const key_type &k) const
     {
-      return a <= varkey(k) && (!has_b || varkey(k) < b);
+      return varkey(a) <= k && (!has_b || k < varkey(b));
     }
   };
 

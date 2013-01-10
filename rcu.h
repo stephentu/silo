@@ -17,16 +17,16 @@ public:
 
   template <typename T>
   static inline void
-  deleter(T *p)
+  deleter(void *p)
   {
-    delete p;
+    delete (T *) p;
   }
 
   template <typename T>
   static inline void
-  deleter_array(T *p)
+  deleter_array(void *p)
   {
-    delete p;
+    delete [] (T *) p;
   }
 
   // all RCU threads interact w/ the RCU subsystem via
@@ -51,20 +51,20 @@ public:
 
   static void region_begin();
 
-  static void free(void *p, deleter_t fn);
+  static void free_with_fn(void *p, deleter_t fn);
 
   template <typename T>
   static inline void
   free(T *p)
   {
-    free(p, deleter<T>);
+    free_with_fn(p, deleter<T>);
   }
 
   template <typename T>
   static inline void
   free_array(T *p)
   {
-    free(p, deleter_array<T>);
+    free_with_fn(p, deleter_array<T>);
   }
 
   static void region_end();

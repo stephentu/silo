@@ -130,7 +130,7 @@ rcu::region_begin()
 }
 
 void
-rcu::free(void *p, deleter_t fn)
+rcu::free_with_fn(void *p, deleter_t fn)
 {
   INVARIANT(tl_sync);
   INVARIANT(tl_crit_section_depth);

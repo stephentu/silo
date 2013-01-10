@@ -337,57 +337,6 @@ private:
 
     static std::string VersionInfoStr(uint64_t v);
 
-    /**
-     * keys[key_search(k).first] == k if key_search(k).first != -1
-     * key does not exist otherwise. considers key length also
-     */
-    inline key_search_ret
-    key_search(key_slice k, size_t len) const
-    {
-      size_t n = key_slots_used();
-      ssize_t lower = 0;
-      ssize_t upper = n;
-      while (lower < upper) {
-        ssize_t i = (lower + upper) / 2;
-        key_slice k0 = keys[i];
-        size_t len0 = keyslice_length(i);
-        if (k0 < k || (k0 == k && len0 < len))
-          lower = i + 1;
-        else if (k0 == k && len0 == len)
-          return key_search_ret(i, n);
-        else
-          return upper = i;
-      }
-      return key_search_ret(-1, n);
-    }
-
-    /**
-     * tightest lower bound key, -1 if no such key exists. operates only
-     * on key slices (internal nodes have unique key slices)
-     */
-    inline key_search_ret
-    key_lower_bound_search(key_slice k, size_t len) const
-    {
-      ssize_t ret = -1;
-      size_t n = key_slots_used();
-      ssize_t lower = 0;
-      ssize_t upper = n;
-      while (lower < upper) {
-        ssize_t i = (lower + upper) / 2;
-        key_slice k0 = keys[i];
-        size_t len0 = keyslice_length(i);
-        if (k0 < k || (k0 == k && len0 < len)) {
-          ret = i;
-          lower = i + 1;
-        } else if (k0 == k && len0 == len) {
-          return key_search_ret(i, n);
-        } else {
-          return upper = i;
-        }
-      }
-      return key_search_ret(ret, n);
-    }
-
     // [min_key, max_key)
     void
     base_invariant_checker(const key_slice *min_key,
@@ -460,6 +409,57 @@ private:
       lengths[n] |= LEN_TYPE_MASK;
     }
 
+    /**
+     * keys[key_search(k).first] == k if key_search(k).first != -1
+     * key does not exist otherwise. considers key length also
+     */
+    inline key_search_ret
+    key_search(key_slice k, size_t len) const
+    {
+      size_t n = key_slots_used();
+      ssize_t lower = 0;
+      ssize_t upper = n;
+      while (lower < upper) {
+        ssize_t i = (lower + upper) / 2;
+        key_slice k0 = keys[i];
+        size_t len0 = keyslice_length(i);
+        if (k0 < k || (k0 == k && len0 < len))
+          lower = i + 1;
+        else if (k0 == k && len0 == len)
+          return key_search_ret(i, n);
+        else
+          upper = i;
+      }
+      return key_search_ret(-1, n);
+    }
+
+    /**
+     * tightest lower bound key, -1 if no such key exists. operates only
+     * on key slices (internal nodes have unique key slices)
+     */
+    inline key_search_ret
+    key_lower_bound_search(key_slice k, size_t len) const
+    {
+      ssize_t ret = -1;
+      size_t n = key_slots_used();
+      ssize_t lower = 0;
+      ssize_t upper = n;
+      while (lower < upper) {
+        ssize_t i = (lower + upper) / 2;
+        key_slice k0 = keys[i];
+        size_t len0 = keyslice_length(i);
+        if (k0 < k || (k0 == k && len0 < len)) {
+          ret = i;
+          lower = i + 1;
+        } else if (k0 == k && len0 == len) {
+          return key_search_ret(i, n);
+        } else {
+          upper = i;
+        }
+      }
+      return key_search_ret(ret, n);
+    }
+
     void
     invariant_checker_impl(const key_slice *min_key,
                            const key_slice *max_key,
@@ -492,10 +492,10 @@ private:
       if (unlikely(!n))
         return;
       n->mark_deleting();
-      rcu::free(n, deleter);
+      rcu::free_with_fn(n, deleter);
     }
 
-  } PACKED_CACHE_ALIGNED;
+  } CACHE_ALIGNED;
 
   struct internal_node : public node {
     /**
@@ -598,7 +598,7 @@ private:
       if (unlikely(!n))
         return;
       n->mark_deleting();
-      rcu::free(n, deleter);
+      rcu::free_with_fn(n, deleter);
     }
 
   } PACKED_CACHE_ALIGNED;
@@ -722,7 +722,7 @@ public:
   inline bool
   search(const key_type &k, value_type &v) const
   {
-    vector<leaf_node *> ns
+    std::vector<leaf_node *> ns;
     scoped_rcu_region rcu_region;
     return search_impl(k, v, ns);
   }
@@ -746,6 +746,15 @@ private:
   private:
     T *const callback;
   };
+
+  struct leaf_kvinfo;
+
+  bool search_range_at_layer(leaf_node *leaf,
+                             const std::string &prefix,
+                             const key_type &lower,
+                             bool inc_lower,
+                             const key_type *upper,
+                             search_range_callback &callback) const;
 
 public:
 
@@ -797,7 +806,7 @@ public:
    */
   template <typename T>
   inline void
-  search_range(const key_type &lower, const key_slice *upper, T callback) const
+  search_range(const key_type &lower, const key_type *upper, T callback) const
   {
     type_callback_wrapper<T> w(&callback);
     search_range_call(lower, upper, w);
@@ -810,7 +819,8 @@ public:
   inline bool
   insert(const key_type &k, value_type v)
   {
-    return insert_impl(&root, k, v, false);
+    // XXX: not sure if this cast is safe
+    return insert_impl((node **) &root, k, v, false);
   }
 
   /**
@@ -820,13 +830,13 @@ public:
   inline bool
   insert_if_absent(const key_type &k, value_type v)
   {
-    return insert_impl(&root, k, v, true);
+    return insert_impl((node **) &root, k, v, true);
   }
 
   inline bool
   remove(const key_type &k)
   {
-    return remove_impl(&root);
+    return remove_impl((node **) &root, k);
   }
 
   bool remove_impl(node **root_location, const key_type &k);
@@ -861,7 +871,7 @@ private:
   sift_swap_right(T *array, size_t p, size_t n)
   {
     for (size_t i = n; i > p; i--)
-      std::swap(array[i], array[i - 1]);
+      array[i].swap(array[i - 1]);
   }
 
   /**
@@ -885,7 +895,7 @@ private:
     if (unlikely(p + 1 >= n))
       return;
     for (size_t i = p; i < n - 1; i++)
-      std::swap(array[i], array[i + 1]);
+      array[i].swap(array[i + 1]);
   }
 
   /**
@@ -904,16 +914,18 @@ private:
   swap_with(T *dest, T *source, size_t p, size_t n)
   {
     for (size_t i = p; i < n; i++)
-      std::swap(*dest++, source[i]);
+      (dest++)->swap(source[i]);
   }
 
   template <typename T>
   static inline ALWAYS_INLINE void
-  unsafe_dup_into(T *dest, T *source, size_t p, size_t n)
+  unsafe_share_with(T *dest, T *source, size_t p, size_t n)
   {
     for (size_t i = p; i < n; i++)
-      util::unsafe_dup_into(*dest++, source[i]);
+      util::unsafe_share_with(*dest++, source[i]);
   }
+
+  leaf_node *leftmost_descend_layer(node *n) const;
 
   /**
    * Assumes RCU region scope is held
@@ -968,14 +980,14 @@ private:
     INVARIANT(pos < n);
     if (leaf->value_is_layer(n)) {
 #ifdef CHECK_INVARIANTS
-      leaf->values[n].lock():
+      leaf->values[n].n->lock():
 #endif
-      leaf->values[n].mark_deleting();
-      INVARIANT(leaf->values[n].is_leaf_node());
-      INVARIANT(leaf->values[n].key_slots_used == 0);
-      leaf_node::release((leaf_node *) leaf->values[n]);
+      leaf->values[n].n->mark_deleting();
+      INVARIANT(leaf->values[n].n->is_leaf_node());
+      INVARIANT(leaf->values[n].n->key_slots_used == 0);
+      leaf_node::release((leaf_node *) leaf->values[n].n);
 #ifdef CHECK_INVARIANTS
-      leaf->values[n].unlock():
+      leaf->values[n].n->unlock():
 #endif
     }
     sift_left(leaf->keys, pos, n);
@@ -1027,7 +1039,7 @@ private:
           node *left_node,
           node *right_node,
           key_slice &new_key,
-          btree::node *&replace_node,
+          node *&replace_node,
           std::vector<remove_parent_entry> &parents,
           std::vector<node *> &locked_nodes);
 };

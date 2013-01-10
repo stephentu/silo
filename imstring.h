@@ -16,6 +16,10 @@
  */
 template <bool RCU>
 class base_imstring : public util::noncopyable {
+
+  template <bool R>
+  friend class base_imstring;
+
 public:
   inline base_imstring() : p(NULL), l(0), xfer(false) {}
 
@@ -31,7 +35,7 @@ public:
     memcpy(p, s.data(), l);
   }
 
-  template <typename R>
+  template <bool R>
   inline void
   swap(base_imstring<R> &that)
   {
@@ -59,7 +63,7 @@ public:
   }
 
   inline void
-  unsafe_dup_into(base_imstring &that)
+  unsafe_share_with(base_imstring &that)
   {
     release();
     p = that.p;
@@ -68,7 +72,7 @@ public:
     that.xfer = true;
   }
 
-private:
+protected:
 
   inline void
   release()
@@ -111,14 +115,5 @@ public:
     : base_imstring<true>(s)
   {}
 };
-
-namespace std {
-  template <bool A, bool B>
-  inline void
-  swap(base_imstring<A> &a, base_imstring<B> &b)
-  {
-    a.swap(b);
-  }
-}
 
 #endif /* _NDB_IMSTRING_H_ */

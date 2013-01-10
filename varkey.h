@@ -14,12 +14,12 @@ public:
   inline varkey() : p(NULL), l(0) {}
 
   inline varkey(const uint8_t *p, size_t l)
-    : p(p), l(p)
+    : p(p), l(l)
   {
   }
 
   explicit inline varkey(const std::string &s)
-    : p(s.data()), l(s.size())
+    : p((const uint8_t *) s.data()), l(s.size())
   {
   }
 
@@ -45,7 +45,7 @@ public:
   inline bool
   operator<(const varkey &that) const
   {
-    int r = memcmp(data(), std::min(size(), that.size());
+    int r = memcmp(data(), that.data(), std::min(size(), that.size()));
     return r < 0 || (r == 0 && size() < that.size());
   }
 
@@ -58,7 +58,7 @@ public:
   inline bool
   operator<=(const varkey &that) const
   {
-    int r = memcmp(data(), std::min(size(), that.size());
+    int r = memcmp(data(), that.data(), std::min(size(), that.size()));
     return r < 0 || (r == 0 && size() <= that.size());
   }
 
@@ -73,7 +73,7 @@ public:
   {
     uint64_t ret = 0;
     uint8_t *rp = (uint8_t *) &ret;
-    for (size_t i = 0; i < std::min(l, 8); i++)
+    for (size_t i = 0; i < std::min(l, size_t(8)); i++)
       rp[i] = p[i];
     return ret;
   }
@@ -107,7 +107,7 @@ public:
   inline
   std::string str() const
   {
-    return std::string(p, l);
+    return std::string((const char *) p, l);
   }
 
 private:
@@ -115,9 +115,10 @@ private:
   size_t l;
 };
 
-std::ostream &operator<<(std::ostream &o, const varkey &k)
+inline std::ostream &
+operator<<(std::ostream &o, const varkey &k)
 {
-  o << util::hexify(std::string(p, l));
+  o << util::hexify(k.str());
   return o;
 }
 
@@ -127,7 +128,7 @@ public:
   inline obj_varkey() : varkey() {}
 
   inline obj_varkey(T t)
-    : varkey(&obj, sizeof(T)), obj(t)
+    : varkey((const uint8_t *) &obj, sizeof(T)), obj(t)
   {
   }
 

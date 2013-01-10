@@ -11,12 +11,13 @@
 #include "txn.h"
 #include "util.h"
 
+using namespace std;
 using namespace util;
 
-std::string
+string
 btree::node::VersionInfoStr(uint64_t v)
 {
-  std::stringstream buf;
+  stringstream buf;
   buf << "[";
 
   if (IsLeafNode(v))
@@ -195,7 +196,7 @@ btree::recursive_delete(node *n)
 
 bool
 btree::search_impl(const key_type &k, value_type &v,
-                   std::vector<leaf_node *> &leaf_nodes) const
+                   vector<leaf_node *> &leaf_nodes) const
 {
 
 retry:
@@ -207,12 +208,12 @@ retry:
     kcur = k;
     cur = root;
     kslice = k.slice();
-    kslicelen = std::min(k.size(), 9);
+    kslicelen = min(k.size(), size_t(9));
   } else {
     kcur = k.shift_many(leaf_nodes.size() - 1);
     cur = leaf_nodes.back();
     kslice = kcur.slice();
-    kslicelen = std::min(kcur.size(), 9);
+    kslicelen = min(kcur.size(), size_t(9));
     leaf_nodes.pop_back();
   }
 
@@ -236,7 +237,7 @@ process:
         // found
         leaf_node::value_or_node_ptr vn = leaf->values[ret];
         bool is_layer = kslicelen == 9 && leaf->value_is_layer(ret);
-        varkey suffix(suffixes[ret]);
+        varkey suffix(leaf->suffixes[ret]);
         if (unlikely(!leaf->check_version(version)))
           goto process;
         if (!is_layer) {
@@ -253,7 +254,7 @@ process:
         cur = vn.n;
         kcur = kcur.shift();
         kslice = kcur.slice();
-        kslicelen = std::min(kcur.size(), 9);
+        kslicelen = min(kcur.size(), size_t(9));
         continue;
       }
 
@@ -305,6 +306,28 @@ process:
   }
 }
 
+struct btree::leaf_kvinfo {
+  key_slice key;
+  leaf_node::value_or_node_ptr vn;
+  bool layer;
+  size_t length;
+  varkey suffix;
+  leaf_kvinfo() {} // for STL
+  leaf_kvinfo(btree::key_slice key,
+              leaf_node::value_or_node_ptr vn,
+              bool layer,
+              size_t length,
+              varkey suffix)
+    : key(key), vn(vn), layer(layer), length(length), suffix(suffix)
+  {}
+
+  inline const char *
+  keyslice() const
+  {
+    return (const char *) &key;
+  }
+};
+
 // recursively read the range from the layer down
 //
 // all args relative to prefix
@@ -313,51 +336,33 @@ process:
 bool
 btree::search_range_at_layer(
     leaf_node *leaf,
-    const std::string &prefix,
-    key_slice lower,
+    const string &prefix,
+    const key_type &lower,
     bool inc_lower,
     const key_type *upper,
     search_range_callback &callback) const
 {
+  INVARIANT(lower.size() <= 8);
 
   key_slice last_keyslice;
   size_t last_keyslice_len;
   bool emitted_last_keyslice = false;
-  if (inc_lower) {
+  if (!inc_lower) {
     last_keyslice = lower.slice();
-    last_keyslice_len = std::min(lower.size(), 9);
+    last_keyslice_len = min(lower.size(), size_t(9));
     emitted_last_keyslice = true;
   }
 
-  key_slice next_key = lower;
+  key_slice lower_slice = lower.slice();
+  key_slice next_key = lower_slice;
   size_t prefix_size = prefix.size();
-  std::string slice_buffer(prefix);
+  string slice_buffer(prefix);
   slice_buffer.reserve(slice_buffer.size() + 8);
   uint64_t upper_slice = upper ? upper->slice() : 0;
   while (!upper || next_key <= upper_slice) {
     prefetch_node(leaf);
-    struct leaf_kvinfo {
-      key_slice key;
-      value_or_node_ptr vn;
-      bool layer;
-      size_t length;
-      varkey suffix;
-      leaf_kvinfo() {} // for STL
-      leaf_kvinfo(key_slice key,
-                  value_or_node_ptr vn,
-                  bool layer,
-                  size_t length,
-                  varkey suffix)
-        : key(key), vn(vn), layer(layer), length(length), suffix(suffix)
-      {}
 
-      inline const char *
-      keyslice() const
-      {
-        return (const char *) &key;
-      }
-    };
-    std::vector<leaf_kvinfo> buf;
+    vector<leaf_kvinfo> buf;
     uint64_t version = leaf->stable_version();
     key_slice leaf_min_key = leaf->min_key;
     if (leaf_min_key > next_key) {
@@ -373,7 +378,9 @@ btree::search_range_at_layer(
     }
 
     for (size_t i = 0; i < leaf->key_slots_used(); i++)
-      if (leaf->keys[i] >= lower && (!upper || leaf->keys[i] <= upper_slice))
+      if ((leaf->keys[i] > lower_slice ||
+           (leaf->keys[i] == lower_slice && leaf->keyslice_length(i) >= lower.size())) &&
+          (!upper || leaf->keys[i] <= upper_slice))
         buf.push_back(
             leaf_kvinfo(
               leaf->keys[i],
@@ -392,30 +399,27 @@ btree::search_range_at_layer(
           (buf[i].key < last_keyslice ||
            (buf[i].key == last_keyslice && buf[i].length <= last_keyslice_len)))
         continue;
-      size_t ncpy = std::min(buf[i].length, 8);
+      size_t ncpy = min(buf[i].length, size_t(8));
       slice_buffer.resize(prefix_size + ncpy);
-      memcpy(slice_buffer.data() + prefix_size, buf[i].keyslice(), ncpy);
+      memcpy(&slice_buffer[0] + prefix_size, buf[i].keyslice(), ncpy);
       if (buf[i].layer) {
         // recurse into layer
-        leaf *next_layer = leftmost_descend_layer(buf[i].values.n);
-        if (!search_range_at_layer(next_layer, slice_buffer, 0, true, NULL, callback))
+        leaf_node *next_layer = leftmost_descend_layer(buf[i].vn.n);
+        varkey zerokey;
+        if (!search_range_at_layer(next_layer, slice_buffer, zerokey, true, NULL, callback))
           return false;
       } else {
         if (upper && buf[i].key == upper_slice) {
-          if (buf[i].length == 9) {
-            if (8 + buf[i].suffix.size() > upper->size())
+          if (buf[i].length == 9 && upper->size() >= 9) {
+            if (buf[i].suffix >= upper->shift())
               break;
-            if (8 + buf[i].suffix.size() == upper->size() &&
-                buf[i].suffix >= upper->slice)
-              break;
-            // need to add suffix to slice_buffer
             slice_buffer.insert(slice_buffer.end(), buf[i].suffix.data(),
                 buf[i].suffix.data() + buf[i].suffix.size());
           } else if (buf[i].length >= upper->size()) {
             break;
           }
         }
-        if (!callback.invoke(varkey(slice_buffer.data(), slice_buffer.size()), buf[i].values.v))
+        if (!callback.invoke(varkey(slice_buffer), buf[i].vn.v))
           return false;
       }
       last_keyslice = buf[i].key;
@@ -446,7 +450,7 @@ btree::search_range_call(const key_type &lower, const key_type *upper, search_ra
 {
   if (unlikely(upper && *upper <= lower))
     return;
-  std::vector<leaf_node *> leaf_nodes;
+  vector<leaf_node *> leaf_nodes;
   value_type v = 0;
   scoped_rcu_region rcu_region;
   search_impl(lower, v, leaf_nodes);
@@ -455,16 +459,16 @@ btree::search_range_call(const key_type &lower, const key_type *upper, search_ra
   while (!leaf_nodes.empty()) {
     leaf_node *cur = leaf_nodes.back();
     leaf_nodes.pop_back();
-    std::string prefix;
+    string prefix;
     prefix.insert(prefix.end(), lower.data(), lower.data() + 8 * leaf_nodes.size());
     key_type layer_upper;
     bool layer_has_upper = false;
-    if (upper && round_up(upper->size(), 8) >= round_up(lower.size(), 8)) {
-      layer_upper = upper.shift_many(leaf_nodes.size());
+    if (upper && round_up(upper->size(), size_t(8)) >= round_up(lower.size(), size_t(8))) {
+      layer_upper = upper->shift_many(leaf_nodes.size());
       layer_has_upper = true;
     }
     if (!search_range_at_layer(
-          cur, prefix, lower.shift_many(leaf_nodes.size()).slice(),
+          cur, prefix, lower.shift_many(leaf_nodes.size()),
           first, layer_has_upper ? &layer_upper : NULL, callback))
       return;
     first = false;
@@ -478,8 +482,8 @@ btree::insert_impl(node **root_location, const key_type &k, value_type v, bool o
 retry:
   key_slice mk;
   node *ret;
-  std::vector<insert_parent_entry> parents;
-  std::vector<node *> locked_nodes;
+  vector<insert_parent_entry> parents;
+  vector<node *> locked_nodes;
   scoped_rcu_region rcu_region;
   node *local_root = *root_location;
   insert_status status =
@@ -527,8 +531,8 @@ btree::remove_impl(node **root_location, const key_type &k)
 retry:
   key_slice new_key;
   node *replace_node;
-  std::vector<remove_parent_entry> parents;
-  std::vector<node *> locked_nodes;
+  vector<remove_parent_entry> parents;
+  vector<node *> locked_nodes;
   scoped_rcu_region rcu_region;
   node *local_root = *root_location;
   remove_status status = remove0(local_root,
@@ -587,11 +591,11 @@ btree::leftmost_descend_layer(node *n) const
 size_t
 btree::size() const
 {
-retry:
   scoped_rcu_region rcu_region;
   size_t count = 0;
-  std::vector<node *> q;
-  q.push_back(root);
+  vector<node *> q;
+  // XXX: not sure if cast is safe
+  q.push_back((node *) root);
   while (!q.empty()) {
     node *cur = q.back();
     q.pop_back();
@@ -618,20 +622,20 @@ process:
 }
 
 btree::insert_status
-btree::insert0(node *n,
+btree::insert0(node *np,
                const key_type &k,
                value_type v,
                bool only_if_absent,
                key_slice &min_key,
                node *&new_node,
-               std::vector<insert_parent_entry> &parents,
-               std::vector<node *> &locked_nodes)
+               vector<insert_parent_entry> &parents,
+               vector<node *> &locked_nodes)
 {
   uint64_t kslice = k.slice();
-  size_t kslicelen = std::min(k.size(), 9);
+  size_t kslicelen = min(k.size(), size_t(9));
 
-  prefetch_node(n);
-  if (leaf_node *leaf = AsLeafCheck(n)) {
+  prefetch_node(np);
+  if (leaf_node *leaf = AsLeafCheck(np)) {
     // locked nodes are acquired bottom to top
     INVARIANT(locked_nodes.empty());
 
@@ -670,7 +674,7 @@ btree::insert0(node *n,
         INVARIANT(leaf->keys[i] >= kslice);
         if (leaf->keys[i] == kslice) {
           nslice++;
-          size_t kslicelen0 = leaf->keyslice_length(l);
+          size_t kslicelen0 = leaf->keyslice_length(i);
           if (kslicelen0 <= kslicelen) {
             INVARIANT(lenmatch == -1);
             lenlowerbound = i;
@@ -717,7 +721,7 @@ btree::insert0(node *n,
         key_type old_slice(leaf->suffixes[lenmatch]);
         new_root->keys[0] = old_slice.slice();
         new_root->values[0] = leaf->values[lenmatch];
-        new_root->lengths[0] = std::min(old_slice.size(), 9);
+        new_root->lengths[0] = min(old_slice.size(), size_t(9));
         if (new_root->lengths[0] == 9) {
           rcu_imstring i(old_slice.data() + 8, old_slice.size() - 8);
           new_root->suffixes[0].swap(i);
@@ -733,6 +737,7 @@ btree::insert0(node *n,
         if (!ret)
           INVARIANT(false);
         return UnlockAndReturn(locked_nodes, I_NONE_MOD);
+      }
     }
 
     // lenlowerbound + 1 is the slot we want the new key to go into, in the leaf node
@@ -741,12 +746,12 @@ btree::insert0(node *n,
       leaf->mark_modifying();
 
       sift_right(leaf->keys, lenlowerbound + 1, n);
-      leaf->keys[lenlowerbound + 1] = k;
+      leaf->keys[lenlowerbound + 1] = kslice;
       sift_right(leaf->values, lenlowerbound + 1, n);
-      leaf->values[lenlowerbound + 1] = v;
+      leaf->values[lenlowerbound + 1].v = v;
       sift_right(leaf->lengths, lenlowerbound + 1, n);
       leaf->lengths[lenlowerbound + 1] = kslicelen;
-      sift_right(leaf->suffixes, lenlowerbound + 1, n);
+      sift_swap_right(leaf->suffixes, lenlowerbound + 1, n);
       if (kslicelen == 9) {
         rcu_imstring i(k.data() + 8, k.size() - 8);
         leaf->suffixes[lenlowerbound + 1].swap(i);
@@ -771,7 +776,7 @@ btree::insert0(node *n,
           return UnlockAndReturn(locked_nodes, I_RETRY);
         //INVARIANT(leaf == root);
       } else {
-        for (std::vector<insert_parent_entry>::reverse_iterator rit = parents.rbegin();
+        for (vector<insert_parent_entry>::reverse_iterator rit = parents.rbegin();
             rit != parents.rend(); ++rit) {
           // lock the parent
           node *p = rit->first;
@@ -825,15 +830,15 @@ btree::insert0(node *n,
       // which all share the same keyslice
 
       // compute new_in_left
-      new_in_left.first = std::max(NMinKeysPerNode, nslice ? ret + nslice : lenlowerbound + 1) + 1;
+      new_in_left.first = max<size_t>(NMinKeysPerNode, nslice ? ret + nslice : lenlowerbound + 1) + 1;
       new_in_left.second = (NKeysPerNode + 1) - new_in_left.first;
 
       // compute new_in_right
-      new_in_right.first = std::min(NMinKeysPerNode, nslice ? ret : lenlowerbound + 1);
+      new_in_right.first = min<size_t>(NMinKeysPerNode, nslice ? ret : lenlowerbound + 1);
       new_in_right.second = (NKeysPerNode + 1) - new_in_right.first;
 
-      size_t new_in_left_min = std::min(new_in_left.first, new_in_left.second);
-      size_t new_in_right_min = std::min(new_in_right.first, new_in_right.second);
+      size_t new_in_left_min = min(new_in_left.first, new_in_left.second);
+      size_t new_in_right_min = min(new_in_right.first, new_in_right.second);
 
       if (new_in_left_min < new_in_right_min) {
         // put new key in new leaf (right)
@@ -844,7 +849,7 @@ btree::insert0(node *n,
         copy_into(&new_leaf->keys[pos + 1], leaf->keys, lenlowerbound + 1, NKeysPerNode);
 
         copy_into(&new_leaf->values[0], leaf->values, new_in_right.first, lenlowerbound + 1);
-        new_leaf->values[pos] = v;
+        new_leaf->values[pos].v = v;
         copy_into(&new_leaf->values[pos + 1], leaf->values, lenlowerbound + 1, NKeysPerNode);
 
         copy_into(&new_leaf->lengths[0], leaf->lengths, new_in_right.first, lenlowerbound + 1);
@@ -873,7 +878,7 @@ btree::insert0(node *n,
         sift_right(leaf->keys, lenlowerbound + 1, new_in_left.first - 1);
         leaf->keys[lenlowerbound + 1] = kslice;
         sift_right(leaf->values, lenlowerbound + 1, new_in_left.first - 1);
-        leaf->values[lenlowerbound + 1] = v;
+        leaf->values[lenlowerbound + 1].v = v;
         sift_right(leaf->lengths, lenlowerbound + 1, new_in_left.first - 1);
         leaf->lengths[lenlowerbound + 1] = kslicelen;
         sift_swap_right(leaf->suffixes, lenlowerbound + 1, new_in_left.first - 1);
@@ -902,7 +907,7 @@ btree::insert0(node *n,
       return I_SPLIT;
     }
   } else {
-    internal_node *internal = AsInternal(n);
+    internal_node *internal = AsInternal(np);
     uint64_t version = internal->stable_version();
     if (unlikely(node::IsDeleting(version)))
       return UnlockAndReturn(locked_nodes, I_RETRY);
@@ -1011,12 +1016,12 @@ btree::remove0(node *np,
                node *left_node,
                node *right_node,
                key_slice &new_key,
-               btree::node *&replace_node,
-               std::vector<remove_parent_entry> &parents,
-               std::vector<node *> &locked_nodes)
+               node *&replace_node,
+               vector<remove_parent_entry> &parents,
+               vector<node *> &locked_nodes)
 {
   uint64_t kslice = k.slice();
-  size_t kslicelen = std::min(k.size(), 9);
+  size_t kslicelen = min(k.size(), size_t(9));
 
   prefetch_node(np);
   if (leaf_node *leaf = AsLeafCheck(np)) {
@@ -1033,14 +1038,14 @@ btree::remove0(node *np,
     // is duplicated from insert0()
     if (unlikely(leaf->is_deleting()))
       return UnlockAndReturn(locked_nodes, R_RETRY);
-    if (unlikely(k < leaf->min_key))
+    if (unlikely(kslice < leaf->min_key))
       return UnlockAndReturn(locked_nodes, R_RETRY);
     if (likely(leaf->next)) {
       uint64_t right_version = leaf->next->stable_version();
       key_slice right_min_key = leaf->next->min_key;
       if (unlikely(!leaf->next->check_version(right_version)))
         return UnlockAndReturn(locked_nodes, R_RETRY);
-      if (unlikely(k >= right_min_key))
+      if (unlikely(kslice >= right_min_key))
         return UnlockAndReturn(locked_nodes, R_RETRY);
     }
 
@@ -1055,7 +1060,7 @@ btree::remove0(node *np,
         node **root_location = &leaf->values[ret].n;
         remove_impl(root_location, k.shift());
         node *layer_n = *root_location;
-        bool layer_leaf = layef_n->is_leaf_node();
+        bool layer_leaf = layer_n->is_leaf_node();
         // XXX: could also re-merge back when layer size becomes 1, but
         // no need for now
         if (!layer_leaf || layer_n)
@@ -1111,7 +1116,7 @@ btree::remove0(node *np,
         //INVARIANT(leaf == root);
       }
 
-      for (std::vector<remove_parent_entry>::reverse_iterator rit = parents.rbegin();
+      for (vector<remove_parent_entry>::reverse_iterator rit = parents.rbegin();
           rit != parents.rend(); ++rit) {
         node *p = rit->parent;
         node *l = rit->parent_left_sibling;
@@ -1189,7 +1194,7 @@ btree::remove0(node *np,
             rcu_imstring im;
             leaf->suffixes[n - 1 + i].swap(im);
           }
-          unsafe_dup_into(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
+          unsafe_share_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
 
           leaf->set_key_slots_used(right_n + (n - 1));
           leaf->next = right_sibling->next;
@@ -1246,8 +1251,8 @@ btree::remove0(node *np,
             rcu_imstring im;
             left_sibling->suffixes[i].swap(im);
           }
-          unsafe_dup_into(&left_sibling->lengths[left_n], leaf->lengths, 0, ret);
-          unsafe_dup_into(&left_sibling->lengths[left_n + ret], leaf->lengths, ret + 1, n);
+          unsafe_share_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
+          unsafe_share_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);
 
           left_sibling->set_key_slots_used(left_n + (n - 1));
           left_sibling->next = leaf->next;
@@ -1275,7 +1280,7 @@ btree::remove0(node *np,
     uint64_t version = internal->stable_version();
     if (unlikely(node::IsDeleting(version)))
       return UnlockAndReturn(locked_nodes, R_RETRY);
-    key_search_ret kret = internal->key_lower_bound_search(k);
+    key_search_ret kret = internal->key_lower_bound_search(kslice);
     ssize_t ret = kret.first;
     size_t n = kret.second;
     size_t child_idx = (ret == -1) ? 0 : ret + 1;
@@ -1452,19 +1457,19 @@ btree::remove0(node *np,
 class scoped_rate_timer {
 private:
   util::timer t;
-  std::string region;
+  string region;
   size_t n;
 
 public:
-  scoped_rate_timer(const std::string &region, size_t n) : region(region), n(n)
+  scoped_rate_timer(const string &region, size_t n) : region(region), n(n)
   {}
 
   ~scoped_rate_timer()
   {
     double x = t.lap() / 1000.0; // ms
     double rate = double(n) / (x / 1000.0);
-    std::cerr << "timed region `" << region << "' took " << x
-              << " ms (" << rate << " events/sec)" << std::endl;
+    cerr << "timed region `" << region << "' took " << x
+              << " ms (" << rate << " events/sec)" << endl;
   }
 };
 
@@ -1673,7 +1678,7 @@ test5()
   for (size_t iter = 0; iter < ARRAY_NELEMS(seeds); iter++) {
     srand(seeds[iter]);
     const size_t nkeys = 20000;
-    std::set<size_t> s;
+    set<size_t> s;
     for (size_t i = 0; i < nkeys; i++) {
       size_t k = rand() % nkeys;
       s.insert(k);
@@ -1707,13 +1712,13 @@ test5()
 
 namespace test6_ns {
   struct scan_callback {
-    typedef std::vector<
-      std::pair< std::string, btree::value_type > > kv_vec;
+    typedef vector<
+      pair< string, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
     operator()(const btree::key_type &k, btree::value_type v) const
     {
-      data->push_back(std::make_pair(std::string(k.data(), k.size()), v));
+      data->push_back(make_pair(k.str(), v));
       return true;
     }
     kv_vec *data;
@@ -2010,9 +2015,9 @@ mp_test4()
 namespace mp_test5_ns {
 
   static const size_t niters = 100000;
-  static const u64_varkey max_key = 45;
+  static const size_t max_key = 45;
 
-  typedef std::set<btree::key_slice> key_set;
+  typedef set<btree::key_slice> key_set;
 
   struct summary {
     key_set inserts;
@@ -2078,8 +2083,8 @@ mp_test5()
     removes.insert(sums[i]->removes.begin(), sums[i]->removes.end());
   }
 
-  std::cerr << "num_inserts: " << inserts.size() << std::endl;
-  std::cerr << "num_removes: " << removes.size() << std::endl;
+  cerr << "num_inserts: " << inserts.size() << endl;
+  cerr << "num_removes: " << removes.size() << endl;
 
   for (key_set::iterator it = inserts.begin(); it != inserts.end(); ++it) {
     if (removes.count(*it) == 1)
@@ -2090,7 +2095,7 @@ mp_test5()
   }
 
   btr.invariant_checker();
-  std::cerr << "btr size: " << btr.size() << std::endl;
+  cerr << "btr size: " << btr.size() << endl;
 }
 
 namespace mp_test6_ns {
@@ -2098,11 +2103,11 @@ namespace mp_test6_ns {
   static const size_t ninsertkeys_perthread = 100000;
   static const size_t nremovekeys_perthread = 100000;
 
-  typedef std::vector<btree::key_slice> key_vec;
+  typedef vector<btree::key_slice> key_vec;
 
   class insert_worker : public btree_worker {
   public:
-    insert_worker(const std::vector<btree::key_slice> &keys, btree &btr)
+    insert_worker(const vector<btree::key_slice> &keys, btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -2110,20 +2115,20 @@ namespace mp_test6_ns {
         btr->insert(u64_varkey(keys[i]), (btree::value_type) keys[i]);
     }
   private:
-    std::vector<btree::key_slice> keys;
+    vector<btree::key_slice> keys;
   };
 
   class remove_worker : public btree_worker {
   public:
-    remove_worker(const std::vector<btree::key_slice> &keys, btree &btr)
+    remove_worker(const vector<btree::key_slice> &keys, btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
       for (size_t i = 0; i < keys.size(); i++)
-        btr->remove(u64_varkey(keys)[i]);
+        btr->remove(u64_varkey(keys[i]));
     }
   private:
-    std::vector<btree::key_slice> keys;
+    vector<btree::key_slice> keys;
   };
 }
 
@@ -2133,8 +2138,8 @@ mp_test6()
   using namespace mp_test6_ns;
 
   btree btr;
-  std::vector<key_vec> inps;
-  std::set<unsigned long> insert_keys, remove_keys;
+  vector<key_vec> inps;
+  set<unsigned long> insert_keys, remove_keys;
 
   fast_random r(87643982);
   for (size_t i = 0; i < nthreads / 2; i++) {
@@ -2160,7 +2165,7 @@ mp_test6()
     inps.push_back(inp);
   }
 
-  std::vector<btree_worker*> workers;
+  vector<btree_worker*> workers;
   for (size_t i = 0; i < nthreads / 2; i++)
     workers.push_back(new insert_worker(inps[i], btr));
   for (size_t i = nthreads / 2; i < nthreads; i++)
@@ -2173,13 +2178,13 @@ mp_test6()
   btr.invariant_checker();
 
   ALWAYS_ASSERT(btr.size() == insert_keys.size());
-  for (std::set<unsigned long>::iterator it = insert_keys.begin();
+  for (set<unsigned long>::iterator it = insert_keys.begin();
        it != insert_keys.end(); ++it) {
     btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(*it), v));
     ALWAYS_ASSERT(v == (btree::value_type) *it);
   }
-  for (std::set<unsigned long>::iterator it = remove_keys.begin();
+  for (set<unsigned long>::iterator it = remove_keys.begin();
        it != remove_keys.end(); ++it) {
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(*it), v));
@@ -2193,16 +2198,16 @@ namespace mp_test7_ns {
   static const size_t nkeys = 50;
   static volatile bool running = false;
 
-  typedef std::vector<btree::key_slice> key_vec;
+  typedef vector<btree::key_slice> key_vec;
 
   struct scan_callback {
-    typedef std::vector<
-      std::pair< std::string, btree::value_type > > kv_vec;
+    typedef vector<
+      pair< string, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
     operator()(const btree::key_type &k, btree::value_type v) const
     {
-      data->push_back(std::make_pair(std::string(k.data(), k.size()), v));
+      data->push_back(make_pair(k.str(), v));
       return true;
     }
     kv_vec *data;
@@ -2217,7 +2222,7 @@ namespace mp_test7_ns {
     {
       fast_random r(seed);
       while (running) {
-        btree::key_slice k = keys[r.next() % keys.size()];
+        uint64_t k = keys[r.next() % keys.size()];
         btree::value_type v = NULL;
         ALWAYS_ASSERT(btr->search(u64_varkey(k), v));
         ALWAYS_ASSERT(v == (btree::value_type) k);
@@ -2237,8 +2242,8 @@ namespace mp_test7_ns {
       while (running) {
         scan_callback::kv_vec data;
         btr->search_range(u64_varkey(nkeys / 2), NULL, scan_callback(&data));
-        std::set<btree::key_slice> scan_keys;
-        btree::key_slice prev = 0;
+        set<string> scan_keys;
+        string prev;
         for (size_t i = 0; i < data.size(); i++) {
           if (i != 0)
             ALWAYS_ASSERT(data[i].first > prev);
@@ -2248,7 +2253,7 @@ namespace mp_test7_ns {
         for (size_t i = 0; i < keys.size(); i++) {
           if (keys[i] < (nkeys / 2))
             continue;
-          ALWAYS_ASSERT(scan_keys.count(keys[i]) == 1);
+          ALWAYS_ASSERT(scan_keys.count(u64_varkey(keys[i]).str()) == 1);
         }
       }
     }
@@ -2267,7 +2272,7 @@ namespace mp_test7_ns {
         if (insert)
           btr->insert(u64_varkey(keys[i]), (btree::value_type) keys[i]);
         else
-          btr->remove(u64_varkey(keys)[i]);
+          btr->remove(u64_varkey(keys[i]));
       }
     }
     key_vec keys;
@@ -2318,18 +2323,18 @@ perf_test()
 
   {
     srand(9876);
-    std::map<uint64_t, uint64_t> m;
+    map<uint64_t, uint64_t> m;
     {
-      scoped_rate_timer t("std::map insert", nrecs);
+      scoped_rate_timer t("map insert", nrecs);
       for (size_t i = 0; i < nrecs; i++)
         m[i] = i;
     }
     {
-      scoped_rate_timer t("std::map random lookups", nlookups);
+      scoped_rate_timer t("map random lookups", nlookups);
       for (size_t i = 0; i < nlookups; i++) {
         //uint64_t key = rand() % nrecs;
         uint64_t key = i;
-        std::map<uint64_t, uint64_t>::iterator it =
+        map<uint64_t, uint64_t>::iterator it =
           m.find(key);
         ALWAYS_ASSERT(it != m.end());
       }
@@ -2410,9 +2415,9 @@ read_only_perf_test()
 
   for (size_t i = 0; i < nkeys; i++)
     btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
-  std::cerr << "btree loaded, test starting" << std::endl;
+  cerr << "btree loaded, test starting" << endl;
 
-  std::vector<worker *> workers;
+  vector<worker *> workers;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
     workers.push_back(new worker(seeds[i], btr));
 
@@ -2435,8 +2440,8 @@ read_only_perf_test()
   double agg_throughput = double(total_n) / (double(t.lap()) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
 
-  std::cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << std::endl;
-  std::cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << std::endl;
+  cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << endl;
+  cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << endl;
 }
 
 namespace write_only_perf_test_ns {
@@ -2485,7 +2490,7 @@ write_only_perf_test()
 
   btree btr;
 
-  std::vector<worker *> workers;
+  vector<worker *> workers;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
     workers.push_back(new worker(seeds[i], btr));
 
@@ -2500,8 +2505,8 @@ write_only_perf_test()
   double agg_throughput = double(nkeys) / (double(t.lap()) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
 
-  std::cerr << "agg_write_throughput: " << agg_throughput << " puts/sec" << std::endl;
-  std::cerr << "avg_per_core_write_throughput: " << avg_per_core_throughput << " puts/sec/core" << std::endl;
+  cerr << "agg_write_throughput: " << agg_throughput << " puts/sec" << endl;
+  cerr << "avg_per_core_write_throughput: " << avg_per_core_throughput << " puts/sec/core" << endl;
 }
 
 void
