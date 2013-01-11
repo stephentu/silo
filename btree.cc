@@ -304,8 +304,10 @@ process:
         if (unlikely(!leaf->check_version(version)))
           goto process;
         prefetch_node(right_sibling);
-        if (unlikely(!right_sibling))
+        if (unlikely(!right_sibling)) {
+          leaf_nodes.push_back(leaf);
           return false;
+        }
         uint64_t right_version = right_sibling->stable_version();
         key_slice right_min_key = right_sibling->min_key;
         if (unlikely(!right_sibling->check_version(right_version)))
@@ -316,6 +318,7 @@ process:
         }
       }
 
+      leaf_nodes.push_back(leaf);
       return false;
     } else {
       internal_node *internal = AsInternal(cur);
@@ -2553,20 +2556,20 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  test6();
-  test7();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
-  //mp_test4();
-  //mp_test5();
-  //mp_test6();
-  //mp_test7();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //test6();
+  //test7();
+  mp_test1();
+  mp_test2();
+  mp_test3();
+  mp_test4();
+  mp_test5();
+  mp_test6();
+  mp_test7();
   //perf_test();
   //read_only_perf_test();
   //write_only_perf_test();
