@@ -337,6 +337,8 @@ private:
 
     static std::string VersionInfoStr(uint64_t v);
 
+    void base_invariant_unique_keys_check() const;
+
     // [min_key, max_key)
     void
     base_invariant_checker(const key_slice *min_key,

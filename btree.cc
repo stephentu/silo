@@ -59,31 +59,11 @@ btree::node::VersionInfoStr(uint64_t v)
 }
 
 void
-btree::node::base_invariant_checker(const key_slice *min_key,
-                                    const key_slice *max_key,
-                                    bool is_root) const
+btree::node::base_invariant_unique_keys_check() const
 {
-  ALWAYS_ASSERT(!is_locked());
-  ALWAYS_ASSERT(!is_modifying());
-  ALWAYS_ASSERT(this->is_root() == is_root);
   size_t n = key_slots_used();
-  ALWAYS_ASSERT(n <= NKeysPerNode);
-  if (is_root) {
-    if (is_internal_node())
-      ALWAYS_ASSERT(n >= 1);
-  } else {
-    if (is_internal_node())
-      ALWAYS_ASSERT(n >= NMinKeysPerNode);
-    else
-      // key-slices constrain splits
-      ALWAYS_ASSERT(n >= 1);
-  }
   if (n == 0)
     return;
-  for (size_t i = 1; i < n; i++) {
-    ALWAYS_ASSERT(!min_key || keys[i] >= *min_key);
-    ALWAYS_ASSERT(!max_key || keys[i] < *max_key);
-  }
   if (is_leaf_node()) {
     const leaf_node *leaf = AsLeaf(this);
     typedef pair<key_slice, size_t> leaf_key;
@@ -112,6 +92,33 @@ btree::node::base_invariant_checker(const key_slice *min_key,
       prev = keys[i];
     }
   }
+}
+
+void
+btree::node::base_invariant_checker(const key_slice *min_key,
+                                    const key_slice *max_key,
+                                    bool is_root) const
+{
+  ALWAYS_ASSERT(!is_locked());
+  ALWAYS_ASSERT(!is_modifying());
+  ALWAYS_ASSERT(this->is_root() == is_root);
+  size_t n = key_slots_used();
+  ALWAYS_ASSERT(n <= NKeysPerNode);
+  if (is_root) {
+    if (is_internal_node())
+      ALWAYS_ASSERT(n >= 1);
+  } else {
+    if (is_internal_node())
+      ALWAYS_ASSERT(n >= NMinKeysPerNode);
+    else
+      // key-slices constrain splits
+      ALWAYS_ASSERT(n >= 1);
+  }
+  for (size_t i = 0; i < n; i++) {
+    ALWAYS_ASSERT(!min_key || keys[i] >= *min_key);
+    ALWAYS_ASSERT(!max_key || keys[i] < *max_key);
+  }
+  base_invariant_unique_keys_check();
 }
 
 void
@@ -719,6 +726,8 @@ btree::insert0(node *np,
         if (!only_if_absent)
           leaf->values[lenmatch].v = v;
         // easy case- we don't modify the node itself
+
+        leaf->base_invariant_unique_keys_check();
         return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
       }
       INVARIANT(kslicelen == 9);
@@ -785,6 +794,7 @@ btree::insert0(node *np,
       }
       leaf->inc_key_slots_used();
 
+      leaf->base_invariant_unique_keys_check();
       return UnlockAndReturn(locked_nodes, I_NONE_MOD);
     } else {
       INVARIANT(n == NKeysPerNode);
@@ -892,6 +902,9 @@ btree::insert0(node *np,
 
         leaf->set_key_slots_used(new_in_right.first);
         new_leaf->set_key_slots_used(new_in_right.second);
+
+        leaf->base_invariant_unique_keys_check();
+        new_leaf->base_invariant_unique_keys_check();
       } else {
         // put new key in original leaf
         copy_into(&new_leaf->keys[0], leaf->keys, new_in_left.first - 1, NKeysPerNode);
@@ -916,6 +929,9 @@ btree::insert0(node *np,
 
         leaf->set_key_slots_used(new_in_left.first);
         new_leaf->set_key_slots_used(new_in_left.second);
+
+        leaf->base_invariant_unique_keys_check();
+        new_leaf->base_invariant_unique_keys_check();
       }
 
       // pointer adjustment
@@ -2537,12 +2553,12 @@ void
 btree::Test()
 {
   test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //test6();
-  //test7();
+  test2();
+  test3();
+  test4();
+  test5();
+  test6();
+  test7();
   //mp_test1();
   //mp_test2();
   //mp_test3();
