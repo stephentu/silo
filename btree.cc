@@ -266,6 +266,8 @@ process:
         varkey suffix(leaf->suffixes[ret]);
         if (unlikely(!leaf->check_version(version)))
           goto process;
+        leaf_nodes.push_back(leaf);
+
         if (!is_layer) {
           // check suffixes
           if (kslicelen == 9 && suffix != kcur.shift())
@@ -273,8 +275,6 @@ process:
           v = vn.v;
           return true;
         }
-
-        leaf_nodes.push_back(leaf);
 
         // search the next layer
         cur = vn.n;
@@ -333,7 +333,8 @@ process:
 }
 
 struct btree::leaf_kvinfo {
-  key_slice key;
+  key_slice key; // in host endian
+  key_slice key_big_endian;
   leaf_node::value_or_node_ptr vn;
   bool layer;
   size_t length;
@@ -344,13 +345,14 @@ struct btree::leaf_kvinfo {
               bool layer,
               size_t length,
               varkey suffix)
-    : key(key), vn(vn), layer(layer), length(length), suffix(suffix)
+    : key(key), key_big_endian(big_endian_trfm<key_slice>()(key)),
+      vn(vn), layer(layer), length(length), suffix(suffix)
   {}
 
   inline const char *
   keyslice() const
   {
-    return (const char *) &key;
+    return (const char *) &key_big_endian;
   }
 };
 
@@ -700,21 +702,20 @@ btree::insert0(node *np,
     size_t nslice = 0;
     ssize_t lenmatch = -1;
     ssize_t lenlowerbound = ret;
-    if (ret != -1) {
-      for (size_t i = ret; i < n; i++) {
-        INVARIANT(leaf->keys[i] >= kslice);
-        if (leaf->keys[i] == kslice) {
-          nslice++;
-          size_t kslicelen0 = leaf->keyslice_length(i);
-          if (kslicelen0 <= kslicelen) {
-            INVARIANT(lenmatch == -1);
-            lenlowerbound = i;
-            if (kslicelen0 == kslicelen)
-              lenmatch = i;
-          }
-        } else {
-          break;
+    for (size_t i = (ret == -1 ? 0 : ret); i < n; i++) {
+      if (leaf->keys[i] < kslice) {
+        continue;
+      } else if (leaf->keys[i] == kslice) {
+        nslice++;
+        size_t kslicelen0 = leaf->keyslice_length(i);
+        if (kslicelen0 <= kslicelen) {
+          INVARIANT(lenmatch == -1);
+          lenlowerbound = i;
+          if (kslicelen0 == kslicelen)
+            lenmatch = i;
         }
+      } else {
+        break;
       }
     }
 
@@ -1771,7 +1772,7 @@ test6()
   btree btr;
   const size_t nkeys = 1000;
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == nkeys);
 

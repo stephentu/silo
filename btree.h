@@ -980,16 +980,16 @@ private:
   {
     INVARIANT(leaf->key_slots_used() == n);
     INVARIANT(pos < n);
-    if (leaf->value_is_layer(n)) {
+    if (leaf->value_is_layer(pos)) {
 #ifdef CHECK_INVARIANTS
-      leaf->values[n].n->lock():
+      leaf->values[pos].n->lock();
 #endif
-      leaf->values[n].n->mark_deleting();
-      INVARIANT(leaf->values[n].n->is_leaf_node());
-      INVARIANT(leaf->values[n].n->key_slots_used == 0);
-      leaf_node::release((leaf_node *) leaf->values[n].n);
+      leaf->values[pos].n->mark_deleting();
+      INVARIANT(leaf->values[pos].n->is_leaf_node());
+      INVARIANT(leaf->values[pos].n->key_slots_used() == 0);
+      leaf_node::release((leaf_node *) leaf->values[pos].n);
 #ifdef CHECK_INVARIANTS
-      leaf->values[n].n->unlock():
+      leaf->values[pos].n->unlock();
 #endif
     }
     sift_left(leaf->keys, pos, n);

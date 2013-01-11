@@ -1,12 +1,14 @@
 #ifndef _NDB_VARKEY_H_
 #define _NDB_VARKEY_H_
 
+#include <endian.h>
 #include <iostream>
 #include <stdint.h>
 #include <string>
 
 #include "imstring.h"
 #include "macros.h"
+#include "util.h"
 
 class varkey {
   friend std::ostream &operator<<(std::ostream &o, const varkey &k);
@@ -75,7 +77,7 @@ public:
     uint8_t *rp = (uint8_t *) &ret;
     for (size_t i = 0; i < std::min(l, size_t(8)); i++)
       rp[i] = p[i];
-    return ret;
+    return util::host_endian_trfm<uint64_t>()(ret);
   }
 
   inline varkey
@@ -122,13 +124,13 @@ operator<<(std::ostream &o, const varkey &k)
   return o;
 }
 
-template <typename T>
+template <typename T, typename Trfm = util::big_endian_trfm<T> >
 class obj_varkey : public varkey {
 public:
   inline obj_varkey() : varkey() {}
 
   inline obj_varkey(T t)
-    : varkey((const uint8_t *) &obj, sizeof(T)), obj(t)
+    : varkey((const uint8_t *) &obj, sizeof(T)), obj(Trfm()(t))
   {
   }
 
