@@ -2,8 +2,10 @@
 #define _NDB_VARKEY_H_
 
 #include <endian.h>
-#include <iostream>
 #include <stdint.h>
+#include <string.h>
+
+#include <iostream>
 #include <string>
 
 #include "imstring.h"
@@ -22,6 +24,11 @@ public:
 
   explicit inline varkey(const std::string &s)
     : p((const uint8_t *) s.data()), l(s.size())
+  {
+  }
+
+  explicit inline varkey(const char *s)
+    : p((const uint8_t *) s), l(strlen(s))
   {
   }
 

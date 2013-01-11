@@ -87,7 +87,7 @@ inline std::string
 hexify(const T &t)
 {
   std::ostringstream buf;
-  buf << std::hex << t << std::endl;
+  buf << std::hex << t;
   return buf.str();
 }
 

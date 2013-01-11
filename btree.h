@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <iostream>
 #include <string>
 #include <vector>
 #include <utility>
@@ -202,6 +203,8 @@ private:
       lock_owner = pthread_self();
 #endif
       COMPILER_MEMORY_FENCE;
+      std::cerr << "0x" << util::hexify(this) << ": lock acquired: "
+                << VersionInfoStr(v | HDR_LOCKED_MASK) << std::endl;
     }
 
     inline void
@@ -224,6 +227,8 @@ private:
       INVARIANT(!IsModifying(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
+      std::cerr << "0x" << util::hexify(this) << ":lock released: "
+                << VersionInfoStr(v) << std::endl;
     }
 
     inline bool
@@ -392,6 +397,19 @@ private:
     {
       INVARIANT(n < NKeysPerNode);
       return lengths[n] & LEN_LEN_MASK;
+    }
+
+    inline void
+    keyslice_set_length(size_t n, size_t len, bool layer)
+    {
+      INVARIANT(n < NKeysPerNode);
+      INVARIANT(is_modifying());
+      INVARIANT(len <= 9);
+      INVARIANT(!layer || len == 9);
+      uint8_t v = lengths[n];
+      v &= ~LEN_LEN_MASK;
+      v |= (len | (layer ? LEN_TYPE_MASK : 0));
+      lengths[n] = v;
     }
 
     inline bool

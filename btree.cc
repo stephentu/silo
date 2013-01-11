@@ -634,6 +634,7 @@ btree::size() const
     q.pop_back();
     prefetch_node(cur);
     leaf_node *leaf = leftmost_descend_layer(cur);
+    INVARIANT(leaf);
     while (leaf) {
       prefetch_node(leaf);
     process:
@@ -731,15 +732,15 @@ btree::insert0(node *np,
           leaf->values[lenmatch].v = v;
         // easy case- we don't modify the node itself
 
-        leaf->base_invariant_unique_keys_check();
+        //leaf->base_invariant_unique_keys_check();
         return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
       }
       INVARIANT(kslicelen == 9);
       if (leaf->value_is_layer(lenmatch)) {
         // need to insert in next level btree (using insert_impl())
         node **root_location = &leaf->values[lenmatch].n;
-        insert_impl(root_location, k.shift(), v, only_if_absent);
-        return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
+        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent);
+        return UnlockAndReturn(locked_nodes, ret ? I_NONE_MOD : I_NONE_NOMOD);
       } else {
         // need to create a new btree layer, and add both existing key and
         // new key to it
@@ -752,14 +753,13 @@ btree::insert0(node *np,
 #ifdef CHECK_INVARIANTS
         new_root->lock();
         new_root->mark_modifying();
-        locked_nodes.push_back(new_root);
 #endif /* CHECK_INVARIANTS */
         new_root->set_root();
         key_type old_slice(leaf->suffixes[lenmatch]);
         new_root->keys[0] = old_slice.slice();
         new_root->values[0] = leaf->values[lenmatch];
-        new_root->lengths[0] = min(old_slice.size(), size_t(9));
-        if (new_root->lengths[0] == 9) {
+        new_root->keyslice_set_length(0, min(old_slice.size(), size_t(9)), false);
+        if (new_root->keyslice_length(0) == 9) {
           rcu_imstring i(old_slice.data() + 8, old_slice.size() - 8);
           new_root->suffixes[0].swap(i);
         }
@@ -770,6 +770,9 @@ btree::insert0(node *np,
         }
         leaf->value_set_layer(lenmatch);
         node **root_location = &leaf->values[lenmatch].n;
+#ifdef CHECK_INVARIANTS
+        new_root->unlock();
+#endif /* CHECK_INVARIANTS */
         bool ret = insert_impl(root_location, k.shift(), v, only_if_absent);
         if (!ret)
           INVARIANT(false);
@@ -798,7 +801,7 @@ btree::insert0(node *np,
       }
       leaf->inc_key_slots_used();
 
-      leaf->base_invariant_unique_keys_check();
+      //leaf->base_invariant_unique_keys_check();
       return UnlockAndReturn(locked_nodes, I_NONE_MOD);
     } else {
       INVARIANT(n == NKeysPerNode);
@@ -907,8 +910,8 @@ btree::insert0(node *np,
         leaf->set_key_slots_used(new_in_right.first);
         new_leaf->set_key_slots_used(new_in_right.second);
 
-        leaf->base_invariant_unique_keys_check();
-        new_leaf->base_invariant_unique_keys_check();
+        //leaf->base_invariant_unique_keys_check();
+        //new_leaf->base_invariant_unique_keys_check();
       } else {
         // put new key in original leaf
         copy_into(&new_leaf->keys[0], leaf->keys, new_in_left.first - 1, NKeysPerNode);
@@ -934,8 +937,8 @@ btree::insert0(node *np,
         leaf->set_key_slots_used(new_in_left.first);
         new_leaf->set_key_slots_used(new_in_left.second);
 
-        leaf->base_invariant_unique_keys_check();
-        new_leaf->base_invariant_unique_keys_check();
+        //leaf->base_invariant_unique_keys_check();
+        //new_leaf->base_invariant_unique_keys_check();
       }
 
       // pointer adjustment
@@ -1818,6 +1821,73 @@ test7()
   ALWAYS_ASSERT(v == (btree::value_type) 2);
 }
 
+static void
+test_varlen_single_layer()
+{
+  btree btr;
+
+  const char *k0 = "a";
+  const char *k1 = "aa";
+  const char *k2 = "aaa";
+  const char *k3 = "aaaa";
+  const char *k4 = "aaaaa";
+
+  const char *keys[] = {k0, k1, k2, k3, k4};
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (btree::value_type) keys[i]));
+    btr.invariant_checker();
+  }
+
+  ALWAYS_ASSERT(btr.size() == ARRAY_NELEMS(keys));
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(keys[i]), v));
+    ALWAYS_ASSERT(strcmp((const char *) v, keys[i]) == 0);
+  }
+
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    ALWAYS_ASSERT(btr.remove(varkey(keys[i])));
+    btr.invariant_checker();
+  }
+  ALWAYS_ASSERT(btr.size() == 0);
+}
+
+static void
+test_varlen_multi_layer()
+{
+  btree btr;
+
+  //const char *k0 = "aaaaaaa";
+  //const char *k1 = "aaaaaaaa";
+  //const char *k2 = "aaaaaaaaa";
+  //const char *k3 = "aaaaaaaaaa";
+  //const char *k4 = "aaaaaaaaaaa";
+  //const char *k5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  //const char *keys[] = {k0, k1, k2, k3, k4, k5};
+
+  const char *k0 = "aaaaaaaaa";
+  const char *k1 = "aaaaaaaaaa";
+  const char *keys[] = {k0, k1};
+
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (btree::value_type) keys[i]));
+    btr.invariant_checker();
+  }
+
+  ALWAYS_ASSERT(btr.size() == ARRAY_NELEMS(keys));
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(keys[i]), v));
+    ALWAYS_ASSERT(strcmp((const char *) v, keys[i]) == 0);
+  }
+
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    ALWAYS_ASSERT(btr.remove(varkey(keys[i])));
+    btr.invariant_checker();
+  }
+  ALWAYS_ASSERT(btr.size() == 0);
+}
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2556,20 +2626,24 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  test6();
-  test7();
-  mp_test1();
-  mp_test2();
-  mp_test3();
-  mp_test4();
-  mp_test5();
-  mp_test6();
-  mp_test7();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //test6();
+  //test7();
+
+  //test_varlen_single_layer();
+  test_varlen_multi_layer();
+
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  //mp_test4();
+  //mp_test5();
+  //mp_test6();
+  //mp_test7();
   //perf_test();
   //read_only_perf_test();
   //write_only_perf_test();
