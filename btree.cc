@@ -1888,6 +1888,18 @@ test_varlen_multi_layer()
   ALWAYS_ASSERT(btr.size() == 0);
 }
 
+static void
+test_two_layer()
+{
+  const char *k0 = "aaaaaaaaa";
+  const char *k1 = "aaaaaaaaaa";
+
+  btree btr;
+  ALWAYS_ASSERT(btr.insert(varkey(k0), (btree::value_type) k0));
+  ALWAYS_ASSERT(btr.insert(varkey(k1), (btree::value_type) k0));
+  ALWAYS_ASSERT(btr.size() == 2);
+}
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2194,7 +2206,7 @@ mp_test5()
   summary *sums[] = { s0, s1, s2, s3 };
   for (size_t i = 0; i < ARRAY_NELEMS(sums); i++) {
     inserts.insert(sums[i]->inserts.begin(), sums[i]->inserts.end());
-    removes.insert(sums[i]->removes.begin(), sums[i]->removes.end());
+   removes.insert(sums[i]->removes.begin(), sums[i]->removes.end());
   }
 
   cerr << "num_inserts: " << inserts.size() << endl;
@@ -2633,10 +2645,9 @@ btree::Test()
   //test5();
   //test6();
   //test7();
-
   //test_varlen_single_layer();
-  test_varlen_multi_layer();
-
+  //test_varlen_multi_layer();
+  test_two_layer();
   //mp_test1();
   //mp_test2();
   //mp_test3();
