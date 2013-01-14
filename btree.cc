@@ -759,6 +759,7 @@ btree::insert0(node *np,
         new_root->keys[0] = old_slice.slice();
         new_root->values[0] = leaf->values[lenmatch];
         new_root->keyslice_set_length(0, min(old_slice.size(), size_t(9)), false);
+        new_root->inc_key_slots_used();
         if (new_root->keyslice_length(0) == 9) {
           rcu_imstring i(old_slice.data() + 8, old_slice.size() - 8);
           new_root->suffixes[0].swap(i);
@@ -790,7 +791,7 @@ btree::insert0(node *np,
       sift_right(leaf->values, lenlowerbound + 1, n);
       leaf->values[lenlowerbound + 1].v = v;
       sift_right(leaf->lengths, lenlowerbound + 1, n);
-      leaf->lengths[lenlowerbound + 1] = kslicelen;
+      leaf->keyslice_set_length(lenlowerbound + 1, kslicelen, false);
       sift_swap_right(leaf->suffixes, lenlowerbound + 1, n);
       if (kslicelen == 9) {
         rcu_imstring i(k.data() + 8, k.size() - 8);
@@ -894,7 +895,7 @@ btree::insert0(node *np,
         copy_into(&new_leaf->values[pos + 1], leaf->values, lenlowerbound + 1, NKeysPerNode);
 
         copy_into(&new_leaf->lengths[0], leaf->lengths, new_in_right.first, lenlowerbound + 1);
-        new_leaf->lengths[pos] = kslicelen;
+        new_leaf->keyslice_set_length(pos, kslicelen, false);
         copy_into(&new_leaf->lengths[pos + 1], leaf->lengths, lenlowerbound + 1, NKeysPerNode);
 
         swap_with(&new_leaf->suffixes[0], leaf->suffixes, new_in_right.first, lenlowerbound + 1);
@@ -924,7 +925,7 @@ btree::insert0(node *np,
         sift_right(leaf->values, lenlowerbound + 1, new_in_left.first - 1);
         leaf->values[lenlowerbound + 1].v = v;
         sift_right(leaf->lengths, lenlowerbound + 1, new_in_left.first - 1);
-        leaf->lengths[lenlowerbound + 1] = kslicelen;
+        leaf->keyslice_set_length(lenlowerbound + 1, kslicelen, false);
         sift_swap_right(leaf->suffixes, lenlowerbound + 1, new_in_left.first - 1);
         if (kslicelen == 9) {
           rcu_imstring i(k.data() + 8, k.size() - 8);
@@ -1105,13 +1106,13 @@ btree::remove0(node *np,
     if (kslicelen == 9) {
       if (leaf->value_is_layer(ret)) {
         node **root_location = &leaf->values[ret].n;
-        remove_impl(root_location, k.shift());
+        bool ret = remove_impl(root_location, k.shift());
         node *layer_n = *root_location;
         bool layer_leaf = layer_n->is_leaf_node();
         // XXX: could also re-merge back when layer size becomes 1, but
         // no need for now
         if (!layer_leaf || layer_n)
-          return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
+          return UnlockAndReturn(locked_nodes, ret ? R_NONE_MOD : R_NONE_NOMOD);
       } else {
         // suffix check
         if (varkey(leaf->suffixes[ret]) != k.shift())
@@ -1857,17 +1858,13 @@ test_varlen_multi_layer()
 {
   btree btr;
 
-  //const char *k0 = "aaaaaaa";
-  //const char *k1 = "aaaaaaaa";
-  //const char *k2 = "aaaaaaaaa";
-  //const char *k3 = "aaaaaaaaaa";
-  //const char *k4 = "aaaaaaaaaaa";
-  //const char *k5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  //const char *keys[] = {k0, k1, k2, k3, k4, k5};
-
-  const char *k0 = "aaaaaaaaa";
-  const char *k1 = "aaaaaaaaaa";
-  const char *keys[] = {k0, k1};
+  const char *k0 = "aaaaaaa";
+  const char *k1 = "aaaaaaaa";
+  const char *k2 = "aaaaaaaaa";
+  const char *k3 = "aaaaaaaaaa";
+  const char *k4 = "aaaaaaaaaaa";
+  const char *k5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const char *keys[] = {k0, k1, k2, k3, k4, k5};
 
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
     ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (btree::value_type) keys[i]));
@@ -1896,7 +1893,7 @@ test_two_layer()
 
   btree btr;
   ALWAYS_ASSERT(btr.insert(varkey(k0), (btree::value_type) k0));
-  ALWAYS_ASSERT(btr.insert(varkey(k1), (btree::value_type) k0));
+  ALWAYS_ASSERT(btr.insert(varkey(k1), (btree::value_type) k1));
   ALWAYS_ASSERT(btr.size() == 2);
 }
 
@@ -2638,15 +2635,15 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //test6();
-  //test7();
-  //test_varlen_single_layer();
-  //test_varlen_multi_layer();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  test6();
+  test7();
+  test_varlen_single_layer();
+  test_varlen_multi_layer();
   test_two_layer();
   //mp_test1();
   //mp_test2();

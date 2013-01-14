@@ -203,8 +203,8 @@ private:
       lock_owner = pthread_self();
 #endif
       COMPILER_MEMORY_FENCE;
-      std::cerr << "0x" << util::hexify(this) << ": lock acquired: "
-                << VersionInfoStr(v | HDR_LOCKED_MASK) << std::endl;
+      //std::cerr << "0x" << util::hexify(this) << ": lock acquired: "
+      //          << VersionInfoStr(v | HDR_LOCKED_MASK) << std::endl;
     }
 
     inline void
@@ -227,8 +227,8 @@ private:
       INVARIANT(!IsModifying(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
-      std::cerr << "0x" << util::hexify(this) << ":lock released: "
-                << VersionInfoStr(v) << std::endl;
+      //std::cerr << "0x" << util::hexify(this) << ":lock released: "
+      //          << VersionInfoStr(v) << std::endl;
     }
 
     inline bool
@@ -406,10 +406,7 @@ private:
       INVARIANT(is_modifying());
       INVARIANT(len <= 9);
       INVARIANT(!layer || len == 9);
-      uint8_t v = lengths[n];
-      v &= ~LEN_LEN_MASK;
-      v |= (len | (layer ? LEN_TYPE_MASK : 0));
-      lengths[n] = v;
+      lengths[n] = (len | (layer ? LEN_TYPE_MASK : 0));
     }
 
     inline bool
