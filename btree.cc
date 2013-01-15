@@ -2070,17 +2070,25 @@ test_random_keys()
   btree btr;
   fast_random r(43698);
 
+  const size_t nkeys = 10000;
+  const unsigned int maxkeylen = 1000;
+
+  set<string> keyset;
   vector<string> keys;
-  for (size_t i = 0; i < 1000; i++) {
-    keys.push_back(r.next_string(r.next() % 100));
+  for (size_t i = 0; i < nkeys; i++) {
+  retry:
+    string k = r.next_string(r.next() % (maxkeylen + 1));
+    if (keyset.count(k) == 1)
+      goto retry;
+    keyset.insert(k);
+    keys.push_back(k);
     btr.insert(varkey(keys.back()), (btree::value_type) keys.back().data());
     btr.invariant_checker();
   }
 
-  set<string> keyset(keys.begin(), keys.end());
   ALWAYS_ASSERT(btr.size() == keyset.size());
 
-  for (size_t i = 0; i < 1000; i++) {
+  for (size_t i = 0; i < nkeys; i++) {
     btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(keys[i]), v));
     ALWAYS_ASSERT(v == (btree::value_type) keys[i].data());
@@ -2090,7 +2098,7 @@ test_random_keys()
   test_range_scan_helper tester(btr, varkey(""), NULL, ex);
   tester.test();
 
-  for (size_t i = 0; i < 1000; i++) {
+  for (size_t i = 0; i < nkeys; i++) {
     btr.remove(varkey(keys[i]));
     btr.invariant_checker();
   }
