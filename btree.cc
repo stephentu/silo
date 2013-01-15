@@ -781,7 +781,8 @@ btree::insert0(node *np,
       }
     }
 
-    // lenlowerbound + 1 is the slot we want the new key to go into, in the leaf node
+    // lenlowerbound + 1 is the slot (0-based index) we want the new key to go
+    // into, in the leaf node
     if (n < NKeysPerNode) {
       // also easy case- we only need to make local modifications
       leaf->mark_modifying();
@@ -866,39 +867,52 @@ btree::insert0(node *np,
       //
       // XXX: do this in a more elegant way
 
-      pair<size_t, size_t> new_in_left, new_in_right;
+      // a split point S is a number such that indices [0, s) go into the left
+      // partition, and indices [s, N) go into the right partition
+      size_t left_split_point, right_split_point;
 
-      // at this point, [ret, ret + nslice) contains the indices
-      // which all share the same keyslice
+      left_split_point = NKeysPerNode / 2;
+      for (ssize_t i = left_split_point - 1; i >= 0; i--) {
+        if (likely(leaf->keys[i] != leaf->keys[left_split_point]))
+          break;
+        left_split_point--;
+      }
+      INVARIANT(left_split_point <= NKeysPerNode);
+      INVARIANT(left_split_point == 0 || leaf->keys[left_split_point - 1] != leaf->keys[left_split_point]);
 
-      // compute new_in_left
-      new_in_left.first = max<size_t>(NMinKeysPerNode, nslice ? ret + nslice : lenlowerbound + 1) + 1;
-      new_in_left.second = (NKeysPerNode + 1) - new_in_left.first;
+      right_split_point = NKeysPerNode / 2;
+      for (ssize_t i = right_split_point - 1; i >= 0 && i < ssize_t(NKeysPerNode) - 1; i++) {
+        if (likely(leaf->keys[i] != leaf->keys[right_split_point]))
+          break;
+        right_split_point++;
+      }
+      INVARIANT(right_split_point <= NKeysPerNode);
+      INVARIANT(right_split_point == 0 || leaf->keys[right_split_point - 1] != leaf->keys[right_split_point]);
 
-      // compute new_in_right
-      new_in_right.first = min<size_t>(NMinKeysPerNode, nslice ? ret : lenlowerbound + 1);
-      new_in_right.second = (NKeysPerNode + 1) - new_in_right.first;
+      size_t split_point;
+      if (min(left_split_point, NKeysPerNode - left_split_point) <
+          min(right_split_point, NKeysPerNode - right_split_point))
+        split_point = right_split_point;
+      else
+        split_point = left_split_point;
 
-      size_t new_in_left_min = min(new_in_left.first, new_in_left.second);
-      size_t new_in_right_min = min(new_in_right.first, new_in_right.second);
-
-      if (new_in_left_min < new_in_right_min) {
+      if (split_point <= size_t(lenlowerbound + 1)) {
         // put new key in new leaf (right)
-        size_t pos = lenlowerbound + 1 - new_in_right.first;
+        size_t pos = lenlowerbound + 1 - split_point;
 
-        copy_into(&new_leaf->keys[0], leaf->keys, new_in_right.first, lenlowerbound + 1);
+        copy_into(&new_leaf->keys[0], leaf->keys, split_point, lenlowerbound + 1);
         new_leaf->keys[pos] = kslice;
         copy_into(&new_leaf->keys[pos + 1], leaf->keys, lenlowerbound + 1, NKeysPerNode);
 
-        copy_into(&new_leaf->values[0], leaf->values, new_in_right.first, lenlowerbound + 1);
+        copy_into(&new_leaf->values[0], leaf->values, split_point, lenlowerbound + 1);
         new_leaf->values[pos].v = v;
         copy_into(&new_leaf->values[pos + 1], leaf->values, lenlowerbound + 1, NKeysPerNode);
 
-        copy_into(&new_leaf->lengths[0], leaf->lengths, new_in_right.first, lenlowerbound + 1);
+        copy_into(&new_leaf->lengths[0], leaf->lengths, split_point, lenlowerbound + 1);
         new_leaf->keyslice_set_length(pos, kslicelen, false);
         copy_into(&new_leaf->lengths[pos + 1], leaf->lengths, lenlowerbound + 1, NKeysPerNode);
 
-        swap_with(&new_leaf->suffixes[0], leaf->suffixes, new_in_right.first, lenlowerbound + 1);
+        swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, lenlowerbound + 1);
         if (kslicelen == 9) {
           rcu_imstring i(k.data() + 8, k.size() - 8);
           new_leaf->suffixes[pos].swap(i);
@@ -908,25 +922,25 @@ btree::insert0(node *np,
         }
         swap_with(&new_leaf->suffixes[pos + 1], leaf->suffixes, lenlowerbound + 1, NKeysPerNode);
 
-        leaf->set_key_slots_used(new_in_right.first);
-        new_leaf->set_key_slots_used(new_in_right.second);
+        leaf->set_key_slots_used(split_point);
+        new_leaf->set_key_slots_used(NKeysPerNode - split_point + 1);
 
         //leaf->base_invariant_unique_keys_check();
         //new_leaf->base_invariant_unique_keys_check();
       } else {
         // put new key in original leaf
-        copy_into(&new_leaf->keys[0], leaf->keys, new_in_left.first - 1, NKeysPerNode);
-        copy_into(&new_leaf->values[0], leaf->values, new_in_left.first - 1, NKeysPerNode);
-        copy_into(&new_leaf->lengths[0], leaf->lengths, new_in_left.first - 1, NKeysPerNode);
-        swap_with(&new_leaf->suffixes[0], leaf->suffixes, new_in_left.first - 1, NKeysPerNode);
+        copy_into(&new_leaf->keys[0], leaf->keys, split_point, NKeysPerNode);
+        copy_into(&new_leaf->values[0], leaf->values, split_point, NKeysPerNode);
+        copy_into(&new_leaf->lengths[0], leaf->lengths, split_point, NKeysPerNode);
+        swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, NKeysPerNode);
 
-        sift_right(leaf->keys, lenlowerbound + 1, new_in_left.first - 1);
+        sift_right(leaf->keys, lenlowerbound + 1, split_point);
         leaf->keys[lenlowerbound + 1] = kslice;
-        sift_right(leaf->values, lenlowerbound + 1, new_in_left.first - 1);
+        sift_right(leaf->values, lenlowerbound + 1, split_point);
         leaf->values[lenlowerbound + 1].v = v;
-        sift_right(leaf->lengths, lenlowerbound + 1, new_in_left.first - 1);
+        sift_right(leaf->lengths, lenlowerbound + 1, split_point);
         leaf->keyslice_set_length(lenlowerbound + 1, kslicelen, false);
-        sift_swap_right(leaf->suffixes, lenlowerbound + 1, new_in_left.first - 1);
+        sift_swap_right(leaf->suffixes, lenlowerbound + 1, split_point);
         if (kslicelen == 9) {
           rcu_imstring i(k.data() + 8, k.size() - 8);
           leaf->suffixes[lenlowerbound + 1].swap(i);
@@ -935,8 +949,8 @@ btree::insert0(node *np,
           leaf->suffixes[lenlowerbound + 1].swap(i);
         }
 
-        leaf->set_key_slots_used(new_in_left.first);
-        new_leaf->set_key_slots_used(new_in_left.second);
+        leaf->set_key_slots_used(split_point + 1);
+        new_leaf->set_key_slots_used(NKeysPerNode - split_point);
 
         //leaf->base_invariant_unique_keys_check();
         //new_leaf->base_invariant_unique_keys_check();
@@ -1981,6 +1995,53 @@ test_two_layer_range_scan()
   tester.test();
 }
 
+static void
+test_null_keys()
+{
+  const uint8_t k0[] = {};
+  const uint8_t k1[] = {'\0'};
+  const uint8_t k2[] = {'\0', '\0'};
+  const uint8_t k3[] = {'\0', '\0', '\0'};
+  const uint8_t k4[] = {'\0', '\0', '\0', '\0'};
+  const uint8_t k5[] = {'\0', '\0', '\0', '\0', '\0'};
+  const uint8_t k6[] = {'\0', '\0', '\0', '\0', '\0', '\0'};
+  const uint8_t k7[] = {'\0', '\0', '\0', '\0', '\0', '\0', '\0'};
+  const uint8_t k8[] = {'\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'};
+  const uint8_t k9[] = {'\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'};
+  const uint8_t k10[] = {'\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'};
+  const uint8_t *keys[] = {k0, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10};
+
+  btree btr;
+
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i], i), (btree::value_type) i));
+    btr.invariant_checker();
+  }
+
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(keys[i], i), v));
+    ALWAYS_ASSERT(v == (btree::value_type) i);
+  }
+
+  for (size_t i = 1; i <= 20; i++) {
+    ALWAYS_ASSERT(btr.insert(u64_varkey(i), (btree::value_type) i));
+    btr.invariant_checker();
+  }
+
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(keys[i], i), v));
+    ALWAYS_ASSERT(v == (btree::value_type) i);
+  }
+
+  for (size_t i = 1; i <= 20; i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
+    ALWAYS_ASSERT(v == (btree::value_type) i);
+  }
+}
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2719,17 +2780,18 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //test6();
-  //test7();
-  //test_varlen_single_layer();
-  //test_varlen_multi_layer();
-  //test_two_layer();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  test6();
+  test7();
+  test_varlen_single_layer();
+  test_varlen_multi_layer();
+  test_two_layer();
   test_two_layer_range_scan();
+  test_null_keys();
   //mp_test1();
   //mp_test2();
   //mp_test3();
