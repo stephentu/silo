@@ -125,6 +125,21 @@ public:
     return seed;
   }
 
+  inline char
+  next_char()
+  {
+    return next() % 256;
+  }
+
+  inline std::string
+  next_string(size_t len)
+  {
+    std::string s(len, 0);
+    for (size_t i = 0; i < len; i++)
+      s[i] = next_char();
+    return s;
+  }
+
 private:
   unsigned long seed;
 };

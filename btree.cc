@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 #include <stack>
+#include <vector>
 
 #include <sstream>
 #include "btree.h"
@@ -1916,10 +1917,10 @@ public:
 
   struct expect {
     expect() : tag(), expected_size() {}
-    expect(uint8_t tag, size_t expected_size)
-      : tag(tag), expected_size(expected_size) {}
-    expect(uint8_t tag, const set<string> &expected_keys)
-      : tag(tag), expected_keys(expected_keys) {}
+    expect(size_t expected_size)
+      : tag(0), expected_size(expected_size) {}
+    expect(const set<string> &expected_keys)
+      : tag(1), expected_keys(expected_keys) {}
     uint8_t tag;
     size_t expected_size;
     set<string> expected_keys;
@@ -1990,7 +1991,7 @@ test_two_layer_range_scan()
     btr.invariant_checker();
   }
 
-  test_range_scan_helper::expect ex(1, set<string>(keys, keys + ARRAY_NELEMS(keys)));
+  test_range_scan_helper::expect ex(set<string>(keys, keys + ARRAY_NELEMS(keys)));
   test_range_scan_helper tester(btr, varkey(""), NULL, ex);
   tester.test();
 }
@@ -2040,6 +2041,39 @@ test_null_keys()
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+}
+
+static void
+test_random_keys()
+{
+  btree btr;
+  fast_random r(43698);
+
+  vector<string> keys;
+  for (size_t i = 0; i < 1000; i++) {
+    keys.push_back(r.next_string(r.next() % 100));
+    btr.insert(varkey(keys.back()), (btree::value_type) keys.back().data());
+    btr.invariant_checker();
+  }
+
+  set<string> keyset(keys.begin(), keys.end());
+  ALWAYS_ASSERT(btr.size() == keyset.size());
+
+  for (size_t i = 0; i < 1000; i++) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(keys[i]), v));
+    ALWAYS_ASSERT(v == (btree::value_type) keys[i].data());
+  }
+
+  test_range_scan_helper::expect ex(keyset);
+  test_range_scan_helper tester(btr, varkey(""), NULL, ex);
+  tester.test();
+
+  for (size_t i = 0; i < 1000; i++) {
+    btr.remove(varkey(keys[i]));
+    btr.invariant_checker();
+  }
+  ALWAYS_ASSERT(btr.size() == 0);
 }
 
 namespace mp_test1_ns {
@@ -2780,18 +2814,19 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  test6();
-  test7();
-  test_varlen_single_layer();
-  test_varlen_multi_layer();
-  test_two_layer();
-  test_two_layer_range_scan();
-  test_null_keys();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //test6();
+  //test7();
+  //test_varlen_single_layer();
+  //test_varlen_multi_layer();
+  //test_two_layer();
+  //test_two_layer_range_scan();
+  //test_null_keys();
+  test_random_keys();
   //mp_test1();
   //mp_test2();
   //mp_test3();
