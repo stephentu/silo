@@ -1897,6 +1897,88 @@ test_two_layer()
   ALWAYS_ASSERT(btr.size() == 2);
 }
 
+class test_range_scan_helper : public btree::search_range_callback {
+public:
+
+  struct expect {
+    expect() : tag(), expected_size() {}
+    expect(uint8_t tag, size_t expected_size)
+      : tag(tag), expected_size(expected_size) {}
+    expect(uint8_t tag, const set<string> &expected_keys)
+      : tag(tag), expected_keys(expected_keys) {}
+    uint8_t tag;
+    size_t expected_size;
+    set<string> expected_keys;
+  };
+
+  test_range_scan_helper(
+    btree &btr,
+    const btree::key_type &begin,
+    const btree::key_type *end,
+    const expect &expectation)
+    : btr(&btr), begin(begin), end(end ? new btree::key_type(*end) : NULL), expectation(expectation)
+  {
+  }
+
+  ~test_range_scan_helper()
+  {
+    if (end)
+      delete end;
+  }
+
+  virtual bool
+  invoke(const btree::key_type &k, btree::value_type v)
+  {
+    string cur_key = k.str();
+    if (!keys.empty())
+      ALWAYS_ASSERT(keys.back() < cur_key);
+    keys.push_back(cur_key);
+    return true;
+  }
+
+  void test()
+  {
+    keys.clear();
+    btr->search_range_call(begin, end, *this);
+    if (expectation.tag == 0) {
+      ALWAYS_ASSERT(keys.size() == expectation.expected_size);
+    } else {
+      vector<string> cmp(expectation.expected_keys.begin(), expectation.expected_keys.end());
+      ALWAYS_ASSERT(keys == cmp);
+    }
+  }
+
+private:
+  btree *const btr;
+  btree::key_type begin;
+  btree::key_type *end;
+  expect expectation;
+
+  vector<string> keys;
+};
+
+static void
+test_two_layer_range_scan()
+{
+  const char *keys[] = {
+    "a",
+    "aaaaaaaa",
+    "aaaaaaaaa",
+    "aaaaaaaaaa",
+    "aaaaaaaaaaa",
+  };
+
+  btree btr;
+  for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (btree::value_type) keys[i]));
+    btr.invariant_checker();
+  }
+
+  test_range_scan_helper::expect ex(1, set<string>(keys, keys + ARRAY_NELEMS(keys)));
+  test_range_scan_helper tester(btr, varkey(""), NULL, ex);
+  tester.test();
+}
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2635,16 +2717,17 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  test6();
-  test7();
-  test_varlen_single_layer();
-  test_varlen_multi_layer();
-  test_two_layer();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //test6();
+  //test7();
+  //test_varlen_single_layer();
+  //test_varlen_multi_layer();
+  //test_two_layer();
+  test_two_layer_range_scan();
   //mp_test1();
   //mp_test2();
   //mp_test3();
