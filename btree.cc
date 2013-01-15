@@ -1229,67 +1229,91 @@ btree::remove0(node *np,
         right_sibling->mark_modifying();
         size_t right_n = right_sibling->key_slots_used();
         if (right_n > NMinKeysPerNode) {
-          // steal first from right
+          // steal first contiguous key slices from right
           INVARIANT(right_sibling->keys[0] > leaf->keys[n - 1]);
-          sift_left(leaf->keys, ret, n);
-          leaf->keys[n - 1] = right_sibling->keys[0];
-          sift_left(leaf->values, ret, n);
-          leaf->values[n - 1] = right_sibling->values[0];
-          sift_left(leaf->lengths, ret, n);
-          leaf->lengths[n - 1] = right_sibling->lengths[0];
-          sift_swap_left(leaf->suffixes, ret, n);
-          leaf->suffixes[n - 1].swap(right_sibling->suffixes[0]);
-          {
-            rcu_imstring i;
-            right_sibling->suffixes[0].swap(i);
+
+          // indices [0, steal_point) will be taken from the right
+          size_t steal_point = 1;
+          for (size_t i = 0; i < right_n - 1; i++, steal_point++)
+            if (likely(right_sibling->keys[i] != right_sibling->keys[steal_point]))
+              break;
+
+          INVARIANT(steal_point <= sizeof(key_slice) + 2);
+          INVARIANT(steal_point <= right_n);
+
+          // to steal, we need to ensure:
+          // 1) we have enough room to steal
+          // 2) the right sibling will not be empty after the steal
+          if ((n - 1 + steal_point) <= NKeysPerNode && steal_point < right_n) {
+            sift_left(leaf->keys, ret, n);
+            copy_into(&leaf->keys[n - 1], right_sibling->keys, 0, steal_point);
+            sift_left(leaf->values, ret, n);
+            copy_into(&leaf->values[n - 1], right_sibling->values, 0, steal_point);
+            sift_left(leaf->lengths, ret, n);
+            copy_into(&leaf->lengths[n - 1], right_sibling->lengths, 0, steal_point);
+            sift_swap_left(leaf->suffixes, ret, n);
+            swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, steal_point);
+
+            sift_left(right_sibling->keys, 0, right_n, steal_point);
+            sift_left(right_sibling->values, 0, right_n, steal_point);
+            sift_left(right_sibling->lengths, 0, right_n, steal_point);
+            sift_swap_left(right_sibling->suffixes, 0, right_n, steal_point);
+            leaf->set_key_slots_used(n - 1 + steal_point);
+            right_sibling->set_key_slots_used(right_n - steal_point);
+            new_key = right_sibling->keys[0];
+            right_sibling->min_key = new_key;
+            return R_STOLE_FROM_RIGHT;
+          } else {
+            // can't steal, so try merging- but only merge if we have room,
+            // otherwise just allow this node to have less elements
+            if ((n - 1 + right_n) > NKeysPerNode) {
+              INVARIANT(n > 1); // if we can't steal or merge, we must have
+                                // enough elements to just remove one w/o going empty
+              remove_pos_from_leaf_node(leaf, ret, n);
+              return UnlockAndReturn(locked_nodes, R_NONE_MOD);
+            }
           }
-
-          sift_left(right_sibling->keys, 0, right_n);
-          sift_left(right_sibling->values, 0, right_n);
-          sift_left(right_sibling->lengths, 0, right_n);
-          sift_swap_left(right_sibling->suffixes, 0, right_n);
-          right_sibling->dec_key_slots_used();
-          new_key = right_sibling->keys[0];
-          right_sibling->min_key = new_key;
-          return R_STOLE_FROM_RIGHT;
-        } else {
-          // merge right sibling into this node
-          INVARIANT(right_sibling->keys[0] > leaf->keys[n - 1]);
-          INVARIANT((right_n + (n - 1)) <= NKeysPerNode);
-
-          sift_left(leaf->keys, ret, n);
-          copy_into(&leaf->keys[n - 1], right_sibling->keys, 0, right_n);
-
-          sift_left(leaf->values, ret, n);
-          copy_into(&leaf->values[n - 1], right_sibling->values, 0, right_n);
-
-          sift_left(leaf->lengths, ret, n);
-          copy_into(&leaf->lengths[n - 1], right_sibling->lengths, 0, right_n);
-
-          sift_swap_left(leaf->suffixes, ret, n);
-          for (size_t i = 0; i < right_n; i++) {
-            rcu_imstring im;
-            leaf->suffixes[n - 1 + i].swap(im);
-          }
-          unsafe_share_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
-
-          leaf->set_key_slots_used(right_n + (n - 1));
-          leaf->next = right_sibling->next;
-          if (right_sibling->next)
-            right_sibling->next->prev = leaf;
-
-          // leaf->next->prev won't change because we hold lock for both leaf
-          // and right_sibling
-          INVARIANT(!leaf->next || leaf->next->prev == leaf);
-
-          // leaf->prev->next might change, however, since the left node could be
-          // splitting (and we might hold a pointer to the left-split of the left node,
-          // before it gets updated)
-          SINGLE_THREADED_INVARIANT(!leaf->prev || leaf->prev->next == leaf);
-
-          leaf_node::release(right_sibling);
-          return R_MERGE_WITH_RIGHT;
         }
+
+        // merge right sibling into this node
+        INVARIANT(right_sibling->keys[0] > leaf->keys[n - 1]);
+        INVARIANT((right_n + (n - 1)) <= NKeysPerNode);
+
+        sift_left(leaf->keys, ret, n);
+        copy_into(&leaf->keys[n - 1], right_sibling->keys, 0, right_n);
+
+        sift_left(leaf->values, ret, n);
+        copy_into(&leaf->values[n - 1], right_sibling->values, 0, right_n);
+
+        sift_left(leaf->lengths, ret, n);
+        copy_into(&leaf->lengths[n - 1], right_sibling->lengths, 0, right_n);
+
+        sift_swap_left(leaf->suffixes, ret, n);
+
+        //for (size_t i = 0; i < right_n; i++) {
+        //  rcu_imstring im;
+        //  leaf->suffixes[n - 1 + i].swap(im);
+        //}
+        //unsafe_share_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
+
+        swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
+
+        leaf->set_key_slots_used(right_n + (n - 1));
+        leaf->next = right_sibling->next;
+        if (right_sibling->next)
+          right_sibling->next->prev = leaf;
+
+        // leaf->next->prev won't change because we hold lock for both leaf
+        // and right_sibling
+        INVARIANT(!leaf->next || leaf->next->prev == leaf);
+
+        // leaf->prev->next might change, however, since the left node could be
+        // splitting (and we might hold a pointer to the left-split of the left node,
+        // before it gets updated)
+        SINGLE_THREADED_INVARIANT(!leaf->prev || leaf->prev->next == leaf);
+
+        leaf_node::release(right_sibling);
+        return R_MERGE_WITH_RIGHT;
       }
 
       if (left_sibling) {
@@ -1298,52 +1322,83 @@ btree::remove0(node *np,
         if (left_n > NMinKeysPerNode) {
           // steal last from left
           INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
-          sift_right(leaf->keys, 0, ret);
-          leaf->keys[0] = left_sibling->keys[left_n - 1];
-          sift_right(leaf->values, 0, ret);
-          leaf->values[0] = left_sibling->values[left_n - 1];
-          sift_right(leaf->lengths, 0, ret);
-          leaf->lengths[0] = left_sibling->lengths[left_n - 1];
-          sift_swap_right(leaf->suffixes, 0, ret);
-          leaf->suffixes[0].swap(left_sibling->suffixes[left_n - 1]);
-          left_sibling->dec_key_slots_used();
-          new_key = leaf->keys[0];
-          leaf->min_key = new_key;
-          return R_STOLE_FROM_LEFT;
-        } else {
-          // merge this node into left sibling
-          INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
-          INVARIANT((left_n + (n - 1)) <= NKeysPerNode);
 
-          copy_into(&left_sibling->keys[left_n], leaf->keys, 0, ret);
-          copy_into(&left_sibling->keys[left_n + ret], leaf->keys, ret + 1, n);
+          // indices [steal_point, left_n) will be taken from the left
+          size_t steal_point = left_n - 1;
+          for (ssize_t i = steal_point - 1; i >= 0; i--, steal_point--)
+            if (likely(left_sibling->keys[i] != leaf->keys[steal_point]))
+              break;
 
-          copy_into(&left_sibling->values[left_n], leaf->values, 0, ret);
-          copy_into(&left_sibling->values[left_n + ret], leaf->values, ret + 1, n);
+          size_t nstolen = left_n - steal_point;
+          INVARIANT(nstolen <= sizeof(key_slice) + 2);
+          INVARIANT(steal_point < left_n);
 
-          copy_into(&left_sibling->lengths[left_n], leaf->lengths, 0, ret);
-          copy_into(&left_sibling->lengths[left_n + ret], leaf->lengths, ret + 1, n);
+          if ((n - 1 + nstolen) <= NKeysPerNode && steal_point > 0) {
+            sift_right(leaf->keys, ret + 1, n, nstolen - 1);
+            sift_right(leaf->keys, 0, ret, nstolen);
+            copy_into(&leaf->keys[0], &left_sibling->keys[0], left_n - nstolen, left_n);
 
-          for (size_t i = left_n; i < n - 1; i++) {
-            rcu_imstring im;
-            left_sibling->suffixes[i].swap(im);
+            sift_right(leaf->values, ret + 1, n, nstolen - 1);
+            sift_right(leaf->values, 0, ret, nstolen);
+            copy_into(&leaf->values[0], &left_sibling->values[0], left_n - nstolen, left_n);
+
+            sift_right(leaf->lengths, ret + 1, n, nstolen - 1);
+            sift_right(leaf->lengths, 0, ret, nstolen);
+            copy_into(&leaf->lengths[0], &left_sibling->lengths[0], left_n - nstolen, left_n);
+
+            sift_swap_right(leaf->suffixes, ret + 1, n, nstolen - 1);
+            sift_swap_right(leaf->suffixes, 0, ret, nstolen);
+            swap_with(&leaf->suffixes[0], &left_sibling->suffixes[0], left_n - nstolen, left_n);
+
+            left_sibling->set_key_slots_used(left_n - nstolen);
+            leaf->set_key_slots_used(n - 1 + nstolen);
+            new_key = leaf->keys[0];
+            leaf->min_key = new_key;
+            return R_STOLE_FROM_LEFT;
+          } else {
+            if ((left_n + (n - 1)) > NKeysPerNode) {
+              INVARIANT(n > 1);
+              remove_pos_from_leaf_node(leaf, ret, n);
+              return UnlockAndReturn(locked_nodes, R_NONE_MOD);
+            }
           }
-          unsafe_share_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
-          unsafe_share_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);
-
-          left_sibling->set_key_slots_used(left_n + (n - 1));
-          left_sibling->next = leaf->next;
-          if (leaf->next)
-            leaf->next->prev = left_sibling;
-
-          // see comments in right_sibling case above, for why one of them is INVARIANT and
-          // the other is SINGLE_THREADED_INVARIANT
-          INVARIANT(!left_sibling->next || left_sibling->next->prev == left_sibling);
-          SINGLE_THREADED_INVARIANT(!left_sibling->prev || left_sibling->prev->next == left_sibling);
-
-          leaf_node::release(leaf);
-          return R_MERGE_WITH_LEFT;
         }
+
+        // merge this node into left sibling
+        INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
+        INVARIANT((left_n + (n - 1)) <= NKeysPerNode);
+
+        copy_into(&left_sibling->keys[left_n], leaf->keys, 0, ret);
+        copy_into(&left_sibling->keys[left_n + ret], leaf->keys, ret + 1, n);
+
+        copy_into(&left_sibling->values[left_n], leaf->values, 0, ret);
+        copy_into(&left_sibling->values[left_n + ret], leaf->values, ret + 1, n);
+
+        copy_into(&left_sibling->lengths[left_n], leaf->lengths, 0, ret);
+        copy_into(&left_sibling->lengths[left_n + ret], leaf->lengths, ret + 1, n);
+
+        //for (size_t i = left_n; i < n - 1; i++) {
+        //  rcu_imstring im;
+        //  left_sibling->suffixes[i].swap(im);
+        //}
+        //unsafe_share_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
+        //unsafe_share_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);
+
+        swap_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
+        swap_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);
+
+        left_sibling->set_key_slots_used(left_n + (n - 1));
+        left_sibling->next = leaf->next;
+        if (leaf->next)
+          leaf->next->prev = left_sibling;
+
+        // see comments in right_sibling case above, for why one of them is INVARIANT and
+        // the other is SINGLE_THREADED_INVARIANT
+        INVARIANT(!left_sibling->next || left_sibling->next->prev == left_sibling);
+        SINGLE_THREADED_INVARIANT(!left_sibling->prev || left_sibling->prev->next == left_sibling);
+
+        leaf_node::release(leaf);
+        return R_MERGE_WITH_LEFT;
       }
 
       // root node, so we are ok
@@ -2062,6 +2117,65 @@ test_null_keys()
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
     ALWAYS_ASSERT(v == (btree::value_type) i);
   }
+}
+
+static void
+test_null_keys_2()
+{
+  const size_t nprefixes = 200;
+
+  btree btr;
+
+  fast_random r(9084398309893);
+
+  set<string> prefixes;
+  for (size_t i = 0; i < nprefixes; i++) {
+  retry:
+    string k = r.next_string(r.next() % 30);
+    if (prefixes.count(k) == 1)
+      goto retry;
+    prefixes.insert(k);
+  }
+
+  set<string> keys;
+  for (set<string>::iterator it = prefixes.begin();
+       it != prefixes.end(); ++it) {
+    string k = *it;
+    for (size_t i = 1; i <= 12; i++) {
+      string x = k;
+      x.resize(x.size() + i);
+      keys.insert(x);
+    }
+  }
+
+  size_t ctr = 1;
+  for (set<string>::iterator it = keys.begin();
+       it != keys.end(); ++it, ++ctr) {
+    ALWAYS_ASSERT(btr.insert(varkey(*it), (btree::value_type) it->data()));
+    btr.invariant_checker();
+    ALWAYS_ASSERT(btr.size() == ctr);
+  }
+  ALWAYS_ASSERT(btr.size() == keys.size());
+
+  for (set<string>::iterator it = keys.begin();
+       it != keys.end(); ++it) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(*it), v));
+    ALWAYS_ASSERT(v == (btree::value_type) it->data());
+  }
+
+  test_range_scan_helper::expect ex(keys);
+  test_range_scan_helper tester(btr, varkey(*keys.begin()), NULL, ex);
+  tester.test();
+
+  ctr = keys.size() - 1;
+  for (set<string>::iterator it = keys.begin();
+       it != keys.end(); ++it, --ctr) {
+    ALWAYS_ASSERT(btr.remove(varkey(*it)));
+    btr.invariant_checker();
+    ALWAYS_ASSERT(btr.size() == ctr);
+  }
+  ALWAYS_ASSERT(btr.size() == 0);
 }
 
 static void
@@ -2855,6 +2969,7 @@ btree::Test()
   test_two_layer();
   test_two_layer_range_scan();
   test_null_keys();
+  test_null_keys_2();
   test_random_keys();
   //mp_test1();
   //mp_test2();

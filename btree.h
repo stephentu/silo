@@ -868,51 +868,55 @@ public:
 private:
 
   /**
-   * Move the array slice from [p, n) to the right by 1 position, occupying [p + 1, n + 1),
-   * leaving the value of array[p] undefined. Has no effect if p >= n
+   * Move the array slice from [p, n) to the right by k position, occupying [p + k, n + k),
+   * leaving the values of array[p] to array[p + k -1] undefined. Has no effect if p >= n
    *
    * Note: Assumes that array[n] is valid memory.
    */
   template <typename T>
   static inline ALWAYS_INLINE void
-  sift_right(T *array, size_t p, size_t n)
+  sift_right(T *array, size_t p, size_t n, size_t k = 1)
   {
-    for (size_t i = n; i > p; i--)
-      array[i] = array[i - 1];
+    if (k == 0)
+      return;
+    for (size_t i = n + k - 1; i > p + k - 1; i--)
+      array[i] = array[i - k];
   }
 
   // use swap() to do moves, for efficiency- avoid this
   // variant when using primitive arrays
   template <typename T>
   static inline ALWAYS_INLINE void
-  sift_swap_right(T *array, size_t p, size_t n)
+  sift_swap_right(T *array, size_t p, size_t n, size_t k = 1)
   {
-    for (size_t i = n; i > p; i--)
-      array[i].swap(array[i - 1]);
+    if (k == 0)
+      return;
+    for (size_t i = n + k - 1; i > p + k - 1; i--)
+      array[i].swap(array[i - k]);
   }
 
   /**
-   * Move the array slice from [p + 1, n) to the left by 1 position, occupying [p, n - 1),
-   * overwriting array[p] and leaving the value of array[n - 1] undefined. Has no effect if p + 1 >= n
+   * Move the array slice from [p + k, n) to the left by k positions, occupying [p, n - k),
+   * overwriting array[p]..array[p+k-1] Has no effect if p + k >= n
    */
   template <typename T>
   static inline ALWAYS_INLINE void
-  sift_left(T *array, size_t p, size_t n)
+  sift_left(T *array, size_t p, size_t n, size_t k = 1)
   {
-    if (unlikely(p + 1 >= n))
+    if (unlikely(p + k >= n))
       return;
-    for (size_t i = p; i < n - 1; i++)
-      array[i] = array[i + 1];
+    for (size_t i = p; i < n - k; i++)
+      array[i] = array[i + k];
   }
 
   template <typename T>
   static inline ALWAYS_INLINE void
-  sift_swap_left(T *array, size_t p, size_t n)
+  sift_swap_left(T *array, size_t p, size_t n, size_t k = 1)
   {
-    if (unlikely(p + 1 >= n))
+    if (unlikely(p + k >= n))
       return;
-    for (size_t i = p; i < n - 1; i++)
-      array[i].swap(array[i + 1]);
+    for (size_t i = p; i < n - k; i++)
+      array[i].swap(array[i + k]);
   }
 
   /**
