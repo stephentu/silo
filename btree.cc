@@ -362,7 +362,8 @@ struct btree::leaf_kvinfo {
 
 // recursively read the range from the layer down
 //
-// all args relative to prefix
+// all args relative to prefix. The lower key must end at the leaf layer
+// (lower.size() <= 8)
 //
 // returns true if we keep going
 bool
@@ -378,10 +379,11 @@ btree::search_range_at_layer(
 
   key_slice last_keyslice;
   size_t last_keyslice_len;
+  string last_keyslice_suffix;
   bool emitted_last_keyslice = false;
   if (!inc_lower) {
     last_keyslice = lower.slice();
-    last_keyslice_len = min(lower.size(), size_t(9));
+    last_keyslice_len = lower.size();
     emitted_last_keyslice = true;
   }
 
@@ -409,6 +411,8 @@ btree::search_range_at_layer(
       continue;
     }
 
+    // grab all keys in [lower_slice, upper_slice]. we'll do boundary condition
+    // checking later (outside of the critical section)
     for (size_t i = 0; i < leaf->key_slots_used(); i++)
       if ((leaf->keys[i] > lower_slice ||
            (leaf->keys[i] == lower_slice && leaf->keyslice_length(i) >= lower.size())) &&
@@ -427,9 +431,14 @@ btree::search_range_at_layer(
       continue;
 
     for (size_t i = 0; i < buf.size(); i++) {
+      // check to see if we already omitted a key <= buf[i]: if so, don't omit it
       if (emitted_last_keyslice &&
-          (buf[i].key < last_keyslice ||
-           (buf[i].key == last_keyslice && buf[i].length <= last_keyslice_len)))
+          ((buf[i].key < last_keyslice) ||
+           (buf[i].key == last_keyslice &&
+            (buf[i].length < last_keyslice_len ||
+             (buf[i].length == last_keyslice_len &&
+              last_keyslice_len == 9 &&
+              buf[i].suffix <= varkey(last_keyslice_suffix))))))
         continue;
       size_t ncpy = min(buf[i].length, size_t(8));
       slice_buffer.resize(prefix_size + ncpy);
@@ -442,20 +451,25 @@ btree::search_range_at_layer(
           return false;
       } else {
         if (upper && buf[i].key == upper_slice) {
-          if (buf[i].length == 9 && upper->size() >= 9) {
+          if (buf[i].length == 9) {
+            if (upper->size() <= 8)
+              break;
             if (buf[i].suffix >= upper->shift())
               break;
-            slice_buffer.insert(slice_buffer.end(), buf[i].suffix.data(),
-                buf[i].suffix.data() + buf[i].suffix.size());
           } else if (buf[i].length >= upper->size()) {
             break;
           }
         }
+        if (buf[i].length == 9)
+          slice_buffer.insert(slice_buffer.end(), buf[i].suffix.data(),
+              buf[i].suffix.data() + buf[i].suffix.size());
         if (!callback.invoke(varkey(slice_buffer), buf[i].vn.v))
           return false;
       }
       last_keyslice = buf[i].key;
       last_keyslice_len = buf[i].length;
+      if (last_keyslice_len == 9)
+        last_keyslice_suffix = buf[i].suffix.str();
       emitted_last_keyslice = true;
     }
 
@@ -1958,8 +1972,15 @@ public:
     if (expectation.tag == 0) {
       ALWAYS_ASSERT(keys.size() == expectation.expected_size);
     } else {
+      ALWAYS_ASSERT(keys.size() == expectation.expected_keys.size());
       vector<string> cmp(expectation.expected_keys.begin(), expectation.expected_keys.end());
-      ALWAYS_ASSERT(keys == cmp);
+      for (size_t i = 0; i < keys.size(); i++) {
+        if (keys[i] != cmp[i]) {
+          cerr << "A: " << hexify(keys[i]) << endl;
+          cerr << "B: " << hexify(cmp[i]) << endl;
+          ALWAYS_ASSERT(false);
+        }
+      }
     }
   }
 
@@ -2814,18 +2835,18 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //test6();
-  //test7();
-  //test_varlen_single_layer();
-  //test_varlen_multi_layer();
-  //test_two_layer();
-  //test_two_layer_range_scan();
-  //test_null_keys();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  test6();
+  test7();
+  test_varlen_single_layer();
+  test_varlen_multi_layer();
+  test_two_layer();
+  test_two_layer_range_scan();
+  test_null_keys();
   test_random_keys();
   //mp_test1();
   //mp_test2();
