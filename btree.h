@@ -832,12 +832,15 @@ public:
   /**
    * returns true if key k did not already exist, false otherwise
    * If k exists with a different mapping, still returns false
+   *
+   * If false and old_v is not NULL, then the overwritten value of v
+   * is written into old_v
    */
   inline bool
-  insert(const key_type &k, value_type v)
+  insert(const key_type &k, value_type v, value_type *old_v = NULL)
   {
     // XXX: not sure if this cast is safe
-    return insert_impl((node **) &root, k, v, false);
+    return insert_impl((node **) &root, k, v, false, old_v);
   }
 
   /**
@@ -847,16 +850,20 @@ public:
   inline bool
   insert_if_absent(const key_type &k, value_type v)
   {
-    return insert_impl((node **) &root, k, v, true);
+    return insert_impl((node **) &root, k, v, true, NULL);
   }
 
+  /**
+   * return true if a value was removed, false otherwise.
+   *
+   * if true and old_v is not NULL, then the removed value of v
+   * is written into old_v
+   */
   inline bool
-  remove(const key_type &k)
+  remove(const key_type &k, value_type *old_v = NULL)
   {
-    return remove_impl((node **) &root, k);
+    return remove_impl((node **) &root, k, old_v);
   }
-
-  bool remove_impl(node **root_location, const key_type &k);
 
   /** Is thread-safe, but not really designed to perform well
    * with concurrent modifications. also the value returned is not
@@ -953,7 +960,10 @@ private:
    */
   bool search_impl(const key_type &k, value_type &v, std::vector<leaf_node *> &leaf_nodes) const;
 
-  bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent);
+  bool insert_impl(node **root_location, const key_type &k, value_type v,
+                   bool only_if_absent, value_type *old_v);
+
+  bool remove_impl(node **root_location, const key_type &k, value_type *old_v);
 
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
@@ -978,6 +988,7 @@ private:
           const key_type &k,
           value_type v,
           bool only_if_absent,
+          value_type *old_v,
           key_slice &min_key,
           node *&new_node,
           std::vector<insert_parent_entry> &parents,
@@ -1057,6 +1068,7 @@ private:
           key_slice *min_key,
           key_slice *max_key,
           const key_type &k,
+          value_type *old_v,
           node *left_node,
           node *right_node,
           key_slice &new_key,
