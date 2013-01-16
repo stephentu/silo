@@ -914,7 +914,7 @@ btree::insert0(node *np,
       else
         split_point = left_split_point;
 
-      if (split_point <= size_t(lenlowerbound + 1)) {
+      if (split_point <= size_t(lenlowerbound + 1) && leaf->keys[split_point - 1] != kslice) {
         // put new key in new leaf (right)
         size_t pos = lenlowerbound + 1 - split_point;
 
@@ -943,9 +943,17 @@ btree::insert0(node *np,
         leaf->set_key_slots_used(split_point);
         new_leaf->set_key_slots_used(NKeysPerNode - split_point + 1);
 
-        //leaf->base_invariant_unique_keys_check();
-        //new_leaf->base_invariant_unique_keys_check();
+#ifdef CHECK_INVARIANTS
+        leaf->base_invariant_unique_keys_check();
+        new_leaf->base_invariant_unique_keys_check();
+        INVARIANT(leaf->keys[split_point - 1] < new_leaf->keys[0]);
+#endif /* CHECK_INVARIANTS */
+
       } else {
+        // XXX: not really sure if this invariant is true, but we rely
+        // on it for now
+        INVARIANT(size_t(lenlowerbound + 1) <= split_point);
+
         // put new key in original leaf
         copy_into(&new_leaf->keys[0], leaf->keys, split_point, NKeysPerNode);
         copy_into(&new_leaf->values[0], leaf->values, split_point, NKeysPerNode);
@@ -970,8 +978,11 @@ btree::insert0(node *np,
         leaf->set_key_slots_used(split_point + 1);
         new_leaf->set_key_slots_used(NKeysPerNode - split_point);
 
-        //leaf->base_invariant_unique_keys_check();
-        //new_leaf->base_invariant_unique_keys_check();
+#ifdef CHECK_INVARIANTS
+        leaf->base_invariant_unique_keys_check();
+        new_leaf->base_invariant_unique_keys_check();
+        INVARIANT(leaf->keys[split_point] < new_leaf->keys[0]);
+#endif /* CHECK_INVARIANTS */
       }
 
       // pointer adjustment
@@ -1266,8 +1277,12 @@ btree::remove0(node *np,
             new_key = right_sibling->keys[0];
             right_sibling->min_key = new_key;
 
-            //leaf->base_invariant_unique_keys_check();
-            //right_sibling->base_invariant_unique_keys_check();
+#ifdef CHECK_INVARIANTS
+            leaf->base_invariant_unique_keys_check();
+            right_sibling->base_invariant_unique_keys_check();
+            INVARIANT(leaf->keys[n - 1 + steal_point - 1] < new_key);
+#endif /* CHECK_INVARIANTS */
+
             return R_STOLE_FROM_RIGHT;
           } else {
             // can't steal, so try merging- but only merge if we have room,
@@ -1327,13 +1342,13 @@ btree::remove0(node *np,
         left_sibling->mark_modifying();
         size_t left_n = left_sibling->key_slots_used();
         if (left_n > NMinKeysPerNode) {
-          // steal last from left
+          // try to steal from left
           INVARIANT(left_sibling->keys[left_n - 1] < leaf->keys[0]);
 
           // indices [steal_point, left_n) will be taken from the left
           size_t steal_point = left_n - 1;
           for (ssize_t i = steal_point - 1; i >= 0; i--, steal_point--)
-            if (likely(left_sibling->keys[i] != leaf->keys[steal_point]))
+            if (likely(left_sibling->keys[i] != left_sibling->keys[steal_point]))
               break;
 
           size_t nstolen = left_n - steal_point;
@@ -1362,8 +1377,11 @@ btree::remove0(node *np,
             new_key = leaf->keys[0];
             leaf->min_key = new_key;
 
-            //leaf->base_invariant_unique_keys_check();
-            //left_sibling->base_invariant_unique_keys_check();
+#ifdef CHECK_INVARIANTS
+            leaf->base_invariant_unique_keys_check();
+            left_sibling->base_invariant_unique_keys_check();
+            INVARIANT(left_sibling->keys[left_n - nstolen - 1] < new_key);
+#endif /* CHECK_INVARIANTS */
 
             return R_STOLE_FROM_LEFT;
           } else {
@@ -2824,7 +2842,7 @@ mp_test7()
 }
 
 namespace mp_test8_ns {
-  static const size_t nthreads = 2;
+  static const size_t nthreads = 16;
   static const size_t ninsertkeys_perthread = 100000;
   static const size_t nremovekeys_perthread = 100000;
 
@@ -2871,8 +2889,7 @@ mp_test8()
     key_vec inp;
     for (size_t j = 0; j < ninsertkeys_perthread; j++) {
     retry:
-      string k = r.next_string(r.next() % 9);
-      ALWAYS_ASSERT(k.size() <= 8);
+      string k = r.next_string(r.next() % 200);
       if (insert_keys.count(k) == 1)
         goto retry;
       insert_keys.insert(k);
@@ -2883,8 +2900,7 @@ mp_test8()
   for (size_t i = nthreads / 2; i < nthreads; i++) {
     key_vec inp;
     for (size_t j = 0; j < nremovekeys_perthread;) {
-      string k = r.next_string(r.next() % 9);
-      ALWAYS_ASSERT(k.size() <= 8);
+      string k = r.next_string(r.next() % 200);
       if (insert_keys.count(k) == 1 || remove_keys.count(k) == 1)
         continue;
       ALWAYS_ASSERT(btr.insert(varkey(k), (btree::value_type) k.data()));
@@ -3122,28 +3138,28 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //test6();
-  //test7();
-  //test_varlen_single_layer();
-  //test_varlen_multi_layer();
-  //test_two_layer();
-  //test_two_layer_range_scan();
-  //test_null_keys();
-  //test_null_keys_2();
-  //test_random_keys();
-  //test_insert_remove_mix();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
-  //mp_test4();
-  //mp_test5();
-  //mp_test6();
-  //mp_test7();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  test6();
+  test7();
+  test_varlen_single_layer();
+  test_varlen_multi_layer();
+  test_two_layer();
+  test_two_layer_range_scan();
+  test_null_keys();
+  test_null_keys_2();
+  test_random_keys();
+  test_insert_remove_mix();
+  mp_test1();
+  mp_test2();
+  mp_test3();
+  mp_test4();
+  mp_test5();
+  mp_test6();
+  mp_test7();
   mp_test8();
   //perf_test();
   //read_only_perf_test();
