@@ -33,7 +33,7 @@ public:
    * A logical_node is the type of value which we stick
    * into underlying (non-transactional) data structures
    *
-   * We try to size a logical node to be about 4 cache lines wide
+   * We try to size a logical node to be about 1 cache line wide
    */
   struct logical_node {
   private:
@@ -47,7 +47,7 @@ public:
 
   public:
 
-    static const size_t NVersions = 15;
+    static const size_t NVersions = 3;
 
     // [ locked | num_versions | version ]
     // [  0..1  |     1..5     |  5..64  ]
@@ -264,6 +264,8 @@ public:
     static inline logical_node *
     alloc()
     {
+      //return new logical_node;
+
       void *p = memalign(CACHELINE_SIZE, sizeof(logical_node));
       assert(p);
       return new (p) logical_node;
@@ -272,6 +274,8 @@ public:
     static inline void
     release(logical_node *n)
     {
+      //delete n;
+
       if (unlikely(!n))
         return;
       n->~logical_node();

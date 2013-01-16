@@ -615,8 +615,8 @@ mp_test3()
 }
 
 namespace read_only_perf_ns {
-  //const size_t nkeys = 140000000; // 140M
-  const size_t nkeys = 100000; // 100K
+  const size_t nkeys = 140000000; // 140M
+  //const size_t nkeys = 100000; // 100K
 
   unsigned long seeds[] = {
     9576455804445224191ULL,
@@ -675,10 +675,15 @@ read_only_perf()
   txn_btree btr;
 
   {
-    transaction t;
-    for (size_t i = 0; i < nkeys; i++)
-      btr.insert(t, u64_varkey(i), (btree::value_type) (i + 1));
-    t.commit();
+    const size_t nkeyspertxn = 100000;
+    for (size_t i = 0; i < nkeys / nkeyspertxn; i++) {
+      transaction t;
+      size_t end = (i == (nkeys / nkeyspertxn - 1)) ? nkeys : ((i + 1) * nkeyspertxn);
+      for (size_t j = i * nkeyspertxn; j < end; j++)
+        btr.insert(t, u64_varkey(j), (btree::value_type) (j + 1));
+      t.commit();
+      std::cerr << "batch " << i << " completed" << std::endl;
+    }
     std::cerr << "btree loaded, test starting" << std::endl;
   }
 
@@ -712,11 +717,11 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  test1();
-  test2();
-  mp_test1();
-  mp_test2();
-  mp_test3();
+  //test1();
+  //test2();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
 
   read_only_perf();
 }
