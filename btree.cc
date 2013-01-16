@@ -2025,12 +2025,19 @@ public:
     set<string> expected_keys;
   };
 
+  enum ExpectType {
+    EXPECT_EXACT,
+    EXPECT_ATLEAST,
+  };
+
   test_range_scan_helper(
     btree &btr,
     const btree::key_type &begin,
     const btree::key_type *end,
-    const expect &expectation)
-    : btr(&btr), begin(begin), end(end ? new btree::key_type(*end) : NULL), expectation(expectation)
+    const expect &expectation,
+    ExpectType ex_type = EXPECT_EXACT)
+    : btr(&btr), begin(begin), end(end ? new btree::key_type(*end) : NULL),
+      expectation(expectation), ex_type(ex_type)
   {
   }
 
@@ -2055,16 +2062,37 @@ public:
     keys.clear();
     btr->search_range_call(begin, end, *this);
     if (expectation.tag == 0) {
-      ALWAYS_ASSERT(keys.size() == expectation.expected_size);
+      switch (ex_type) {
+      case EXPECT_EXACT:
+        ALWAYS_ASSERT(keys.size() == expectation.expected_size);
+        break;
+      case EXPECT_ATLEAST:
+        ALWAYS_ASSERT(keys.size() >= expectation.expected_size);
+        break;
+      }
     } else {
-      ALWAYS_ASSERT(keys.size() == expectation.expected_keys.size());
-      vector<string> cmp(expectation.expected_keys.begin(), expectation.expected_keys.end());
-      for (size_t i = 0; i < keys.size(); i++) {
-        if (keys[i] != cmp[i]) {
-          cerr << "A: " << hexify(keys[i]) << endl;
-          cerr << "B: " << hexify(cmp[i]) << endl;
-          ALWAYS_ASSERT(false);
+      switch (ex_type) {
+      case EXPECT_EXACT: {
+        ALWAYS_ASSERT(keys.size() == expectation.expected_keys.size());
+        vector<string> cmp(expectation.expected_keys.begin(), expectation.expected_keys.end());
+        for (size_t i = 0; i < keys.size(); i++) {
+          if (keys[i] != cmp[i]) {
+            cerr << "A: " << hexify(keys[i]) << endl;
+            cerr << "B: " << hexify(cmp[i]) << endl;
+            ALWAYS_ASSERT(false);
+          }
         }
+        break;
+      }
+      case EXPECT_ATLEAST: {
+        ALWAYS_ASSERT(keys.size() >= expectation.expected_keys.size());
+        // every key in the expected set must be present
+        set<string> keyset(keys.begin(), keys.end());
+        for (set<string>::iterator it = expectation.expected_keys.begin();
+             it != expectation.expected_keys.end(); ++it)
+          ALWAYS_ASSERT(keyset.count(*it) == 1);
+        break;
+      }
       }
     }
   }
@@ -2074,6 +2102,7 @@ private:
   btree::key_type begin;
   btree::key_type *end;
   expect expectation;
+  ExpectType ex_type;
 
   vector<string> keys;
 };
@@ -2941,6 +2970,146 @@ mp_test8()
     delete workers[i];
 }
 
+namespace mp_test_long_keys_ns {
+  static const size_t nthreads = 16;
+  static const size_t ninsertkeys_perthread = 100000;
+  static const size_t nremovekeys_perthread = 100000;
+
+  typedef vector<string> key_vec;
+
+  class insert_worker : public btree_worker {
+  public:
+    insert_worker(const vector<string> &keys, btree &btr)
+      : btree_worker(btr), keys(keys) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < keys.size(); i++)
+        ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (btree::value_type) keys[i].data()));
+    }
+  private:
+    vector<string> keys;
+  };
+
+  class remove_worker : public btree_worker {
+  public:
+    remove_worker(const vector<string> &keys, btree &btr)
+      : btree_worker(btr), keys(keys) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < keys.size(); i++)
+        ALWAYS_ASSERT(btr->remove(varkey(keys[i])));
+    }
+  private:
+    vector<string> keys;
+  };
+
+  static volatile bool running = false;
+
+  class scan_worker : public btree_worker {
+  public:
+    scan_worker(const set<string> &ex, btree &btr)
+      : btree_worker(btr), ex(ex) {}
+    virtual void run()
+    {
+      while (running) {
+        test_range_scan_helper tester(*btr, varkey(""), NULL, ex, test_range_scan_helper::EXPECT_ATLEAST);
+        tester.test();
+      }
+    }
+  private:
+    test_range_scan_helper::expect ex;
+  };
+}
+
+static void
+mp_test_long_keys()
+{
+  // all keys at least 9-bytes long
+  using namespace mp_test_long_keys_ns;
+
+  btree btr;
+  vector<key_vec> inps;
+  set<string> existing_keys, insert_keys, remove_keys;
+
+  fast_random r(189230589352);
+  for (size_t i = 0; i < 10000; i++) {
+  retry0:
+    string k = r.next_string((r.next() % 200) + 9);
+    if (existing_keys.count(k) == 1)
+      goto retry0;
+    existing_keys.insert(k);
+    ALWAYS_ASSERT(btr.insert(varkey(k), (btree::value_type) k.data()));
+  }
+  ALWAYS_ASSERT(btr.size() == existing_keys.size());
+
+  for (size_t i = 0; i < nthreads / 2; i++) {
+    key_vec inp;
+    for (size_t j = 0; j < ninsertkeys_perthread; j++) {
+    retry:
+      string k = r.next_string((r.next() % 200) + 9);
+      if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1)
+        goto retry;
+      insert_keys.insert(k);
+      inp.push_back(k);
+    }
+    inps.push_back(inp);
+  }
+
+  for (size_t i = nthreads / 2; i < nthreads; i++) {
+    key_vec inp;
+    for (size_t j = 0; j < nremovekeys_perthread;) {
+      string k = r.next_string((r.next() % 200) + 9);
+      if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1 || remove_keys.count(k) == 1)
+        continue;
+      ALWAYS_ASSERT(btr.insert(varkey(k), (btree::value_type) k.data()));
+      remove_keys.insert(k);
+      inp.push_back(k);
+      j++;
+    }
+    inps.push_back(inp);
+  }
+
+  ALWAYS_ASSERT(btr.size() == (insert_keys.size() + existing_keys.size()));
+  btr.invariant_checker();
+
+  vector<btree_worker*> workers, running_workers;
+  running = true;
+  for (size_t i = 0; i < nthreads / 2; i++)
+    workers.push_back(new insert_worker(inps[i], btr));
+  for (size_t i = nthreads / 2; i < nthreads; i++)
+    workers.push_back(new remove_worker(inps[i], btr));
+  for (size_t i = 0; i < 4; i++)
+    running_workers.push_back(new scan_worker(existing_keys, btr));
+  for (size_t i = 0; i < nthreads; i++)
+    workers[i]->start();
+  for (size_t i = 0; i < running_workers.size(); i++)
+    running_workers[i]->start();
+  for (size_t i = 0; i < nthreads; i++)
+    workers[i]->join();
+  running = false;
+  for (size_t i = 0; i < running_workers.size(); i++)
+    running_workers[i]->join();
+
+  btr.invariant_checker();
+
+  ALWAYS_ASSERT(btr.size() == (insert_keys.size() + existing_keys.size()));
+  for (set<string>::iterator it = insert_keys.begin();
+       it != insert_keys.end(); ++it) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(*it), v));
+  }
+  for (set<string>::iterator it = remove_keys.begin();
+       it != remove_keys.end(); ++it) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(!btr.search(varkey(*it), v));
+  }
+
+  for (size_t i = 0; i < nthreads; i++)
+    delete workers[i];
+  for (size_t i = 0; i < running_workers.size(); i++)
+    delete running_workers[i];
+}
+
 static void
 perf_test()
 {
@@ -3138,29 +3307,30 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  test6();
-  test7();
-  test_varlen_single_layer();
-  test_varlen_multi_layer();
-  test_two_layer();
-  test_two_layer_range_scan();
-  test_null_keys();
-  test_null_keys_2();
-  test_random_keys();
-  test_insert_remove_mix();
-  mp_test1();
-  mp_test2();
-  mp_test3();
-  mp_test4();
-  mp_test5();
-  mp_test6();
-  mp_test7();
-  mp_test8();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //test6();
+  //test7();
+  //test_varlen_single_layer();
+  //test_varlen_multi_layer();
+  //test_two_layer();
+  //test_two_layer_range_scan();
+  //test_null_keys();
+  //test_null_keys_2();
+  //test_random_keys();
+  //test_insert_remove_mix();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  //mp_test4();
+  //mp_test5();
+  //mp_test6();
+  //mp_test7();
+  //mp_test8();
+  mp_test_long_keys();
   //perf_test();
   //read_only_perf_test();
   //write_only_perf_test();
