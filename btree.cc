@@ -2231,6 +2231,48 @@ test_random_keys()
   ALWAYS_ASSERT(btr.size() == 0);
 }
 
+static void
+test_insert_remove_mix()
+{
+  btree btr;
+  fast_random r(38953623328597);
+
+  // bootstrap with keys, then alternate insert/remove
+  const size_t nkeys_start = 100000;
+
+  vector<string> start_keys_v;
+  set<string> start_keys;
+  for (size_t i = 0; i < nkeys_start; i++) {
+  retry:
+    string k = r.next_string(r.next() % 200);
+    if (start_keys.count(k) == 1)
+      goto retry;
+    start_keys_v.push_back(k);
+    start_keys.insert(k);
+    ALWAYS_ASSERT(btr.insert(varkey(k), (btree::value_type) k.data()));
+  }
+  btr.invariant_checker();
+  ALWAYS_ASSERT(btr.size() == start_keys.size());
+
+  vector<string> insert_keys_v;
+  set<string> insert_keys;
+  for (size_t i = 0; i < nkeys_start; i++) {
+  retry1:
+    string k = r.next_string(r.next() % 200);
+    if (start_keys.count(k) == 1 || insert_keys.count(k) == 1)
+      goto retry1;
+    insert_keys_v.push_back(k);
+    insert_keys.insert(k);
+  }
+
+  for (size_t i = 0; i < nkeys_start; i++) {
+    ALWAYS_ASSERT(btr.remove(varkey(start_keys_v[i])));
+    ALWAYS_ASSERT(btr.insert(varkey(insert_keys_v[i]), (btree::value_type) insert_keys_v[i].data()));
+  }
+  btr.invariant_checker();
+  ALWAYS_ASSERT(btr.size() == insert_keys.size());
+}
+
 namespace mp_test1_ns {
 
   static const size_t nkeys = 20000;
@@ -2782,7 +2824,7 @@ mp_test7()
 }
 
 namespace mp_test8_ns {
-  static const size_t nthreads = 16;
+  static const size_t nthreads = 2;
   static const size_t ninsertkeys_perthread = 100000;
   static const size_t nremovekeys_perthread = 100000;
 
@@ -2829,7 +2871,8 @@ mp_test8()
     key_vec inp;
     for (size_t j = 0; j < ninsertkeys_perthread; j++) {
     retry:
-      string k = r.next_string(r.next() % 200);
+      string k = r.next_string(r.next() % 9);
+      ALWAYS_ASSERT(k.size() <= 8);
       if (insert_keys.count(k) == 1)
         goto retry;
       insert_keys.insert(k);
@@ -2840,7 +2883,8 @@ mp_test8()
   for (size_t i = nthreads / 2; i < nthreads; i++) {
     key_vec inp;
     for (size_t j = 0; j < nremovekeys_perthread;) {
-      string k = r.next_string(r.next() % 200);
+      string k = r.next_string(r.next() % 9);
+      ALWAYS_ASSERT(k.size() <= 8);
       if (insert_keys.count(k) == 1 || remove_keys.count(k) == 1)
         continue;
       ALWAYS_ASSERT(btr.insert(varkey(k), (btree::value_type) k.data()));
@@ -2850,6 +2894,8 @@ mp_test8()
     }
     inps.push_back(inp);
   }
+
+  btr.invariant_checker();
 
   vector<btree_worker*> workers;
   for (size_t i = 0; i < nthreads / 2; i++)
@@ -3076,27 +3122,28 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  test1();
-  test2();
-  test3();
-  test4();
-  test5();
-  test6();
-  test7();
-  test_varlen_single_layer();
-  test_varlen_multi_layer();
-  test_two_layer();
-  test_two_layer_range_scan();
-  test_null_keys();
-  test_null_keys_2();
-  test_random_keys();
-  mp_test1();
-  mp_test2();
-  mp_test3();
-  mp_test4();
-  mp_test5();
-  mp_test6();
-  mp_test7();
+  //test1();
+  //test2();
+  //test3();
+  //test4();
+  //test5();
+  //test6();
+  //test7();
+  //test_varlen_single_layer();
+  //test_varlen_multi_layer();
+  //test_two_layer();
+  //test_two_layer_range_scan();
+  //test_null_keys();
+  //test_null_keys_2();
+  //test_random_keys();
+  //test_insert_remove_mix();
+  //mp_test1();
+  //mp_test2();
+  //mp_test3();
+  //mp_test4();
+  //mp_test5();
+  //mp_test6();
+  //mp_test7();
   mp_test8();
   //perf_test();
   //read_only_perf_test();
