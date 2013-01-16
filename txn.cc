@@ -125,13 +125,23 @@ transaction::commit()
     }
 
     // commit actual records
+    vector<record_t> removed_vec;
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
       VERBOSE(cout << "writing logical_node 0x" << hexify(it->first)
                    << " at commit_tid " << commit_tid << endl);
-      it->first->write_record_at(commit_tid, it->second);
+      record_t removed;
+      it->first->write_record_at(commit_tid, it->second, &removed);
       it->first->unlock();
+      removed_vec.push_back(removed);
     }
+
+    vector<callback_t> &callbacks = completion_callbacks();
+    for (vector<record_t>::iterator it = removed_vec.begin();
+         it != removed_vec.end(); ++it)
+      for (vector<callback_t>::iterator inner_it = callbacks.begin();
+           inner_it != callbacks.end(); ++inner_it)
+        (*inner_it)(*it);
   }
 
   resolved = true;
@@ -365,6 +375,22 @@ transaction::txn_context::add_absent_range(const key_range_t &range)
 
   AssertValidRangeSet(new_absent_range_set);
   swap(absent_range_set, new_absent_range_set);
+}
+
+bool
+transaction::register_cleanup_callback(callback_t callback)
+{
+  completion_callbacks().push_back(callback);
+  return true;
+}
+
+vector<transaction::callback_t> &
+transaction::completion_callbacks()
+{
+  static vector<callback_t> *callbacks = NULL;
+  if (!callbacks)
+    callbacks = new vector<callback_t>;
+  return *callbacks;
 }
 
 volatile transaction::tid_t transaction::global_tid = MIN_TID;

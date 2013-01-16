@@ -31,7 +31,7 @@ ndb_thread::register_completion_callback(callback_t callback)
   return true;
 }
 
-vector<ndb_thread::callback_t>&
+vector<ndb_thread::callback_t> &
 ndb_thread::completion_callbacks()
 {
   static vector<callback_t> *callbacks = NULL;

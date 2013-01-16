@@ -241,7 +241,7 @@ public:
     }
 
     inline void
-    write_record_at(tid_t t, record_t r)
+    write_record_at(tid_t t, record_t r, record_t *removed)
     {
       INVARIANT(is_locked());
       size_t n = size();
@@ -249,6 +249,8 @@ public:
       INVARIANT(versions[n - 1] < t);
       if (n == NVersions) {
         // drop oldest version
+        if (removed)
+          *removed = values[0];
         for (size_t i = 0; i < NVersions - 1; i++) {
           versions[i] = versions[i + 1];
           values[i] = values[i + 1];
@@ -299,9 +301,15 @@ public:
   static tid_t current_global_tid(); // tid of the last commit
   static tid_t incr_and_get_global_tid();
 
+  typedef void (*callback_t)(record_t);
+  /** not thread-safe */
+  static bool register_cleanup_callback(callback_t callback);
+
   static void Test();
 
 private:
+
+  static std::vector<callback_t> &completion_callbacks();
 
   struct read_record_t {
     tid_t t;
@@ -428,5 +436,9 @@ private:
   volatile static tid_t global_tid;
 
 };
+
+#define NDB_TXN_REGISTER_CLEANUP_CALLBACK(fn) \
+  static bool _txn_cleanup_callback_register_ ## __LINE__ UNUSED = \
+    ::transaction::register_cleanup_callback(fn);
 
 #endif /* _NDB_TXN_H_ */

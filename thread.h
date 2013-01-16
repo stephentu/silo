@@ -46,14 +46,14 @@ public:
 private:
   pthread_t p;
   run_t body;
-  static std::vector<callback_t>& completion_callbacks();
+  static std::vector<callback_t> &completion_callbacks();
 
   void on_complete();
   static void *pthread_bootstrap(void *p);
 };
 
 #define NDB_THREAD_REGISTER_COMPLETION_CALLBACK(fn) \
-  static bool _ndb_thread_callback_register_ ## __LINE__ UNUSED= \
+  static bool _ndb_thread_callback_register_ ## __LINE__ UNUSED = \
     ::ndb_thread::register_completion_callback(fn);
 
 #endif /* _NDB_THREAD_H_ */
