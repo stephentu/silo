@@ -274,8 +274,32 @@ test2()
   txn_btree btr;
   for (size_t i = 0; i < 100; i++) {
     transaction t;
-    btr.insert(t, u64_varkey(0), (txn_btree::value_type) 123);
+    btr.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
     t.commit();
+  }
+}
+
+static void
+test_multi_btree()
+{
+  txn_btree btr0, btr1;
+  for (size_t i = 0; i < 100; i++) {
+    transaction t;
+    btr0.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
+    btr1.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
+    t.commit();
+  }
+
+  for (size_t i = 0; i < 100; i++) {
+    transaction t;
+    txn_btree::value_type v0 = 0, v1 = 0;
+    bool ret0 = btr0.search(t, u64_varkey(i), v0);
+    bool ret1 = btr1.search(t, u64_varkey(i), v1);
+    t.commit();
+    ALWAYS_ASSERT(ret0);
+    ALWAYS_ASSERT(ret1);
+    ALWAYS_ASSERT(v0 == (txn_btree::value_type) 123);
+    ALWAYS_ASSERT(v1 == (txn_btree::value_type) 123);
   }
 }
 
@@ -715,6 +739,7 @@ txn_btree::Test()
 {
   test1();
   test2();
+  test_multi_btree();
   mp_test1();
   mp_test2();
   mp_test3();
