@@ -2781,6 +2781,104 @@ mp_test7()
   w0.join(); w1.join(); w2.join(); w3.join(); w4.join(); w5.join(); w6.join();
 }
 
+namespace mp_test8_ns {
+  static const size_t nthreads = 16;
+  static const size_t ninsertkeys_perthread = 100000;
+  static const size_t nremovekeys_perthread = 100000;
+
+  typedef vector<string> key_vec;
+
+  class insert_worker : public btree_worker {
+  public:
+    insert_worker(const vector<string> &keys, btree &btr)
+      : btree_worker(btr), keys(keys) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < keys.size(); i++)
+        ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (btree::value_type) keys[i].data()));
+    }
+  private:
+    vector<string> keys;
+  };
+
+  class remove_worker : public btree_worker {
+  public:
+    remove_worker(const vector<string> &keys, btree &btr)
+      : btree_worker(btr), keys(keys) {}
+    virtual void run()
+    {
+      for (size_t i = 0; i < keys.size(); i++)
+        ALWAYS_ASSERT(btr->remove(varkey(keys[i])));
+    }
+  private:
+    vector<string> keys;
+  };
+}
+
+static void
+mp_test8()
+{
+  using namespace mp_test8_ns;
+
+  btree btr;
+  vector<key_vec> inps;
+  set<string> insert_keys, remove_keys;
+
+  fast_random r(83287583);
+  for (size_t i = 0; i < nthreads / 2; i++) {
+    key_vec inp;
+    for (size_t j = 0; j < ninsertkeys_perthread; j++) {
+    retry:
+      string k = r.next_string(r.next() % 200);
+      if (insert_keys.count(k) == 1)
+        goto retry;
+      insert_keys.insert(k);
+      inp.push_back(k);
+    }
+    inps.push_back(inp);
+  }
+  for (size_t i = nthreads / 2; i < nthreads; i++) {
+    key_vec inp;
+    for (size_t j = 0; j < nremovekeys_perthread;) {
+      string k = r.next_string(r.next() % 200);
+      if (insert_keys.count(k) == 1 || remove_keys.count(k) == 1)
+        continue;
+      ALWAYS_ASSERT(btr.insert(varkey(k), (btree::value_type) k.data()));
+      remove_keys.insert(k);
+      inp.push_back(k);
+      j++;
+    }
+    inps.push_back(inp);
+  }
+
+  vector<btree_worker*> workers;
+  for (size_t i = 0; i < nthreads / 2; i++)
+    workers.push_back(new insert_worker(inps[i], btr));
+  for (size_t i = nthreads / 2; i < nthreads; i++)
+    workers.push_back(new remove_worker(inps[i], btr));
+  for (size_t i = 0; i < nthreads; i++)
+    workers[i]->start();
+  for (size_t i = 0; i < nthreads; i++)
+    workers[i]->join();
+
+  btr.invariant_checker();
+
+  ALWAYS_ASSERT(btr.size() == insert_keys.size());
+  for (set<string>::iterator it = insert_keys.begin();
+       it != insert_keys.end(); ++it) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(btr.search(varkey(*it), v));
+  }
+  for (set<string>::iterator it = remove_keys.begin();
+       it != remove_keys.end(); ++it) {
+    btree::value_type v = 0;
+    ALWAYS_ASSERT(!btr.search(varkey(*it), v));
+  }
+
+  for (size_t i = 0; i < nthreads; i++)
+    delete workers[i];
+}
+
 static void
 perf_test()
 {
@@ -2999,6 +3097,7 @@ btree::Test()
   mp_test5();
   mp_test6();
   mp_test7();
+  mp_test8();
   //perf_test();
   //read_only_perf_test();
   //write_only_perf_test();
