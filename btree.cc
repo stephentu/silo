@@ -2972,8 +2972,8 @@ mp_test8()
 
 namespace mp_test_long_keys_ns {
   static const size_t nthreads = 16;
-  static const size_t ninsertkeys_perthread = 100000;
-  static const size_t nremovekeys_perthread = 100000;
+  static const size_t ninsertkeys_perthread = 500000;
+  static const size_t nremovekeys_perthread = 500000;
 
   typedef vector<string> key_vec;
 
@@ -3307,29 +3307,29 @@ write_only_perf_test()
 void
 btree::Test()
 {
-  //test1();
-  //test2();
-  //test3();
-  //test4();
-  //test5();
-  //test6();
-  //test7();
-  //test_varlen_single_layer();
-  //test_varlen_multi_layer();
-  //test_two_layer();
-  //test_two_layer_range_scan();
-  //test_null_keys();
-  //test_null_keys_2();
-  //test_random_keys();
-  //test_insert_remove_mix();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
-  //mp_test4();
-  //mp_test5();
-  //mp_test6();
-  //mp_test7();
-  //mp_test8();
+  test1();
+  test2();
+  test3();
+  test4();
+  test5();
+  test6();
+  test7();
+  test_varlen_single_layer();
+  test_varlen_multi_layer();
+  test_two_layer();
+  test_two_layer_range_scan();
+  test_null_keys();
+  test_null_keys_2();
+  test_random_keys();
+  test_insert_remove_mix();
+  mp_test1();
+  mp_test2();
+  mp_test3();
+  mp_test4();
+  mp_test5();
+  mp_test6();
+  mp_test7();
+  mp_test8();
   mp_test_long_keys();
   //perf_test();
   //read_only_perf_test();
