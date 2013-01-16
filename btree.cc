@@ -3209,7 +3209,7 @@ read_only_perf_test()
   btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(u64_varkey(i)), (btree::value_type) i);
+    btr.insert(u64_varkey(i), (btree::value_type) i);
   cerr << "btree loaded, test starting" << endl;
 
   vector<worker *> workers;
