@@ -57,14 +57,16 @@ private:
 
   struct txn_search_range_callback : public search_range_callback {
     txn_search_range_callback(transaction *t,
+                              transaction::txn_context *ctx,
                               const key_type &lower,
                               const key_type *upper,
                               search_range_callback *caller_callback)
-      : t(t), lower(lower), upper(upper), prev_key(),
+      : t(t), ctx(ctx), lower(lower), upper(upper), prev_key(),
         invoked(false), caller_callback(caller_callback),
         caller_stopped(false) {}
     virtual bool invoke(const key_type &k, value_type v);
     transaction *const t;
+    transaction::txn_context *const ctx;
     const key_type lower;
     const key_type *const upper;
     std::string prev_key;
@@ -74,11 +76,12 @@ private:
   };
 
   struct absent_range_validation_callback : public search_range_callback {
-    absent_range_validation_callback(transaction *t, transaction::tid_t commit_tid)
-      : t(t), commit_tid(commit_tid), failed_flag(false) {}
+    absent_range_validation_callback(transaction::txn_context *ctx,
+                                     transaction::tid_t commit_tid)
+      : ctx(ctx), commit_tid(commit_tid), failed_flag(false) {}
     inline bool failed() const { return failed_flag; }
     virtual bool invoke(const key_type &k, value_type v);
-    transaction *const t;
+    transaction::txn_context *const ctx;
     const transaction::tid_t commit_tid;
     bool failed_flag;
   };

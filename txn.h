@@ -18,6 +18,7 @@ class txn_btree;
 
 class transaction {
   friend class txn_btree;
+  friend class txn_context;
   class key_range_t;
   friend std::ostream &operator<<(std::ostream &, const key_range_t &);
 public:
@@ -302,23 +303,38 @@ public:
 
 private:
 
-  void clear();
-
-  bool local_search_str(const std::string &k, record_t &v) const;
-
-  inline bool
-  local_search(const key_type &k, record_t &v) const
-  {
-    // XXX: we have to make an un-necessary copy of the key each time we search
-    // the write/read set- we need to find a way to avoid this
-    return local_search_str(k.str(), v);
-  }
-
   struct read_record_t {
     tid_t t;
     record_t r;
     logical_node *ln;
   };
+
+  // XXX: use hash tables for the read/write set
+  typedef std::map<std::string, read_record_t> read_set_map;
+  typedef std::map<std::string, record_t> write_set_map;
+  typedef std::vector<key_range_t> absent_range_vec;
+
+  struct txn_context {
+    read_set_map read_set;
+    write_set_map write_set;
+    absent_range_vec absent_range_set; // ranges do not overlap
+
+    bool local_search_str(const std::string &k, record_t &v) const;
+
+    inline bool
+    local_search(const key_type &k, record_t &v) const
+    {
+      // XXX: we have to make an un-necessary copy of the key each time we search
+      // the write/read set- we need to find a way to avoid this
+      return local_search_str(k.str(), v);
+    }
+
+    bool key_in_absent_set(const key_type &k) const;
+
+    void add_absent_range(const key_range_t &range);
+  };
+
+  void clear();
 
   // [a, b)
   struct key_range_t {
@@ -393,10 +409,6 @@ private:
     }
   };
 
-  bool key_in_absent_set(const key_type &k) const;
-
-  void add_absent_range(const key_range_t &range);
-
 #ifdef CHECK_INVARIANTS
   static void AssertValidRangeSet(const std::vector<key_range_t> &range_set);
 #else
@@ -410,13 +422,8 @@ private:
 
   const tid_t snapshot_tid;
   bool resolved;
-  txn_btree *btree;
 
-  // XXX: use hash tables for the read/write set
-  std::map<std::string, read_record_t> read_set;
-  std::map<std::string, record_t> write_set;
-
-  std::vector<key_range_t> absent_range_set; // ranges do not overlap
+  std::map<txn_btree *, txn_context> ctx_map;
 
   volatile static tid_t global_tid;
 

@@ -11,8 +11,7 @@ using namespace util;
 bool
 txn_btree::search(transaction &t, const key_type &k, value_type &v)
 {
-  INVARIANT(!t.btree || t.btree == this);
-  t.btree = this;
+  transaction::txn_context &ctx = t.ctx_map[this];
 
   // priority is
   // 1) write set
@@ -23,13 +22,13 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
   // note (1)-(3) are served by transaction::local_search()
 
   string sk(k.str());
-  if (t.local_search_str(sk, v))
+  if (ctx.local_search_str(sk, v))
     return (bool) v;
 
   btree::value_type underlying_v;
   if (!underlying_btree.search(k, underlying_v)) {
     // all records exist in the system at MIN_TID with no value
-    transaction::read_record_t *read_rec = &t.read_set[sk];
+    transaction::read_record_t *read_rec = &ctx.read_set[sk];
     read_rec->t = transaction::MIN_TID;
     read_rec->r = NULL;
     read_rec->ln = NULL;
@@ -44,7 +43,7 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
       t.abort();
       throw transaction_abort_exception();
     }
-    transaction::read_record_t *read_rec = &t.read_set[sk];
+    transaction::read_record_t *read_rec = &ctx.read_set[sk];
     read_rec->t = start_t;
     read_rec->r = r;
     read_rec->ln = ln;
@@ -61,17 +60,17 @@ txn_btree::txn_search_range_callback::invoke(const key_type &k, value_type v)
   transaction::key_range_t r =
     invoked ? transaction::key_range_t(prev_key, sk) : transaction::key_range_t(lower, sk);
   if (!r.is_empty_range())
-    t->add_absent_range(r);
+    ctx->add_absent_range(r);
   prev_key = sk;
   invoked = true;
   value_type local_v = 0;
-  bool local_read = t->local_search_str(sk, local_v);
+  bool local_read = ctx->local_search_str(sk, local_v);
   bool ret = true;
   if (local_read && local_v)
     ret = caller_callback->invoke(k, local_v);
   map<string, transaction::read_record_t>::const_iterator it =
-    t->read_set.find(sk);
-  if (it == t->read_set.end()) {
+    ctx->read_set.find(sk);
+  if (it == ctx->read_set.end()) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
     INVARIANT(ln);
     prefetch_node(ln);
@@ -81,7 +80,7 @@ txn_btree::txn_search_range_callback::invoke(const key_type &k, value_type v)
       t->abort();
       throw transaction_abort_exception();
     }
-    transaction::read_record_t *read_rec = &t->read_set[sk];
+    transaction::read_record_t *read_rec = &ctx->read_set[sk];
     read_rec->t = start_t;
     read_rec->r = r;
     read_rec->ln = ln;
@@ -100,10 +99,9 @@ txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_typ
 {
   transaction::logical_node *ln = (transaction::logical_node *) v;
   INVARIANT(ln);
-  prefetch_node(ln);
   VERBOSE(cout << "absent_range_validation_callback: key " << k
                << " found logical_node 0x" << hexify(ln) << endl);
-  bool did_write = t->write_set.find(string(k.str())) != t->write_set.end();
+  bool did_write = ctx->write_set.find(k.str()) != ctx->write_set.end();
   // XXX: I don't think it matters here whether or not we use snapshot_tid or
   // MIN_TID, since this record did not exist @ snapshot_tid, so any new
   // entries must be > snapshot_tid, and therefore using MIN_TID or
@@ -128,8 +126,7 @@ txn_btree::search_range_call(transaction &t,
                              const key_type *upper,
                              search_range_callback &callback)
 {
-  INVARIANT(!t.btree || t.btree == this);
-  t.btree = this;
+  transaction::txn_context &ctx = t.ctx_map[this];
 
   // many cases to consider:
   // 1) for each logical_node returned from the scan, we need to
@@ -143,16 +140,16 @@ txn_btree::search_range_call(transaction &t,
   //    of contiguous ranges
   if (unlikely(upper && *upper <= lower))
     return;
-  txn_search_range_callback c(&t, lower, upper, &callback);
+  txn_search_range_callback c(&t, &ctx, lower, upper, &callback);
   underlying_btree.search_range_call(lower, upper, c);
   if (c.caller_stopped)
     return;
   if (upper)
-    t.add_absent_range(
+    ctx.add_absent_range(
         transaction::key_range_t(
           c.invoked ? next_key(c.prev_key) : lower.str(), *upper));
   else
-    t.add_absent_range(
+    ctx.add_absent_range(
         transaction::key_range_t(
           c.invoked ? c.prev_key : lower.str()));
 }
@@ -160,9 +157,8 @@ txn_btree::search_range_call(transaction &t,
 void
 txn_btree::insert_impl(transaction &t, const key_type &k, value_type v)
 {
-  INVARIANT(!t.btree || t.btree == this);
-  t.btree = this;
-  t.write_set[string(k.str())] = v;
+  transaction::txn_context &ctx = t.ctx_map[this];
+  ctx.write_set[string(k.str())] = v;
 }
 
 struct test_callback_ctr {
@@ -717,11 +713,11 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  //test1();
-  //test2();
-  //mp_test1();
-  //mp_test2();
-  //mp_test3();
+  test1();
+  test2();
+  mp_test1();
+  mp_test2();
+  mp_test3();
 
-  read_only_perf();
+  //read_only_perf();
 }
