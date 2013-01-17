@@ -16,6 +16,7 @@ bdb_wrapper::bdb_wrapper(const string &envdir, const string &dbfile)
   ALWAYS_ASSERT(env->open(envdir.c_str(), DB_INIT_LOCK | DB_INIT_LOG | DB_INIT_MPOOL | DB_INIT_TXN | DB_PRIVATE | DB_THREAD | DB_CREATE, 0) == 0);
 
   db = new Db(env, 0);
+  ALWAYS_ASSERT(db->set_flags(DB_TXN_NOT_DURABLE) == 0);
   DbTxn *txn = NULL;
   ALWAYS_ASSERT(env->txn_begin(NULL, &txn, 0) == 0);
   ALWAYS_ASSERT(db->open(txn, dbfile.c_str(), NULL, DB_BTREE, DB_CREATE, 0) == 0);
