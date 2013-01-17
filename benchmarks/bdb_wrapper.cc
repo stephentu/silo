@@ -1,3 +1,5 @@
+#include <limits>
+
 #include "bdb_wrapper.h"
 #include "../macros.h"
 
@@ -8,6 +10,7 @@ bdb_wrapper::bdb_wrapper(const string &envdir, const string &dbfile)
 {
   env = new DbEnv(0);
   ALWAYS_ASSERT(env->log_set_config(DB_LOG_IN_MEMORY, 1) == 0);
+  ALWAYS_ASSERT(env->set_lg_bsize(numeric_limits<uint32_t>::max()) == 0);
   ALWAYS_ASSERT(env->set_flags(DB_TXN_NOSYNC, 1) == 0);
   ALWAYS_ASSERT(env->set_cachesize(4, 0, 1) == 0);
   ALWAYS_ASSERT(env->open(envdir.c_str(), DB_INIT_LOCK | DB_INIT_LOG | DB_INIT_MPOOL | DB_INIT_TXN | DB_PRIVATE | DB_THREAD | DB_CREATE, 0) == 0);
