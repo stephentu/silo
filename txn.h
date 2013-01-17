@@ -14,6 +14,7 @@
 #include "varkey.h"
 
 class transaction_abort_exception {};
+class transaction_unusable_exception {};
 class txn_btree;
 
 class transaction {
@@ -21,10 +22,13 @@ class transaction {
   friend class txn_context;
   class key_range_t;
   friend std::ostream &operator<<(std::ostream &, const key_range_t &);
+
 public:
 
   typedef uint64_t tid_t;
   typedef uint8_t* record_t;
+
+  enum txn_state { TXN_ACTIVE, TXN_COMMITED, TXN_ABRT, };
 
   static const tid_t MIN_TID = 0;
 
@@ -309,6 +313,16 @@ public:
 
 private:
 
+  /**
+   * throws transaction_unusable_exception if already resolved (commited/aborted)
+   */
+  inline void
+  ensure_active()
+  {
+    if (unlikely(state != TXN_ACTIVE))
+      throw transaction_unusable_exception();
+  }
+
   static std::vector<callback_t> &completion_callbacks();
 
   struct read_record_t {
@@ -429,7 +443,7 @@ private:
       const std::vector<key_range_t> &range_set);
 
   const tid_t snapshot_tid;
-  bool resolved;
+  txn_state state;
 
   std::map<txn_btree *, txn_context> ctx_map;
 

@@ -1,10 +1,12 @@
 #include <iostream>
 
-#include "bdb_wrapper.h"
 #include "../macros.h"
 #include "../varkey.h"
 #include "../thread.h"
 #include "../util.h"
+
+#include "bdb_wrapper.h"
+#include "ndb_wrapper.h"
 
 using namespace std;
 using namespace util;
@@ -40,24 +42,22 @@ public:
   size_t ntxns;
 };
 
-int main(void)
+static void
+do_test(abstract_db *db)
 {
-  int ret UNUSED = system("rm -rf db/*");
-  bdb_wrapper w("db", "ycsb.db");
-
   // load
   for (size_t i = 0; i < nkeys; i++) {
-    void *txn = w.new_txn();
+    void *txn = db->new_txn();
     string k = u64_varkey(i).str();
     string v(128, 'a');
-    w.put(txn, k.data(), k.size(), v.data(), v.size());
-    ALWAYS_ASSERT(w.commit_txn(txn));
+    db->put(txn, k.data(), k.size(), v.data(), v.size());
+    ALWAYS_ASSERT(db->commit_txn(txn));
   }
 
   fast_random r(8544290);
   vector<worker *> workers;
   for (size_t i = 0; i < nthreads; i++)
-    workers.push_back(new worker(r.next(), &w));
+    workers.push_back(new worker(r.next(), db));
   timer t;
   for (size_t i = 0; i < nthreads; i++)
     workers[i]->start();
@@ -74,6 +74,15 @@ int main(void)
 
   cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << endl;
   cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << endl;
+}
 
+int main(void)
+{
+  //int ret UNUSED = system("rm -rf db/*");
+  //bdb_wrapper w("db", "ycsb.db");
+
+  ndb_wrapper w;
+
+  do_test(&w);
   return 0;
 }

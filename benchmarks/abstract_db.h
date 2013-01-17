@@ -1,6 +1,8 @@
 #ifndef _ABSTRACT_DB_H_
 #define _ABSTRACT_DB_H_
 
+#include <stddef.h>
+
 /**
  * Abstract interface for a DB. This is to facilitate writing
  * benchmarks for different systems, making each system present
@@ -8,6 +10,15 @@
  */
 class abstract_db {
 public:
+
+  /**
+   * both get() and put() can throw abstract_abort_exception. If thrown,
+   * abort_txn() must be called (calling commit_txn() will result in undefined
+   * behavior).  Also if thrown, subsequently calling get()/put() will also
+   * result in undefined behavior)
+   */
+  class abstract_abort_exception {};
+
   // ctor should open db
   abstract_db() {}
 

@@ -29,20 +29,27 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
 
 transaction::transaction()
   : snapshot_tid(current_global_tid()),
-    resolved(false)
+    state(TXN_ACTIVE)
 {
 }
 
 transaction::~transaction()
 {
   // transaction shouldn't fall out of scope w/o resolution
-  INVARIANT(resolved);
+  INVARIANT(state != TXN_ACTIVE);
 }
 
 void
 transaction::commit()
 {
-  INVARIANT(!resolved);
+  switch (state) {
+  case TXN_ACTIVE:
+    break;
+  case TXN_COMMITED:
+    return;
+  case TXN_ABRT:
+    throw transaction_abort_exception();
+  }
 
   // fetch logical_nodes for insert
   map<logical_node *, record_t> logical_nodes;
@@ -144,7 +151,7 @@ transaction::commit()
         (*inner_it)(*it);
   }
 
-  resolved = true;
+  state = TXN_COMMITED;
   clear();
   return;
 
@@ -153,7 +160,7 @@ do_abort:
   for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
        it != logical_nodes.end(); ++it)
     it->first->unlock();
-  resolved = true;
+  state = TXN_ABRT;
   clear();
   throw transaction_abort_exception();
 }
@@ -167,8 +174,15 @@ transaction::clear()
 void
 transaction::abort()
 {
-  INVARIANT(!resolved);
-  resolved = true;
+  switch (state) {
+  case TXN_ACTIVE:
+    break;
+  case TXN_ABRT:
+    return;
+  case TXN_COMMITED:
+    throw transaction_unusable_exception();
+  }
+  state = TXN_ABRT;
   clear();
 }
 

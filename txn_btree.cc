@@ -11,6 +11,7 @@ using namespace util;
 bool
 txn_btree::search(transaction &t, const key_type &k, value_type &v)
 {
+  t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
 
   // priority is
@@ -55,6 +56,7 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
 bool
 txn_btree::txn_search_range_callback::invoke(const key_type &k, value_type v)
 {
+  t->ensure_active();
   VERBOSE(cerr << "search range k: " << k << endl);
   string sk(k.str());
   transaction::key_range_t r =
@@ -126,6 +128,7 @@ txn_btree::search_range_call(transaction &t,
                              const key_type *upper,
                              search_range_callback &callback)
 {
+  t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
 
   // many cases to consider:
@@ -157,6 +160,7 @@ txn_btree::search_range_call(transaction &t,
 void
 txn_btree::insert_impl(transaction &t, const key_type &k, value_type v)
 {
+  t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
   ctx.write_set[string(k.str())] = v;
 }
