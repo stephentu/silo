@@ -137,10 +137,11 @@ transaction::commit()
          it != logical_nodes.end(); ++it) {
       VERBOSE(cout << "writing logical_node 0x" << hexify(it->first)
                    << " at commit_tid " << commit_tid << endl);
-      record_t removed;
+      record_t removed = 0;
       it->first->write_record_at(commit_tid, it->second, &removed);
       it->first->unlock();
-      removed_vec.push_back(removed);
+      if (removed)
+        removed_vec.push_back(removed);
     }
 
     vector<callback_t> &callbacks = completion_callbacks();

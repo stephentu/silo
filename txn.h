@@ -124,6 +124,7 @@ public:
     inline void
     set_size(size_t n)
     {
+      INVARIANT(n > 0);
       INVARIANT(n <= NVersions);
       hdr &= ~HDR_SIZE_MASK;
       hdr |= (n << HDR_SIZE_SHIFT);
@@ -271,8 +272,6 @@ public:
     static inline logical_node *
     alloc()
     {
-      //return new logical_node;
-
       void *p = memalign(CACHELINE_SIZE, sizeof(logical_node));
       assert(p);
       return new (p) logical_node;
@@ -281,8 +280,8 @@ public:
     static inline void
     release(logical_node *n)
     {
-      //delete n;
-
+      // XXX: currently not RCU GC-ed (since we only free when we cannot put
+      // the logical_node into the shared data structure)
       if (unlikely(!n))
         return;
       n->~logical_node();

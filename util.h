@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <limits>
 
 #include <pthread.h>
 #include <sys/time.h>
@@ -123,6 +124,13 @@ public:
     seed ^= (seed >> 35);
     seed ^= (seed << 4);
     return seed;
+  }
+
+  /** [0, 1] */
+  inline double
+  next_uniform()
+  {
+    return double(next())/double(std::numeric_limits<unsigned long>::max());
   }
 
   inline char

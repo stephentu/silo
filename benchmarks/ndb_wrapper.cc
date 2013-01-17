@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "ndb_wrapper.h"
+#include "../rcu.h"
 #include "../varkey.h"
 #include "../macros.h"
 
@@ -74,6 +75,9 @@ ndb_wrapper::put(
 static void
 record_cleanup_callback(uint8_t *record)
 {
-  delete [] record;
+  if (!record)
+    return;
+  scoped_rcu_region rcu;
+  rcu::free_array(record);
 }
 NDB_TXN_REGISTER_CLEANUP_CALLBACK(record_cleanup_callback);
