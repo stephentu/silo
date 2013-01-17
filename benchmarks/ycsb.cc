@@ -9,8 +9,9 @@
 using namespace std;
 using namespace util;
 
-static const size_t nkeys = 1000;
-static size_t nthreads = 16;
+//static const size_t nkeys = 1000;
+static const size_t nkeys = 140000000;
+static size_t nthreads = 1;
 static volatile bool running = true;
 
 class worker : public ndb_thread {
@@ -44,14 +45,14 @@ int main(void)
   int ret UNUSED = system("rm -rf db/*");
   bdb_wrapper w("db", "ycsb.db");
 
-  void *txn = w.new_txn();
   // load
   for (size_t i = 0; i < nkeys; i++) {
+    void *txn = w.new_txn();
     string k = u64_varkey(i).str();
     string v(128, 'a');
     w.put(txn, k.data(), k.size(), v.data(), v.size());
+    ALWAYS_ASSERT(w.commit_txn(txn));
   }
-  ALWAYS_ASSERT(w.commit_txn(txn));
 
   fast_random r(8544290);
   vector<worker *> workers;
