@@ -70,3 +70,10 @@ ndb_wrapper::put(
     throw abstract_abort_exception();
   }
 }
+
+static void
+record_cleanup_callback(uint8_t *record)
+{
+  delete [] record;
+}
+NDB_TXN_REGISTER_CLEANUP_CALLBACK(record_cleanup_callback);
