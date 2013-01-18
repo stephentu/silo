@@ -1,6 +1,10 @@
 #include <iostream>
 #include <vector>
 #include <utility>
+#include <string>
+
+#include <getopt.h>
+#include <stdlib.h>
 
 #include "../macros.h"
 #include "../varkey.h"
@@ -13,11 +17,10 @@
 using namespace std;
 using namespace util;
 
-//static const size_t nkeys = 1000;
-//static const size_t nkeys = 140000000;
-static const size_t nkeys = 100000;
+static size_t nkeys = 100000;
 static size_t nthreads = 1;
 static volatile bool running = true;
+static int verbose = 0;
 
 class worker;
 typedef void (*txn_fn_t)(worker *);
@@ -114,7 +117,7 @@ MakeWorkloadDesc()
 }
 
 static void
-do_test(abstract_db *db, double read_ratio)
+do_test(abstract_db *db)
 {
   // load
   for (size_t i = 0; i < nkeys; i++) {
@@ -143,17 +146,77 @@ do_test(abstract_db *db, double read_ratio)
   double agg_throughput = double(n) / (double(t.lap()) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(nthreads);
 
-  cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
-  cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+  if (verbose) {
+    cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
+    cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+  } else {
+    cerr << agg_throughput << endl;
+  }
 }
 
-int main(void)
+int
+main(int argc, char **argv)
 {
-  //int ret UNUSED = system("rm -rf db/*");
-  //bdb_wrapper w("db", "ycsb.db");
+  abstract_db *db = NULL;
+  string db_type;
+  while (1) {
+    static struct option long_options[] =
+    {
+      {"verbose", no_argument,       &verbose, 1},
+      {"num-keys",  required_argument, 0, 'k'},
+      {"num-threads",  required_argument, 0, 't'},
+      {"db-type",    required_argument, 0, 'd'},
+      {0, 0, 0, 0}
+    };
+    int option_index = 0;
+    int c = getopt_long(argc, argv, "vk:t:d:", long_options, &option_index);
+    if (c == -1)
+      break;
 
-  ndb_wrapper w;
+    switch (c) {
+    case 0:
+      if (long_options[option_index].flag != 0)
+        break;
+      abort();
+      break;
 
-  do_test(&w, 0.95);
+    case 'k':
+      nkeys = strtoul(optarg, NULL, 10);
+      ALWAYS_ASSERT(nkeys > 0);
+      break;
+
+    case 't':
+      nthreads = strtoul(optarg, NULL, 10);
+      ALWAYS_ASSERT(nthreads > 0);
+      break;
+
+    case 'd':
+      db_type = optarg;
+      if (db_type == "bdb") {
+        int ret UNUSED = system("rm -rf db/*");
+        db = new bdb_wrapper("db", "ycsb.db");
+      } else if (db_type == "ndb") {
+        db = new ndb_wrapper;
+      } else
+        ALWAYS_ASSERT(false);
+      break;
+
+    case '?':
+      /* getopt_long already printed an error message. */
+      break;
+
+    default:
+      abort();
+    }
+  }
+
+  if (verbose) {
+    cerr << "settings:" << endl;
+    cerr << "  num-keys: " << nkeys << endl;
+    cerr << "  num-threads: " << nthreads << endl;
+    cerr << "  db-type: " << db_type << endl;
+  }
+
+  do_test(db);
   return 0;
 }
