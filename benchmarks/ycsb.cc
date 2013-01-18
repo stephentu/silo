@@ -135,7 +135,7 @@ do_test(abstract_db *db)
   timer t;
   for (size_t i = 0; i < nthreads; i++)
     workers[i]->start();
-  sleep(10);
+  sleep(30);
   running = false;
   size_t n = 0;
   for (size_t i = 0; i < nthreads; i++) {
@@ -149,9 +149,8 @@ do_test(abstract_db *db)
   if (verbose) {
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
-  } else {
-    cerr << agg_throughput << endl;
   }
+  cout << agg_throughput << endl;
 }
 
 int
