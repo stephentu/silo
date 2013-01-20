@@ -12,7 +12,7 @@ import platform
 import subprocess
 import sys
 
-DBS = ('bdb', 'ndb')
+DBS = ('bdb', 'ndb-proto1', 'ndb-proto2')
 THREADS = (1, 2, 4, 8, 16, 24)
 
 def run_configuration(dbtype, nthreads):
