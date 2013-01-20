@@ -10,7 +10,7 @@ public:
   enum Proto {
     PROTO_1,
     PROTO_2,
-  }
+  };
 
   ndb_wrapper(Proto proto) : proto(proto) {}
 
