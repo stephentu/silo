@@ -315,17 +315,17 @@ public:
 
   static void Test();
 
-protected:
-
   /**
    * XXX: document
    */
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const = 0;
 
+protected:
+
   /**
    * XXX: document
    */
-  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) const = 0;
+  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) = 0;
 
   /**
    * throws transaction_unusable_exception if already resolved (commited/aborted)
@@ -470,10 +470,10 @@ protected:
 class transaction_proto1 : public transaction {
 public:
   transaction_proto1();
+  virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
 protected:
-  virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
-  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) const;
+  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
 
 private:
   static tid_t current_global_tid(); // tid of the last commit
@@ -487,10 +487,10 @@ private:
 class transaction_proto2 : public transaction {
 public:
   transaction_proto2() {}
+  virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
 protected:
-  virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
-  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) const;
+  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
 
 private:
   static size_t core_id();

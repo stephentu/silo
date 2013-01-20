@@ -59,7 +59,7 @@ transaction::commit()
     retry:
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
-        VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(v) << endl);
+        VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
         logical_nodes[(logical_node *) v] = it->second;
       } else {
         logical_node *ln = logical_node::alloc();
@@ -69,7 +69,7 @@ transaction::commit()
           logical_node::release(ln);
           goto retry;
         }
-        VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(ln) << endl);
+        VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
         logical_nodes[ln] = it->second;
       }
     }
@@ -82,12 +82,17 @@ transaction::commit()
     // lock the logical nodes in sort order
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      VERBOSE(cout << "locking node 0x" << hexify(it->first) << endl);
+      VERBOSE(cout << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
       it->first->lock();
     }
 
     // acquire commit tid (if not read-only txn)
     tid_t commit_tid = logical_nodes.empty() ? 0 : gen_commit_tid(logical_nodes);
+
+    if (logical_nodes.empty())
+      VERBOSE(cout << "commit tid: <read-only>" << endl);
+    else
+      VERBOSE(cout << "commit tid: " << commit_tid << endl);
 
     // do read validation
     for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
@@ -106,7 +111,7 @@ transaction::commit()
         if (unlikely(!ln))
           continue;
         VERBOSE(cout << "validating key " << hexify(it->first) << " @ logical_node 0x"
-                     << hexify(ln) << " at snapshot_tid " << snapshot_tid << endl);
+                     << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
         if (snapshot_tid_t.first) {
           // An optimization:
@@ -142,7 +147,7 @@ transaction::commit()
     vector<record_t> removed_vec;
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      VERBOSE(cout << "writing logical_node 0x" << hexify(it->first)
+      VERBOSE(cout << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid << endl);
       record_t removed = 0;
       it->first->write_record_at(commit_tid, it->second, &removed);
@@ -164,7 +169,10 @@ transaction::commit()
   return;
 
 do_abort:
-  VERBOSE(cout << "aborting txn @ snapshot_tid " << snapshot_tid << endl);
+  if (snapshot_tid_t.first)
+    VERBOSE(cout << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
+  else
+    VERBOSE(cout << "aborting txn" << endl);
   for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
        it != logical_nodes.end(); ++it)
     it->first->unlock();
@@ -415,7 +423,7 @@ transaction_proto1::consistent_snapshot_tid() const
 }
 
 transaction::tid_t
-transaction_proto1::gen_commit_tid(const map<logical_node *, record_t> &write_nodes) const
+transaction_proto1::gen_commit_tid(const map<logical_node *, record_t> &write_nodes)
 {
   return incr_and_get_global_tid();
 }
@@ -441,7 +449,7 @@ transaction_proto2::consistent_snapshot_tid() const
 }
 
 transaction::tid_t
-transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_nodes) const
+transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_nodes)
 {
   size_t my_core_id = core_id();
   INVARIANT(tl_last_commit_tid == MIN_TID ||
@@ -460,10 +468,10 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_no
     if (t > ret)
       ret = t;
   }
-  ret &= (CoreBits - 1);
+  ret &= ~((1 << CoreBits) - 1);
   ret += (1 << CoreBits);
   ret |= my_core_id;
-  return ret;
+  return (tl_last_commit_tid = ret);
 }
 
 size_t

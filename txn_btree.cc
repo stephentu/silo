@@ -216,7 +216,14 @@ test1()
     ALWAYS_ASSERT(v1 == (txn_btree::value_type) &recs[0]);
 
     t0.commit();
-    t1.commit();
+    try {
+      t1.commit();
+      // if we have a consistent snapshot, then this txn should not abort
+      ALWAYS_ASSERT(t1.consistent_snapshot_tid().first);
+    } catch (transaction_abort_exception &e) {
+      // if we dont have a snapshot, then we expect an abort
+      ALWAYS_ASSERT(!t1.consistent_snapshot_tid().first);
+    }
     VERBOSE(cout << "------" << endl);
   }
 
@@ -268,7 +275,7 @@ test1()
 
   {
     TxnType t;
-    u64_varkey vend (20);
+    u64_varkey vend(20);
     size_t ctr = 0;
     btr.search_range(t, u64_varkey(10), &vend, test_callback_ctr(&ctr));
     ALWAYS_ASSERT(ctr == 0);
@@ -725,12 +732,12 @@ read_only_perf()
       for (size_t j = i * nkeyspertxn; j < end; j++)
         btr.insert(t, u64_varkey(j), (btree::value_type) (j + 1));
       t.commit();
-      std::cerr << "batch " << i << " completed" << std::endl;
+      cerr << "batch " << i << " completed" << endl;
     }
-    std::cerr << "btree loaded, test starting" << std::endl;
+    cerr << "btree loaded, test starting" << endl;
   }
 
-  std::vector<worker<TxnType> *> workers;
+  vector<worker<TxnType> *> workers;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
     workers.push_back(new worker<TxnType>(seeds[i], btr));
 
@@ -753,13 +760,14 @@ read_only_perf()
   double agg_throughput = double(total_n) / (double(t.lap()) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(ARRAY_NELEMS(seeds));
 
-  std::cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << std::endl;
-  std::cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << std::endl;
+  cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << endl;
+  cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << endl;
 }
 
 void
 txn_btree::Test()
 {
+  cerr << "Test proto1" << endl;
   test1<transaction_proto1>();
   test2<transaction_proto1>();
   test_multi_btree<transaction_proto1>();
@@ -767,6 +775,7 @@ txn_btree::Test()
   mp_test2<transaction_proto1>();
   mp_test3<transaction_proto1>();
 
+  cerr << "Test proto2" << endl;
   test1<transaction_proto2>();
   test2<transaction_proto2>();
   test_multi_btree<transaction_proto2>();
