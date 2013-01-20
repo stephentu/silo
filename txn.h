@@ -18,6 +18,7 @@ class transaction_unusable_exception {};
 class txn_btree;
 
 class transaction {
+protected:
   friend class txn_btree;
   friend class txn_context;
   class key_range_t;
@@ -31,6 +32,7 @@ public:
   enum txn_state { TXN_ACTIVE, TXN_COMMITED, TXN_ABRT, };
 
   static const tid_t MIN_TID = 0;
+  static const tid_t MAX_TID = (tid_t) -1;
 
   typedef varkey key_type;
 
@@ -192,9 +194,7 @@ public:
     inline bool
     is_latest_version(tid_t t) const
     {
-      size_t n = size();
-      INVARIANT(n > 0 && n <= NVersions);
-      return versions[n - 1] <= t;
+      return latest_version() <= t;
     }
 
     inline bool
@@ -206,6 +206,14 @@ public:
         if (likely(check_version(v)))
           return ret;
       }
+    }
+
+    inline tid_t
+    latest_version() const
+    {
+      size_t n = size();
+      INVARIANT(n > 0 && n <= NVersions);
+      return versions[n - 1];
     }
 
     /**
@@ -294,15 +302,12 @@ public:
   } PACKED_CACHE_ALIGNED;
 
   transaction();
-  ~transaction();
+  virtual ~transaction();
 
   void commit();
 
   // abort() always succeeds
   void abort();
-
-  static tid_t current_global_tid(); // tid of the last commit
-  static tid_t incr_and_get_global_tid();
 
   typedef void (*callback_t)(record_t);
   /** not thread-safe */
@@ -310,7 +315,17 @@ public:
 
   static void Test();
 
-private:
+protected:
+
+  /**
+   * XXX: document
+   */
+  virtual std::pair<bool, tid_t> consistent_snapshot_tid() const = 0;
+
+  /**
+   * XXX: document
+   */
+  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) const = 0;
 
   /**
    * throws transaction_unusable_exception if already resolved (commited/aborted)
@@ -441,17 +456,50 @@ private:
   static std::string PrintRangeSet(
       const std::vector<key_range_t> &range_set);
 
-  const tid_t snapshot_tid;
   txn_state state;
 
   std::map<txn_btree *, txn_context> ctx_map;
-
-  volatile static tid_t global_tid;
-
 };
 
 #define NDB_TXN_REGISTER_CLEANUP_CALLBACK(fn) \
   static bool _txn_cleanup_callback_register_ ## __LINE__ UNUSED = \
     ::transaction::register_cleanup_callback(fn);
+
+
+// protocol 1 - global consistent TIDs
+class transaction_proto1 : public transaction {
+public:
+  transaction_proto1();
+
+protected:
+  virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
+  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) const;
+
+private:
+  static tid_t current_global_tid(); // tid of the last commit
+  static tid_t incr_and_get_global_tid();
+
+  const tid_t snapshot_tid;
+  volatile static tid_t global_tid;
+};
+
+// protocol 2 - no global consistent TIDs
+class transaction_proto2 : public transaction {
+public:
+  transaction_proto2() {}
+
+protected:
+  virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
+  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) const;
+
+private:
+  static size_t core_id();
+
+  // XXX: need to implement core ID recycling
+  static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
+  static __thread tid_t tl_last_commit_tid;
+  static __thread ssize_t tl_core_id; // -1 if not set
+  static volatile size_t g_core_count;
+};
 
 #endif /* _NDB_TXN_H_ */

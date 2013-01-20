@@ -194,8 +194,10 @@ main(int argc, char **argv)
       if (db_type == "bdb") {
         int ret UNUSED = system("rm -rf db/*");
         db = new bdb_wrapper("db", "ycsb.db");
-      } else if (db_type == "ndb") {
-        db = new ndb_wrapper;
+      } else if (db_type == "ndb-proto1") {
+        db = new ndb_wrapper(ndb_wrapper::PROTO_1);
+      } else if (db_type == "ndb-proto2") {
+        db = new ndb_wrapper(ndb_wrapper::PROTO_2);
       } else
         ALWAYS_ASSERT(false);
       break;

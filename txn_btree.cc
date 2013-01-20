@@ -40,7 +40,10 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
     prefetch_node(ln);
     transaction::tid_t start_t;
     transaction::record_t r;
-    if (unlikely(!ln->stable_read(t.snapshot_tid, start_t, r))) {
+
+    pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
+    transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
       t.abort();
       throw transaction_abort_exception();
     }
@@ -78,7 +81,9 @@ txn_btree::txn_search_range_callback::invoke(const key_type &k, value_type v)
     prefetch_node(ln);
     transaction::tid_t start_t;
     transaction::record_t r;
-    if (unlikely(!ln->stable_read(t->snapshot_tid, start_t, r))) {
+    pair<bool, transaction::tid_t> snapshot_tid_t = t->consistent_snapshot_tid();
+    transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
       t->abort();
       throw transaction_abort_exception();
     }
@@ -176,6 +181,7 @@ struct test_callback_ctr {
   size_t *const ctr;
 };
 
+template <typename TxnType>
 static void
 test1()
 {
@@ -187,7 +193,7 @@ test1()
     recs[i].v = 0;
 
   {
-    transaction t;
+    TxnType t;
     txn_btree::value_type v;
     ALWAYS_ASSERT(!btr.search(t, u64_varkey(0), v));
     btr.insert(t, u64_varkey(0), (txn_btree::value_type) &recs[0]);
@@ -198,7 +204,7 @@ test1()
   }
 
   {
-    transaction t0, t1;
+    TxnType t0, t1;
     txn_btree::value_type v0, v1;
 
     ALWAYS_ASSERT(btr.search(t0, u64_varkey(0), v0));
@@ -216,7 +222,7 @@ test1()
 
   {
     // racy insert
-    transaction t0, t1;
+    TxnType t0, t1;
     txn_btree::value_type v0, v1;
 
     ALWAYS_ASSERT(btr.search(t0, u64_varkey(0), v0));
@@ -240,7 +246,7 @@ test1()
 
   {
     // racy scan
-    transaction t0, t1;
+    TxnType t0, t1;
 
     u64_varkey vend(5);
     size_t ctr = 0;
@@ -261,7 +267,7 @@ test1()
   }
 
   {
-    transaction t;
+    TxnType t;
     u64_varkey vend (20);
     size_t ctr = 0;
     btr.search_range(t, u64_varkey(10), &vend, test_callback_ctr(&ctr));
@@ -272,30 +278,32 @@ test1()
   }
 }
 
+template <typename TxnType>
 static void
 test2()
 {
   txn_btree btr;
   for (size_t i = 0; i < 100; i++) {
-    transaction t;
+    TxnType t;
     btr.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
     t.commit();
   }
 }
 
+template <typename TxnType>
 static void
 test_multi_btree()
 {
   txn_btree btr0, btr1;
   for (size_t i = 0; i < 100; i++) {
-    transaction t;
+    TxnType t;
     btr0.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
     btr1.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
     t.commit();
   }
 
   for (size_t i = 0; i < 100; i++) {
-    transaction t;
+    TxnType t;
     txn_btree::value_type v0 = 0, v1 = 0;
     bool ret0 = btr0.search(t, u64_varkey(i), v0);
     bool ret1 = btr1.search(t, u64_varkey(i), v1);
@@ -324,6 +332,7 @@ namespace mp_test1_ns {
 
   const size_t niters = 1000;
 
+  template <typename TxnType>
   class worker : public txn_btree_worker {
   public:
     worker(txn_btree &btr) : txn_btree_worker(btr) {}
@@ -337,7 +346,7 @@ namespace mp_test1_ns {
     {
       for (size_t i = 0; i < niters; i++) {
       retry:
-        transaction t;
+        TxnType t;
         record *rec = new record;
         recs.push_back(rec);
         try {
@@ -361,6 +370,7 @@ namespace mp_test1_ns {
 
 }
 
+template <typename TxnType>
 static void
 mp_test1()
 {
@@ -368,13 +378,13 @@ mp_test1()
 
   txn_btree btr;
 
-  worker w0(btr);
-  worker w1(btr);
+  worker<TxnType> w0(btr);
+  worker<TxnType> w1(btr);
 
   w0.start(); w1.start();
   w0.join(); w1.join();
 
-  transaction t;
+  TxnType t;
   txn_btree::value_type v = 0;
   ALWAYS_ASSERT(btr.search(t, u64_varkey(0), v));
   ALWAYS_ASSERT( ((record *) v)->v == (niters * 2) );
@@ -390,6 +400,7 @@ namespace mp_test2_ns {
 
   static volatile bool running = true;
 
+  template <typename TxnType>
   class mutate_worker : public txn_btree_worker {
   public:
     mutate_worker(txn_btree &btr) : txn_btree_worker(btr), naborts(0) {}
@@ -398,7 +409,7 @@ namespace mp_test2_ns {
       while (running) {
         for (size_t i = range_begin; running && i < range_end; i++) {
         retry:
-          transaction t;
+          TxnType t;
           try {
             txn_btree::value_type v = 0, v_ctr = 0;
             ALWAYS_ASSERT(btr->search(t, u64_varkey(ctr_key), v_ctr));
@@ -423,6 +434,7 @@ namespace mp_test2_ns {
     size_t naborts;
   };
 
+  template <typename TxnType>
   class reader_worker : public txn_btree_worker, public txn_btree::search_range_callback {
   public:
     reader_worker(txn_btree &btr) : txn_btree_worker(btr), validations(0), naborts(0), ctr(0) {}
@@ -435,7 +447,7 @@ namespace mp_test2_ns {
     {
       while (running) {
         try {
-          transaction t;
+          TxnType t;
           txn_btree::value_type v_ctr = 0;
           ALWAYS_ASSERT(btr->search(t, u64_varkey(ctr_key), v_ctr));
           ctr = 0;
@@ -456,6 +468,7 @@ namespace mp_test2_ns {
   };
 }
 
+template <typename TxnType>
 static void
 mp_test2()
 {
@@ -463,7 +476,7 @@ mp_test2()
 
   txn_btree btr;
   {
-    transaction t;
+    TxnType t;
     size_t n = 0;
     for (size_t i = range_begin; i < range_end; i++)
       if ((i % 2) == 0) {
@@ -474,8 +487,8 @@ mp_test2()
     t.commit();
   }
 
-  mutate_worker w0(btr);
-  reader_worker w1(btr);
+  mutate_worker<TxnType> w0(btr);
+  reader_worker<TxnType> w1(btr);
 
   running = true;
   w0.start(); w1.start();
@@ -494,6 +507,7 @@ namespace mp_test3_ns {
   static const size_t naccounts = 100;
   struct record { uint64_t v; };
 
+  template <typename TxnType>
   class transfer_worker : public txn_btree_worker {
   public:
     transfer_worker(txn_btree &btr, unsigned long seed) : txn_btree_worker(btr), seed(seed) {}
@@ -513,7 +527,7 @@ namespace mp_test3_ns {
         recs.push_back(brec_new);
       retry:
         try {
-          transaction t;
+          TxnType t;
           uint64_t a = r.next() % naccounts;
           uint64_t b = r.next() % naccounts;
           while (unlikely(a == b))
@@ -543,6 +557,7 @@ namespace mp_test3_ns {
     vector<record *> recs;
   };
 
+  template <typename TxnType>
   class invariant_worker_scan : public txn_btree_worker, public txn_btree::search_range_callback {
   public:
     invariant_worker_scan(txn_btree &btr)
@@ -551,7 +566,7 @@ namespace mp_test3_ns {
     {
       while (running) {
         try {
-          transaction t;
+          TxnType t;
           sum = 0;
           btr->search_range_call(t, u64_varkey(0), NULL, *this);
           t.commit();
@@ -573,6 +588,7 @@ namespace mp_test3_ns {
     uint64_t sum;
   };
 
+  template <typename TxnType>
   class invariant_worker_1by1 : public txn_btree_worker {
   public:
     invariant_worker_1by1(txn_btree &btr)
@@ -581,7 +597,7 @@ namespace mp_test3_ns {
     {
       while (running) {
         try {
-          transaction t;
+          TxnType t;
           uint64_t sum = 0;
           for (uint64_t i = 0; i < naccounts; i++) {
             txn_btree::value_type v = 0;
@@ -603,6 +619,7 @@ namespace mp_test3_ns {
 
 }
 
+template <typename TxnType>
 static void
 mp_test3()
 {
@@ -611,7 +628,7 @@ mp_test3()
   vector<record *> recs;
   txn_btree btr;
   {
-    transaction t;
+    TxnType t;
     for (uint64_t i = 0; i < naccounts; i++) {
       record *r = new record;
       recs.push_back(r);
@@ -621,9 +638,9 @@ mp_test3()
     t.commit();
   }
 
-  transfer_worker w0(btr, 342), w1(btr, 93852), w2(btr, 23085), w3(btr, 859438989);
-  invariant_worker_scan w4(btr);
-  invariant_worker_1by1 w5(btr);
+  transfer_worker<TxnType> w0(btr, 342), w1(btr, 93852), w2(btr, 23085), w3(btr, 859438989);
+  invariant_worker_scan<TxnType> w4(btr);
+  invariant_worker_1by1<TxnType> w5(btr);
 
   w0.start(); w1.start(); w2.start(); w3.start(); w4.start(); w5.start();
   w0.join(); w1.join(); w2.join(); w3.join();
@@ -663,6 +680,7 @@ namespace read_only_perf_ns {
 
   volatile bool running = false;
 
+  template <typename TxnType>
   class worker : public txn_btree_worker {
   public:
     worker(unsigned int seed, txn_btree &btr) : txn_btree_worker(btr), n(0), seed(seed) {}
@@ -673,7 +691,7 @@ namespace read_only_perf_ns {
         uint64_t k = r.next() % nkeys;
       retry:
         try {
-          transaction t;
+          TxnType t;
           btree::value_type v = 0;
           bool found = btr->search(t, u64_varkey(k), v);
           t.commit();
@@ -691,6 +709,7 @@ namespace read_only_perf_ns {
   };
 }
 
+template <typename TxnType>
 static void
 read_only_perf()
 {
@@ -701,7 +720,7 @@ read_only_perf()
   {
     const size_t nkeyspertxn = 100000;
     for (size_t i = 0; i < nkeys / nkeyspertxn; i++) {
-      transaction t;
+      TxnType t;
       size_t end = (i == (nkeys / nkeyspertxn - 1)) ? nkeys : ((i + 1) * nkeyspertxn);
       for (size_t j = i * nkeyspertxn; j < end; j++)
         btr.insert(t, u64_varkey(j), (btree::value_type) (j + 1));
@@ -711,9 +730,9 @@ read_only_perf()
     std::cerr << "btree loaded, test starting" << std::endl;
   }
 
-  std::vector<worker *> workers;
+  std::vector<worker<TxnType> *> workers;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
-    workers.push_back(new worker(seeds[i], btr));
+    workers.push_back(new worker<TxnType>(seeds[i], btr));
 
   running = true;
   util::timer t;
@@ -741,12 +760,20 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  test1();
-  test2();
-  test_multi_btree();
-  mp_test1();
-  mp_test2();
-  mp_test3();
+  test1<transaction_proto1>();
+  test2<transaction_proto1>();
+  test_multi_btree<transaction_proto1>();
+  mp_test1<transaction_proto1>();
+  mp_test2<transaction_proto1>();
+  mp_test3<transaction_proto1>();
 
-  //read_only_perf();
+  test1<transaction_proto2>();
+  test2<transaction_proto2>();
+  test_multi_btree<transaction_proto2>();
+  mp_test1<transaction_proto2>();
+  mp_test2<transaction_proto2>();
+  mp_test3<transaction_proto2>();
+
+  //read_only_perf<transaction_proto1>();
+  //read_only_perf<transaction_proto2>();
 }

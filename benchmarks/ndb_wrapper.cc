@@ -7,7 +7,15 @@
 void *
 ndb_wrapper::new_txn()
 {
-  return new transaction;
+  switch (proto) {
+  case PROTO_1:
+    return new transaction_proto1;
+  case PROTO_2:
+    return new transaction_proto2;
+  default:
+    ALWAYS_ASSERT(false);
+    return NULL;
+  }
 }
 
 bool

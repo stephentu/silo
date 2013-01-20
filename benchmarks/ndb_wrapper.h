@@ -7,6 +7,13 @@
 class ndb_wrapper : public abstract_db {
 public:
 
+  enum Proto {
+    PROTO_1,
+    PROTO_2,
+  }
+
+  ndb_wrapper(Proto proto) : proto(proto) {}
+
   virtual void *new_txn();
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
@@ -20,6 +27,7 @@ public:
       const char *value, size_t valuelen);
 
 private:
+  Proto proto;
   txn_btree btr;
 };
 

@@ -28,8 +28,7 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
 }
 
 transaction::transaction()
-  : snapshot_tid(current_global_tid()),
-    state(TXN_ACTIVE)
+  : state(TXN_ACTIVE)
 {
 }
 
@@ -76,8 +75,9 @@ transaction::commit()
     }
   }
 
-  if (!logical_nodes.empty()) {
-    // not a read-only txn
+  pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
+  if (!snapshot_tid_t.first || !logical_nodes.empty()) {
+    // we don't have consistent tids, or not a read-only txn
 
     // lock the logical nodes in sort order
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
@@ -86,8 +86,8 @@ transaction::commit()
       it->first->lock();
     }
 
-    // acquire commit tid
-    tid_t commit_tid = incr_and_get_global_tid();
+    // acquire commit tid (if not read-only txn)
+    tid_t commit_tid = logical_nodes.empty() ? 0 : gen_commit_tid(logical_nodes);
 
     // do read validation
     for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
@@ -108,15 +108,22 @@ transaction::commit()
         VERBOSE(cout << "validating key " << hexify(it->first) << " @ logical_node 0x"
                      << hexify(ln) << " at snapshot_tid " << snapshot_tid << endl);
 
-        // An optimization:
-        // if the latest version is > commit_tid, and the next latest version is <
-        // snapshot_tid, then it is also ok because the latest version will be ordered
-        // after this txn, and we know its read set does not depend on our write set
-        // (since it has a txn id higher than we do)
-        if (likely(did_write ?
-              ln->is_snapshot_consistent(snapshot_tid, commit_tid) :
-              ln->stable_is_snapshot_consistent(snapshot_tid, commit_tid)))
-          continue;
+        if (snapshot_tid_t.first) {
+          // An optimization:
+          // if the latest version is > commit_tid, and the next latest version is <
+          // snapshot_tid, then it is also ok because the latest version will be ordered
+          // after this txn, and we know its read set does not depend on our write set
+          // (since it has a txn id higher than we do)
+          if (likely(did_write ?
+                ln->is_snapshot_consistent(snapshot_tid_t.second, commit_tid) :
+                ln->stable_is_snapshot_consistent(snapshot_tid_t.second, commit_tid)))
+            continue;
+        } else {
+          if (likely(did_write ?
+                ln->is_latest_version(it->second.t) :
+                ln->stable_is_latest_version(it->second.t)))
+            continue;
+        }
         goto do_abort;
       }
 
@@ -185,18 +192,6 @@ transaction::abort()
   }
   state = TXN_ABRT;
   clear();
-}
-
-transaction::tid_t
-transaction::current_global_tid()
-{
-  return global_tid;
-}
-
-transaction::tid_t
-transaction::incr_and_get_global_tid()
-{
-  return __sync_add_and_fetch(&global_tid, 1);
 }
 
 inline ostream &
@@ -408,4 +403,78 @@ transaction::completion_callbacks()
   return *callbacks;
 }
 
-volatile transaction::tid_t transaction::global_tid = MIN_TID;
+transaction_proto1::transaction_proto1()
+  : transaction(), snapshot_tid(current_global_tid())
+{
+}
+
+pair<bool, transaction::tid_t>
+transaction_proto1::consistent_snapshot_tid() const
+{
+  return make_pair(true, snapshot_tid);
+}
+
+transaction::tid_t
+transaction_proto1::gen_commit_tid(const map<logical_node *, record_t> &write_nodes) const
+{
+  return incr_and_get_global_tid();
+}
+
+transaction::tid_t
+transaction_proto1::current_global_tid()
+{
+  return global_tid;
+}
+
+transaction::tid_t
+transaction_proto1::incr_and_get_global_tid()
+{
+  return __sync_add_and_fetch(&global_tid, 1);
+}
+
+volatile transaction::tid_t transaction_proto1::global_tid = MIN_TID;
+
+pair<bool, transaction::tid_t>
+transaction_proto2::consistent_snapshot_tid() const
+{
+  return make_pair(false, 0);
+}
+
+transaction::tid_t
+transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_nodes) const
+{
+  size_t my_core_id = core_id();
+  INVARIANT(tl_last_commit_tid == MIN_TID ||
+            ((tl_last_commit_tid & (CoreBits - 1)) == my_core_id));
+  tid_t ret = tl_last_commit_tid;
+  for (map<txn_btree *, txn_context>::const_iterator outer_it = ctx_map.begin();
+       outer_it != ctx_map.end(); ++outer_it)
+    for (read_set_map::const_iterator it = outer_it->second.read_set.begin();
+         it != outer_it->second.read_set.end(); ++it)
+      if (it->second.t > ret)
+        ret = it->second.t;
+  for (map<logical_node *, record_t>::const_iterator it = write_nodes.begin();
+       it != write_nodes.end(); ++it) {
+    INVARIANT(it->first->is_locked());
+    tid_t t = it->first->latest_version();
+    if (t > ret)
+      ret = t;
+  }
+  ret &= (CoreBits - 1);
+  ret += (1 << CoreBits);
+  ret |= my_core_id;
+  return ret;
+}
+
+size_t
+transaction_proto2::core_id()
+{
+  if (unlikely(tl_core_id == -1))
+    tl_core_id = __sync_fetch_and_add(&g_core_count, 1);
+  ALWAYS_ASSERT(tl_core_id < (1 << CoreBits));
+  return tl_core_id;
+}
+
+__thread transaction::tid_t transaction_proto2::tl_last_commit_tid = MIN_TID;
+__thread ssize_t transaction_proto2::tl_core_id = -1;
+volatile transaction::tid_t transaction_proto2::g_core_count = 0;
