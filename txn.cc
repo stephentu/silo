@@ -471,6 +471,7 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_no
   ret &= ~((1 << CoreBits) - 1);
   ret += (1 << CoreBits);
   ret |= my_core_id;
+  __sync_synchronize();
   return (tl_last_commit_tid = ret);
 }
 
