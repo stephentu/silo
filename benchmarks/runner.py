@@ -12,11 +12,11 @@ import platform
 import subprocess
 import sys
 
-DBS = ('bdb', 'ndb-proto1', 'ndb-proto2')
-THREADS = (1, 2, 4, 8, 16, 24)
+DBS = ('ndb-proto1', 'ndb-proto2')
+THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48)
 
 def run_configuration(dbtype, nthreads):
-  args = ['./ycsb', '--db-type', dbtype, '--num-threads', str(nthreads)]
+  args = ['./ycsb', '--db-type', dbtype, '--num-threads', str(nthreads), '--num-keys', '1000000']
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
   p.wait()
@@ -28,8 +28,10 @@ if __name__ == '__main__':
     print "matplotlib found, will draw plots"
   else:
     print "matplotlib not found"
+  all_values = []
   for db in DBS:
     values = [run_configuration(db, n) for n in THREADS]
+    all_values.append(values)
     print db, values
     if do_plot:
       plt.plot(THREADS, values)
@@ -38,4 +40,8 @@ if __name__ == '__main__':
     plt.ylabel('ops/sec')
     plt.title(platform.node())
     plt.legend(DBS)
-    plt.savefig(outfile)
+    plt.savefig(outfile + '.eps')
+  with open(outfile + '.py', 'w') as fp:
+    print >>fp, 'DBS = %s' % (repr(DBS))
+    print >>fp, 'THREADS = %s' % (repr(THREADS))
+    print >>fp, 'RESULTS = %s' % (repr(all_values))

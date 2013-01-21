@@ -10,6 +10,7 @@
 #include "../varkey.h"
 #include "../thread.h"
 #include "../util.h"
+#include "../spinbarrier.h"
 
 #include "bdb_wrapper.h"
 #include "ndb_wrapper.h"
@@ -30,8 +31,10 @@ static workload_desc *ycsb_workload = MakeWorkloadDesc();
 
 class worker : public ndb_thread {
 public:
-  worker(unsigned long seed, abstract_db *db)
-    : r(seed), db(db), ntxns(0)
+  worker(unsigned long seed, abstract_db *db,
+         spin_barrier *barrier_a, spin_barrier *barrier_b)
+    : r(seed), db(db), barrier_a(barrier_a), barrier_b(barrier_b),
+      ntxns(0)
   {}
 
   void
@@ -90,6 +93,8 @@ public:
 
   virtual void run()
   {
+    barrier_a->count_down();
+    barrier_b->wait_for();
     while (running) {
       double d = r.next_uniform();
       for (size_t i = 0; i < ycsb_workload->size(); i++) {
@@ -103,6 +108,8 @@ public:
 
   fast_random r;
   abstract_db *db;
+  spin_barrier *barrier_a;
+  spin_barrier *barrier_b;
   size_t ntxns;
 };
 
@@ -119,6 +126,9 @@ MakeWorkloadDesc()
 static void
 do_test(abstract_db *db)
 {
+  spin_barrier barrier_a(nthreads);
+  spin_barrier barrier_b(1);
+
   // load
   for (size_t i = 0; i < nkeys; i++) {
     void *txn = db->new_txn();
@@ -131,19 +141,23 @@ do_test(abstract_db *db)
   fast_random r(8544290);
   vector<worker *> workers;
   for (size_t i = 0; i < nthreads; i++)
-    workers.push_back(new worker(r.next(), db));
-  timer t;
+    workers.push_back(new worker(r.next(), db, &barrier_a, &barrier_b));
   for (size_t i = 0; i < nthreads; i++)
     workers[i]->start();
+  barrier_a.wait_for();
+  barrier_b.count_down();
+  timer t;
   sleep(30);
   running = false;
+  __sync_synchronize();
+  unsigned long elapsed = t.lap();
   size_t n = 0;
   for (size_t i = 0; i < nthreads; i++) {
     workers[i]->join();
     n += workers[i]->ntxns;
   }
 
-  double agg_throughput = double(n) / (double(t.lap()) / 1000000.0);
+  double agg_throughput = double(n) / (double(elapsed) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(nthreads);
 
   if (verbose) {
