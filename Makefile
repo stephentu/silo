@@ -1,5 +1,5 @@
 CXXFLAGS := -Wall -g -O2
-LDFLAGS  := -lpthread -ljemalloc
+LDFLAGS  := -lpthread -ljemalloc 
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h
@@ -28,7 +28,7 @@ test: test.cc $(OBJFILES)
 bench: benchmarks/ycsb
 
 benchmarks/ycsb: benchmarks/ycsb.cc $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) $(CXXFLAGS) -o benchmarks/ycsb $^ $(LDFLAGS) -ldb_cxx -lmysqld -lz -lrt -lcrypt
+	$(CXX) $(CXXFLAGS) -o benchmarks/ycsb $^ $(LDFLAGS) -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio
 
 .PHONY: clean
 clean:

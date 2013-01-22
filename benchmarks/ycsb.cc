@@ -39,12 +39,10 @@ public:
     : r(seed), db(db), barrier_a(barrier_a), barrier_b(barrier_b),
       ntxns(0)
   {
-    db->thread_init();
   }
 
   ~worker()
   {
-    db->thread_end();
   }
 
   void
@@ -103,6 +101,7 @@ public:
 
   virtual void run()
   {
+    db->thread_init();
     barrier_a->count_down();
     barrier_b->wait_for();
     while (running) {
@@ -114,6 +113,7 @@ public:
         }
       }
     }
+    db->thread_end();
   }
 
   fast_random r;
@@ -138,6 +138,8 @@ do_test(abstract_db *db)
 {
   spin_barrier barrier_a(nthreads);
   spin_barrier barrier_b(1);
+
+  db->thread_init();
 
   // load
   for (size_t i = 0; i < nkeys; i++) {
@@ -175,6 +177,8 @@ do_test(abstract_db *db)
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
   }
   cout << agg_throughput << endl;
+
+  db->thread_end();
 }
 
 int

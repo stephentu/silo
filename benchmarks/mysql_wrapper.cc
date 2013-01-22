@@ -13,6 +13,15 @@
 using namespace std;
 static bool embed_active = false;
 
+static inline void
+check_result(MYSQL *conn, int result)
+{
+  if (likely(result == 0))
+    return;
+  cerr << "mysql_error_message: " << mysql_error(conn) << endl;
+  ALWAYS_ASSERT(false);
+}
+
 mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
   : db(db)
 {
@@ -57,26 +66,22 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
       "--innodb_flush_method=O_DIRECT",
     };
 
-  int ret = mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0);
-  if (ret != 0) {
-    cerr << "mysql_library_init(): err=" << ret << ", msg=" << mysql_error(0) << endl;
-    ALWAYS_ASSERT(false);
-  }
+  check_result(0, mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0));
 
   MYSQL *conn = new_connection("");
 
   stringstream b;
   b << "CREATE DATABASE IF NOT EXISTS " << db << ";";
-  ALWAYS_ASSERT(0 == mysql_query(conn, b.str().c_str()));
-  ALWAYS_ASSERT(0 == mysql_select_db(conn, db.c_str()));
+  check_result(conn, mysql_query(conn, b.str().c_str()));
+  check_result(conn, mysql_select_db(conn, db.c_str()));
 
   const char *cmd =
     "CREATE TABLE IF NOT EXISTS tbl ("
-    "  key VARBINARY(256), "
-    "  value VARBINARY(256) "
+    "  tbl_key VARBINARY(256) PRIMARY KEY, "
+    "  tbl_value VARBINARY(256) "
     ") ENGINE=InnoDB;";
-  ALWAYS_ASSERT(0 == mysql_query(conn, cmd));
-  ALWAYS_ASSERT(0 == mysql_commit(conn));
+  check_result(conn, mysql_query(conn, cmd));
+  check_result(conn, mysql_commit(conn));
   mysql_close(conn);
 }
 
@@ -91,6 +96,7 @@ mysql_wrapper::thread_init()
 {
   ALWAYS_ASSERT(tl_conn == NULL);
   tl_conn = new_connection(db);
+  ALWAYS_ASSERT(tl_conn);
 }
 
 void
@@ -105,7 +111,7 @@ void *
 mysql_wrapper::new_txn()
 {
   ALWAYS_ASSERT(tl_conn);
-  ALWAYS_ASSERT(0 == mysql_real_query(tl_conn, "BEGIN", 5));
+  check_result(tl_conn, mysql_real_query(tl_conn, "BEGIN", 5));
   return (void *) tl_conn;
 }
 
@@ -120,7 +126,7 @@ void
 mysql_wrapper::abort_txn(void *p)
 {
   ALWAYS_ASSERT(tl_conn == p);
-  ALWAYS_ASSERT(0 == mysql_rollback(tl_conn));
+  check_result(tl_conn, mysql_rollback(tl_conn));
 }
 
 static inline string
@@ -140,9 +146,9 @@ mysql_wrapper::get(
   INVARIANT(txn == tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
   stringstream b;
-  b << "SELECT value FROM tbl WHERE key = '" << my_escape(tl_conn, key, keylen) << "';";
+  b << "SELECT tbl_value FROM tbl WHERE tbl_key = '" << my_escape(tl_conn, key, keylen) << "';";
   string q = b.str();
-  ALWAYS_ASSERT(0 == mysql_real_query(tl_conn, q.data(), q.size()));
+  check_result(tl_conn, mysql_real_query(tl_conn, q.data(), q.size()));
   MYSQL_RES *res = mysql_store_result(tl_conn);
   ALWAYS_ASSERT(res);
   MYSQL_ROW row = mysql_fetch_row(res);
@@ -167,13 +173,12 @@ mysql_wrapper::put(
   INVARIANT(txn == tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
   ALWAYS_ASSERT(valuelen <= 256);
+  string escaped_value = my_escape(tl_conn, value, valuelen);
   stringstream b;
-  b << "UPDATE tbl SET VALUE = '"
-    << my_escape(tl_conn, value, valuelen)
-    << "' WHERE key = '"
-    << my_escape(tl_conn, key, keylen) << "';";
+  b << "INSERT INTO tbl VALUES ('" << my_escape(tl_conn, key, keylen)
+    << "', '" << escaped_value << "') ON DUPLICATE KEY UPDATE tbl_value='" << escaped_value << "';";
   string q = b.str();
-  ALWAYS_ASSERT(0 == mysql_real_query(tl_conn, q.data(), q.size()));
+  check_result(tl_conn, mysql_real_query(tl_conn, q.data(), q.size()));
 }
 
 MYSQL *
@@ -186,7 +191,7 @@ mysql_wrapper::new_connection(const string &db)
     cerr << "mysql_real_connect: " << mysql_error(conn) << endl;
     ALWAYS_ASSERT(false);
   }
-  ALWAYS_ASSERT(0 == mysql_autocommit(conn, 0));
+  check_result(conn, mysql_autocommit(conn, 0));
   return conn;
 }
 
