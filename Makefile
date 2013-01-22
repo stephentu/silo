@@ -28,7 +28,7 @@ test: test.cc $(OBJFILES)
 bench: benchmarks/ycsb
 
 benchmarks/ycsb: benchmarks/ycsb.cc $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) $(CXXFLAGS) -o benchmarks/ycsb $^ $(LDFLAGS) -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio
+	$(CXX) $(CXXFLAGS) -o benchmarks/ycsb $^ $(LDFLAGS) -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl
 
 .PHONY: clean
 clean:
