@@ -6,6 +6,7 @@
 #include "abstract_db.h"
 
 class mysql_wrapper : public abstract_db {
+public:
   mysql_wrapper(const std::string &dir, const std::string &db);
   ~mysql_wrapper();
 
@@ -28,7 +29,7 @@ class mysql_wrapper : public abstract_db {
 
 private:
   std::string db;
-  MYSQL *new_connection();
+  MYSQL *new_connection(const std::string &db);
   static __thread MYSQL *tl_conn;
 };
 

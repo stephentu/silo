@@ -1,10 +1,12 @@
 #include <iostream>
+#include <sstream>
 #include <vector>
 #include <utility>
 #include <string>
 
 #include <getopt.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "../macros.h"
 #include "../varkey.h"
@@ -14,6 +16,7 @@
 
 #include "bdb_wrapper.h"
 #include "ndb_wrapper.h"
+#include "mysql_wrapper.h"
 
 using namespace std;
 using namespace util;
@@ -219,6 +222,12 @@ main(int argc, char **argv)
         db = new ndb_wrapper(ndb_wrapper::PROTO_1);
       } else if (db_type == "ndb-proto2") {
         db = new ndb_wrapper(ndb_wrapper::PROTO_2);
+      } else if (db_type == "mysql") {
+        char *curdir = get_current_dir_name();
+        stringstream b;
+        b << curdir << "/mysql-db";
+        free(curdir);
+        db = new mysql_wrapper(b.str(), "ycsb");
       } else
         ALWAYS_ASSERT(false);
       break;

@@ -51,7 +51,7 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
       "--skip-grant-tables",
       dir_arg,
       "--character-set-server=utf8",
-      "--innodb-buffer-pool-size=24GB", // XXX: don't hardocde
+      "--innodb-buffer-pool-size=128M", // XXX: don't hardocde
       "--innodb_log_file_size=1792M",
       "--transaction_isolation=serializable",
       "--innodb_flush_method=O_DIRECT",
@@ -59,12 +59,18 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
 
   ALWAYS_ASSERT(0 == mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0));
 
+  MYSQL *conn = new_connection("");
+
+  stringstream b;
+  b << "CREATE DATABASE IF NOT EXISTS " << db << ";";
+  ALWAYS_ASSERT(0 == mysql_query(conn, b.str().c_str()));
+  ALWAYS_ASSERT(0 == mysql_select_db(conn, db.c_str()));
+
   const char *cmd =
     "CREATE TABLE IF NOT EXISTS tbl ("
     "  key VARBINARY(256), "
     "  value VARBINARY(256) "
     ") ENGINE=InnoDB;";
-  MYSQL *conn = new_connection();
   ALWAYS_ASSERT(0 == mysql_query(conn, cmd));
   ALWAYS_ASSERT(0 == mysql_commit(conn));
   mysql_close(conn);
@@ -80,7 +86,7 @@ void
 mysql_wrapper::thread_init()
 {
   ALWAYS_ASSERT(tl_conn == NULL);
-  tl_conn = new_connection();
+  tl_conn = new_connection(db);
 }
 
 void
@@ -167,7 +173,7 @@ mysql_wrapper::put(
 }
 
 MYSQL *
-mysql_wrapper::new_connection()
+mysql_wrapper::new_connection(const string &db)
 {
   MYSQL *conn = mysql_init(0);
   mysql_options(conn, MYSQL_OPT_USE_EMBEDDED_CONNECTION, 0);
