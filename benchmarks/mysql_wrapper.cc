@@ -57,7 +57,11 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
       "--innodb_flush_method=O_DIRECT",
     };
 
-  ALWAYS_ASSERT(0 == mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0));
+  int ret = mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0);
+  if (ret != 0) {
+    cerr << "mysql_library_init(): err=" << ret << ", msg=" << mysql_error(0) << endl;
+    ALWAYS_ASSERT(false);
+  }
 
   MYSQL *conn = new_connection("");
 
