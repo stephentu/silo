@@ -12,6 +12,11 @@ public:
               const std::string &dbfile);
   ~bdb_wrapper();
 
+  /**
+   * BDB has small txn sizes
+   */
+  virtual ssize_t txn_max_batch_size() const { return 1000; }
+
   virtual void *new_txn();
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);

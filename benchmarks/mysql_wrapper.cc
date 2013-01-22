@@ -14,12 +14,18 @@ using namespace std;
 static bool embed_active = false;
 
 static inline void
+print_error_and_bail(MYSQL *conn)
+{
+  cerr << "mysql_error_message: " << mysql_error(conn) << endl;
+  ALWAYS_ASSERT(false);
+}
+
+static inline void
 check_result(MYSQL *conn, int result)
 {
   if (likely(result == 0))
     return;
-  cerr << "mysql_error_message: " << mysql_error(conn) << endl;
-  ALWAYS_ASSERT(false);
+  print_error_and_bail(conn);
 }
 
 mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
@@ -173,12 +179,38 @@ mysql_wrapper::put(
   INVARIANT(txn == tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
   ALWAYS_ASSERT(valuelen <= 256);
+  string escaped_key = my_escape(tl_conn, key, keylen);
   string escaped_value = my_escape(tl_conn, value, valuelen);
   stringstream b;
-  b << "INSERT INTO tbl VALUES ('" << my_escape(tl_conn, key, keylen)
-    << "', '" << escaped_value << "') ON DUPLICATE KEY UPDATE tbl_value='" << escaped_value << "';";
+  b << "UPDATE tbl SET tbl_value='" << escaped_value << "' WHERE tbl_key='" << escaped_key << "';";
   string q = b.str();
   check_result(tl_conn, mysql_real_query(tl_conn, q.data(), q.size()));
+  my_ulonglong ret = mysql_affected_rows(tl_conn);
+  if (unlikely(ret == (my_ulonglong) -1))
+    print_error_and_bail(tl_conn);
+  if (ret)
+    return;
+  stringstream b1;
+  b1 << "INSERT INTO tbl VALUES ('" << escaped_key << "', '" << escaped_value << "');";
+  string q1 = b1.str();
+  check_result(tl_conn, mysql_real_query(tl_conn, q1.data(), q1.size()));
+}
+
+void
+mysql_wrapper::insert(
+    void *txn,
+    const char *key, size_t keylen,
+    const char *value, size_t valuelen)
+{
+  INVARIANT(txn == tl_conn);
+  ALWAYS_ASSERT(keylen <= 256);
+  ALWAYS_ASSERT(valuelen <= 256);
+  string escaped_key = my_escape(tl_conn, key, keylen);
+  string escaped_value = my_escape(tl_conn, value, valuelen);
+  stringstream b1;
+  b1 << "INSERT INTO tbl VALUES ('" << escaped_key << "', '" << escaped_value << "');";
+  string q1 = b1.str();
+  check_result(tl_conn, mysql_real_query(tl_conn, q1.data(), q1.size()));
 }
 
 MYSQL *

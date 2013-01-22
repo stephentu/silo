@@ -2,6 +2,7 @@
 #define _ABSTRACT_DB_H_
 
 #include <stddef.h>
+#include <sys/types.h>
 
 /**
  * Abstract interface for a DB. This is to facilitate writing
@@ -24,6 +25,13 @@ public:
 
   // dtor should close db
   virtual ~abstract_db() {}
+
+  /**
+   * an approximate max batch size for updates in a transaction.
+   *
+   * A return value of -1 indicates no maximum
+   */
+  virtual ssize_t txn_max_batch_size() const { return -1; }
 
   /**
    * for cruftier APIs
@@ -67,11 +75,29 @@ public:
    * Put a key of length keylen, with mapping of length valuelen.
    * The underlying DB does not manage the memory pointed to by key or value
    * (a copy is made).
+   *
+   * If a record with key k exists, overwrites. Otherwise, inserts.
    */
   virtual void put(
       void *txn,
       const char *key, size_t keylen,
       const char *value, size_t valuelen) = 0;
+
+  /**
+   * Insert a key of length keylen.
+   *
+   * If a record with key k exists, behavior is unspecified- this function
+   * is only to be used when you can guarantee no such key exists (ie in loading phase)
+   *
+   * Default implementation calls put()
+   */
+  virtual void insert(
+      void *txn,
+      const char *key, size_t keylen,
+      const char *value, size_t valuelen)
+  {
+    put(txn, key, keylen, value, valuelen);
+  }
 };
 
 #endif /* _ABSTRACT_DB_H_ */

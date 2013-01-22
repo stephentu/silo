@@ -142,11 +142,18 @@ do_test(abstract_db *db)
   db->thread_init();
 
   // load
-  for (size_t i = 0; i < nkeys; i++) {
+  const size_t batchsize = (db->txn_max_batch_size() == -1) ?
+    10000 : db->txn_max_batch_size();
+  ALWAYS_ASSERT(batchsize > 0);
+  size_t nbatches = nkeys / batchsize;
+  for (size_t i = 0; i < nbatches; i++) {
+    size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
     void *txn = db->new_txn();
-    string k = u64_varkey(i).str();
-    string v(128, 'a');
-    db->put(txn, k.data(), k.size(), v.data(), v.size());
+    for (size_t j = i * batchsize; j < keyend; j++) {
+      string k = u64_varkey(i).str();
+      string v(128, 'a');
+      db->insert(txn, k.data(), k.size(), v.data(), v.size());
+    }
     ALWAYS_ASSERT(db->commit_txn(txn));
   }
 

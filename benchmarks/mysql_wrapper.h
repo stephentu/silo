@@ -27,6 +27,11 @@ public:
       const char *key, size_t keylen,
       const char *value, size_t valuelen);
 
+  virtual void insert(
+      void *txn,
+      const char *key, size_t keylen,
+      const char *value, size_t valuelen);
+
 private:
   std::string db;
   MYSQL *new_connection(const std::string &db);
