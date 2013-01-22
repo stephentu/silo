@@ -193,17 +193,21 @@ main(int argc, char **argv)
 {
   abstract_db *db = NULL;
   string db_type;
+  char *curdir = get_current_dir_name();
+  string basedir = curdir;
+  free(curdir);
   while (1) {
     static struct option long_options[] =
     {
-      {"verbose", no_argument,       &verbose, 1},
-      {"num-keys",  required_argument, 0, 'k'},
-      {"num-threads",  required_argument, 0, 't'},
-      {"db-type",    required_argument, 0, 'd'},
+      {"verbose",     no_argument,       &verbose, 1},
+      {"num-keys",    required_argument, 0,       'k'},
+      {"num-threads", required_argument, 0,       't'},
+      {"db-type",     required_argument, 0,       'd'},
+      {"basedir",     required_argument, 0,       'b'},
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "vk:t:d:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "vk:t:d:b:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -226,21 +230,10 @@ main(int argc, char **argv)
 
     case 'd':
       db_type = optarg;
-      if (db_type == "bdb") {
-        int ret UNUSED = system("rm -rf db/*");
-        db = new bdb_wrapper("db", "ycsb.db");
-      } else if (db_type == "ndb-proto1") {
-        db = new ndb_wrapper(ndb_wrapper::PROTO_1);
-      } else if (db_type == "ndb-proto2") {
-        db = new ndb_wrapper(ndb_wrapper::PROTO_2);
-      } else if (db_type == "mysql") {
-        char *curdir = get_current_dir_name();
-        stringstream b;
-        b << curdir << "/mysql-db";
-        free(curdir);
-        db = new mysql_wrapper(b.str(), "ycsb");
-      } else
-        ALWAYS_ASSERT(false);
+      break;
+
+    case 'b':
+      basedir = optarg;
       break;
 
     case '?':
@@ -252,11 +245,26 @@ main(int argc, char **argv)
     }
   }
 
+  if (db_type == "bdb") {
+    string cmd = "rm -rf " + basedir + "/db/*";
+    int ret UNUSED = system(cmd.c_str());
+    db = new bdb_wrapper("db", "ycsb.db");
+  } else if (db_type == "ndb-proto1") {
+    db = new ndb_wrapper(ndb_wrapper::PROTO_1);
+  } else if (db_type == "ndb-proto2") {
+    db = new ndb_wrapper(ndb_wrapper::PROTO_2);
+  } else if (db_type == "mysql") {
+    string dbdir = basedir + "/mysql-db";
+    db = new mysql_wrapper(dbdir.c_str(), "ycsb");
+  } else
+    ALWAYS_ASSERT(false);
+
   if (verbose) {
     cerr << "settings:" << endl;
-    cerr << "  num-keys: " << nkeys << endl;
-    cerr << "  num-threads: " << nthreads << endl;
-    cerr << "  db-type: " << db_type << endl;
+    cerr << "  num-keys    : " << nkeys << endl;
+    cerr << "  num-threads : " << nthreads << endl;
+    cerr << "  db-type     : " << db_type << endl;
+    cerr << "  basedir     : " << basedir << endl;
   }
 
   do_test(db);

@@ -70,6 +70,7 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
       "--innodb_log_file_size=1792M",
       "--transaction_isolation=serializable",
       "--innodb_flush_method=O_DIRECT",
+      "--language=" MYSQL_SHARE_DIR,
     };
 
   check_result(0, mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0));

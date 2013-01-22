@@ -1,4 +1,4 @@
-CXXFLAGS := -Wall -g -O2
+CXXFLAGS := -Wall -g -O2 
 LDFLAGS  := -lpthread -ljemalloc 
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
@@ -6,8 +6,12 @@ HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h vark
 SRCFILES = btree.cc rcu.cc thread.cc txn.cc txn_btree.cc
 OBJFILES = $(SRCFILES:.cc=.o)
 
+MYSQL_SHARE_DIR=/x/stephentu/mysql-5.5.29/build/sql/share
 
-BENCH_HEADERS = benchmarks/abstract_db.h benchmarks/bdb_wrapper.h \
+BENCH_CXXFLAGS := $(CXXFLAGS) -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
+BENCH_LDFLAGS := $(LDFLAGS) -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl
+
+BENCH_HEADERS = $(HEADERS) benchmarks/abstract_db.h benchmarks/bdb_wrapper.h \
 		benchmarks/ndb_wrapper.h benchmarks/mysql_wrapper.h
 BENCH_SRCFILES = benchmarks/bdb_wrapper.cc benchmarks/ndb_wrapper.cc \
 		 benchmarks/mysql_wrapper.cc
@@ -15,10 +19,10 @@ BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
 
 all: test
 
-%.o: %.cc $(HEADERS)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
+	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
-benchmarks/%.o: benchmarks/%.cc $(HEADERS) $(BENCH_HEADERS)
+%.o: %.cc $(HEADERS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 test: test.cc $(OBJFILES) 
@@ -28,7 +32,7 @@ test: test.cc $(OBJFILES)
 bench: benchmarks/ycsb
 
 benchmarks/ycsb: benchmarks/ycsb.cc $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) $(CXXFLAGS) -o benchmarks/ycsb $^ $(LDFLAGS) -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl
+	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/ycsb $^ $(BENCH_LDFLAGS) 
 
 .PHONY: clean
 clean:
