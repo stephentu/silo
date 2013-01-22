@@ -1,10 +1,12 @@
 #include <iostream>
+#include <sstream>
 #include <vector>
 #include <utility>
 #include <string>
 
 #include <getopt.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "../macros.h"
 #include "../varkey.h"
@@ -14,6 +16,7 @@
 
 #include "bdb_wrapper.h"
 #include "ndb_wrapper.h"
+#include "mysql_wrapper.h"
 
 using namespace std;
 using namespace util;
@@ -35,7 +38,12 @@ public:
          spin_barrier *barrier_a, spin_barrier *barrier_b)
     : r(seed), db(db), barrier_a(barrier_a), barrier_b(barrier_b),
       ntxns(0)
-  {}
+  {
+  }
+
+  ~worker()
+  {
+  }
 
   void
   txn_read()
@@ -93,6 +101,7 @@ public:
 
   virtual void run()
   {
+    db->thread_init();
     barrier_a->count_down();
     barrier_b->wait_for();
     while (running) {
@@ -104,6 +113,7 @@ public:
         }
       }
     }
+    db->thread_end();
   }
 
   fast_random r;
@@ -128,6 +138,8 @@ do_test(abstract_db *db)
 {
   spin_barrier barrier_a(nthreads);
   spin_barrier barrier_b(1);
+
+  db->thread_init();
 
   // load
   for (size_t i = 0; i < nkeys; i++) {
@@ -165,6 +177,8 @@ do_test(abstract_db *db)
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
   }
   cout << agg_throughput << endl;
+
+  db->thread_end();
 }
 
 int
@@ -212,6 +226,12 @@ main(int argc, char **argv)
         db = new ndb_wrapper(ndb_wrapper::PROTO_1);
       } else if (db_type == "ndb-proto2") {
         db = new ndb_wrapper(ndb_wrapper::PROTO_2);
+      } else if (db_type == "mysql") {
+        char *curdir = get_current_dir_name();
+        stringstream b;
+        b << curdir << "/mysql-db";
+        free(curdir);
+        db = new mysql_wrapper(b.str(), "ycsb");
       } else
         ALWAYS_ASSERT(false);
       break;

@@ -26,6 +26,16 @@ public:
   virtual ~abstract_db() {}
 
   /**
+   * for cruftier APIs
+   */
+  virtual void thread_init() {}
+
+  /**
+   * for cruftier APIs
+   */
+  virtual void thread_end() {}
+
+  /**
    * Allocate and return a new txn object, to use with this instance
    */
   virtual void *new_txn() = 0;
