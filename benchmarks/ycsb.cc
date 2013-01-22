@@ -35,7 +35,14 @@ public:
          spin_barrier *barrier_a, spin_barrier *barrier_b)
     : r(seed), db(db), barrier_a(barrier_a), barrier_b(barrier_b),
       ntxns(0)
-  {}
+  {
+    db->thread_init();
+  }
+
+  ~worker()
+  {
+    db->thread_end();
+  }
 
   void
   txn_read()
