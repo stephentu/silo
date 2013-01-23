@@ -66,10 +66,12 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
       "--skip-grant-tables",
       dir_arg,
       "--character-set-server=utf8",
-      "--innodb-buffer-pool-size=128M", // XXX: don't hardocde
-      "--innodb_log_file_size=1792M",
+      "--innodb-buffer-pool-size=4G", // XXX: don't hardocde
+      "--innodb_log_file_size=1792M", // max log file size
       "--transaction_isolation=serializable",
       "--innodb_flush_method=O_DIRECT",
+      "--innodb_flush_log_at_trx_commit=0", // only flush log once every second
+      "--sync_binlog=0",
       "--language=" MYSQL_SHARE_DIR,
     };
 
