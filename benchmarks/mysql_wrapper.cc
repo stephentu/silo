@@ -82,12 +82,16 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
   check_result(conn, mysql_query(conn, b.str().c_str()));
   check_result(conn, mysql_select_db(conn, db.c_str()));
 
-  const char *cmd =
+  const char *cmd_create =
     "CREATE TABLE IF NOT EXISTS tbl ("
     "  tbl_key VARBINARY(256) PRIMARY KEY, "
     "  tbl_value VARBINARY(256) "
     ") ENGINE=InnoDB;";
-  check_result(conn, mysql_query(conn, cmd));
+  const char *cmd_truncate =
+    "TRUNCATE TABLE tbl;";
+
+  check_result(conn, mysql_query(conn, cmd_create));
+  check_result(conn, mysql_query(conn, cmd_truncate));
   check_result(conn, mysql_commit(conn));
   mysql_close(conn);
 }
@@ -219,7 +223,7 @@ mysql_wrapper::new_connection(const string &db)
 {
   MYSQL *conn = mysql_init(0);
   mysql_options(conn, MYSQL_OPT_USE_EMBEDDED_CONNECTION, 0);
-  if (!mysql_real_connect(conn, 0, 0, 0, db.c_str(), 0, 0, CLIENT_MULTI_STATEMENTS)) {
+  if (!mysql_real_connect(conn, 0, 0, 0, db.c_str(), 0, 0, CLIENT_FOUND_ROWS | CLIENT_MULTI_STATEMENTS)) {
     mysql_close(conn);
     cerr << "mysql_real_connect: " << mysql_error(conn) << endl;
     ALWAYS_ASSERT(false);

@@ -150,10 +150,11 @@ do_test(abstract_db *db)
     size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
     void *txn = db->new_txn();
     for (size_t j = i * batchsize; j < keyend; j++) {
-      string k = u64_varkey(i).str();
+      string k = u64_varkey(j).str();
       string v(128, 'a');
       db->insert(txn, k.data(), k.size(), v.data(), v.size());
     }
+    cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
     ALWAYS_ASSERT(db->commit_txn(txn));
   }
 
