@@ -118,6 +118,7 @@ mysql_wrapper::thread_end()
   ALWAYS_ASSERT(tl_conn);
   mysql_close(tl_conn);
   tl_conn = NULL;
+  mysql_thread_end();
 }
 
 void *

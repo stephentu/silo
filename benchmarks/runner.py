@@ -30,7 +30,7 @@ if __name__ == '__main__':
     print "matplotlib not found"
   all_values = []
   for db in DBS:
-    values = [run_configuration(db, n) for n in THREADS]
+    values = [run_configuration(basedir, db, n) for n in THREADS]
     all_values.append(values)
     print db, values
     if do_plot:

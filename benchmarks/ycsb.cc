@@ -269,5 +269,7 @@ main(int argc, char **argv)
   }
 
   do_test(db);
+
+  delete db;
   return 0;
 }
