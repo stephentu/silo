@@ -12,18 +12,18 @@ import platform
 import subprocess
 import sys
 
-DBS = ('ndb-proto1', 'ndb-proto2')
+DBS = ('mysql', 'bdb', 'ndb-proto1', 'ndb-proto2')
 THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48)
 
-def run_configuration(dbtype, nthreads):
-  args = ['./ycsb', '--db-type', dbtype, '--num-threads', str(nthreads), '--num-keys', '1000000']
+def run_configuration(basedir, dbtype, nthreads):
+  args = ['./ycsb', '--basedir', basedir, '--db-type', dbtype, '--num-threads', str(nthreads), '--num-keys', '1000000']
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
   p.wait()
   return float(r.strip())
 
 if __name__ == '__main__':
-  (_, outfile) = sys.argv
+  (_, basedir, outfile) = sys.argv
   if do_plot:
     print "matplotlib found, will draw plots"
   else:
