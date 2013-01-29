@@ -3,7 +3,9 @@
 
 #include <string>
 #include <mysql/mysql.h>
+
 #include "abstract_db.h"
+#include "../macros.h"
 
 class mysql_wrapper : public abstract_db {
 public:
@@ -31,6 +33,17 @@ public:
       void *txn,
       const char *key, size_t keylen,
       const char *value, size_t valuelen);
+
+  virtual void scan(
+      void *txn,
+      const char *start_key, size_t start_len,
+      const char *end_key, size_t end_len,
+      bool has_end_key,
+      scan_callback &callback)
+  {
+    NDB_UNIMPLEMENTED("scan");
+  }
+
 
 private:
   std::string db;

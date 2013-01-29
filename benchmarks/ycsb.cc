@@ -37,7 +37,8 @@ public:
   worker(unsigned long seed, abstract_db *db,
          spin_barrier *barrier_a, spin_barrier *barrier_b)
     : r(seed), db(db), barrier_a(barrier_a), barrier_b(barrier_b),
-      ntxns(0)
+      // the ntxn_* numbers are per worker
+      ntxn_commits(0), ntxn_aborts(0)
   {
   }
 
@@ -56,9 +57,10 @@ public:
       ALWAYS_ASSERT(db->get(txn, k.data(), k.size(), v, vlen));
       free(v);
       if (db->commit_txn(txn))
-        ntxns++;
+        ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
+      ntxn_aborts++;
     }
   }
   static void TxnRead(worker *w) { w->txn_read(); }
@@ -72,9 +74,10 @@ public:
       string v(128, 'b');
       db->put(txn, k.data(), k.size(), v.data(), v.size());
       if (db->commit_txn(txn))
-        ntxns++;
+        ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
+      ntxn_aborts++;
     }
   }
   static void TxnWrite(worker *w) { w->txn_write(); }
@@ -92,12 +95,43 @@ public:
       string vnew(128, 'c');
       db->put(txn, k.data(), k.size(), vnew.data(), vnew.size());
       if (db->commit_txn(txn))
-        ntxns++;
+        ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
+      ntxn_aborts++;
     }
   }
   static void TxnRmw(worker *w) { w->txn_rmw(); }
+
+  class worker_scan_callback : public abstract_db::scan_callback {
+  public:
+    virtual bool
+    invoke(const char *key, size_t key_len,
+           const char *value, size_t value_len)
+    {
+      return true;
+    }
+  };
+
+  void
+  txn_scan()
+  {
+    void *txn = db->new_txn();
+    size_t kstart = r.next() % nkeys;
+    string kbegin = u64_varkey(kstart).str();
+    string kend = u64_varkey(kstart + 100).str();
+    worker_scan_callback c;
+    try {
+      db->scan(txn, kbegin.data(), kbegin.size(),
+               kend.data(), kend.size(), true, c);
+      if (db->commit_txn(txn))
+        ntxn_commits++;
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      db->abort_txn(txn);
+      ntxn_aborts++;
+    }
+  }
+  static void TxnScan(worker *w) { w->txn_scan(); }
 
   virtual void run()
   {
@@ -120,14 +154,16 @@ public:
   abstract_db *db;
   spin_barrier *barrier_a;
   spin_barrier *barrier_b;
-  size_t ntxns;
+  size_t ntxn_commits;
+  size_t ntxn_aborts;
 };
 
 static workload_desc *
 MakeWorkloadDesc()
 {
   workload_desc *w = new workload_desc;
-  w->push_back(make_pair(0.95, worker::TxnRead));
+  w->push_back(make_pair(0.85, worker::TxnRead));
+  w->push_back(make_pair(0.10, worker::TxnScan));
   w->push_back(make_pair(0.04, worker::TxnRmw));
   w->push_back(make_pair(0.01, worker::TxnWrite));
   return w;
@@ -171,18 +207,25 @@ do_test(abstract_db *db)
   running = false;
   __sync_synchronize();
   unsigned long elapsed = t.lap();
-  size_t n = 0;
+  size_t n_commits = 0;
+  size_t n_aborts = 0;
   for (size_t i = 0; i < nthreads; i++) {
     workers[i]->join();
-    n += workers[i]->ntxns;
+    n_commits += workers[i]->ntxn_commits;
+    n_aborts += workers[i]->ntxn_aborts;
   }
 
-  double agg_throughput = double(n) / (double(elapsed) / 1000000.0);
+  double agg_throughput = double(n_commits) / (double(elapsed) / 1000000.0);
   double avg_per_core_throughput = agg_throughput / double(nthreads);
+
+  double agg_abort_rate = double(n_aborts) / (double(elapsed) / 1000000.0);
+  double avg_per_core_abort_rate = agg_abort_rate / double(nthreads);
 
   if (verbose) {
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+    cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
+    cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
   }
   cout << agg_throughput << endl;
 

@@ -2,6 +2,7 @@
 #define _MACROS_H_
 
 #include <assert.h>
+#include <stdexcept>
 
 /** options */
 //#define NODE_PREFETCH
@@ -50,5 +51,13 @@
 #else
   #define prefetch_node(n) ((void)0)
 #endif /* NODE_PREFETCH */
+
+// throw exception after the assert(), so that GCC knows
+// we'll never return
+#define NDB_UNIMPLEMENTED(what) \
+  do { \
+    ALWAYS_ASSERT(false); \
+    throw ::std::runtime_error(what); \
+  } while (0)
 
 #endif /* _MACROS_H_ */

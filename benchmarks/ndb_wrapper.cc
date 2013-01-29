@@ -80,6 +80,49 @@ ndb_wrapper::put(
   }
 }
 
+class ndb_wrapper_search_range_callback : public txn_btree::search_range_callback {
+public:
+  ndb_wrapper_search_range_callback(ndb_wrapper::scan_callback &upcall)
+    : upcall(&upcall) {}
+
+  virtual bool
+  invoke(const txn_btree::key_type &k, txn_btree::value_type v)
+  {
+    const char *key = (const char *) k.data();
+    const size_t keylen = k.size();
+
+    const size_t *sp = (const size_t *) v;
+    const size_t valuelen = *sp;
+    const char *value = (const char *) (sp + 1);
+
+    return upcall->invoke(key, keylen, value, valuelen);
+  }
+
+private:
+  ndb_wrapper::scan_callback *upcall;
+};
+
+void
+ndb_wrapper::scan(
+    void *txn,
+    const char *start_key, size_t start_len,
+    const char *end_key, size_t end_len,
+    bool has_end_key,
+    scan_callback &callback)
+{
+  transaction &t = *((transaction *) txn);
+
+  txn_btree::key_type lower((const uint8_t *) start_key, start_len);
+  txn_btree::key_type upper((const uint8_t *) end_key, end_len);
+
+  ndb_wrapper_search_range_callback c(callback);
+
+  if (has_end_key)
+    btr.search_range_call(t, lower, &upper, c);
+  else
+    btr.search_range_call(t, lower, NULL, c);
+}
+
 static void
 record_cleanup_callback(uint8_t *record)
 {

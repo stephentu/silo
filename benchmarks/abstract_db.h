@@ -71,6 +71,28 @@ public:
       const char *key, size_t keylen,
       char *&value, size_t &valuelen) = 0;
 
+  class scan_callback {
+  public:
+    virtual ~scan_callback() {}
+
+    // caller manages memory of key/value
+    virtual bool invoke(const char *key, size_t key_len,
+                        const char *value, size_t value_len) = 0;
+  };
+
+  /**
+   * Search [start_key, end_key) if has_end_key is true, otherwise
+   * search [start_key, +infty)
+   *
+   * Caller manages memory of start_key/end_key
+   */
+  virtual void scan(
+      void *txn,
+      const char *start_key, size_t start_len,
+      const char *end_key, size_t end_len,
+      bool has_end_key,
+      scan_callback &callback) = 0;
+
   /**
    * Put a key of length keylen, with mapping of length valuelen.
    * The underlying DB does not manage the memory pointed to by key or value
