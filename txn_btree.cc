@@ -371,7 +371,7 @@ test_multi_btree()
 }
 
 class txn_btree_worker : public ndb_thread,
-                         public noncopyable {
+                         private noncopyable {
 public:
   txn_btree_worker(txn_btree &btr, uint64_t txn_flags)
     : btr(&btr), txn_flags(txn_flags) {}

@@ -15,7 +15,7 @@
  * RCU for GC
  */
 template <bool RCU>
-class base_imstring : public util::noncopyable {
+class base_imstring : private util::noncopyable {
 
   template <bool R>
   friend class base_imstring;

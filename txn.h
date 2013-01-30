@@ -19,7 +19,7 @@ class transaction_abort_exception {};
 class transaction_unusable_exception {};
 class txn_btree;
 
-class transaction : public util::noncopyable {
+class transaction : private util::noncopyable {
 protected:
   friend class txn_btree;
   friend class txn_context;
