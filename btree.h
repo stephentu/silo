@@ -698,6 +698,9 @@ private:
 
 public:
 
+  // XXX(stephentu): trying out a very opaque node API for now
+  typedef struct node node_opaque_t;
+
   btree() : root(leaf_node::alloc())
   {
 
@@ -744,9 +747,27 @@ public:
     return search_impl(k, v, ns);
   }
 
-  class search_range_callback {
+  class low_level_search_range_callback {
   public:
-    virtual ~search_range_callback() {}
+    virtual ~low_level_search_range_callback() {}
+
+    /**
+     * This key/value pair was read from node n @ version
+     */
+    virtual bool invoke(const key_type &k, value_type v,
+                        const node_opaque_t *n, uint64_t version) = 0;
+  };
+
+  /**
+   * A higher level interface if you don't care about node and version numbers
+   */
+  class search_range_callback : public low_level_search_range_callback {
+  public:
+    virtual bool invoke(const key_type &k, value_type v,
+                        const node_opaque_t *n, uint64_t version)
+    {
+      return invoke(k, v);
+    }
     virtual bool invoke(const key_type &k, value_type v) = 0;
   };
 
@@ -771,7 +792,7 @@ private:
                              const key_type &lower,
                              bool inc_lower,
                              const key_type *upper,
-                             search_range_callback &callback) const;
+                             low_level_search_range_callback &callback) const;
 
 public:
 
@@ -814,7 +835,7 @@ public:
   void
   search_range_call(const key_type &lower,
                     const key_type *upper,
-                    search_range_callback &callback) const;
+                    low_level_search_range_callback &callback) const;
 
   /**
    * Callback is expected to implement bool operator()(key_slice k, value_type v),
@@ -837,10 +858,12 @@ public:
    * is written into old_v
    */
   inline bool
-  insert(const key_type &k, value_type v, value_type *old_v = NULL)
+  insert(const key_type &k, value_type v,
+         value_type *old_v = NULL,
+         std::pair< const node_opaque_t *, uint64_t > *insert_info = NULL)
   {
     // XXX: not sure if this cast is safe
-    return insert_impl((node **) &root, k, v, false, old_v);
+    return insert_impl((node **) &root, k, v, false, old_v, insert_info);
   }
 
   /**
@@ -848,9 +871,10 @@ public:
    * if k inserted, false otherwise (k exists already)
    */
   inline bool
-  insert_if_absent(const key_type &k, value_type v)
+  insert_if_absent(const key_type &k, value_type v,
+                   std::pair< const node_opaque_t *, uint64_t > *insert_info = NULL)
   {
-    return insert_impl((node **) &root, k, v, true, NULL);
+    return insert_impl((node **) &root, k, v, true, NULL, insert_info);
   }
 
   /**
@@ -869,6 +893,15 @@ public:
    * with concurrent modifications. also the value returned is not
    * consistent given concurrent modifications */
   size_t size() const;
+
+  static inline uint64_t
+  ExtractVersionNumber(const node_opaque_t *n)
+  {
+    // XXX(stephentu): I think we must use stable_version() for
+    // correctness, but I am not 100% sure. It's definitely correct to use it,
+    // but maybe we can get away with unstable_version()?
+    return node::Version(n->stable_version());
+  }
 
   static void Test();
 
@@ -960,8 +993,8 @@ private:
    */
   bool search_impl(const key_type &k, value_type &v, std::vector<leaf_node *> &leaf_nodes) const;
 
-  bool insert_impl(node **root_location, const key_type &k, value_type v,
-                   bool only_if_absent, value_type *old_v);
+  bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent,
+                   value_type *old_v, std::pair< const node_opaque_t *, uint64_t > *insert_info);
 
   bool remove_impl(node **root_location, const key_type &k, value_type *old_v);
 
@@ -989,6 +1022,7 @@ private:
           value_type v,
           bool only_if_absent,
           value_type *old_v,
+          std::pair< const node_opaque_t *, uint64_t > *insert_info,
           key_slice &min_key,
           node *&new_node,
           std::vector<insert_parent_entry> &parents,

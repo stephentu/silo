@@ -10,14 +10,16 @@
 #include <vector>
 #include <string>
 
+#include "btree.h"
 #include "macros.h"
 #include "varkey.h"
+#include "util.h"
 
 class transaction_abort_exception {};
 class transaction_unusable_exception {};
 class txn_btree;
 
-class transaction {
+class transaction : public util::noncopyable {
 protected:
   friend class txn_btree;
   friend class txn_context;
@@ -30,6 +32,14 @@ public:
   typedef uint8_t* record_t;
 
   enum txn_state { TXN_ACTIVE, TXN_COMMITED, TXN_ABRT, };
+
+  enum {
+    // use the low-level scan protocol for checking scan consistency,
+    // instead of keeping track of absent ranges
+    TXN_FLAG_LOW_LEVEL_SCAN = 0x1,
+
+    // XXX: more flags in the future, things like consistency levels
+  };
 
   static const tid_t MIN_TID = 0;
   static const tid_t MAX_TID = (tid_t) -1;
@@ -301,13 +311,18 @@ public:
 
   } PACKED_CACHE_ALIGNED;
 
-  transaction();
+  transaction(uint64_t flags);
   virtual ~transaction();
 
   void commit();
 
   // abort() always succeeds
   void abort();
+
+  inline uint64_t get_flags() const
+  {
+    return flags;
+  }
 
   typedef void (*callback_t)(record_t);
   /** not thread-safe */
@@ -349,11 +364,13 @@ protected:
   typedef std::map<std::string, read_record_t> read_set_map;
   typedef std::map<std::string, record_t> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec;
+  typedef std::map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 
   struct txn_context {
     read_set_map read_set;
     write_set_map write_set;
     absent_range_vec absent_range_set; // ranges do not overlap
+    node_scan_map node_scan; // we scanned these nodes at verison v
 
     bool local_search_str(const std::string &k, record_t &v) const;
 
@@ -457,7 +474,7 @@ protected:
       const std::vector<key_range_t> &range_set);
 
   txn_state state;
-
+  const uint64_t flags;
   std::map<txn_btree *, txn_context> ctx_map;
 };
 
@@ -469,7 +486,7 @@ protected:
 // protocol 1 - global consistent TIDs
 class transaction_proto1 : public transaction {
 public:
-  transaction_proto1();
+  transaction_proto1(uint64_t flags = 0);
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
 protected:
@@ -486,7 +503,7 @@ private:
 // protocol 2 - no global consistent TIDs
 class transaction_proto2 : public transaction {
 public:
-  transaction_proto2() {}
+  transaction_proto2(uint64_t flags = 0) : transaction(flags) {}
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
 protected:

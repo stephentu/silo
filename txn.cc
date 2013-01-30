@@ -27,8 +27,8 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   return buf.str();
 }
 
-transaction::transaction()
-  : state(TXN_ACTIVE)
+transaction::transaction(uint64_t flags)
+  : state(TXN_ACTIVE), flags(flags)
 {
 }
 
@@ -52,6 +52,8 @@ transaction::commit()
 
   // fetch logical_nodes for insert
   map<logical_node *, record_t> logical_nodes;
+  pair<bool, tid_t> snapshot_tid_t; // declared here so we don't cross initialization
+
   for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it) {
     for (write_set_map::iterator it = outer_it->second.write_set.begin();
@@ -65,17 +67,31 @@ transaction::commit()
         logical_node *ln = logical_node::alloc();
         // XXX: underlying btree api should return the existing value if
         // insert fails- this would allow us to avoid having to do another search
-        if (!outer_it->first->underlying_btree.insert_if_absent(varkey(it->first), (btree::value_type) ln)) {
+        pair<const btree::node_opaque_t *, uint64_t> insert_info;
+        if (!outer_it->first->underlying_btree.insert_if_absent(
+              varkey(it->first), (btree::value_type) ln, &insert_info)) {
           logical_node::release(ln);
           goto retry;
         }
         VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
+        if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
+          // update node #s
+          INVARIANT(insert_info.first);
+          node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
+          if (nit != outer_it->second.node_scan.end()) {
+            if (unlikely(nit->second != insert_info.second))
+              goto do_abort;
+            // otherwise, bump the version by 1
+            nit->second++; // XXX(stephentu): this doesn't properly handle wrap-around
+                           // but we're probably F-ed on a wrap around anyways for now
+          }
+        }
         logical_nodes[ln] = it->second;
       }
     }
   }
 
-  pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
+  snapshot_tid_t = consistent_snapshot_tid();
   if (!snapshot_tid_t.first || !logical_nodes.empty()) {
     // we don't have consistent tids, or not a read-only txn
 
@@ -132,14 +148,23 @@ transaction::commit()
         goto do_abort;
       }
 
-      for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
-           it != outer_it->second.absent_range_set.end(); ++it) {
-        VERBOSE(cout << "checking absent range: " << *it << endl);
-        txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid);
-        varkey upper(it->b);
-        outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
-        if (unlikely(c.failed()))
-          goto do_abort;
+      if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
+        INVARIANT(outer_it->second.absent_range_set.empty());
+        for (node_scan_map::iterator it = outer_it->second.node_scan.begin();
+             it != outer_it->second.node_scan.end(); ++it)
+          if (unlikely(btree::ExtractVersionNumber(it->first) != it->second))
+            goto do_abort;
+      } else {
+        INVARIANT(outer_it->second.node_scan.empty());
+        for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
+             it != outer_it->second.absent_range_set.end(); ++it) {
+          VERBOSE(cout << "checking absent range: " << *it << endl);
+          txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid);
+          varkey upper(it->b);
+          outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
+          if (unlikely(c.failed()))
+            goto do_abort;
+        }
       }
     }
 
@@ -169,6 +194,7 @@ transaction::commit()
   return;
 
 do_abort:
+  // XXX: these values are possibly un-initialized
   if (snapshot_tid_t.first)
     VERBOSE(cout << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
@@ -411,8 +437,8 @@ transaction::completion_callbacks()
   return *callbacks;
 }
 
-transaction_proto1::transaction_proto1()
-  : transaction(), snapshot_tid(current_global_tid())
+transaction_proto1::transaction_proto1(uint64_t flags)
+  : transaction(flags), snapshot_tid(current_global_tid())
 {
 }
 

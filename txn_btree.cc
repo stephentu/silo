@@ -57,15 +57,30 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
 }
 
 bool
-txn_btree::txn_search_range_callback::invoke(const key_type &k, value_type v)
+txn_btree::txn_search_range_callback::invoke(
+    const key_type &k, value_type v,
+    const btree::node_opaque_t *n, uint64_t version)
 {
   t->ensure_active();
   VERBOSE(cerr << "search range k: " << k << endl);
   string sk(k.str());
-  transaction::key_range_t r =
-    invoked ? transaction::key_range_t(prev_key, sk) : transaction::key_range_t(lower, sk);
-  if (!r.is_empty_range())
-    ctx->add_absent_range(r);
+  if (t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN) {
+    transaction::node_scan_map::iterator it = ctx->node_scan.find(n);
+    if (it == ctx->node_scan.end()) {
+      ctx->node_scan[n] = version;
+    } else {
+      if (unlikely(it->second != version)) {
+        t->abort();
+        throw transaction_abort_exception();
+      }
+    }
+  } else {
+    transaction::key_range_t r =
+      invoked ? transaction::key_range_t(prev_key, sk) :
+                transaction::key_range_t(lower, sk);
+    if (!r.is_empty_range())
+      ctx->add_absent_range(r);
+  }
   prev_key = sk;
   invoked = true;
   value_type local_v = 0;

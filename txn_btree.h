@@ -55,7 +55,7 @@ public:
 
 private:
 
-  struct txn_search_range_callback : public search_range_callback {
+  struct txn_search_range_callback : public btree::low_level_search_range_callback {
     txn_search_range_callback(transaction *t,
                               transaction::txn_context *ctx,
                               const key_type &lower,
@@ -64,7 +64,8 @@ private:
       : t(t), ctx(ctx), lower(lower), upper(upper), prev_key(),
         invoked(false), caller_callback(caller_callback),
         caller_stopped(false) {}
-    virtual bool invoke(const key_type &k, value_type v);
+    virtual bool invoke(const key_type &k, value_type v,
+                        const btree::node_opaque_t *n, uint64_t version);
     transaction *const t;
     transaction::txn_context *const ctx;
     const key_type lower;

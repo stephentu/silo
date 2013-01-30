@@ -373,7 +373,7 @@ btree::search_range_at_layer(
     const key_type &lower,
     bool inc_lower,
     const key_type *upper,
-    search_range_callback &callback) const
+    low_level_search_range_callback &callback) const
 {
   INVARIANT(lower.size() <= 8);
 
@@ -466,7 +466,9 @@ btree::search_range_at_layer(
         if (buf[i].length == 9)
           slice_buffer.insert(slice_buffer.end(), buf[i].suffix.data(),
               buf[i].suffix.data() + buf[i].suffix.size());
-        if (!callback.invoke(varkey(slice_buffer), buf[i].vn.v))
+        // we give the actual version # minus all the other bits, b/c they are not
+        // important here and make comparison easier at higher layers
+        if (!callback.invoke(varkey(slice_buffer), buf[i].vn.v, leaf, node::Version(version)))
           return false;
       }
       last_keyslice = buf[i].key;
@@ -497,7 +499,8 @@ round_up(T n, T div)
 }
 
 void
-btree::search_range_call(const key_type &lower, const key_type *upper, search_range_callback &callback) const
+btree::search_range_call(const key_type &lower, const key_type *upper,
+                         low_level_search_range_callback &callback) const
 {
   if (unlikely(upper && *upper <= lower))
     return;
@@ -529,7 +532,8 @@ btree::search_range_call(const key_type &lower, const key_type *upper, search_ra
 // XXX: requires that root_location is a stable memory location
 bool
 btree::insert_impl(node **root_location, const key_type &k, value_type v,
-                   bool only_if_absent, value_type *old_v)
+                   bool only_if_absent, value_type *old_v,
+                   pair< const node_opaque_t *, uint64_t > *insert_info)
 {
 retry:
   key_slice mk;
@@ -539,7 +543,8 @@ retry:
   scoped_rcu_region rcu_region;
   node *local_root = *root_location;
   insert_status status =
-    insert0(local_root, k, v, only_if_absent, old_v, mk, ret, parents, locked_nodes);
+    insert0(local_root, k, v, only_if_absent, old_v, insert_info,
+            mk, ret, parents, locked_nodes);
   switch (status) {
   case I_NONE_NOMOD:
     return false;
@@ -684,6 +689,7 @@ btree::insert0(node *np,
                value_type v,
                bool only_if_absent,
                value_type *old_v,
+               pair< const node_opaque_t *, uint64_t > *insert_info,
                key_slice &min_key,
                node *&new_node,
                vector<insert_parent_entry> &parents,
@@ -754,13 +760,15 @@ btree::insert0(node *np,
           *old_v = leaf->values[lenmatch].v;
         if (!only_if_absent)
           leaf->values[lenmatch].v = v;
+        if (insert_info)
+          insert_info->first = 0;
         return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
       }
       INVARIANT(kslicelen == 9);
       if (leaf->value_is_layer(lenmatch)) {
         // need to insert in next level btree (using insert_impl())
         node **root_location = &leaf->values[lenmatch].n;
-        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v);
+        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v, insert_info);
         return UnlockAndReturn(locked_nodes, ret ? I_NONE_MOD : I_NONE_NOMOD);
       } else {
         // need to create a new btree layer, and add both existing key and
@@ -795,7 +803,7 @@ btree::insert0(node *np,
 #ifdef CHECK_INVARIANTS
         new_root->unlock();
 #endif /* CHECK_INVARIANTS */
-        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v);
+        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v, insert_info);
         if (!ret)
           INVARIANT(false);
         return UnlockAndReturn(locked_nodes, I_NONE_MOD);
@@ -825,6 +833,10 @@ btree::insert0(node *np,
       leaf->inc_key_slots_used();
 
       //leaf->base_invariant_unique_keys_check();
+      if (insert_info) {
+        insert_info->first = leaf;
+        insert_info->second = node::Version(leaf->unstable_version()); // we hold lock on leaf
+      }
       return UnlockAndReturn(locked_nodes, I_NONE_MOD);
     } else {
       INVARIANT(n == NKeysPerNode);
@@ -998,6 +1010,12 @@ btree::insert0(node *np,
       min_key = new_leaf->keys[0];
       new_leaf->min_key = min_key;
       new_node = new_leaf;
+
+      if (insert_info) {
+        insert_info->first = leaf;
+        insert_info->second = node::Version(leaf->unstable_version()); // we hold lock on leaf
+      }
+
       return I_SPLIT;
     }
   } else {
@@ -1016,7 +1034,8 @@ btree::insert0(node *np,
     key_slice mk = 0;
     node *new_child = NULL;
     insert_status status =
-      insert0(child_ptr, k, v, only_if_absent, old_v, mk, new_child, parents, locked_nodes);
+      insert0(child_ptr, k, v, only_if_absent, old_v, insert_info,
+              mk, new_child, parents, locked_nodes);
     if (status != I_SPLIT)
       return status;
     INVARIANT(new_child);
