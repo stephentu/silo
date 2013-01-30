@@ -56,16 +56,13 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
   }
 }
 
-bool
-txn_btree::txn_search_range_callback::invoke(
-    const key_type &k, value_type v,
+void
+txn_btree::txn_search_range_callback::on_resp_node(
     const btree::node_opaque_t *n, uint64_t version)
 {
-  t->ensure_active();
-  VERBOSE(cerr << "search range k: " << k << " from <node=0x" << hexify(n)
-               << ", version=" << version << ">" << endl);
-  string sk(k.str());
   if (t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN) {
+    VERBOSE(cerr << "on_resp_node(): <node=0x" << hexify(intptr_t(n))
+                 << ", version=" << version << ">" << endl);
     transaction::node_scan_map::iterator it = ctx->node_scan.find(n);
     if (it == ctx->node_scan.end()) {
       ctx->node_scan[n] = version;
@@ -75,7 +72,19 @@ txn_btree::txn_search_range_callback::invoke(
         throw transaction_abort_exception();
       }
     }
-  } else {
+  }
+}
+
+bool
+txn_btree::txn_search_range_callback::invoke(
+    const key_type &k, value_type v,
+    const btree::node_opaque_t *n, uint64_t version)
+{
+  t->ensure_active();
+  VERBOSE(cerr << "search range k: " << k << " from <node=0x" << hexify(intptr_t(n))
+               << ", version=" << version << ">" << endl);
+  string sk(k.str());
+  if (!(t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
     transaction::key_range_t r =
       invoked ? transaction::key_range_t(prev_key, sk) :
                 transaction::key_range_t(lower, sk);
@@ -122,7 +131,7 @@ txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_typ
 {
   transaction::logical_node *ln = (transaction::logical_node *) v;
   INVARIANT(ln);
-  VERBOSE(cout << "absent_range_validation_callback: key " << k
+  VERBOSE(cerr << "absent_range_validation_callback: key " << k
                << " found logical_node 0x" << hexify(ln) << endl);
   bool did_write = ctx->write_set.find(k.str()) != ctx->write_set.end();
   // XXX: I don't think it matters here whether or not we use snapshot_tid or
@@ -153,10 +162,10 @@ txn_btree::search_range_call(transaction &t,
   transaction::txn_context &ctx = t.ctx_map[this];
 
   if (upper)
-    VERBOSE(cout << "txn_btree::search_range_call [" << lower
+    VERBOSE(cerr << "txn_btree::search_range_call [" << lower
                  << ", " << *upper << ")" << endl);
   else
-    VERBOSE(cout << "txn_btree::search_range_call [" << lower
+    VERBOSE(cerr << "txn_btree::search_range_call [" << lower
                  << ", +inf)" << endl);
 
   // many cases to consider:
@@ -219,7 +228,7 @@ test1()
        txn_flags_idx++) {
     uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
-    VERBOSE(cout << "Testing with flags=0x" << hexify(txn_flags) << endl);
+    VERBOSE(cerr << "Testing with flags=0x" << hexify(txn_flags) << endl);
 
     txn_btree btr;
 
@@ -236,7 +245,7 @@ test1()
       ALWAYS_ASSERT(btr.search(t, u64_varkey(0), v));
       ALWAYS_ASSERT(v == (txn_btree::value_type) &recs[0]);
       t.commit();
-      VERBOSE(cout << "------" << endl);
+      VERBOSE(cerr << "------" << endl);
     }
 
     {
@@ -260,7 +269,7 @@ test1()
         // if we dont have a snapshot, then we expect an abort
         ALWAYS_ASSERT(!t1.consistent_snapshot_tid().first);
       }
-      VERBOSE(cout << "------" << endl);
+      VERBOSE(cerr << "------" << endl);
     }
 
     {
@@ -284,7 +293,7 @@ test1()
       } catch (transaction_abort_exception &e) {
 
       }
-      VERBOSE(cout << "------" << endl);
+      VERBOSE(cerr << "------" << endl);
     }
 
     {
@@ -306,7 +315,7 @@ test1()
       } catch (transaction_abort_exception &e) {
 
       }
-      VERBOSE(cout << "------" << endl);
+      VERBOSE(cerr << "------" << endl);
     }
 
     {
@@ -317,7 +326,7 @@ test1()
       ALWAYS_ASSERT(ctr == 0);
       btr.insert(t, u64_varkey(15), (txn_btree::value_type) &recs[5]);
       t.commit();
-      VERBOSE(cout << "------" << endl);
+      VERBOSE(cerr << "------" << endl);
     }
   }
 }

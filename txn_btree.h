@@ -64,6 +64,7 @@ private:
       : t(t), ctx(ctx), lower(lower), upper(upper), prev_key(),
         invoked(false), caller_callback(caller_callback),
         caller_stopped(false) {}
+    virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
     virtual bool invoke(const key_type &k, value_type v,
                         const btree::node_opaque_t *n, uint64_t version);
     transaction *const t;

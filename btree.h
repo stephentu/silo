@@ -747,9 +747,24 @@ public:
     return search_impl(k, v, ns);
   }
 
+  /**
+   * The low level callback interface is as follows:
+   *
+   * Consider a scan in the range [a, b):
+   *   1) on_resp_node() is called at least once per node which
+   *      has a responibility range that overlaps with the scan range
+   *   2) invoke() is called per <k, v>-pair such that k is in [a, b)
+   *
+   * The order of calling on_resp_node() and invoke() is up to the implementation.
+   */
   class low_level_search_range_callback {
   public:
     virtual ~low_level_search_range_callback() {}
+
+    /**
+     * This node lies within the search range (at version v)
+     */
+    virtual void on_resp_node(const node_opaque_t *n, uint64_t version) = 0;
 
     /**
      * This key/value pair was read from node n @ version
@@ -763,11 +778,18 @@ public:
    */
   class search_range_callback : public low_level_search_range_callback {
   public:
-    virtual bool invoke(const key_type &k, value_type v,
-                        const node_opaque_t *n, uint64_t version)
+    virtual void
+    on_resp_node(const node_opaque_t *n, uint64_t version)
+    {
+    }
+
+    virtual bool
+    invoke(const key_type &k, value_type v,
+           const node_opaque_t *n, uint64_t version)
     {
       return invoke(k, v);
     }
+
     virtual bool invoke(const key_type &k, value_type v) = 0;
   };
 

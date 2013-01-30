@@ -61,7 +61,7 @@ transaction::commit()
     retry:
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
-        VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
+        VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
         logical_nodes[(logical_node *) v] = it->second;
       } else {
         logical_node *ln = logical_node::alloc();
@@ -73,7 +73,7 @@ transaction::commit()
           logical_node::release(ln);
           goto retry;
         }
-        VERBOSE(cout << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
+        VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
         if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
           // update node #s
           INVARIANT(insert_info.first);
@@ -81,9 +81,12 @@ transaction::commit()
           if (nit != outer_it->second.node_scan.end()) {
             if (unlikely(nit->second != insert_info.second))
               goto do_abort;
+            VERBOSE(cerr << "bump node=" << hexify(nit->first) << " from v=" << (nit->second)
+                         << " -> v=" << (nit->second + 1) << endl);
             // otherwise, bump the version by 1
             nit->second++; // XXX(stephentu): this doesn't properly handle wrap-around
                            // but we're probably F-ed on a wrap around anyways for now
+            SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
           }
         }
         logical_nodes[ln] = it->second;
@@ -98,7 +101,7 @@ transaction::commit()
     // lock the logical nodes in sort order
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      VERBOSE(cout << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
+      VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
       it->first->lock();
     }
 
@@ -106,9 +109,9 @@ transaction::commit()
     tid_t commit_tid = logical_nodes.empty() ? 0 : gen_commit_tid(logical_nodes);
 
     if (logical_nodes.empty())
-      VERBOSE(cout << "commit tid: <read-only>" << endl);
+      VERBOSE(cerr << "commit tid: <read-only>" << endl);
     else
-      VERBOSE(cout << "commit tid: " << commit_tid << endl);
+      VERBOSE(cerr << "commit tid: " << commit_tid << endl);
 
     // do read validation
     for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
@@ -126,7 +129,7 @@ transaction::commit()
         }
         if (unlikely(!ln))
           continue;
-        VERBOSE(cout << "validating key " << hexify(it->first) << " @ logical_node 0x"
+        VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
                      << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
         if (snapshot_tid_t.first) {
@@ -151,14 +154,19 @@ transaction::commit()
       if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
         INVARIANT(outer_it->second.absent_range_set.empty());
         for (node_scan_map::iterator it = outer_it->second.node_scan.begin();
-             it != outer_it->second.node_scan.end(); ++it)
-          if (unlikely(btree::ExtractVersionNumber(it->first) != it->second))
+             it != outer_it->second.node_scan.end(); ++it) {
+          uint64_t v = btree::ExtractVersionNumber(it->first);
+          if (unlikely(v != it->second)) {
+            VERBOSE(cerr << "expected node " << hexify(it->first) << " at v="
+                         << it->second << ", got v=" << v << endl);
             goto do_abort;
+          }
+        }
       } else {
         INVARIANT(outer_it->second.node_scan.empty());
         for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
              it != outer_it->second.absent_range_set.end(); ++it) {
-          VERBOSE(cout << "checking absent range: " << *it << endl);
+          VERBOSE(cerr << "checking absent range: " << *it << endl);
           txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid);
           varkey upper(it->b);
           outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
@@ -172,7 +180,7 @@ transaction::commit()
     vector<record_t> removed_vec;
     for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      VERBOSE(cout << "writing logical_node 0x" << hexify(intptr_t(it->first))
+      VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid << endl);
       record_t removed = 0;
       it->first->write_record_at(commit_tid, it->second, &removed);
@@ -196,9 +204,9 @@ transaction::commit()
 do_abort:
   // XXX: these values are possibly un-initialized
   if (snapshot_tid_t.first)
-    VERBOSE(cout << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
+    VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
-    VERBOSE(cout << "aborting txn" << endl);
+    VERBOSE(cerr << "aborting txn" << endl);
   for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
        it != logical_nodes.end(); ++it)
     it->first->unlock();

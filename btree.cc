@@ -430,6 +430,8 @@ btree::search_range_at_layer(
     if (unlikely(!leaf->check_version(version)))
       continue;
 
+    callback.on_resp_node(leaf, node::Version(version));
+
     for (size_t i = 0; i < buf.size(); i++) {
       // check to see if we already omitted a key <= buf[i]: if so, don't omit it
       if (emitted_last_keyslice &&

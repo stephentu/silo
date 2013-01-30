@@ -28,8 +28,8 @@
 
 #define ARRAY_NELEMS(a) (sizeof(a)/sizeof((a)[0]))
 
-//#define VERBOSE(expr) ((void)0)
-#define VERBOSE(expr) (expr)
+#define VERBOSE(expr) ((void)0)
+//#define VERBOSE(expr) (expr)
 
 #ifdef CHECK_INVARIANTS
   #define INVARIANT(expr) ALWAYS_ASSERT(expr)
