@@ -15,7 +15,7 @@ public:
   virtual void thread_init();
   virtual void thread_end();
 
-  virtual void *new_txn();
+  virtual void *new_txn(uint64_t txn_flags);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
 

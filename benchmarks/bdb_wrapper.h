@@ -18,7 +18,7 @@ public:
    */
   virtual ssize_t txn_max_batch_size() const { return 1000; }
 
-  virtual void *new_txn();
+  virtual void *new_txn(uint64_t txn_flags);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
 

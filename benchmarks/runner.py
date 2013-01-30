@@ -14,9 +14,10 @@ import sys
 
 DBS = ('mysql', 'bdb', 'ndb-proto1', 'ndb-proto2')
 THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48)
+TXN_FLAGS = (0x0, 0x1)
 
-def run_configuration(basedir, dbtype, nthreads):
-  args = ['./ycsb', '--basedir', basedir, '--db-type', dbtype, '--num-threads', str(nthreads), '--num-keys', '1000000']
+def run_configuration(basedir, dbtype, nthreads, txnflags):
+  args = ['./ycsb', '--basedir', basedir, '--db-type', dbtype, '--num-threads', str(nthreads), '--num-keys', '1000000', '--txn-flags', txnflags]
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
   p.wait()

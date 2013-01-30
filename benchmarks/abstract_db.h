@@ -2,6 +2,7 @@
 #define _ABSTRACT_DB_H_
 
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/types.h>
 
 /**
@@ -45,8 +46,10 @@ public:
 
   /**
    * Allocate and return a new txn object, to use with this instance
+	 *
+	 * Flags is only for the ndb protocol for now
    */
-  virtual void *new_txn() = 0;
+  virtual void *new_txn(uint64_t txn_flags) = 0;
 
   /**
    * XXX

@@ -25,6 +25,7 @@ static size_t nkeys = 100000;
 static size_t nthreads = 1;
 static volatile bool running = true;
 static int verbose = 0;
+static uint64_t txn_flags = 0;
 
 class worker;
 typedef void (*txn_fn_t)(worker *);
@@ -49,7 +50,7 @@ public:
   void
   txn_read()
   {
-    void *txn = db->new_txn();
+    void *txn = db->new_txn(txn_flags);
     string k = u64_varkey(r.next() % nkeys).str();
     try {
       char *v = 0;
@@ -68,7 +69,7 @@ public:
   void
   txn_write()
   {
-    void *txn = db->new_txn();
+    void *txn = db->new_txn(txn_flags);
     string k = u64_varkey(r.next() % nkeys).str();
     try {
       string v(128, 'b');
@@ -85,7 +86,7 @@ public:
   void
   txn_rmw()
   {
-    void *txn = db->new_txn();
+    void *txn = db->new_txn(txn_flags);
     string k = u64_varkey(r.next() % nkeys).str();
     try {
       char *v = 0;
@@ -116,7 +117,7 @@ public:
   void
   txn_scan()
   {
-    void *txn = db->new_txn();
+    void *txn = db->new_txn(txn_flags);
     size_t kstart = r.next() % nkeys;
     string kbegin = u64_varkey(kstart).str();
     string kend = u64_varkey(kstart + 100).str();
@@ -184,13 +185,14 @@ do_test(abstract_db *db)
   size_t nbatches = nkeys / batchsize;
   for (size_t i = 0; i < nbatches; i++) {
     size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
-    void *txn = db->new_txn();
+    void *txn = db->new_txn(txn_flags);
     for (size_t j = i * batchsize; j < keyend; j++) {
       string k = u64_varkey(j).str();
       string v(128, 'a');
       db->insert(txn, k.data(), k.size(), v.data(), v.size());
     }
-    cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+    if (verbose)
+      cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
     ALWAYS_ASSERT(db->commit_txn(txn));
   }
 
@@ -248,10 +250,11 @@ main(int argc, char **argv)
       {"num-threads", required_argument, 0,       't'},
       {"db-type",     required_argument, 0,       'd'},
       {"basedir",     required_argument, 0,       'b'},
+      {"txn-flags",   required_argument, 0,       'f'},
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "vk:t:d:b:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "vk:t:d:b:f:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -280,6 +283,10 @@ main(int argc, char **argv)
       basedir = optarg;
       break;
 
+    case 'f':
+      txn_flags = strtoul(optarg, NULL, 10);
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       break;
@@ -304,11 +311,12 @@ main(int argc, char **argv)
     ALWAYS_ASSERT(false);
 
   if (verbose) {
-    cerr << "settings:" << endl;
-    cerr << "  num-keys    : " << nkeys << endl;
-    cerr << "  num-threads : " << nthreads << endl;
-    cerr << "  db-type     : " << db_type << endl;
-    cerr << "  basedir     : " << basedir << endl;
+    cerr << "settings:"                             << endl;
+    cerr << "  num-keys    : " << nkeys             << endl;
+    cerr << "  num-threads : " << nthreads          << endl;
+    cerr << "  db-type     : " << db_type           << endl;
+    cerr << "  basedir     : " << basedir           << endl;
+    cerr << "  txn-flags   : " << hexify(txn_flags) << endl;
   }
 
   do_test(db);

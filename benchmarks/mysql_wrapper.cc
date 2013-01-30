@@ -122,7 +122,7 @@ mysql_wrapper::thread_end()
 }
 
 void *
-mysql_wrapper::new_txn()
+mysql_wrapper::new_txn(uint64_t txn_flags)
 {
   ALWAYS_ASSERT(tl_conn);
   check_result(tl_conn, mysql_real_query(tl_conn, "BEGIN", 5));

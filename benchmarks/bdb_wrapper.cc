@@ -32,7 +32,7 @@ bdb_wrapper::~bdb_wrapper()
 }
 
 void *
-bdb_wrapper::new_txn()
+bdb_wrapper::new_txn(uint64_t txn_flags)
 {
   DbTxn *txn = NULL;
   ALWAYS_ASSERT(env->txn_begin(NULL, &txn, 0) == 0);

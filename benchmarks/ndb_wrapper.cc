@@ -5,13 +5,13 @@
 #include "../macros.h"
 
 void *
-ndb_wrapper::new_txn()
+ndb_wrapper::new_txn(uint64_t txn_flags)
 {
   switch (proto) {
   case PROTO_1:
-    return new transaction_proto1;
+    return new transaction_proto1(txn_flags);
   case PROTO_2:
-    return new transaction_proto2;
+    return new transaction_proto2(txn_flags);
   default:
     ALWAYS_ASSERT(false);
     return NULL;
