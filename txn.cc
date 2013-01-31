@@ -476,6 +476,27 @@ transaction_proto1::incr_and_get_global_tid()
 
 volatile transaction::tid_t transaction_proto1::global_tid = MIN_TID;
 
+transaction_proto2::transaction_proto2(uint64_t flags)
+  : transaction(flags), current_epoch(0)
+{
+  size_t my_core_id = core_id();
+  VERBOSE(cerr << "new transaction_proto2 (core=" << my_core_id
+               << ", nest=" << tl_nest_level << ")" << endl);
+  if (tl_nest_level++ == 0)
+    ALWAYS_ASSERT(pthread_spin_lock(&g_epoch_spinlocks[my_core_id].elem) == 0);
+  current_epoch = g_current_epoch;
+}
+
+transaction_proto2::~transaction_proto2()
+{
+  size_t my_core_id = core_id();
+  VERBOSE(cerr << "destroy transaction_proto2 (core=" << my_core_id
+               << ", nest=" << tl_nest_level << ")" << endl);
+  ALWAYS_ASSERT(tl_nest_level > 0);
+  if (!--tl_nest_level)
+    ALWAYS_ASSERT(pthread_spin_unlock(&g_epoch_spinlocks[my_core_id].elem) == 0);
+}
+
 pair<bool, transaction::tid_t>
 transaction_proto2::consistent_snapshot_tid() const
 {
@@ -487,37 +508,65 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_no
 {
   size_t my_core_id = core_id();
   INVARIANT(tl_last_commit_tid == MIN_TID ||
-            ((tl_last_commit_tid & (CoreBits - 1)) == my_core_id));
+            CoreId(tl_last_commit_tid) == my_core_id);
+
+  // XXX(stephentu): wrap-around messes this up
+  INVARIANT(EpochId(tl_last_commit_tid) <= current_epoch);
+
   tid_t ret = tl_last_commit_tid;
   for (map<txn_btree *, txn_context>::const_iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it)
     for (read_set_map::const_iterator it = outer_it->second.read_set.begin();
-         it != outer_it->second.read_set.end(); ++it)
+         it != outer_it->second.read_set.end(); ++it) {
+      // NB: we don't allow ourselves to do reads in future epochs
+      INVARIANT(EpochId(it->second.t) <= current_epoch);
       if (it->second.t > ret)
         ret = it->second.t;
+    }
   for (map<logical_node *, record_t>::const_iterator it = write_nodes.begin();
        it != write_nodes.end(); ++it) {
     INVARIANT(it->first->is_locked());
     tid_t t = it->first->latest_version();
+    // NB: see above
+    INVARIANT(EpochId(it->second.t) <= current_epoch);
     if (t > ret)
       ret = t;
   }
-  ret &= ~((1 << CoreBits) - 1);
-  ret += (1 << CoreBits);
-  ret |= my_core_id;
+  ret = MakeTid(my_core_id, NumId(ret) + 1, current_epoch);
+
+  // XXX(stephentu): document why we need this memory fence
   __sync_synchronize();
+
   return (tl_last_commit_tid = ret);
 }
 
 size_t
 transaction_proto2::core_id()
 {
-  if (unlikely(tl_core_id == -1))
+  if (unlikely(tl_core_id == -1)) {
+    // initialize per-core data structures
     tl_core_id = __sync_fetch_and_add(&g_core_count, 1);
-  ALWAYS_ASSERT(tl_core_id < (1 << CoreBits));
+    // did we exceed max cores?
+    ALWAYS_ASSERT(tl_core_id < (1 << CoreBits));
+  }
   return tl_core_id;
 }
 
-__thread transaction::tid_t transaction_proto2::tl_last_commit_tid = MIN_TID;
+bool
+transaction_proto2::InitEpochScheme()
+{
+  for (size_t i = 0; i < NMaxCores; i++)
+    ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
+  return true;
+}
+
+bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
+
 __thread ssize_t transaction_proto2::tl_core_id = -1;
+__thread transaction::tid_t transaction_proto2::tl_last_commit_tid = MIN_TID;
+__thread unsigned int transaction_proto2::tl_nest_level = 0;
+
+volatile uint64_t transaction_proto2::g_current_epoch = 0;
 volatile transaction::tid_t transaction_proto2::g_core_count = 0;
+volatile aligned_padded_u64 transaction_proto2::g_last_consistent_versions[NMaxCores];
+volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];

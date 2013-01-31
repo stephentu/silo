@@ -43,7 +43,7 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
 
     pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t.can_read_tid(start_t))) {
       t.abort();
       throw transaction_abort_exception();
     }
@@ -108,7 +108,7 @@ txn_btree::txn_search_range_callback::invoke(
     transaction::record_t r;
     pair<bool, transaction::tid_t> snapshot_tid_t = t->consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t->can_read_tid(start_t))) {
       t->abort();
       throw transaction_abort_exception();
     }
@@ -134,9 +134,9 @@ txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_typ
   VERBOSE(cerr << "absent_range_validation_callback: key " << k
                << " found logical_node 0x" << hexify(ln) << endl);
   bool did_write = ctx->write_set.find(k.str()) != ctx->write_set.end();
-  // XXX: I don't think it matters here whether or not we use snapshot_tid or
-  // MIN_TID, since this record did not exist @ snapshot_tid, so any new
-  // entries must be > snapshot_tid, and therefore using MIN_TID or
+  // NB(stephentu): I don't think it matters here whether or not we use
+  // snapshot_tid or MIN_TID, since this record did not exist @ snapshot_tid,
+  // so any new entries must be > snapshot_tid, and therefore using MIN_TID or
   // snapshot_tid gives equivalent results.
   failed_flag = did_write ?
     !ln->is_snapshot_consistent(transaction::MIN_TID, commit_tid) :
@@ -861,13 +861,13 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  cerr << "Test proto1" << endl;
-  test1<transaction_proto1>();
-  test2<transaction_proto1>();
-  test_multi_btree<transaction_proto1>();
-  mp_test1<transaction_proto1>();
-  mp_test2<transaction_proto1>();
-  mp_test3<transaction_proto1>();
+  //cerr << "Test proto1" << endl;
+  //test1<transaction_proto1>();
+  //test2<transaction_proto1>();
+  //test_multi_btree<transaction_proto1>();
+  //mp_test1<transaction_proto1>();
+  //mp_test2<transaction_proto1>();
+  //mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();

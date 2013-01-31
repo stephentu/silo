@@ -10,7 +10,11 @@
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 
+// some helpers for cacheline alignment
+#define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))
 #define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(CACHELINE_SIZE)))
+#define CACHE_PADOUT  char __padout[0] __attribute__((aligned(CACHELINE_SIZE)))
+
 #define NEVER_INLINE  __attribute__((noinline))
 #define ALWAYS_INLINE __attribute__((always_inline))
 #define UNUSED __attribute__((unused))

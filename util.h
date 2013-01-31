@@ -13,6 +13,19 @@
 
 namespace util {
 
+// padded, aligned primitives
+template <typename T>
+struct aligned_padded_elem {
+  T elem;
+  CACHE_PADOUT;
+} CACHE_ALIGNED;
+
+// some pre-defs
+typedef aligned_padded_elem<uint8_t>  aligned_padded_u8;
+typedef aligned_padded_elem<uint16_t> aligned_padded_u16;
+typedef aligned_padded_elem<uint32_t> aligned_padded_u32;
+typedef aligned_padded_elem<uint64_t> aligned_padded_u64;
+
 template <typename T>
 struct host_endian_trfm {
   inline ALWAYS_INLINE T operator()(T t) const { return t; }

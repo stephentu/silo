@@ -4,6 +4,7 @@
 #include <malloc.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <pthread.h>
 
 #include <map>
 #include <iostream>
@@ -17,6 +18,7 @@
 
 class transaction_abort_exception {};
 class transaction_unusable_exception {};
+class transaction_read_only_exception {};
 class txn_btree;
 
 class transaction : private util::noncopyable {
@@ -37,6 +39,11 @@ public:
     // use the low-level scan protocol for checking scan consistency,
     // instead of keeping track of absent ranges
     TXN_FLAG_LOW_LEVEL_SCAN = 0x1,
+
+    // true to mark a read-only transaction- if a txn marked read-only
+    // does a write, a transaction_read_only_exception is thrown and the
+    // txn is aborted
+    TXN_FLAG_READ_ONLY = 0x2,
 
     // XXX: more flags in the future, things like consistency levels
   };
@@ -342,6 +349,8 @@ protected:
    */
   virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) = 0;
 
+  virtual bool can_read_tid(tid_t t) const { return true; }
+
   /**
    * throws transaction_unusable_exception if already resolved (commited/aborted)
    */
@@ -482,7 +491,6 @@ protected:
   static bool _txn_cleanup_callback_register_ ## __LINE__ UNUSED = \
     ::transaction::register_cleanup_callback(fn);
 
-
 // protocol 1 - global consistent TIDs
 class transaction_proto1 : public transaction {
 public:
@@ -502,21 +510,99 @@ private:
 
 // protocol 2 - no global consistent TIDs
 class transaction_proto2 : public transaction {
+
+  // in this protocol, the version number is:
+  //
+  // [ core  | number |  epoch ]
+  // [ 0..10 | 10..27 | 27..64 ]
+
 public:
-  transaction_proto2(uint64_t flags = 0) : transaction(flags) {}
+  transaction_proto2(uint64_t flags = 0);
+  ~transaction_proto2();
+
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
 protected:
   virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
 
+  // can only read elements in this epoch or previous epochs
+  virtual bool can_read_tid(tid_t t) const { return EpochId(t) <= current_epoch; }
+
 private:
+  // the global epoch this txn is running in (this # is read when it starts)
+  uint64_t current_epoch;
+
   static size_t core_id();
 
-  // XXX: need to implement core ID recycling
+  // XXX(stephentu): need to implement core ID recycling
   static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
+  static const size_t NMaxCores = (1 << CoreBits);
+
+  static const uint64_t CoreMask = ((1 << CoreBits) - 1);
+
+  static const uint64_t NumIdShift = CoreBits;
+  static const uint64_t NumIdMask = ((1 << 27) - 1) << NumIdShift;
+
+  static const uint64_t EpochShift = NumIdShift + 27;
+  static const uint64_t EpochMask = ((uint64_t)-1) << EpochShift;
+
+  static inline ALWAYS_INLINE
+  uint64_t CoreId(uint64_t v)
+  {
+    return v & CoreMask;
+  }
+
+  static inline ALWAYS_INLINE
+  uint64_t NumId(uint64_t v)
+  {
+    return (v & NumIdMask) >> NumIdShift;
+  }
+
+  static inline ALWAYS_INLINE
+  uint64_t EpochId(uint64_t v)
+  {
+    return (v & EpochMask) >> EpochShift;
+  }
+
+  static inline ALWAYS_INLINE
+  uint64_t MakeTid(uint64_t core_id, uint64_t num_id, uint64_t epoch_id)
+  {
+    return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
+  }
+
+  // XXX(stephentu): we re-implement another epoch-based scheme- we should
+  // reconcile this with the RCU-subsystem, by implementing an epoch based
+  // thread manager, which both the RCU GC and this machinery can build on top
+  // of
+
+  static bool InitEpochScheme();
+  static bool _init_epoch_scheme_flag;
+
+  // the core ID of this core: -1 if not set
+  static __thread ssize_t tl_core_id;
+
+  // the last commit ID made by this core
   static __thread tid_t tl_last_commit_tid;
-  static __thread ssize_t tl_core_id; // -1 if not set
-  static volatile size_t g_core_count;
+
+  // allows a single core to run multiple transactions at the same time
+  // XXX(stephentu): should we allow this? this seems potentially troubling
+  static __thread unsigned int tl_nest_level;
+
+  // XXX(stephentu): think about if the vars below really need to be volatile
+
+  // contains the current epoch number
+  static volatile uint64_t g_current_epoch CACHE_ALIGNED;
+
+  // contains a running count of all the cores
+  static volatile size_t g_core_count CACHE_ALIGNED;
+
+  // contains the information from each epoch sync- used for
+  // doing consistent snapshots
+  static volatile util::aligned_padded_u64
+    g_last_consistent_versions[NMaxCores] CACHE_ALIGNED;
+
+  static volatile util::aligned_padded_elem<pthread_spinlock_t>
+    g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
 };
 
 #endif /* _NDB_TXN_H_ */
