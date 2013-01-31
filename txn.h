@@ -15,6 +15,7 @@
 #include "macros.h"
 #include "varkey.h"
 #include "util.h"
+#include "static_assert.h"
 
 class transaction_abort_exception {};
 class transaction_unusable_exception {};
@@ -527,30 +528,6 @@ public:
 
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
-protected:
-  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
-
-  // can only read elements in this epoch or previous epochs
-  virtual bool can_read_tid(tid_t t) const { return EpochId(t) <= current_epoch; }
-
-private:
-  // the global epoch this txn is running in (this # is read when it starts)
-  uint64_t current_epoch;
-
-  static size_t core_id();
-
-  // XXX(stephentu): need to implement core ID recycling
-  static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
-  static const size_t NMaxCores = (1 << CoreBits);
-
-  static const uint64_t CoreMask = ((1 << CoreBits) - 1);
-
-  static const uint64_t NumIdShift = CoreBits;
-  static const uint64_t NumIdMask = ((1 << 27) - 1) << NumIdShift;
-
-  static const uint64_t EpochShift = NumIdShift + 27;
-  static const uint64_t EpochMask = ((uint64_t)-1) << EpochShift;
-
   static inline ALWAYS_INLINE
   uint64_t CoreId(uint64_t v)
   {
@@ -569,9 +546,41 @@ private:
     return (v & EpochMask) >> EpochShift;
   }
 
+protected:
+  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
+
+  // can only read elements in this epoch or previous epochs
+  virtual bool
+  can_read_tid(tid_t t) const
+  {
+    return EpochId(t) <= current_epoch;
+  }
+
+private:
+  // the global epoch this txn is running in (this # is read when it starts)
+  uint64_t current_epoch;
+
+  static size_t core_id();
+
+  // XXX(stephentu): need to implement core ID recycling
+  static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
+  static const size_t NMaxCores = (1 << CoreBits);
+
+  static const uint64_t CoreMask = ((1 << CoreBits) - 1);
+
+  static const uint64_t NumIdShift = CoreBits;
+  static const uint64_t NumIdMask = ((((uint64_t)1) << 27) - 1) << NumIdShift;
+
+  static const uint64_t EpochShift = NumIdShift + 27;
+  static const uint64_t EpochMask = ((uint64_t)-1) << EpochShift;
+
   static inline ALWAYS_INLINE
   uint64_t MakeTid(uint64_t core_id, uint64_t num_id, uint64_t epoch_id)
   {
+    // some sanity checking
+    _static_assert((CoreMask | NumIdMask | EpochMask) == ((uint64_t)-1));
+    _static_assert((CoreMask & NumIdMask) == 0);
+    _static_assert((NumIdMask & EpochMask) == 0);
     return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
   }
 
