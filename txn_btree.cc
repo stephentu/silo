@@ -356,7 +356,6 @@ template <typename TxnType>
 static void
 test_multi_btree()
 {
-
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
@@ -379,6 +378,49 @@ test_multi_btree()
       ALWAYS_ASSERT(ret1);
       ALWAYS_ASSERT(v0 == (txn_btree::value_type) 123);
       ALWAYS_ASSERT(v1 == (txn_btree::value_type) 123);
+    }
+  }
+}
+
+template <typename TxnType>
+static void
+test_read_only_snapshot()
+{
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    txn_btree btr;
+
+    struct rec { uint64_t v; };
+    rec recs[2];
+    for (size_t i = 0; i < ARRAY_NELEMS(recs); i++)
+      recs[i].v = 0;
+
+    {
+      TxnType t(txn_flags);
+      btr.insert(t, u64_varkey(0), (txn_btree::value_type) &recs[0]);
+      t.commit();
+    }
+
+    // XXX(stephentu): HACK! we need to wait for the GC to
+    // compute a new consistent snapshot version that includes this
+    // latest update
+    sleep(3);
+
+    {
+      TxnType t0(txn_flags), t1(txn_flags | transaction::TXN_FLAG_READ_ONLY);
+      txn_btree::value_type v0, v1;
+      ALWAYS_ASSERT(btr.search(t0, u64_varkey(0), v0));
+      ALWAYS_ASSERT(v0 == (txn_btree::value_type) &recs[0]);
+
+      btr.insert(t0, u64_varkey(0), (txn_btree::value_type) &recs[1]);
+
+      ALWAYS_ASSERT(btr.search(t1, u64_varkey(0), v1));
+      ALWAYS_ASSERT(v1 == (txn_btree::value_type) &recs[0]);
+
+      t0.commit();
+      t1.commit();
     }
   }
 }
@@ -552,12 +594,10 @@ static void
 mp_test2()
 {
   using namespace mp_test2_ns;
-
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     uint64_t txn_flags = TxnFlags[txn_flags_idx];
-
     txn_btree btr;
     {
       TxnType t(txn_flags);
@@ -874,12 +914,13 @@ txn_btree::Test()
   //mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  test1<transaction_proto2>();
-  test2<transaction_proto2>();
-  test_multi_btree<transaction_proto2>();
-  mp_test1<transaction_proto2>();
+  //test1<transaction_proto2>();
+  //test2<transaction_proto2>();
+  //test_multi_btree<transaction_proto2>();
+  //test_read_only_snapshot<transaction_proto2>();
+  //mp_test1<transaction_proto2>();
   mp_test2<transaction_proto2>();
-  mp_test3<transaction_proto2>();
+  //mp_test3<transaction_proto2>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();
