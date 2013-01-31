@@ -270,6 +270,11 @@ public:
       }
     }
 
+    /**
+     * Always writes the record in the latest (newest) version slot,
+     * not asserting whether or not inserting r @ t would violate the
+     * sorted order invariant
+     */
     inline void
     write_record_at(tid_t t, record_t r, record_t *removed)
     {
@@ -578,11 +583,15 @@ private:
   static bool InitEpochScheme();
   static bool _init_epoch_scheme_flag;
 
+  static void *EpochLoop(void *p);
+
+  /**
+   * Get a (possibly stale) consistent TID
+   */
+  static uint64_t GetConsistentTid();
+
   // the core ID of this core: -1 if not set
   static __thread ssize_t tl_core_id;
-
-  // the last commit ID made by this core
-  static __thread tid_t tl_last_commit_tid;
 
   // allows a single core to run multiple transactions at the same time
   // XXX(stephentu): should we allow this? this seems potentially troubling
@@ -596,11 +605,15 @@ private:
   // contains a running count of all the cores
   static volatile size_t g_core_count CACHE_ALIGNED;
 
+  // the last commit ID made by this core
+  static volatile util::aligned_padded_u64
+    g_last_commit_tids[NMaxCores] CACHE_ALIGNED;
+
   // contains the information from each epoch sync- used for
   // doing consistent snapshots
-  static volatile util::aligned_padded_u64
-    g_last_consistent_versions[NMaxCores] CACHE_ALIGNED;
+  static volatile uint64_t g_last_consistent_tid CACHE_ALIGNED;
 
+  // for synchronizing with the epoch incrementor loop
   static volatile util::aligned_padded_elem<pthread_spinlock_t>
     g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
 };

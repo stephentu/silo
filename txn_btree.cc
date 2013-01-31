@@ -202,7 +202,11 @@ txn_btree::insert_impl(transaction &t, const key_type &k, value_type v)
 {
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
-  ctx.write_set[string(k.str())] = v;
+  if (unlikely(t.get_flags() & transaction::TXN_FLAG_READ_ONLY)) {
+    t.abort();
+    throw transaction_abort_exception();
+  }
+  ctx.write_set[k.str()] = v;
 }
 
 struct test_callback_ctr {

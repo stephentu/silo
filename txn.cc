@@ -56,6 +56,7 @@ transaction::commit()
 
   for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it) {
+    INVARIANT(!(get_flags() & TXN_FLAG_READ_ONLY) || outer_it->second.write_set.empty());
     for (write_set_map::iterator it = outer_it->second.write_set.begin();
         it != outer_it->second.write_set.end(); ++it) {
     retry:
@@ -500,20 +501,23 @@ transaction_proto2::~transaction_proto2()
 pair<bool, transaction::tid_t>
 transaction_proto2::consistent_snapshot_tid() const
 {
-  return make_pair(false, 0);
+  if (get_flags() & TXN_FLAG_READ_ONLY)
+    return make_pair(true, g_last_consistent_tid);
+  else
+    return make_pair(false, 0);
 }
 
 transaction::tid_t
 transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_nodes)
 {
   size_t my_core_id = core_id();
-  INVARIANT(tl_last_commit_tid == MIN_TID ||
-            CoreId(tl_last_commit_tid) == my_core_id);
+  tid_t l_last_commit_tid = g_last_commit_tids[my_core_id].elem;
+  INVARIANT(l_last_commit_tid == MIN_TID || CoreId(l_last_commit_tid) == my_core_id);
 
   // XXX(stephentu): wrap-around messes this up
-  INVARIANT(EpochId(tl_last_commit_tid) <= current_epoch);
+  INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);
 
-  tid_t ret = tl_last_commit_tid;
+  tid_t ret = l_last_commit_tid;
   for (map<txn_btree *, txn_context>::const_iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it)
     for (read_set_map::const_iterator it = outer_it->second.read_set.begin();
@@ -537,7 +541,7 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_no
   // XXX(stephentu): document why we need this memory fence
   __sync_synchronize();
 
-  return (tl_last_commit_tid = ret);
+  return (g_last_commit_tids[my_core_id].elem = ret);
 }
 
 size_t
@@ -555,18 +559,67 @@ transaction_proto2::core_id()
 bool
 transaction_proto2::InitEpochScheme()
 {
-  for (size_t i = 0; i < NMaxCores; i++)
+  // NB(stephentu): we don't use ndb_thread here, because the EpochLoop
+  // does not participate in any transactions.
+  for (size_t i = 0; i < NMaxCores; i++) {
+    g_last_commit_tids[i].elem = MIN_TID;
     ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
+  }
+  pthread_t p;
+  pthread_attr_t attr;
+  ALWAYS_ASSERT(pthread_attr_init(&attr) == 0);
+  ALWAYS_ASSERT(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0);
+  ALWAYS_ASSERT(pthread_create(&p, &attr, EpochLoop, NULL) == 0);
+  ALWAYS_ASSERT(pthread_attr_destroy(&attr) == 0);
   return true;
 }
 
 bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
 
+void *
+transaction_proto2::EpochLoop(void *p)
+{
+  for (;;) {
+
+    // XXX(stephentu): better solution for epoch intervals?
+    // this interval time defines the staleness of our consistent
+    // snapshots
+    struct timespec t;
+    memset(&t, 0, sizeof(t));
+    t.tv_sec = 2;
+    nanosleep(&t, NULL);
+
+    // bump epoch number
+    // NB(stephentu): no need to do this as an atomic operation because we are
+    // the only writer!
+    g_current_epoch++;
+
+    // XXX(stephentu): document why we need this memory fence
+    __sync_synchronize();
+
+    // consistent TID = max_{all cores}(last tid in epoch of core)
+    uint64_t ret = 0;
+    size_t l_core_count = g_core_count;
+    for (size_t i = 0; i < l_core_count; i++) {
+      scoped_spinlock l(&g_epoch_spinlocks[i].elem);
+      if (g_last_commit_tids[i].elem > ret)
+        ret = g_last_commit_tids[i].elem;
+    }
+
+    g_last_consistent_tid = ret;
+  }
+  return 0;
+}
+
 __thread ssize_t transaction_proto2::tl_core_id = -1;
-__thread transaction::tid_t transaction_proto2::tl_last_commit_tid = MIN_TID;
 __thread unsigned int transaction_proto2::tl_nest_level = 0;
 
-volatile uint64_t transaction_proto2::g_current_epoch = 0;
+// NB(stephentu): we start the current epoch at t=1, to guarantee that
+// zero modifications are made in epoch at t=0 (which is the epoch the DB
+// started in). This allows us to *immediately* take a consistent snapshot
+// of the DB (it will be of an empty DB).
+volatile uint64_t transaction_proto2::g_current_epoch = 1;
 volatile transaction::tid_t transaction_proto2::g_core_count = 0;
-volatile aligned_padded_u64 transaction_proto2::g_last_consistent_versions[NMaxCores];
+volatile aligned_padded_u64 transaction_proto2::g_last_commit_tids[NMaxCores];
+volatile uint64_t transaction_proto2::g_last_consistent_tid = 0;
 volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];
