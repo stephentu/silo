@@ -11,6 +11,25 @@
 using namespace std;
 using namespace util;
 
+void
+transaction::logical_node_spillblock::gc_chain()
+{
+  INVARIANT(rcu::in_rcu_region());
+  struct logical_node_spillblock *cur = this;
+  while (cur) {
+    // free all the records
+    vector<callback_t> &callbacks = completion_callbacks();
+    const size_t n = cur->size();
+    for (size_t i = 0; i < n; i++)
+      for (vector<callback_t>::iterator inner_it = callbacks.begin();
+           inner_it != callbacks.end(); ++inner_it)
+        (*inner_it)(cur->values[i]);
+    struct logical_node_spillblock *next = cur->spillblock_next;
+    rcu::free(cur);
+    cur = next;
+  }
+}
+
 string
 transaction::logical_node::VersionInfoStr(uint64_t v)
 {
@@ -27,6 +46,26 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   return buf.str();
 }
 
+// XXX: hacky
+static inline string
+proto2_version_str(uint64_t v)
+{
+  ostringstream b;
+  b << "[core=" << transaction_proto2::CoreId(v) << " | n="
+    << transaction_proto2::NumId(v) << " | epoch=" << transaction_proto2::EpochId(v) << "]";
+  return b.str();
+}
+
+static vector<string>
+format_tid_list(const vector<transaction::tid_t> &tids)
+{
+  vector<string> s;
+  for (vector<transaction::tid_t>::const_iterator it = tids.begin();
+       it != tids.end(); ++it)
+    s.push_back(proto2_version_str(*it));
+  return s;
+}
+
 inline ostream &
 operator<<(ostream &o, const transaction::logical_node &ln)
 {
@@ -34,9 +73,10 @@ operator<<(ostream &o, const transaction::logical_node &ln)
   const size_t n = ln.size();
   for (size_t i = 0 ; i < n; i++)
     tids.push_back(ln.versions[i]);
+  vector<string> tids_s = format_tid_list(tids);
   bool has_spill = ln.spillblock_head;
   o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) << ", tids="
-    << format_list(tids.rbegin(), tids.rend()) << ", has_spill="
+    << format_list(tids_s.rbegin(), tids_s.rend()) << ", has_spill="
     <<  has_spill << "]";
   o << endl;
   const struct transaction::logical_node_spillblock *p = ln.spillblock_head;
@@ -45,7 +85,8 @@ operator<<(ostream &o, const transaction::logical_node &ln)
     vector<transaction::tid_t> itids;
     for (size_t j = 0; j < in; j++)
       itids.push_back(p->versions[j]);
-    o << format_list(itids.rbegin(), itids.rend()) << endl;
+    vector<string> itids_s = format_tid_list(itids);
+    o << format_list(itids_s.rbegin(), itids_s.rend()) << endl;
   }
   return o;
 }
@@ -207,7 +248,7 @@ transaction::commit()
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid << endl);
       record_t removed = 0;
-      if (it->first->write_record_at(commit_tid, it->second, &removed))
+      if (it->first->write_record_at(this, commit_tid, it->second, &removed))
         // signal for GC
         on_logical_node_spill(it->first);
       it->first->unlock();
@@ -293,20 +334,12 @@ transaction_flags_to_str(uint64_t flags)
   return oss.str();
 }
 
-// XXX: hacky
-static inline string
-proto2_version_str(uint64_t v)
-{
-  ostringstream b;
-  b << "[core=" << transaction_proto2::CoreId(v) << " | n="
-    << transaction_proto2::NumId(v) << " | epoch=" << transaction_proto2::EpochId(v) << "]";
-  return b.str();
-}
+
 
 inline ostream &
 operator<<(ostream &o, const transaction::read_record_t &rr)
 {
-  o << "[tid=" << /*proto2_version_str*/(rr.t) << ", record=0x" << hexify(intptr_t(rr.r))
+  o << "[tid=" << proto2_version_str(rr.t) << ", record=0x" << hexify(intptr_t(rr.r))
     << ", ln=" << *rr.ln << "]";
   return o;
 }

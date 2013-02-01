@@ -55,6 +55,13 @@ public:
 
   typedef varkey key_type;
 
+  // declared here so logical_node::write_record_at() can see it.
+  virtual bool
+  can_overwrite_record_tid(tid_t prev, tid_t cur) const
+  {
+    return false;
+  }
+
   struct logical_node_spillblock {
 
     static const size_t NSpills = 5; // makes each spillblock about 4 cachelines
@@ -167,17 +174,7 @@ public:
      *
      * **must be called within an RCU region **
      */
-    inline void
-    gc_chain()
-    {
-      INVARIANT(rcu::in_rcu_region());
-      struct logical_node_spillblock *cur = this;
-      while (cur) {
-        struct logical_node_spillblock *next = cur->spillblock_next;
-        rcu::free(cur);
-        cur = next;
-      }
-    }
+    void gc_chain();
 
   }; // XXX(stephentu): do we care about cache alignment for spill blocks?
 
@@ -435,12 +432,25 @@ public:
      * Returns true if the write induces a spill
      */
     inline bool
-    write_record_at(tid_t t, record_t r, record_t *removed)
+    write_record_at(const transaction *txn, tid_t t, record_t r, record_t *removed)
     {
       INVARIANT(is_locked());
-      size_t n = size();
+      const size_t n = size();
       INVARIANT(n > 0 && n <= NVersions);
       INVARIANT(versions[n - 1] < t);
+
+      if (removed)
+        *removed = 0;
+
+      // easy case
+      if (txn->can_overwrite_record_tid(versions[n - 1], t)) {
+        versions[n - 1] = t;
+        if (removed)
+          *removed = values[n - 1];
+        values[n - 1] = r;
+        return false;
+      }
+
       if (n == NVersions) {
         // need to spill
         struct logical_node_spillblock *sb = spillblock_head;
@@ -739,6 +749,11 @@ public:
     COMPILER_MEMORY_FENCE;
   }
 
+  virtual bool
+  can_overwrite_record_tid(tid_t prev, tid_t cur) const
+  {
+    return EpochId(prev) == EpochId(cur);
+  }
 
 protected:
   virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
