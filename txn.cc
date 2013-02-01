@@ -94,12 +94,15 @@ operator<<(ostream &o, const transaction::logical_node &ln)
 transaction::transaction(uint64_t flags)
   : state(TXN_ACTIVE), flags(flags)
 {
+  // XXX(stephentu): VERY large RCU region
+  rcu::region_begin();
 }
 
 transaction::~transaction()
 {
   // transaction shouldn't fall out of scope w/o resolution
   INVARIANT(state != TXN_ACTIVE);
+  rcu::region_end();
 }
 
 void
@@ -115,7 +118,7 @@ transaction::commit()
   }
 
   // fetch logical_nodes for insert
-  map<logical_node *, record_t> logical_nodes;
+  map<logical_node *, pair<bool, record_t> > logical_nodes;
   pair<bool, tid_t> snapshot_tid_t; // declared here so we don't cross initialization
 
   for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
@@ -127,7 +130,7 @@ transaction::commit()
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
-        logical_nodes[(logical_node *) v] = it->second;
+        logical_nodes[(logical_node *) v] = make_pair(false, it->second);
       } else {
         logical_node *ln = logical_node::alloc();
         // XXX: underlying btree api should return the existing value if
@@ -154,7 +157,7 @@ transaction::commit()
             SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
           }
         }
-        logical_nodes[ln] = it->second;
+        logical_nodes[ln] = make_pair(false, it->second);
       }
     }
   }
@@ -164,10 +167,14 @@ transaction::commit()
     // we don't have consistent tids, or not a read-only txn
 
     // lock the logical nodes in sort order
-    for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
+    for (map<logical_node *, pair<bool, record_t> >::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
       VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
       it->first->lock();
+      it->second.first = true; // we locked the node
+      if (!can_read_tid(it->first->latest_version()))
+        // XXX(stephentu): overly conservative
+        goto do_abort;
     }
 
     // acquire commit tid (if not read-only txn)
@@ -243,12 +250,13 @@ transaction::commit()
 
     // commit actual records
     vector<record_t> removed_vec;
-    for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
+    for (map<logical_node *, pair<bool, record_t> >::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
+      INVARIANT(it->second.first);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid << endl);
       record_t removed = 0;
-      if (it->first->write_record_at(this, commit_tid, it->second, &removed))
+      if (it->first->write_record_at(this, commit_tid, it->second.second, &removed))
         // signal for GC
         on_logical_node_spill(it->first);
       it->first->unlock();
@@ -274,9 +282,10 @@ do_abort:
     VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
     VERBOSE(cerr << "aborting txn" << endl);
-  for (map<logical_node *, record_t>::iterator it = logical_nodes.begin();
+  for (map<logical_node *, pair<bool, record_t> >::iterator it = logical_nodes.begin();
        it != logical_nodes.end(); ++it)
-    it->first->unlock();
+    if (it->second.first)
+      it->first->unlock();
   state = TXN_ABRT;
   clear();
   throw transaction_abort_exception();
@@ -597,7 +606,7 @@ transaction_proto1::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto1::gen_commit_tid(const map<logical_node *, record_t> &write_nodes)
+transaction_proto1::gen_commit_tid(const map<logical_node *, pair<bool, record_t> > &write_nodes)
 {
   return incr_and_get_global_tid();
 }
@@ -642,7 +651,7 @@ transaction_proto2::transaction_proto2(uint64_t flags)
     ALWAYS_ASSERT(pthread_spin_lock(&g_epoch_spinlocks[my_core_id].elem) == 0);
   current_epoch = g_current_epoch;
   if (get_flags() & TXN_FLAG_READ_ONLY)
-    last_consistent_tid = g_last_consistent_tid;
+    last_consistent_tid = MakeTid(0, 0, g_last_consistent_epoch);
 }
 
 transaction_proto2::~transaction_proto2()
@@ -664,8 +673,6 @@ transaction_proto2::consistent_snapshot_tid() const
     return make_pair(false, 0);
 }
 
-
-
 void
 transaction_proto2::dump_debug_info() const
 {
@@ -675,10 +682,10 @@ transaction_proto2::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_nodes)
+transaction_proto2::gen_commit_tid(const map<logical_node *, pair<bool, record_t> > &write_nodes)
 {
   size_t my_core_id = core_id();
-  tid_t l_last_commit_tid = g_last_commit_tids[my_core_id].elem;
+  tid_t l_last_commit_tid = tl_last_commit_tid;
   INVARIANT(l_last_commit_tid == MIN_TID || CoreId(l_last_commit_tid) == my_core_id);
 
   // XXX(stephentu): wrap-around messes this up
@@ -694,12 +701,15 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_no
       if (it->second.t > ret)
         ret = it->second.t;
     }
-  for (map<logical_node *, record_t>::const_iterator it = write_nodes.begin();
+  for (map<logical_node *, pair<bool, record_t> >::const_iterator it = write_nodes.begin();
        it != write_nodes.end(); ++it) {
     INVARIANT(it->first->is_locked());
+    INVARIANT(it->second.first);
     tid_t t = it->first->latest_version();
-    // NB: see above
-    INVARIANT(EpochId(it->second.t) <= current_epoch);
+    // XXX(stephentu): we are overly conservative for now- technically this
+    // abort isn't necessary (we really should just write the value in the correct
+    // position)
+    INVARIANT(EpochId(t) <= current_epoch);
     if (t > ret)
       ret = t;
   }
@@ -708,7 +718,10 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_no
   // XXX(stephentu): document why we need this memory fence
   __sync_synchronize();
 
-  return (g_last_commit_tids[my_core_id].elem = ret);
+  // XXX(stephentu): this txn hasn't actually been commited yet,
+  // and could potentially be aborted - but it's ok to increase this #, since
+  // subsequent txns on this core will read this # anyways
+  return (tl_last_commit_tid = ret);
 }
 
 void
@@ -762,12 +775,11 @@ transaction_proto2::core_id()
 bool
 transaction_proto2::InitEpochScheme()
 {
+  for (size_t i = 0; i < NMaxCores; i++)
+    ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
+
   // NB(stephentu): we don't use ndb_thread here, because the EpochLoop
   // does not participate in any transactions.
-  for (size_t i = 0; i < NMaxCores; i++) {
-    g_last_commit_tids[i].elem = MIN_TID;
-    ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
-  }
   pthread_t p;
   pthread_attr_t attr;
   ALWAYS_ASSERT(pthread_attr_init(&attr) == 0);
@@ -783,7 +795,6 @@ void *
 transaction_proto2::EpochLoop(void *p)
 {
   for (;;) {
-
     // XXX(stephentu): better solution for epoch intervals?
     // this interval time defines the staleness of our consistent
     // snapshots
@@ -800,29 +811,23 @@ transaction_proto2::EpochLoop(void *p)
     // XXX(stephentu): document why we need this memory fence
     __sync_synchronize();
 
-    // consistent TID = max_{all cores}(last tid in epoch of core)
-    uint64_t ret = 0;
-    size_t l_core_count = g_core_count;
+    // wait for each core to finish epoch (g_current_epoch - 1)
+    const size_t l_core_count = g_core_count;
     for (size_t i = 0; i < l_core_count; i++) {
       scoped_spinlock l(&g_epoch_spinlocks[i].elem);
-      if (g_last_commit_tids[i].elem > ret)
-        ret = g_last_commit_tids[i].elem;
     }
 
-    g_last_consistent_tid = ret;
+    COMPILER_MEMORY_FENCE;
+    g_last_consistent_epoch = g_current_epoch;
   }
   return 0;
 }
 
 __thread ssize_t transaction_proto2::tl_core_id = -1;
 __thread unsigned int transaction_proto2::tl_nest_level = 0;
+__thread uint64_t transaction_proto2::tl_last_commit_tid = MIN_TID;
 
-// NB(stephentu): we start the current epoch at t=1, to guarantee that
-// zero modifications are made in epoch at t=0 (which is the epoch the DB
-// started in). This allows us to *immediately* take a consistent snapshot
-// of the DB (it will be of an empty DB).
-volatile uint64_t transaction_proto2::g_current_epoch = 1;
+volatile uint64_t transaction_proto2::g_current_epoch = 0;
+volatile uint64_t transaction_proto2::g_last_consistent_epoch = 0;
 volatile transaction::tid_t transaction_proto2::g_core_count = 0;
-volatile aligned_padded_u64 transaction_proto2::g_last_commit_tids[NMaxCores];
-volatile uint64_t transaction_proto2::g_last_consistent_tid = 0;
 volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];

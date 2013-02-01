@@ -10,6 +10,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <utility>
 
 #include "btree.h"
 #include "macros.h"
@@ -532,7 +533,8 @@ protected:
   /**
    * XXX: document
    */
-  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes) = 0;
+  virtual tid_t gen_commit_tid(
+      const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes) = 0;
 
   virtual bool can_read_tid(tid_t t) const { return true; }
 
@@ -695,7 +697,8 @@ public:
 protected:
   static const size_t NMaxChainLength = 5; // XXX(stephentu): tune me?
 
-  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
+  virtual tid_t gen_commit_tid(
+      const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes);
   virtual void on_logical_node_spill(logical_node *ln);
 
 private:
@@ -756,7 +759,8 @@ public:
   }
 
 protected:
-  virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
+  virtual tid_t gen_commit_tid(
+      const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes);
 
   // can only read elements in this epoch or previous epochs
   virtual bool
@@ -818,21 +822,20 @@ private:
   // XXX(stephentu): should we allow this? this seems potentially troubling
   static __thread unsigned int tl_nest_level;
 
+  static __thread uint64_t tl_last_commit_tid;
+
   // XXX(stephentu): think about if the vars below really need to be volatile
 
-  // contains the current epoch number
+  // contains the current epoch number, is either == g_last_consistent_epoch or
+  // == g_last_consistent_epoch + 1
   static volatile uint64_t g_current_epoch CACHE_ALIGNED;
+
+  // contains the epoch # to take a consistent snapshot at the beginning of
+  // (this means g_last_consistent_epoch - 1 is the last epoch fully completed)
+  static volatile uint64_t g_last_consistent_epoch CACHE_ALIGNED;
 
   // contains a running count of all the cores
   static volatile size_t g_core_count CACHE_ALIGNED;
-
-  // the last commit ID made by this core
-  static volatile util::aligned_padded_u64
-    g_last_commit_tids[NMaxCores] CACHE_ALIGNED;
-
-  // contains the information from each epoch sync- used for
-  // doing consistent snapshots
-  static volatile uint64_t g_last_consistent_tid CACHE_ALIGNED;
 
   // for synchronizing with the epoch incrementor loop
   static volatile util::aligned_padded_elem<pthread_spinlock_t>
