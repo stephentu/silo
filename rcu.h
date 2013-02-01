@@ -69,6 +69,8 @@ public:
 
   static void region_end();
 
+  static bool in_rcu_region();
+
 private:
   static void *gc_thread_loop(void *p);
   static pthread_spinlock_t *rcu_mutex();
@@ -85,6 +87,12 @@ private:
   static __thread unsigned int tl_crit_section_depth;
 };
 
+/**
+ * Use by data structures which use RCU
+ *
+ * XXX(stephentu): we are doing a terrible job of annotating all the
+ * data structures which use RCU now
+ */
 class rcu_enabled {
 public:
   inline rcu_enabled()

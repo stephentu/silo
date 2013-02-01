@@ -148,6 +148,12 @@ rcu::region_end()
     ALWAYS_ASSERT(pthread_spin_unlock(&tl_sync->local_critical_mutex) == 0);
 }
 
+bool
+rcu::in_rcu_region()
+{
+  return tl_crit_section_depth;
+}
+
 void *
 rcu::gc_thread_loop(void *p)
 {

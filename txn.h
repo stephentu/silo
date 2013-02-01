@@ -16,6 +16,7 @@
 #include "varkey.h"
 #include "util.h"
 #include "static_assert.h"
+#include "rcu.h"
 
 class transaction_abort_exception {};
 class transaction_unusable_exception {};
@@ -54,11 +55,130 @@ public:
 
   typedef varkey key_type;
 
+  struct logical_node_spillblock {
+
+    static const size_t NSpills = 5; // makes each spillblock about 4 cachelines
+    static const size_t NSpillSize = 3;
+
+    volatile uint8_t nspills; // how many spills so far, the # only increases
+    volatile uint64_t gc_opaque_value; // an opaque 64-bit value for GC, initialized to 0
+
+    tid_t versions[NSpillSize * NSpills];
+    record_t values[NSpillSize * NSpills];
+
+    struct logical_node_spillblock *spillblock_next;
+
+    logical_node_spillblock(
+        struct logical_node_spillblock *spillblock_next)
+      : nspills(0), gc_opaque_value(0),
+        spillblock_next(spillblock_next)
+    {}
+
+    inline uint8_t
+    version() const
+    {
+      COMPILER_MEMORY_FENCE;
+      return nspills;
+    }
+
+    inline bool
+    check_version(uint8_t version) const
+    {
+      COMPILER_MEMORY_FENCE;
+      return nspills == version;
+    }
+
+    inline bool
+    is_full() const
+    {
+      INVARIANT(nspills <= NSpills);
+      return nspills == NSpills;
+    }
+
+    inline void
+    spill_into(tid_t *intake_versions, record_t *intake_values)
+    {
+      INVARIANT(!is_full());
+      memcpy((char *) &versions[nspills * NSpillSize],
+             (const char *) intake_versions,
+             NSpillSize * sizeof(tid_t));
+      memcpy((char *) &values[nspills * NSpillSize],
+             (const char *) intake_values,
+             NSpillSize * sizeof(record_t));
+      COMPILER_MEMORY_FENCE;
+      nspills++;
+    }
+
+    /**
+     * Read the record at tid t. Returns true if such a record exists,
+     * false otherwise (ie the record was GC-ed). Note that
+     * record_at()'s return values must be validated using versions.
+     *
+     * The cool thing about record_at() for spillblocks is we don't ever have
+     * to check version numbers- the contents are never overwritten
+     */
+    inline bool
+    record_at(tid_t t, tid_t &start_t, record_t &r) const
+    {
+      const struct logical_node_spillblock *cur = this;
+      while (cur) {
+        size_t n = cur->nspills;
+        INVARIANT(n > 0 && n <= NSpillSize * NSpills);
+        for (ssize_t i = n - 1; i >= 0; i--)
+          if (cur->versions[i] <= t) {
+            start_t = cur->versions[i];
+            r = cur->values[i];
+            return true;
+          }
+        cur = cur->spillblock_next;
+      }
+      return false;
+    }
+
+    inline bool
+    is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid, tid_t oldest_tid) const
+    {
+      const struct logical_node_spillblock *cur = this;
+      while (cur) {
+        size_t n = cur->nspills;
+        INVARIANT(n > 0 && n <= NSpillSize * NSpills);
+        if (versions[n - 1] <= snapshot_tid)
+          return oldest_tid > commit_tid;
+        for (ssize_t i = n - 2; i >= 0; i--)
+          if (versions[i] <= snapshot_tid) {
+            INVARIANT(versions[i + 1] != commit_tid);
+            return versions[i + 1] > commit_tid;
+          }
+        oldest_tid = versions[0];
+        cur = cur->spillblock_next;
+      }
+      return false;
+    }
+
+    /**
+     * Put this spillblock and all the spillblocks later in the chain up for GC
+     *
+     * **must be called within an RCU region **
+     */
+    inline void
+    gc_chain()
+    {
+      INVARIANT(rcu::in_rcu_region());
+      struct logical_node_spillblock *cur = this;
+      while (cur) {
+        struct logical_node_spillblock *next = cur->spillblock_next;
+        rcu::free(cur);
+        cur = next;
+      }
+    }
+
+  }; // XXX(stephentu): do we care about cache alignment for spill blocks?
+
   /**
    * A logical_node is the type of value which we stick
    * into underlying (non-transactional) data structures
    *
-   * We try to size a logical node to be about 1 cache line wide
+   * A logical node is one cache line wide
    */
   struct logical_node {
   private:
@@ -72,7 +192,7 @@ public:
 
   public:
 
-    static const size_t NVersions = 3;
+    static const size_t NVersions = logical_node_spillblock::NSpillSize;
 
     // [ locked | num_versions | version ]
     // [  0..1  |     1..5     |  5..64  ]
@@ -84,8 +204,11 @@ public:
     tid_t versions[NVersions];
     record_t values[NVersions];
 
+    // spill in units of NVersions
+    struct logical_node_spillblock *spillblock_head;
+
     logical_node()
-      : hdr(0)
+      : hdr(0), spillblock_head(0)
     {
       // each logical node starts with one "deleted" entry at MIN_TID
       set_size(1);
@@ -166,6 +289,12 @@ public:
       return v;
     }
 
+    inline uint64_t
+    unstable_version() const
+    {
+      return hdr;
+    }
+
     inline bool
     check_version(uint64_t version) const
     {
@@ -177,36 +306,39 @@ public:
      * Read the record at tid t. Returns true if such a record exists,
      * false otherwise (ie the record was GC-ed). Note that
      * record_at()'s return values must be validated using versions.
+     *
+     * NB(stephentu): calling record_at() while holding the lock
+     * is an error- this will cause deadlock
      */
     inline bool
     record_at(tid_t t, tid_t &start_t, record_t &r) const
     {
+    retry:
+      uint64_t v = stable_version();
       // because we expect t's to be relatively recent, instead of
       // doing binary search, we simply do a linear scan from the
       // end- most of the time we should find a match on the first try
       size_t n = size();
+      const struct logical_node_spillblock *p = spillblock_head;
       INVARIANT(n > 0 && n <= NVersions);
+      bool found = false;
       for (ssize_t i = n - 1; i >= 0; i--)
         if (versions[i] <= t) {
           start_t = versions[i];
           r = values[i];
-          return true;
+          found = true;
+          break;
         }
-      return false;
+      if (unlikely(!check_version(v)))
+        goto retry;
+
+      return found ? true : (p ? p->record_at(t, start_t, r) : false);
     }
 
     inline bool
     stable_read(tid_t t, tid_t &start_t, record_t &r) const
     {
-      while (true) {
-        uint64_t v = stable_version();
-        if (unlikely(!record_at(t, start_t, r)))
-          // the record at this tid was gc-ed
-          return false;
-        if (likely(check_version(v)))
-          break;
-      }
-      return true;
+      return record_at(t, start_t, r);
     }
 
     inline bool
@@ -237,46 +369,65 @@ public:
     /**
      * Is the valid read at snapshot_tid still consistent at commit_tid
      */
+    template <bool check>
     inline bool
-    is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid) const
+    is_snapshot_consistent_impl(tid_t snapshot_tid, tid_t commit_tid) const
     {
-      size_t n = size();
+    retry:
+      const uint64_t v = check ? stable_version() : unstable_version();
+
+      const size_t n = size();
       INVARIANT(n > 0 && n <= NVersions);
 
       // fast path
-      if (likely(versions[n - 1] <= snapshot_tid))
+      if (versions[n - 1] <= snapshot_tid) {
+        if (unlikely(check && !check_version(v)))
+          goto retry;
         return true;
+      }
 
       // slow path
-      for (ssize_t i = n - 2 /* we already checked @ (n-1) */; i >= 0; i--)
+      ssize_t i = n - 2; /* we already checked @ (n-1) */
+      bool ret = false;
+      const struct logical_node_spillblock *p = spillblock_head;
+      tid_t oldest_version = versions[0];
+      for (; i >= 0; i--)
         if (versions[i] <= snapshot_tid) {
           // see if theres any conflict between the version we read, and
           // the next modification. there is no conflict (conservatively)
           // if the next modification happens *after* our commit tid
           INVARIANT(versions[i + 1] != commit_tid);
-          return versions[i + 1] > commit_tid;
+          ret = versions[i + 1] > commit_tid;
+          break;
         }
+      if (unlikely(check && !check_version(v)))
+        goto retry;
+      if (i == -1)
+        return p ? p->is_snapshot_consistent(snapshot_tid, commit_tid, oldest_version) : false;
+      else
+        return ret;
+    }
 
-      return false;
+    inline bool
+    is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid) const
+    {
+      return is_snapshot_consistent_impl<false>(snapshot_tid, commit_tid);
     }
 
     inline bool
     stable_is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid) const
     {
-      while (true) {
-        uint64_t v = stable_version();
-        bool ret = is_snapshot_consistent(snapshot_tid, commit_tid);
-        if (likely(check_version(v)))
-          return ret;
-      }
+      return is_snapshot_consistent_impl<true>(snapshot_tid, commit_tid);
     }
 
     /**
      * Always writes the record in the latest (newest) version slot,
      * not asserting whether or not inserting r @ t would violate the
      * sorted order invariant
+     *
+     * Returns true if the write induces a spill
      */
-    inline void
+    inline bool
     write_record_at(tid_t t, record_t r, record_t *removed)
     {
       INVARIANT(is_locked());
@@ -284,19 +435,24 @@ public:
       INVARIANT(n > 0 && n <= NVersions);
       INVARIANT(versions[n - 1] < t);
       if (n == NVersions) {
-        // drop oldest version
-        if (removed)
-          *removed = values[0];
-        for (size_t i = 0; i < NVersions - 1; i++) {
-          versions[i] = versions[i + 1];
-          values[i] = values[i + 1];
-        }
-        versions[NVersions - 1] = t;
-        values[NVersions - 1] = r;
+        // need to spill
+        struct logical_node_spillblock *sb = spillblock_head;
+        if (!spillblock_head || spillblock_head->is_full())
+          sb = new logical_node_spillblock(spillblock_head);
+        sb->spill_into(&versions[0], &values[0]);
+        if (sb != spillblock_head)
+          spillblock_head = sb;
+        versions[0] = t;
+        values[0] = r;
+        set_size(1);
+
+        return true;
       } else {
         versions[n] = t;
         values[n] = r;
         set_size(n + 1);
+
+        return false;
       }
     }
 
@@ -332,10 +488,13 @@ public:
   // abort() always succeeds
   void abort();
 
-  inline uint64_t get_flags() const
+  inline uint64_t
+  get_flags() const
   {
     return flags;
   }
+
+  virtual void dump_debug_info() const;
 
   typedef void (*callback_t)(record_t);
   /** not thread-safe */
@@ -357,6 +516,12 @@ protected:
 
   virtual bool can_read_tid(tid_t t) const { return true; }
 
+  // For GC handlers- note that on_logical_node_spill() is called
+  // with the lock on ln held, to simplify GC code
+  //
+  // Is also called within an RCU read region
+  virtual void on_logical_node_spill(logical_node *ln) = 0;
+
   /**
    * throws transaction_unusable_exception if already resolved (commited/aborted)
    */
@@ -374,6 +539,9 @@ protected:
     record_t r;
     logical_node *ln;
   };
+
+  friend std::ostream &
+  operator<<(std::ostream &o, const transaction::read_record_t &rr);
 
   // XXX: use hash tables for the read/write set
   typedef std::map<std::string, read_record_t> read_set_map;
@@ -504,7 +672,10 @@ public:
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
 protected:
+  static const size_t NMaxChainLength = 5; // XXX(stephentu): tune me?
+
   virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
+  virtual void on_logical_node_spill(logical_node *ln);
 
 private:
   static tid_t current_global_tid(); // tid of the last commit
@@ -527,6 +698,8 @@ public:
   ~transaction_proto2();
 
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
+
+  virtual void dump_debug_info() const;
 
   static inline ALWAYS_INLINE
   uint64_t CoreId(uint64_t v)
@@ -556,9 +729,12 @@ protected:
     return EpochId(t) <= current_epoch;
   }
 
+  virtual void on_logical_node_spill(logical_node *ln);
+
 private:
   // the global epoch this txn is running in (this # is read when it starts)
   uint64_t current_epoch;
+  uint64_t last_consistent_tid;
 
   static size_t core_id();
 

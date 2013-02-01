@@ -38,8 +38,8 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
     transaction::logical_node *ln = (transaction::logical_node *) underlying_v;
     INVARIANT(ln);
     prefetch_node(ln);
-    transaction::tid_t start_t;
-    transaction::record_t r;
+    transaction::tid_t start_t = 0;
+    transaction::record_t r = 0;
 
     pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
@@ -104,8 +104,8 @@ txn_btree::txn_search_range_callback::invoke(
     transaction::logical_node *ln = (transaction::logical_node *) v;
     INVARIANT(ln);
     prefetch_node(ln);
-    transaction::tid_t start_t;
-    transaction::record_t r;
+    transaction::tid_t start_t = 0;
+    transaction::record_t r = 0;
     pair<bool, transaction::tid_t> snapshot_tid_t = t->consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t->can_read_tid(start_t))) {
@@ -574,6 +574,10 @@ namespace mp_test2_ns {
           ctr = 0;
           u64_varkey kend(range_end);
           btr->search_range_call(t, u64_varkey(range_begin), &kend, *this);
+          if (ctr != size_t(v_ctr)) {
+            cerr << "ctr: " << ctr << ", v_ctr: " << size_t(v_ctr) << endl;
+            t.dump_debug_info();
+          }
           t.commit();
           ALWAYS_ASSERT(ctr == size_t(v_ctr));
           validations++;
@@ -611,18 +615,30 @@ mp_test2()
       t.commit();
     }
 
+    // XXX(stephentu): HACK! we need to wait for the GC to
+    // compute a new consistent snapshot version that includes this
+    // latest update
+    sleep(5);
+
     mutate_worker<TxnType> w0(btr, txn_flags);
-    reader_worker<TxnType> w1(btr, txn_flags);
+    //reader_worker<TxnType> w1(btr, txn_flags);
+    reader_worker<TxnType> w2(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
 
     running = true;
-    w0.start(); w1.start();
+    w0.start();
+    //w1.start();
+    w2.start();
     sleep(10);
     running = false;
-    w0.join(); w1.join();
+    w0.join();
+    //w1.join();
+    w2.join();
 
     cerr << "mutate naborts: " << w0.naborts << endl;
-    cerr << "reader naborts: " << w1.naborts << endl;
-    cerr << "validations: " << w1.validations << endl;
+    //cerr << "reader naborts: " << w1.naborts << endl;
+    //cerr << "reader validations: " << w1.validations << endl;
+    cerr << "read-only reader naborts: " << w2.naborts << endl;
+    cerr << "read-only reader validations: " << w2.validations << endl;
 
   }
 }

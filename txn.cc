@@ -184,7 +184,9 @@ transaction::commit()
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid << endl);
       record_t removed = 0;
-      it->first->write_record_at(commit_tid, it->second, &removed);
+      if (it->first->write_record_at(commit_tid, it->second, &removed))
+        // signal for GC
+        on_logical_node_spill(it->first);
       it->first->unlock();
       if (removed)
         removed_vec.push_back(removed);
@@ -235,6 +237,79 @@ transaction::abort()
   }
   state = TXN_ABRT;
   clear();
+}
+
+static inline const char *
+transaction_state_to_cstr(transaction::txn_state state)
+{
+  switch (state) {
+  case transaction::TXN_ACTIVE: return "TXN_ACTIVE";
+  case transaction::TXN_ABRT: return "TXN_ABRT";
+  case transaction::TXN_COMMITED: return "TXN_COMMITED";
+  }
+  ALWAYS_ASSERT(false);
+  return 0;
+}
+
+static inline string
+transaction_flags_to_str(uint64_t flags)
+{
+  bool first = true;
+  ostringstream oss;
+  if (flags & transaction::TXN_FLAG_LOW_LEVEL_SCAN) {
+    oss << "TXN_FLAG_LOW_LEVEL_SCAN";
+    first = false;
+  }
+  if (flags & transaction::TXN_FLAG_READ_ONLY) {
+    if (first)
+      oss << "TXN_FLAG_READ_ONLY";
+    else
+      oss << " | TXN_FLAG_READ_ONLY";
+    first = false;
+  }
+  return oss.str();
+}
+
+// XXX: hacky
+static inline string
+proto2_version_str(uint64_t v)
+{
+  ostringstream b;
+  b << "[core=" << transaction_proto2::CoreId(v) << " | n="
+    << transaction_proto2::NumId(v) << " | epoch=" << transaction_proto2::EpochId(v) << "]";
+  return b.str();
+}
+
+inline ostream &
+operator<<(ostream &o, const transaction::read_record_t &rr)
+{
+  o << "[tid=" << proto2_version_str(rr.t) << ", record=0x" << hexify(intptr_t(rr.r))
+    << ", ln=" << hexify(rr.ln) << "]";
+  return o;
+}
+
+void
+transaction::dump_debug_info() const
+{
+  cerr << "Transaction (obj=0x" << hexify(this) << ") -- state " << transaction_state_to_cstr(state) << endl;
+  cerr << "  Flags: " << transaction_flags_to_str(flags) << endl;
+  cerr << "  Read/Write sets:" << endl;
+  for (map<txn_btree *, txn_context>::const_iterator it = ctx_map.begin();
+       it != ctx_map.end(); ++it) {
+    cerr << "    Btree @ " << hexify(it->first) << ":" << endl;
+
+    // read-set
+    for (read_set_map::const_iterator rs_it = it->second.read_set.begin();
+         rs_it != it->second.read_set.end(); ++rs_it)
+      cerr << "      Key 0x" << hexify(rs_it->first) << " @ " << rs_it->second << endl;
+
+    // write-set
+    for (write_set_map::const_iterator ws_it = it->second.write_set.begin();
+         ws_it != it->second.write_set.end(); ++ws_it)
+      cerr << "      Key 0x" << hexify(ws_it->first) << " @ " << hexify(ws_it->second) << endl;
+
+    // XXX: node set + absent ranges
+  }
 }
 
 inline ostream &
@@ -463,6 +538,22 @@ transaction_proto1::gen_commit_tid(const map<logical_node *, record_t> &write_no
   return incr_and_get_global_tid();
 }
 
+void
+transaction_proto1::on_logical_node_spill(logical_node *ln)
+{
+  INVARIANT(ln->is_locked());
+  INVARIANT(rcu::in_rcu_region());
+  struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
+  for (size_t i = 0; p && i < NMaxChainLength; i++) {
+    pp = &p->spillblock_next;
+    p = p->spillblock_next;
+  }
+  if (p) {
+    *pp = 0;
+    p->gc_chain();
+  }
+}
+
 transaction::tid_t
 transaction_proto1::current_global_tid()
 {
@@ -478,7 +569,7 @@ transaction_proto1::incr_and_get_global_tid()
 volatile transaction::tid_t transaction_proto1::global_tid = MIN_TID;
 
 transaction_proto2::transaction_proto2(uint64_t flags)
-  : transaction(flags), current_epoch(0)
+  : transaction(flags), current_epoch(0), last_consistent_tid(0)
 {
   size_t my_core_id = core_id();
   VERBOSE(cerr << "new transaction_proto2 (core=" << my_core_id
@@ -486,6 +577,8 @@ transaction_proto2::transaction_proto2(uint64_t flags)
   if (tl_nest_level++ == 0)
     ALWAYS_ASSERT(pthread_spin_lock(&g_epoch_spinlocks[my_core_id].elem) == 0);
   current_epoch = g_current_epoch;
+  if (get_flags() & TXN_FLAG_READ_ONLY)
+    last_consistent_tid = g_last_consistent_tid;
 }
 
 transaction_proto2::~transaction_proto2()
@@ -502,9 +595,19 @@ pair<bool, transaction::tid_t>
 transaction_proto2::consistent_snapshot_tid() const
 {
   if (get_flags() & TXN_FLAG_READ_ONLY)
-    return make_pair(true, g_last_consistent_tid);
+    return make_pair(true, last_consistent_tid);
   else
     return make_pair(false, 0);
+}
+
+
+
+void
+transaction_proto2::dump_debug_info() const
+{
+  transaction::dump_debug_info();
+  cerr << "  current_epoch: " << current_epoch << endl;
+  cerr << "  last_consistent_tid: " << proto2_version_str(last_consistent_tid) << endl;
 }
 
 transaction::tid_t
@@ -542,6 +645,40 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, record_t> &write_no
   __sync_synchronize();
 
   return (g_last_commit_tids[my_core_id].elem = ret);
+}
+
+void
+transaction_proto2::on_logical_node_spill(logical_node *ln)
+{
+  INVARIANT(ln->is_locked());
+  INVARIANT(rcu::in_rcu_region());
+
+  // XXX(stephentu): punt on wrap-around for now
+  if (current_epoch < 2 || !ln->spillblock_head)
+    return;
+  const uint64_t gc_epoch = current_epoch - 2;
+
+  struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
+
+  // we store the number of the last GC in the 1st spillblock's opaque counter
+  if (p->gc_opaque_value >= gc_epoch)
+    // don't need to GC anymore
+    return;
+
+  p->gc_opaque_value = gc_epoch;
+
+  // chase the pointers until we find a value which has epoch < gc_epoch. Then we gc the
+  // entire chain
+  while (p) {
+    INVARIANT(p->nspills);
+    if (EpochId(p->versions[0]) < gc_epoch) {
+      *pp = 0;
+      p->gc_chain();
+      break;
+    }
+    pp = &p->spillblock_next;
+    p = p->spillblock_next;
+  }
 }
 
 size_t
