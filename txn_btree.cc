@@ -223,6 +223,15 @@ struct test_callback_ctr {
 // all combinations of txn flags to test
 static uint64_t TxnFlags[] = { 0, transaction::TXN_FLAG_LOW_LEVEL_SCAN };
 
+// stupid hacks
+template <typename TxnType>
+struct txn_epoch_sync { static inline void sync() {} };
+
+template <>
+struct txn_epoch_sync<transaction_proto2> {
+  static inline void sync() { transaction_proto2::wait_an_epoch(); }
+};
+
 template <typename TxnType>
 static void
 test1()
@@ -406,7 +415,7 @@ test_read_only_snapshot()
     // XXX(stephentu): HACK! we need to wait for the GC to
     // compute a new consistent snapshot version that includes this
     // latest update
-    sleep(3);
+    txn_epoch_sync<TxnType>::sync();
 
     {
       TxnType t0(txn_flags), t1(txn_flags | transaction::TXN_FLAG_READ_ONLY);
@@ -618,7 +627,7 @@ mp_test2()
     // XXX(stephentu): HACK! we need to wait for the GC to
     // compute a new consistent snapshot version that includes this
     // latest update
-    sleep(5);
+    txn_epoch_sync<TxnType>::sync();
 
     mutate_worker<TxnType> w0(btr, txn_flags);
     //reader_worker<TxnType> w1(btr, txn_flags);

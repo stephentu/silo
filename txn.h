@@ -730,6 +730,16 @@ public:
     return (v & EpochMask) >> EpochShift;
   }
 
+  // XXX(stephentu): HACK
+  static void wait_an_epoch()
+  {
+    const uint64_t e = g_current_epoch;
+    while (g_current_epoch == e)
+      ;
+    COMPILER_MEMORY_FENCE;
+  }
+
+
 protected:
   virtual tid_t gen_commit_tid(const std::map<logical_node *, record_t> &write_nodes);
 
