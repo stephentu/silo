@@ -59,12 +59,13 @@ public:
 
     static const size_t NSpills = 5; // makes each spillblock about 4 cachelines
     static const size_t NSpillSize = 3;
+    static const size_t NElems = NSpills * NSpillSize;
 
     volatile uint8_t nspills; // how many spills so far, the # only increases
     volatile uint64_t gc_opaque_value; // an opaque 64-bit value for GC, initialized to 0
 
-    tid_t versions[NSpillSize * NSpills];
-    record_t values[NSpillSize * NSpills];
+    tid_t versions[NElems];
+    record_t values[NElems];
 
     struct logical_node_spillblock *spillblock_next;
 
@@ -73,6 +74,12 @@ public:
       : nspills(0), gc_opaque_value(0),
         spillblock_next(spillblock_next)
     {}
+
+    inline size_t
+    size() const
+    {
+      return nspills * NSpillSize;
+    }
 
     inline uint8_t
     version() const
@@ -122,8 +129,8 @@ public:
     {
       const struct logical_node_spillblock *cur = this;
       while (cur) {
-        size_t n = cur->nspills;
-        INVARIANT(n > 0 && n <= NSpillSize * NSpills);
+        const size_t n = cur->size();
+        INVARIANT(n > 0 && n <= NElems);
         for (ssize_t i = n - 1; i >= 0; i--)
           if (cur->versions[i] <= t) {
             start_t = cur->versions[i];
@@ -140,8 +147,8 @@ public:
     {
       const struct logical_node_spillblock *cur = this;
       while (cur) {
-        size_t n = cur->nspills;
-        INVARIANT(n > 0 && n <= NSpillSize * NSpills);
+        const size_t n = cur->size();
+        INVARIANT(n > 0 && n <= NElems);
         if (versions[n - 1] <= snapshot_tid)
           return oldest_tid > commit_tid;
         for (ssize_t i = n - 2; i >= 0; i--)
@@ -480,6 +487,9 @@ public:
 
   } PACKED_CACHE_ALIGNED;
 
+  friend std::ostream &
+  operator<<(std::ostream &o, const logical_node &ln);
+
   transaction(uint64_t flags);
   virtual ~transaction();
 
@@ -670,6 +680,7 @@ class transaction_proto1 : public transaction {
 public:
   transaction_proto1(uint64_t flags = 0);
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
+  virtual void dump_debug_info() const;
 
 protected:
   static const size_t NMaxChainLength = 5; // XXX(stephentu): tune me?

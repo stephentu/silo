@@ -27,6 +27,29 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   return buf.str();
 }
 
+inline ostream &
+operator<<(ostream &o, const transaction::logical_node &ln)
+{
+  vector<transaction::tid_t> tids;
+  const size_t n = ln.size();
+  for (size_t i = 0 ; i < n; i++)
+    tids.push_back(ln.versions[i]);
+  bool has_spill = ln.spillblock_head;
+  o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) << ", tids="
+    << format_list(tids.rbegin(), tids.rend()) << ", has_spill="
+    <<  has_spill << "]";
+  o << endl;
+  const struct transaction::logical_node_spillblock *p = ln.spillblock_head;
+  for (size_t i = 0; p && i < 5; i++, p = p->spillblock_next) {
+    const size_t in = p->size();
+    vector<transaction::tid_t> itids;
+    for (size_t j = 0; j < in; j++)
+      itids.push_back(p->versions[j]);
+    o << format_list(itids.rbegin(), itids.rend()) << endl;
+  }
+  return o;
+}
+
 transaction::transaction(uint64_t flags)
   : state(TXN_ACTIVE), flags(flags)
 {
@@ -283,8 +306,8 @@ proto2_version_str(uint64_t v)
 inline ostream &
 operator<<(ostream &o, const transaction::read_record_t &rr)
 {
-  o << "[tid=" << proto2_version_str(rr.t) << ", record=0x" << hexify(intptr_t(rr.r))
-    << ", ln=" << hexify(rr.ln) << "]";
+  o << "[tid=" << /*proto2_version_str*/(rr.t) << ", record=0x" << hexify(intptr_t(rr.r))
+    << ", ln=" << *rr.ln << "]";
   return o;
 }
 
@@ -532,6 +555,14 @@ transaction_proto1::consistent_snapshot_tid() const
   return make_pair(true, snapshot_tid);
 }
 
+void
+transaction_proto1::dump_debug_info() const
+{
+  transaction::dump_debug_info();
+  cerr << "  snapshot_tid: " << snapshot_tid << endl;
+  cerr << "  global_tid: " << global_tid << endl;
+}
+
 transaction::tid_t
 transaction_proto1::gen_commit_tid(const map<logical_node *, record_t> &write_nodes)
 {
@@ -670,7 +701,7 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
   // chase the pointers until we find a value which has epoch < gc_epoch. Then we gc the
   // entire chain
   while (p) {
-    INVARIANT(p->nspills);
+    INVARIANT(p->size());
     if (EpochId(p->versions[0]) < gc_epoch) {
       *pp = 0;
       p->gc_chain();
