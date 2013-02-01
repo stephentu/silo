@@ -702,7 +702,9 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
   // entire chain
   while (p) {
     INVARIANT(p->size());
-    if (EpochId(p->versions[0]) < gc_epoch) {
+    // don't GC non-full blocks
+    if (p->is_full() &&
+        EpochId(p->versions[logical_node_spillblock::NElems - 1]) < gc_epoch) {
       *pp = 0;
       p->gc_chain();
       break;
