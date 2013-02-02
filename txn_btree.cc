@@ -643,22 +643,22 @@ mp_test2()
     txn_epoch_sync<TxnType>::sync();
 
     mutate_worker<TxnType> w0(btr, txn_flags);
-    //reader_worker<TxnType> w1(btr, txn_flags);
+    reader_worker<TxnType> w1(btr, txn_flags);
     reader_worker<TxnType> w2(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
 
     running = true;
     w0.start();
-    //w1.start();
+    w1.start();
     w2.start();
     sleep(10);
     running = false;
     w0.join();
-    //w1.join();
+    w1.join();
     w2.join();
 
     cerr << "mutate naborts: " << w0.naborts << endl;
-    //cerr << "reader naborts: " << w1.naborts << endl;
-    //cerr << "reader validations: " << w1.validations << endl;
+    cerr << "reader naborts: " << w1.naborts << endl;
+    cerr << "reader validations: " << w1.validations << endl;
     cerr << "read-only reader naborts: " << w2.naborts << endl;
     cerr << "read-only reader validations: " << w2.validations << endl;
 
@@ -817,14 +817,19 @@ mp_test3()
                              w3(btr, txn_flags, 859438989);
     invariant_worker_scan<TxnType> w4(btr, txn_flags);
     invariant_worker_1by1<TxnType> w5(btr, txn_flags);
+    invariant_worker_scan<TxnType> w6(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
+    invariant_worker_1by1<TxnType> w7(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
 
-    w0.start(); w1.start(); w2.start(); w3.start(); w4.start(); w5.start();
+    w0.start(); w1.start(); w2.start(); w3.start(); w4.start(); w5.start(); w6.start(); w7.start();
     w0.join(); w1.join(); w2.join(); w3.join();
-    w4.running = false; w5.running = false;
-    w4.join(); w5.join();
+    w4.running = false; w5.running = false; w6.running = false; w7.running = false;
+    __sync_synchronize();
+    w4.join(); w5.join(); w6.join(); w7.join();
 
     cerr << "scan validations: " << w4.validations << ", scan aborts: " << w4.naborts << endl;
     cerr << "1by1 validations: " << w5.validations << ", 1by1 aborts: " << w5.naborts << endl;
+    cerr << "scan-readonly validations: " << w6.validations << ", scan-readonly aborts: " << w6.naborts << endl;
+    cerr << "1by1-readonly validations: " << w7.validations << ", 1by1-readonly aborts: " << w7.naborts << endl;
 
     for (vector<record *>::iterator it = recs.begin();
         it != recs.end(); ++it)
