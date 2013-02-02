@@ -36,7 +36,9 @@ public:
   typedef uint64_t tid_t;
   typedef uint8_t* record_t;
 
-  enum txn_state { TXN_ACTIVE, TXN_COMMITED, TXN_ABRT, };
+  // TXN_EMBRYO - the transaction object has been allocated but has not
+  // done any operations yet
+  enum txn_state { TXN_EMBRYO, TXN_ACTIVE, TXN_COMMITED, TXN_ABRT, };
 
   enum {
     // use the low-level scan protocol for checking scan consistency,
@@ -550,7 +552,9 @@ protected:
   inline void
   ensure_active()
   {
-    if (unlikely(state != TXN_ACTIVE))
+    if (state == TXN_EMBRYO)
+      state = TXN_ACTIVE;
+    else if (unlikely(state != TXN_ACTIVE))
       throw transaction_unusable_exception();
   }
 

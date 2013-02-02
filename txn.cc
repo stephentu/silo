@@ -46,7 +46,7 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   return buf.str();
 }
 
-// XXX: hacky
+// XXX(stephentu): hacky (how do we know we are using proto2?)
 static inline string
 proto2_version_str(uint64_t v)
 {
@@ -92,7 +92,7 @@ operator<<(ostream &o, const transaction::logical_node &ln)
 }
 
 transaction::transaction(uint64_t flags)
-  : state(TXN_ACTIVE), flags(flags)
+  : state(TXN_EMBRYO), flags(flags)
 {
   // XXX(stephentu): VERY large RCU region
   rcu::region_begin();
@@ -101,6 +101,7 @@ transaction::transaction(uint64_t flags)
 transaction::~transaction()
 {
   // transaction shouldn't fall out of scope w/o resolution
+  // resolution means TXN_EMBRYO, TXN_COMMITED, and TXN_ABRT
   INVARIANT(state != TXN_ACTIVE);
   rcu::region_end();
 }
@@ -109,6 +110,7 @@ void
 transaction::commit()
 {
   switch (state) {
+  case TXN_EMBRYO:
   case TXN_ACTIVE:
     break;
   case TXN_COMMITED:
@@ -294,13 +296,15 @@ do_abort:
 void
 transaction::clear()
 {
-  ctx_map.clear();
+  // don't clear for debugging purposes
+  //ctx_map.clear();
 }
 
 void
 transaction::abort()
 {
   switch (state) {
+  case TXN_EMBRYO:
   case TXN_ACTIVE:
     break;
   case TXN_ABRT:
@@ -316,6 +320,7 @@ static inline const char *
 transaction_state_to_cstr(transaction::txn_state state)
 {
   switch (state) {
+  case transaction::TXN_EMBRYO: return "TXN_EMBRYO";
   case transaction::TXN_ACTIVE: return "TXN_ACTIVE";
   case transaction::TXN_ABRT: return "TXN_ABRT";
   case transaction::TXN_COMMITED: return "TXN_COMMITED";
@@ -343,12 +348,11 @@ transaction_flags_to_str(uint64_t flags)
   return oss.str();
 }
 
-
-
 inline ostream &
 operator<<(ostream &o, const transaction::read_record_t &rr)
 {
-  o << "[tid=" << proto2_version_str(rr.t) << ", record=0x" << hexify(intptr_t(rr.r))
+  o << "[tid=" << proto2_version_str(rr.t) << ", record=0x"
+    << hexify(intptr_t(rr.r))
     << ", ln=" << *rr.ln << "]";
   return o;
 }
@@ -356,7 +360,8 @@ operator<<(ostream &o, const transaction::read_record_t &rr)
 void
 transaction::dump_debug_info() const
 {
-  cerr << "Transaction (obj=0x" << hexify(this) << ") -- state " << transaction_state_to_cstr(state) << endl;
+  cerr << "Transaction (obj=0x" << hexify(this) << ") -- state "
+       << transaction_state_to_cstr(state) << endl;
   cerr << "  Flags: " << transaction_flags_to_str(flags) << endl;
   cerr << "  Read/Write sets:" << endl;
   for (map<txn_btree *, txn_context>::const_iterator it = ctx_map.begin();
