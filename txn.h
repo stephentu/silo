@@ -746,8 +746,8 @@ public:
   // XXX(stephentu): HACK
   static void wait_an_epoch()
   {
-    const uint64_t e = g_current_epoch;
-    while (g_current_epoch == e)
+    const uint64_t e = g_last_consistent_epoch;
+    while (g_last_consistent_epoch == e)
       ;
     COMPILER_MEMORY_FENCE;
   }
