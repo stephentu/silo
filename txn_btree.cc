@@ -596,10 +596,6 @@ namespace mp_test2_ns {
           ctr = 0;
           u64_varkey kend(range_end);
           btr->search_range_call(t, u64_varkey(range_begin), &kend, *this);
-          if (ctr != size_t(v_ctr)) {
-            cerr << "ctr: " << ctr << ", v_ctr: " << size_t(v_ctr) << endl;
-            t.dump_debug_info();
-          }
           t.commit();
           ALWAYS_ASSERT_COND_IN_TXN(t, ctr == size_t(v_ctr));
           validations++;
