@@ -237,8 +237,11 @@ always_assert_cond_in_txn(const transaction &t, bool cond, const char *condstr)
 {
   if (likely(cond))
     return;
+  static pthread_mutex_t g_report_lock = PTHREAD_MUTEX_INITIALIZER;
+  ALWAYS_ASSERT(pthread_mutex_lock(&g_report_lock) == 0);
   cerr << "Condition `" << condstr << "' failed!" << endl;
   t.dump_debug_info();
+  ALWAYS_ASSERT(pthread_mutex_unlock(&g_report_lock) == 0);
   abort();
 }
 
@@ -944,13 +947,13 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  cerr << "Test proto1" << endl;
-  test1<transaction_proto1>();
-  test2<transaction_proto1>();
-  test_multi_btree<transaction_proto1>();
-  mp_test1<transaction_proto1>();
-  mp_test2<transaction_proto1>();
-  mp_test3<transaction_proto1>();
+  //cerr << "Test proto1" << endl;
+  //test1<transaction_proto1>();
+  //test2<transaction_proto1>();
+  //test_multi_btree<transaction_proto1>();
+  //mp_test1<transaction_proto1>();
+  //mp_test2<transaction_proto1>();
+  //mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();
