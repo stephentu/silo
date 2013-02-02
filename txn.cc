@@ -46,8 +46,19 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   return buf.str();
 }
 
-// XXX(stephentu): hacky (how do we know we are using proto2?)
-static inline string
+static string
+proto1_version_str(uint64_t v) UNUSED;
+static string
+proto1_version_str(uint64_t v)
+{
+  ostringstream b;
+  b << v;
+  return b.str();
+}
+
+static string
+proto2_version_str(uint64_t v) UNUSED;
+static string
 proto2_version_str(uint64_t v)
 {
   ostringstream b;
@@ -56,13 +67,16 @@ proto2_version_str(uint64_t v)
   return b.str();
 }
 
+// XXX(stephentu): hacky!
+static string (*g_proto_version_str)(uint64_t v) = proto1_version_str;
+
 static vector<string>
 format_tid_list(const vector<transaction::tid_t> &tids)
 {
   vector<string> s;
   for (vector<transaction::tid_t>::const_iterator it = tids.begin();
        it != tids.end(); ++it)
-    s.push_back(proto2_version_str(*it));
+    s.push_back(g_proto_version_str(*it));
   return s;
 }
 
@@ -80,7 +94,7 @@ operator<<(ostream &o, const transaction::logical_node &ln)
     <<  has_spill << "]";
   o << endl;
   const struct transaction::logical_node_spillblock *p = ln.spillblock_head;
-  for (size_t i = 0; p && i < 5; i++, p = p->spillblock_next) {
+  for (; p; p = p->spillblock_next) {
     const size_t in = p->size();
     vector<transaction::tid_t> itids;
     for (size_t j = 0; j < in; j++)
@@ -121,7 +135,8 @@ transaction::commit()
 
   // fetch logical_nodes for insert
   map<logical_node *, pair<bool, record_t> > logical_nodes;
-  pair<bool, tid_t> snapshot_tid_t; // declared here so we don't cross initialization
+  const pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
+  pair<bool, tid_t> commit_tid(false, 0);
 
   for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it) {
@@ -164,7 +179,6 @@ transaction::commit()
     }
   }
 
-  snapshot_tid_t = consistent_snapshot_tid();
   if (!snapshot_tid_t.first || !logical_nodes.empty()) {
     // we don't have consistent tids, or not a read-only txn
 
@@ -180,12 +194,15 @@ transaction::commit()
     }
 
     // acquire commit tid (if not read-only txn)
-    tid_t commit_tid = logical_nodes.empty() ? 0 : gen_commit_tid(logical_nodes);
+    if (!logical_nodes.empty()) {
+      commit_tid.first = true;
+      commit_tid.second = gen_commit_tid(logical_nodes);
+    }
 
     if (logical_nodes.empty())
       VERBOSE(cerr << "commit tid: <read-only>" << endl);
     else
-      VERBOSE(cerr << "commit tid: " << commit_tid << endl);
+      VERBOSE(cerr << "commit tid: " << commit_tid.second << endl);
 
     // do read validation
     for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
@@ -206,22 +223,26 @@ transaction::commit()
         VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
                      << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
-        if (snapshot_tid_t.first) {
-          // An optimization:
-          // if the latest version is > commit_tid, and the next latest version is <
-          // snapshot_tid, then it is also ok because the latest version will be ordered
-          // after this txn, and we know its read set does not depend on our write set
-          // (since it has a txn id higher than we do)
-          if (likely(did_write ?
-                ln->is_snapshot_consistent(snapshot_tid_t.second, commit_tid) :
-                ln->stable_is_snapshot_consistent(snapshot_tid_t.second, commit_tid)))
-            continue;
-        } else {
+        // XXX(stephentu): this optimization seems broken for now, and don't quite know why,
+        // so we disable it for the time being (it doesn't help proto2)
+        //if (snapshot_tid_t.first) {
+        //  // An optimization:
+        //  // if the latest version is > commit_tid, and the next latest version is <
+        //  // snapshot_tid, then it is also ok because the latest version will be ordered
+        //  // after this txn, and we know its read set does not depend on our write set
+        //  // (since it has a txn id higher than we do)
+        //  if (likely(did_write ?
+        //        ln->is_snapshot_consistent(snapshot_tid_t.second, commit_tid.second) :
+        //        ln->stable_is_snapshot_consistent(snapshot_tid_t.second, commit_tid.second)))
+        //    continue;
+        //} else {
+
           if (likely(did_write ?
                 ln->is_latest_version(it->second.t) :
                 ln->stable_is_latest_version(it->second.t)))
             continue;
-        }
+
+        //}
         goto do_abort;
       }
 
@@ -241,7 +262,7 @@ transaction::commit()
         for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
              it != outer_it->second.absent_range_set.end(); ++it) {
           VERBOSE(cerr << "checking absent range: " << *it << endl);
-          txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid);
+          txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid.second);
           varkey upper(it->b);
           outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
           if (unlikely(c.failed()))
@@ -256,9 +277,9 @@ transaction::commit()
          it != logical_nodes.end(); ++it) {
       INVARIANT(it->second.first);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
-                   << " at commit_tid " << commit_tid << endl);
+                   << " at commit_tid " << commit_tid.second << endl);
       record_t removed = 0;
-      if (it->first->write_record_at(this, commit_tid, it->second.second, &removed))
+      if (it->first->write_record_at(this, commit_tid.second, it->second.second, &removed))
         // signal for GC
         on_logical_node_spill(it->first);
       it->first->unlock();
@@ -275,6 +296,8 @@ transaction::commit()
   }
 
   state = TXN_COMMITED;
+  if (commit_tid.first)
+    on_tid_finish(commit_tid.second);
   clear();
   return;
 
@@ -289,6 +312,8 @@ do_abort:
     if (it->second.first)
       it->first->unlock();
   state = TXN_ABRT;
+  if (commit_tid.first)
+    on_tid_finish(commit_tid.second);
   clear();
   throw transaction_abort_exception();
 }
@@ -351,7 +376,7 @@ transaction_flags_to_str(uint64_t flags)
 inline ostream &
 operator<<(ostream &o, const transaction::read_record_t &rr)
 {
-  o << "[tid=" << proto2_version_str(rr.t) << ", record=0x"
+  o << "[tid=" << g_proto_version_str(rr.t) << ", record=0x"
     << hexify(intptr_t(rr.r))
     << ", ln=" << *rr.ln << "]";
   return o;
@@ -592,7 +617,7 @@ transaction::completion_callbacks()
 }
 
 transaction_proto1::transaction_proto1(uint64_t flags)
-  : transaction(flags), snapshot_tid(current_global_tid())
+  : transaction(flags), snapshot_tid(last_consistent_global_tid)
 {
 }
 
@@ -632,10 +657,15 @@ transaction_proto1::on_logical_node_spill(logical_node *ln)
   }
 }
 
-transaction::tid_t
-transaction_proto1::current_global_tid()
+void
+transaction_proto1::on_tid_finish(tid_t commit_tid)
 {
-  return global_tid;
+  INVARIANT(state == TXN_COMMITED || state == TXN_ABRT);
+  // XXX(stephentu): handle wrap around
+  INVARIANT(commit_tid > last_consistent_global_tid);
+  while (!__sync_bool_compare_and_swap(
+         &last_consistent_global_tid, commit_tid - 1, commit_tid))
+    ;
 }
 
 transaction::tid_t
@@ -645,6 +675,7 @@ transaction_proto1::incr_and_get_global_tid()
 }
 
 volatile transaction::tid_t transaction_proto1::global_tid = MIN_TID;
+volatile transaction::tid_t transaction_proto1::last_consistent_global_tid = 0;
 
 transaction_proto2::transaction_proto2(uint64_t flags)
   : transaction(flags), current_epoch(0), last_consistent_tid(0)
@@ -683,7 +714,7 @@ transaction_proto2::dump_debug_info() const
 {
   transaction::dump_debug_info();
   cerr << "  current_epoch: " << current_epoch << endl;
-  cerr << "  last_consistent_tid: " << proto2_version_str(last_consistent_tid) << endl;
+  cerr << "  last_consistent_tid: " << g_proto_version_str(last_consistent_tid) << endl;
 }
 
 transaction::tid_t

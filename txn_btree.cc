@@ -233,20 +233,26 @@ struct txn_epoch_sync<transaction_proto2> {
 };
 
 static void
-always_assert_cond_in_txn(const transaction &t, bool cond, const char *condstr)
+always_assert_cond_in_txn(
+    const transaction &t, bool cond,
+    const char *condstr, const char *func,
+    const char *filename, int lineno)
 {
   if (likely(cond))
     return;
   static pthread_mutex_t g_report_lock = PTHREAD_MUTEX_INITIALIZER;
   ALWAYS_ASSERT(pthread_mutex_lock(&g_report_lock) == 0);
-  cerr << "Condition `" << condstr << "' failed!" << endl;
+  cerr << func << " (" << filename << ":" << lineno << ") - Condition `"
+       << condstr << "' failed!" << endl;
   t.dump_debug_info();
-  ALWAYS_ASSERT(pthread_mutex_unlock(&g_report_lock) == 0);
+  sleep(1); // XXX(stephentu): give time for debug dump to reach console
+            // why doesn't flushing solve this?
   abort();
+  ALWAYS_ASSERT(pthread_mutex_unlock(&g_report_lock) == 0);
 }
 
 #define ALWAYS_ASSERT_COND_IN_TXN(t, cond) \
-  always_assert_cond_in_txn(t, cond, #cond)
+  always_assert_cond_in_txn(t, cond, #cond, __PRETTY_FUNCTION__, __FILE__, __LINE__)
 
 template <typename TxnType>
 static void
@@ -668,6 +674,7 @@ namespace mp_test3_ns {
 
   static const size_t amount_per_person = 100;
   static const size_t naccounts = 100;
+  static const size_t niters = 1000000;
   struct record { uint64_t v; };
 
   template <typename TxnType>
@@ -684,7 +691,7 @@ namespace mp_test3_ns {
     virtual void run()
     {
       fast_random r(seed);
-      for (size_t i = 0; i < 300000; i++) {
+      for (size_t i = 0; i < niters; i++) {
         record *arec_new = new record;
         record *brec_new = new record;
         recs.push_back(arec_new);
@@ -772,6 +779,10 @@ namespace mp_test3_ns {
             sum += ((record *) v)->v;
           }
           t.commit();
+          if (sum != (naccounts * amount_per_person)) {
+            cerr << "sum: " << sum << endl;
+            cerr << "naccounts * amount_per_person: " << (naccounts * amount_per_person) << endl;
+          }
           ALWAYS_ASSERT_COND_IN_TXN(t, sum == (naccounts * amount_per_person));
           validations++;
         } catch (transaction_abort_exception &e) {
@@ -809,6 +820,8 @@ mp_test3()
       }
       t.commit();
     }
+
+    txn_epoch_sync<TxnType>::sync();
 
     transfer_worker<TxnType> w0(btr, txn_flags, 342),
                              w1(btr, txn_flags, 93852),
@@ -947,13 +960,13 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  //cerr << "Test proto1" << endl;
-  //test1<transaction_proto1>();
-  //test2<transaction_proto1>();
-  //test_multi_btree<transaction_proto1>();
-  //mp_test1<transaction_proto1>();
-  //mp_test2<transaction_proto1>();
-  //mp_test3<transaction_proto1>();
+  cerr << "Test proto1" << endl;
+  test1<transaction_proto1>();
+  test2<transaction_proto1>();
+  test_multi_btree<transaction_proto1>();
+  mp_test1<transaction_proto1>();
+  mp_test2<transaction_proto1>();
+  mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();

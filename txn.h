@@ -533,7 +533,9 @@ public:
 protected:
 
   /**
-   * XXX: document
+   * create a new, unique TID for a txn. at the point which gen_commit_tid(),
+   * it still has not been decided whether or not this txn will commit
+   * successfully
    */
   virtual tid_t gen_commit_tid(
       const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes) = 0;
@@ -545,6 +547,11 @@ protected:
   //
   // Is also called within an RCU read region
   virtual void on_logical_node_spill(logical_node *ln) = 0;
+
+  // if gen_commit_tid() is called, then on_tid_finish() will be called
+  // with the commit tid. before on_tid_finish() is called, state is updated
+  // with the resolution (commited, aborted) of this txn
+  virtual void on_tid_finish(tid_t commit_tid) = 0;
 
   /**
    * throws transaction_unusable_exception if already resolved (commited/aborted)
@@ -699,18 +706,20 @@ public:
   virtual void dump_debug_info() const;
 
 protected:
-  static const size_t NMaxChainLength = 5; // XXX(stephentu): tune me?
+  static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
 
   virtual tid_t gen_commit_tid(
       const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes);
   virtual void on_logical_node_spill(logical_node *ln);
+  virtual void on_tid_finish(tid_t commit_tid);
 
 private:
-  static tid_t current_global_tid(); // tid of the last commit
   static tid_t incr_and_get_global_tid();
 
   const tid_t snapshot_tid;
-  volatile static tid_t global_tid;
+
+  volatile static tid_t global_tid CACHE_ALIGNED;
+  volatile static tid_t last_consistent_global_tid CACHE_ALIGNED;
 };
 
 // protocol 2 - no global consistent TIDs
@@ -774,6 +783,7 @@ protected:
   }
 
   virtual void on_logical_node_spill(logical_node *ln);
+  virtual void on_tid_finish(tid_t commit_tid) {}
 
 private:
   // the global epoch this txn is running in (this # is read when it starts)
