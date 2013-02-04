@@ -9,7 +9,7 @@ struct customer {
   int32_t c_d_id;
   int32_t c_id;
   float c_discount;
-  char c_credit[2];
+  inline_str_fixed<2> c_credit;
   inline_str_8<16> c_last;
   inline_str_8<16> c_first;
   float c_credit_lim;
@@ -20,11 +20,11 @@ struct customer {
   inline_str_8<20> c_street_1;
   inline_str_8<20> c_street_2;
   inline_str_8<20> c_city;
-  char c_state[2];
-  char c_zip[9];
-  char c_phone[16];
+  inline_str_fixed<2> c_state;
+  inline_str_fixed<9> c_zip;
+  inline_str_fixed<16> c_phone;
   uint32_t c_since;
-  char c_middle[2];
+  inline_str_fixed<2> c_middle;
   inline_str_16<500> c_data;
 } PACKED;
 struct district {
@@ -37,8 +37,8 @@ struct district {
   inline_str_8<20> d_street_1;
   inline_str_8<20> d_street_2;
   inline_str_8<20> d_city;
-  char d_state[2];
-  char d_zip[9];
+  inline_str_fixed<2> d_state;
+  inline_str_fixed<9> d_zip;
 } PACKED;
 struct history {
   int32_t h_c_id;
@@ -82,7 +82,7 @@ struct order_line {
   float ol_amount;
   int32_t ol_supply_w_id;
   int8_t ol_quantity;
-  char ol_dist_info[24];
+  inline_str_fixed<24> ol_dist_info;
 } PACKED;
 struct stock {
   int32_t s_w_id;
@@ -92,16 +92,16 @@ struct stock {
   int32_t s_order_cnt;
   int32_t s_remote_cnt;
   inline_str_8<50> s_data;
-  char s_dist_01[24];
-  char s_dist_02[24];
-  char s_dist_03[24];
-  char s_dist_04[24];
-  char s_dist_05[24];
-  char s_dist_06[24];
-  char s_dist_07[24];
-  char s_dist_08[24];
-  char s_dist_09[24];
-  char s_dist_10[24];
+  inline_str_fixed<24> s_dist_01;
+  inline_str_fixed<24> s_dist_02;
+  inline_str_fixed<24> s_dist_03;
+  inline_str_fixed<24> s_dist_04;
+  inline_str_fixed<24> s_dist_05;
+  inline_str_fixed<24> s_dist_06;
+  inline_str_fixed<24> s_dist_07;
+  inline_str_fixed<24> s_dist_08;
+  inline_str_fixed<24> s_dist_09;
+  inline_str_fixed<24> s_dist_10;
 } PACKED;
 struct warehouse {
   int32_t w_id;
@@ -111,8 +111,8 @@ struct warehouse {
   inline_str_8<20> w_street_1;
   inline_str_8<20> w_street_2;
   inline_str_8<20> w_city;
-  char w_state[2];
-  char w_zip[9];
+  inline_str_fixed<2> w_state;
+  inline_str_fixed<9> w_zip;
 } PACKED;
 }
 #endif

@@ -1,19 +1,19 @@
 #include <sys/time.h>
+#include <string>
+#include <ctype.h>
 
 #include "bench.h"
 #include "tpcc.h"
 
 // tpcc schemas
 using namespace std;
+using namespace util;
 
-class tpcc_worker : public bench_worker {
+typedef uint uint;
+
+class tpcc_worker_mixin {
 public:
-  tpcc_worker(unsigned long seed, abstract_db *db,
-              const map<string, abstract_ordered_index *> &open_tables,
-              spin_barrier *barrier_a, spin_barrier *barrier_b,
-              unsigned int warehouse_id)
-    : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
-      warehouse_id(warehouse_id),
+  tpcc_worker_mixin(const map<string, abstract_ordered_index *> &open_tables) :
       tbl_customer(open_tables.at("customer")),
       tbl_district(open_tables.at("district")),
       tbl_history(open_tables.at("history")),
@@ -25,14 +25,9 @@ public:
       tbl_warehouse(open_tables.at("warehouse"))
   {
     assert(NumWarehouses() >= 1);
-    assert(warehouse_id >= 1);
   }
 
-  void txn_new_order();
-
-private:
-
-  unsigned int warehouse_id;
+protected:
 
   abstract_ordered_index *tbl_customer;
   abstract_ordered_index *tbl_district;
@@ -52,34 +47,74 @@ private:
     return tv.tv_sec * 1000;
   }
 
-  static inline size_t
+  // config constants
+
+  static inline ALWAYS_INLINE size_t
   NumWarehouses()
   {
     return (size_t) scale_factor;
   }
 
-  inline int
-  RandomNumber(int min, int max)
+  static inline ALWAYS_INLINE size_t
+  NumItems()
+  {
+    return 100000;
+  }
+
+  static inline ALWAYS_INLINE size_t
+  NumDistrictsPerWarehouse()
+  {
+    return 10;
+  }
+
+  static inline ALWAYS_INLINE size_t
+  NumCustomersPerDistrict()
+  {
+    return 3000;
+  }
+
+  // utils for generating random #s and strings
+
+  static inline int
+  RandomNumber(fast_random &r, int min, int max)
   {
     return (int) (r.next_uniform() * (max - min + 1) + min);
   }
 
-  inline int
-  NonUniformRandom(int A, int C, int min, int max)
+  static inline int
+  NonUniformRandom(fast_random &r, int A, int C, int min, int max)
   {
-    return (((RandomNumber(0, A) | RandomNumber(min, max)) + C) % (max - min + 1)) + min;
+    return (((RandomNumber(r, 0, A) | RandomNumber(r, min, max)) + C) % (max - min + 1)) + min;
   }
 
-  inline int
-  GetItemId()
+  static inline int
+  GetItemId(fast_random &r)
   {
-    return NonUniformRandom(8191, 7911, 1, 100000);
+    return NonUniformRandom(r, 8191, 7911, 1, 100000);
   }
 
-  inline int
-  GetCustomerId()
+  static inline int
+  GetCustomerId(fast_random &r)
   {
-    return NonUniformRandom(1023, 259, 1, 3000);
+    return NonUniformRandom(r, 1023, 259, 1, 3000);
+  }
+
+  // following oltpbench, we really generate strings of len - 1...
+  static inline string
+  RandomStr(fast_random &r, int len)
+  {
+    assert(len >= 1);
+    int i = 0;
+    stringstream buf;
+    while (i < (len - 1)) {
+      char c = (char) (r.next_uniform() * 128);
+      // XXX(stephentu): oltpbench uses java's Character.isLetter(), which
+      // is a less restrictive filter than isalnum()
+      if (!isalnum(c))
+        continue;
+      i++;
+    }
+    return buf.str();
   }
 
   // should autogenerate this crap
@@ -168,29 +203,138 @@ private:
   }
 };
 
-typedef unsigned int uint;
+class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
+public:
+  tpcc_worker(unsigned long seed, abstract_db *db,
+              const map<string, abstract_ordered_index *> &open_tables,
+              spin_barrier *barrier_a, spin_barrier *barrier_b,
+              uint warehouse_id)
+    : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
+      tpcc_worker_mixin(open_tables),
+      warehouse_id(warehouse_id)
+  {
+    assert(warehouse_id >= 1);
+  }
+
+  void txn_new_order();
+
+private:
+  uint warehouse_id;
+};
+
+class tpcc_warehouse_loader : public tpcc_worker_mixin {
+public:
+  tpcc_warehouse_loader(unsigned long seed,
+                        abstract_db *db,
+                        const map<string, abstract_ordered_index *> &open_tables)
+    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+  {}
+
+  virtual void
+  run()
+  {
+    void *txn = db->new_txn(txn_flags);
+    try {
+      for (uint i = 1; i < NumWarehouses(); i++) {
+        tpcc::warehouse warehouse;
+        warehouse.w_id = i;
+        warehouse.w_ytd = 300000;
+        warehouse.w_tax = (float) RandomNumber(r, 0, 2000) / 10000.0;
+
+        string w_name = RandomStr(r, RandomNumber(r, 6, 10));
+        string w_street_1 = RandomStr(r, RandomNumber(r, 10, 20));
+        string w_street_2 = RandomStr(r, RandomNumber(r, 10, 20));
+        string w_city = RandomStr(r, RandomNumber(r, 10, 20));
+        string w_state = RandomStr(r, 3);
+        string w_zip = "123456789";
+
+        warehouse.w_name.assign(w_name);
+        warehouse.w_street_1.assign(w_street_1);
+        warehouse.w_street_2.assign(w_street_2);
+        warehouse.w_city.assign(w_city);
+        warehouse.w_state.assign(w_state);
+        warehouse.w_zip.assign(w_zip);
+
+        string pk = WarehousePrimaryKey(i);
+        tbl_warehouse->put(txn, pk.data(), pk.size(), (const char *) &warehouse, sizeof(warehouse));
+      }
+      db->commit_txn(txn);
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      // shouldn't abort on loading!
+      ALWAYS_ASSERT(false);
+    }
+  }
+
+private:
+  fast_random r;
+  abstract_db *db;
+};
+
+class tpcc_item_loader : public tpcc_worker_mixin {
+public:
+  tpcc_item_loader(unsigned long seed,
+                        abstract_db *db,
+                        const map<string, abstract_ordered_index *> &open_tables)
+    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+  {}
+
+  virtual void
+  run()
+  {
+    void *txn = db->new_txn(txn_flags);
+    try {
+      for (uint i = 1; i < NumItems(); i++) {
+        tpcc::item item;
+        item.i_id = i;
+        string i_name = RandomStr(r, RandomNumber(r, 14, 24));
+        item.i_name.assign(i_name);
+        item.i_price = (float) RandomNumber(r, 100, 10000) / 100.0;
+        int len = RandomNumber(r, 26, 50);
+        if (RandomNumber(r, 1, 100) > 10) {
+          string i_data = RandomStr(r, len);
+          item.i_data.assign(i_data);
+        } else {
+          int startOriginal = RandomNumber(r, 2, (len - 8));
+          string i_data = RandomStr(r, startOriginal - 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 9);
+          item.i_data.assign(i_data);
+        }
+        item.i_im_id = RandomNumber(r, 1, 10000);
+        string pk = ItemPrimaryKey(i);
+        tbl_item->put(txn, pk.data(), pk.size(), (const char *) &item, sizeof(item));
+      }
+      db->commit_txn(txn);
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      // shouldn't abort on loading!
+      ALWAYS_ASSERT(false);
+    }
+  }
+
+private:
+  fast_random r;
+  abstract_db *db;
+};
 
 void
 tpcc_worker::txn_new_order()
 {
-  const uint districtID = RandomNumber(1, 10);
-  const uint customerID = GetCustomerId();
-  const uint numItems = RandomNumber(5, 15);
+  const uint districtID = RandomNumber(r, 1, 10);
+  const uint customerID = GetCustomerId(r);
+  const uint numItems = RandomNumber(r, 5, 15);
   vector<uint> itemIDs(numItems),
                supplierWarehouseIDs(numItems),
                orderQuantities(numItems);
   bool allLocal = true;
   for (uint i = 0; i < numItems; i++) {
-    itemIDs[i] = GetItemId();
-    if (NumWarehouses() == 1 || RandomNumber(1, 100) > 1) {
+    itemIDs[i] = GetItemId(r);
+    if (NumWarehouses() == 1 || RandomNumber(r, 1, 100) > 1) {
       supplierWarehouseIDs[i] = warehouse_id;
     } else {
       do {
-       supplierWarehouseIDs[i] = RandomNumber(1, NumWarehouses());
+       supplierWarehouseIDs[i] = RandomNumber(r, 1, NumWarehouses());
       } while (supplierWarehouseIDs[i] == warehouse_id);
       allLocal = false;
     }
-    orderQuantities[i] = RandomNumber(1, 10);
+    orderQuantities[i] = RandomNumber(r, 1, 10);
   }
 
   // XXX(stephentu): implement rollback
@@ -222,11 +366,10 @@ tpcc_worker::txn_new_order()
     ALWAYS_ASSERT(district_vlen == sizeof(tpcc::district));
     tpcc::district *district = (tpcc::district *) district_v;
 
-    tpcc::new_order new_order = {
-      .no_w_id = int32_t(warehouse_id),
-      .no_d_id = int32_t(districtID),
-      .no_o_id = district->d_next_o_id,
-    };
+    tpcc::new_order new_order;
+    new_order.no_w_id = int32_t(warehouse_id);
+    new_order.no_d_id = int32_t(districtID);
+    new_order.no_o_id = district->d_next_o_id;
 
     string newOrderPK = NewOrderPrimaryKey(warehouse_id, districtID, district->d_next_o_id);
     tbl_new_order->insert(txn, newOrderPK.data(), newOrderPK.size(), (const char *) &new_order, sizeof(new_order));
@@ -287,44 +430,44 @@ tpcc_worker::txn_new_order()
       order_line.ol_supply_w_id = int32_t(ol_supply_w_id);
       order_line.ol_quantity = int8_t(ol_quantity);
 
-      char *ol_dist_info = 0;
+      inline_str_fixed<24> *ol_dist_info;
       switch (districtID) {
       case 1:
-        ol_dist_info = &stock->s_dist_01[0];
+        ol_dist_info = &stock->s_dist_01;
         break;
       case 2:
-        ol_dist_info = &stock->s_dist_02[0];
+        ol_dist_info = &stock->s_dist_02;
         break;
       case 3:
-        ol_dist_info = &stock->s_dist_03[0];
+        ol_dist_info = &stock->s_dist_03;
         break;
       case 4:
-        ol_dist_info = &stock->s_dist_04[0];
+        ol_dist_info = &stock->s_dist_04;
         break;
       case 5:
-        ol_dist_info = &stock->s_dist_05[0];
+        ol_dist_info = &stock->s_dist_05;
         break;
       case 6:
-        ol_dist_info = &stock->s_dist_06[0];
+        ol_dist_info = &stock->s_dist_06;
         break;
       case 7:
-        ol_dist_info = &stock->s_dist_07[0];
+        ol_dist_info = &stock->s_dist_07;
         break;
       case 8:
-        ol_dist_info = &stock->s_dist_08[0];
+        ol_dist_info = &stock->s_dist_08;
         break;
       case 9:
-        ol_dist_info = &stock->s_dist_09[0];
+        ol_dist_info = &stock->s_dist_09;
         break;
       case 10:
-        ol_dist_info = &stock->s_dist_10[0];
+        ol_dist_info = &stock->s_dist_10;
         break;
       default:
         ALWAYS_ASSERT(false);
         break;
       }
 
-      memcpy(&order_line.ol_dist_info[0], ol_dist_info, ARRAY_NELEMS(order_line.ol_dist_info));
+      memcpy(&order_line.ol_dist_info, (const char *) ol_dist_info, sizeof(order_line.ol_dist_info));
 
       string orderLinePK = OrderLinePrimaryKey(warehouse_id, districtID, new_order.no_o_id);
       tbl_order_line->insert(txn, orderLinePK.data(), orderLinePK.size(), (const char *) &order_line, sizeof(order_line));
@@ -337,6 +480,8 @@ tpcc_worker::txn_new_order()
     ntxn_aborts++;
   }
 }
+
+
 
 void
 tpcc_do_test(abstract_db *db)
@@ -351,5 +496,7 @@ tpcc_do_test(abstract_db *db)
   open_tables["order_line"] = db->open_index("order_line");
   open_tables["stock"]      = db->open_index("stock");
   open_tables["warehouse"]  = db->open_index("warehouse");
+
+
 
 }
