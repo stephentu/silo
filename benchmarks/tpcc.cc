@@ -130,7 +130,10 @@ protected:
   static inline string
   RandomStr(fast_random &r, uint len)
   {
-    assert(len >= 1);
+    // this is a property of the oltpbench implementation...
+    if (!len)
+      return "";
+
     uint i = 0;
     stringstream buf;
     while (i < (len - 1)) {
@@ -151,7 +154,7 @@ protected:
     char base = '0';
     stringstream buf;
     for (uint i = 0; i < len; i++)
-      buf << (base + (r.next() % 10));
+      buf << (char)(base + (r.next() % 10));
     return buf.str();
   }
 
@@ -322,8 +325,8 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-
     db->thread_end();
+    cerr << "[INFO] finished loading warehouse" << endl;
   }
 
 private:
@@ -358,7 +361,7 @@ public:
           item.i_data.assign(i_data);
         } else {
           int startOriginal = RandomNumber(r, 2, (len - 8));
-          string i_data = RandomStr(r, startOriginal - 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 9);
+          string i_data = RandomStr(r, startOriginal + 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 7);
           item.i_data.assign(i_data);
         }
         item.i_im_id = RandomNumber(r, 1, 10000);
@@ -375,8 +378,8 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-
     db->thread_end();
+    cerr << "[INFO] finished loading item" << endl;
   }
 
 private:
@@ -415,7 +418,7 @@ public:
             stock.s_data.assign(s_data);
           } else {
             int startOriginal = RandomNumber(r, 2, (len - 8));
-            string s_data = RandomStr(r, startOriginal - 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 9);
+            string s_data = RandomStr(r, startOriginal + 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 7);
             stock.s_data.assign(s_data);
           }
           stock.s_dist_01.assign(RandomStr(r, 24));
@@ -444,6 +447,7 @@ public:
       ALWAYS_ASSERT(false);
     }
     db->thread_end();
+    cerr << "[INFO] finished loading stock" << endl;
   }
 
 private:
@@ -496,6 +500,7 @@ public:
       ALWAYS_ASSERT(false);
     }
     db->thread_end();
+    cerr << "[INFO] finished loading district" << endl;
   }
 
 private:
@@ -591,6 +596,7 @@ public:
       ALWAYS_ASSERT(false);
     }
     db->thread_end();
+    cerr << "[INFO] finished loading customer" << endl;
   }
 
 private:
@@ -693,6 +699,7 @@ public:
       ALWAYS_ASSERT(false);
     }
     db->thread_end();
+    cerr << "[INFO] finished loading order" << endl;
   }
 
 private:

@@ -20,7 +20,7 @@ size_t nthreads = 1;
 volatile bool running = true;
 int verbose = 0;
 uint64_t txn_flags = 0;
-double scale_factor = 100000;
+double scale_factor = 1.0;
 
 int
 main(int argc, char **argv)
@@ -28,7 +28,7 @@ main(int argc, char **argv)
   abstract_db *db = NULL;
   void (*test_fn)(abstract_db *) = NULL;
   string bench_type;
-  string db_type;
+  string db_type = "ndb-proto2";
   char *curdir = get_current_dir_name();
   string basedir = curdir;
   free(curdir);
