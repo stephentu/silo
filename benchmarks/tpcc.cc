@@ -50,9 +50,15 @@ public:
   static inline uint32_t
   GetCurrentTimeMillis()
   {
-    struct timeval tv;
-    ALWAYS_ASSERT(gettimeofday(&tv, 0) == 0);
-    return tv.tv_sec * 1000;
+    //struct timeval tv;
+    //ALWAYS_ASSERT(gettimeofday(&tv, 0) == 0);
+    //return tv.tv_sec * 1000;
+
+    // XXX(stephentu): implement a scalable GetCurrentTimeMillis()
+    // for now, we just give each core an increasing number
+
+    static __thread uint32_t tl_hack = 0;
+    return tl_hack++;
   }
 
   // config constants
@@ -348,7 +354,7 @@ public:
         string pk = WarehousePrimaryKey(i);
         tbl_warehouse->insert(txn, pk.data(), pk.size(), (const char *) &warehouse, sizeof(warehouse));
       }
-      db->commit_txn(txn);
+      ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
@@ -397,11 +403,11 @@ public:
         tbl_item->insert(txn, pk.data(), pk.size(), (const char *) &item, sizeof(item));
 
         if (bsize != -1 && !(i % bsize)) {
-          db->commit_txn(txn);
+          ALWAYS_ASSERT(db->commit_txn(txn));
           txn = db->new_txn(txn_flags);
         }
       }
-      db->commit_txn(txn);
+      ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
@@ -464,12 +470,12 @@ public:
           tbl_stock->insert(txn, pk.data(), pk.size(), (const char *) &stock, sizeof(stock));
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
-            db->commit_txn(txn);
+            ALWAYS_ASSERT(db->commit_txn(txn));
             txn = db->new_txn(txn_flags);
           }
         }
       }
-      db->commit_txn(txn);
+      ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
@@ -517,12 +523,12 @@ public:
           tbl_district->insert(txn, pk.data(), pk.size(), (const char *) &district, sizeof(district));
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
-            db->commit_txn(txn);
+            ALWAYS_ASSERT(db->commit_txn(txn));
             txn = db->new_txn(txn_flags);
           }
         }
       }
-      db->commit_txn(txn);
+      ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
@@ -594,7 +600,7 @@ public:
             tbl_customer->insert(txn, pk.data(), pk.size(), (const char *) &customer, sizeof(customer));
 
             if (bsize != -1 && !((++ctr) % bsize)) {
-              db->commit_txn(txn);
+              ALWAYS_ASSERT(db->commit_txn(txn));
               txn = db->new_txn(txn_flags);
             }
 
@@ -612,13 +618,13 @@ public:
             tbl_history->insert(txn, pk.data(), pk.size(), (const char *) &hpk, sizeof(hpk));
 
             if (bsize != -1 && !((++ctr) % bsize)) {
-              db->commit_txn(txn);
+              ALWAYS_ASSERT(db->commit_txn(txn));
               txn = db->new_txn(txn_flags);
             }
           }
         }
       }
-      db->commit_txn(txn);
+      ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
@@ -672,7 +678,7 @@ public:
             tbl_oorder->insert(txn, oorderPK.data(), oorderPK.size(), (const char *) &oorder, sizeof(oorder));
 
             if (bsize != -1 && !((++ctr) % bsize)) {
-              db->commit_txn(txn);
+              ALWAYS_ASSERT(db->commit_txn(txn));
               txn = db->new_txn(txn_flags);
             }
 
@@ -685,7 +691,7 @@ public:
               tbl_new_order->insert(txn, newOrderPK.data(), newOrderPK.size(), (const char *) &new_order, sizeof(new_order));
 
               if (bsize != -1 && !((++ctr) % bsize)) {
-                db->commit_txn(txn);
+                ALWAYS_ASSERT(db->commit_txn(txn));
                 txn = db->new_txn(txn_flags);
               }
             }
@@ -714,14 +720,14 @@ public:
               tbl_order_line->insert(txn, orderLinePK.data(), orderLinePK.size(), (const char *) &order_line, sizeof(order_line));
 
               if (bsize != -1 && !((++ctr) % bsize)) {
-                db->commit_txn(txn);
+                ALWAYS_ASSERT(db->commit_txn(txn));
                 txn = db->new_txn(txn_flags);
               }
             }
           }
         }
       }
-      db->commit_txn(txn);
+      ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
@@ -903,8 +909,10 @@ tpcc_worker::txn_new_order()
       tbl_order_line->insert(txn, orderLinePK.data(), orderLinePK.size(), (const char *) &order_line, sizeof(order_line));
     }
 
-    db->commit_txn(txn);
-    ntxn_commits++;
+    if (db->commit_txn(txn))
+      ntxn_commits++;
+    else
+      ntxn_aborts++;
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
     ntxn_aborts++;
