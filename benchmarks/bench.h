@@ -24,8 +24,7 @@ extern int verbose;
 extern uint64_t txn_flags;
 extern double scale_factor;
 
-class bench_worker : public ndb_thread,
-                     private util::noncopyable {
+class bench_worker : public ndb_thread {
 public:
 
   bench_worker(unsigned long seed, abstract_db *db,

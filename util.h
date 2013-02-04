@@ -6,6 +6,7 @@
 #include <string>
 #include <limits>
 
+#include <stdint.h>
 #include <pthread.h>
 #include <sys/time.h>
 

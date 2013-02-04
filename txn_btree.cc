@@ -456,8 +456,7 @@ test_read_only_snapshot()
   }
 }
 
-class txn_btree_worker : public ndb_thread,
-                         private noncopyable {
+class txn_btree_worker : public ndb_thread {
 public:
   txn_btree_worker(txn_btree &btr, uint64_t txn_flags)
     : btr(&btr), txn_flags(txn_flags) {}

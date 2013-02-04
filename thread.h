@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "macros.h"
+#include "util.h"
 
 /**
  * Threads in NuDB
@@ -16,7 +17,7 @@
  * Note that ndb_threads are thin wrappers around pthread's API
  */
 
-class ndb_thread {
+class ndb_thread : private util::noncopyable {
 public:
 
   typedef void (*run_t)(void);

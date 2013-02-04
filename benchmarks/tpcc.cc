@@ -1,6 +1,9 @@
 #include <sys/time.h>
 #include <string>
 #include <ctype.h>
+#include <stdlib.h>
+
+#include <set>
 
 #include "bench.h"
 #include "tpcc.h"
@@ -75,36 +78,60 @@ protected:
 
   // utils for generating random #s and strings
 
-  static inline int
+  static inline ALWAYS_INLINE int
   RandomNumber(fast_random &r, int min, int max)
   {
     return (int) (r.next_uniform() * (max - min + 1) + min);
   }
 
-  static inline int
+  static inline ALWAYS_INLINE int
   NonUniformRandom(fast_random &r, int A, int C, int min, int max)
   {
     return (((RandomNumber(r, 0, A) | RandomNumber(r, min, max)) + C) % (max - min + 1)) + min;
   }
 
-  static inline int
+  static inline ALWAYS_INLINE int
   GetItemId(fast_random &r)
   {
     return NonUniformRandom(r, 8191, 7911, 1, 100000);
   }
 
-  static inline int
+  static inline ALWAYS_INLINE int
   GetCustomerId(fast_random &r)
   {
     return NonUniformRandom(r, 1023, 259, 1, 3000);
   }
 
+  static const char *NameTokens[];
+
+  static inline string
+  GetCustomerLastName(fast_random &r, int num)
+  {
+    stringstream buf;
+    buf << NameTokens[num / 100];
+    buf << NameTokens[(num / 10) % 10];
+    buf << NameTokens[num % 10];
+    return buf.str();
+  }
+
+  static inline ALWAYS_INLINE string
+  GetNonUniformCustomerLastNameLoad(fast_random &r)
+  {
+    return GetCustomerLastName(r, NonUniformRandom(r, 255, 157, 0, 999));
+  }
+
+  static inline ALWAYS_INLINE string
+  GetNonUniformCustomerLastNameRun(fast_random &r)
+  {
+    return GetCustomerLastName(r, NonUniformRandom(r, 255, 223, 0, 999));
+  }
+
   // following oltpbench, we really generate strings of len - 1...
   static inline string
-  RandomStr(fast_random &r, int len)
+  RandomStr(fast_random &r, uint len)
   {
     assert(len >= 1);
-    int i = 0;
+    uint i = 0;
     stringstream buf;
     while (i < (len - 1)) {
       char c = (char) (r.next_uniform() * 128);
@@ -114,6 +141,17 @@ protected:
         continue;
       i++;
     }
+    return buf.str();
+  }
+
+  // RandomNStr() actually produces a string of length len
+  static inline string
+  RandomNStr(fast_random &r, uint len)
+  {
+    char base = '0';
+    stringstream buf;
+    for (uint i = 0; i < len; i++)
+      buf << (base + (r.next() % 10));
     return buf.str();
   }
 
@@ -193,6 +231,22 @@ protected:
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
+  // artificial
+  static inline string
+  HistoryPrimaryKey(int32_t h_c_id, int32_t h_c_d_id, int32_t h_c_w_id,
+                    int32_t h_d_id, int32_t h_w_id, uint32_t h_date)
+  {
+    char buf[6 * sizeof(int32_t)];
+    int32_t *p = (int32_t *) &buf[0];
+    *p++ = h_c_id;
+    *p++ = h_c_d_id;
+    *p++ = h_c_w_id;
+    *p++ = h_d_id;
+    *p++ = h_w_id;
+    *p++ = h_date;
+    return string(&buf[0], ARRAY_NELEMS(buf));
+  }
+
   static inline string
   WarehousePrimaryKey(int32_t w_id)
   {
@@ -201,6 +255,10 @@ protected:
     *p++ = w_id;
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
+};
+
+const char *tpcc_worker_mixin::NameTokens[] = {
+ "BAR", "OUGHT", "ABLE", "PRI", "PRES", "ESE", "ANTI", "CALLY", "ATION", "EING",
 };
 
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
@@ -222,7 +280,7 @@ private:
   uint warehouse_id;
 };
 
-class tpcc_warehouse_loader : public tpcc_worker_mixin {
+class tpcc_warehouse_loader : public ndb_thread, public tpcc_worker_mixin {
 public:
   tpcc_warehouse_loader(unsigned long seed,
                         abstract_db *db,
@@ -233,9 +291,10 @@ public:
   virtual void
   run()
   {
+    db->thread_init();
     void *txn = db->new_txn(txn_flags);
     try {
-      for (uint i = 1; i < NumWarehouses(); i++) {
+      for (uint i = 1; i <= NumWarehouses(); i++) {
         tpcc::warehouse warehouse;
         warehouse.w_id = i;
         warehouse.w_ytd = 300000;
@@ -256,13 +315,15 @@ public:
         warehouse.w_zip.assign(w_zip);
 
         string pk = WarehousePrimaryKey(i);
-        tbl_warehouse->put(txn, pk.data(), pk.size(), (const char *) &warehouse, sizeof(warehouse));
+        tbl_warehouse->insert(txn, pk.data(), pk.size(), (const char *) &warehouse, sizeof(warehouse));
       }
       db->commit_txn(txn);
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    db->thread_end();
   }
 
 private:
@@ -270,20 +331,22 @@ private:
   abstract_db *db;
 };
 
-class tpcc_item_loader : public tpcc_worker_mixin {
+class tpcc_item_loader : public ndb_thread, public tpcc_worker_mixin {
 public:
   tpcc_item_loader(unsigned long seed,
-                        abstract_db *db,
-                        const map<string, abstract_ordered_index *> &open_tables)
+                   abstract_db *db,
+                   const map<string, abstract_ordered_index *> &open_tables)
     : tpcc_worker_mixin(open_tables), r(seed), db(db)
   {}
 
   virtual void
   run()
   {
+    db->thread_init();
+    const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
     try {
-      for (uint i = 1; i < NumItems(); i++) {
+      for (uint i = 1; i <= NumItems(); i++) {
         tpcc::item item;
         item.i_id = i;
         string i_name = RandomStr(r, RandomNumber(r, 14, 24));
@@ -300,13 +363,336 @@ public:
         }
         item.i_im_id = RandomNumber(r, 1, 10000);
         string pk = ItemPrimaryKey(i);
-        tbl_item->put(txn, pk.data(), pk.size(), (const char *) &item, sizeof(item));
+        tbl_item->insert(txn, pk.data(), pk.size(), (const char *) &item, sizeof(item));
+
+        if (bsize != -1 && !(i % bsize)) {
+          db->commit_txn(txn);
+          txn = db->new_txn(txn_flags);
+        }
       }
       db->commit_txn(txn);
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    db->thread_end();
+  }
+
+private:
+  fast_random r;
+  abstract_db *db;
+};
+
+class tpcc_stock_loader : public ndb_thread, public tpcc_worker_mixin {
+public:
+  tpcc_stock_loader(unsigned long seed,
+                        abstract_db *db,
+                        const map<string, abstract_ordered_index *> &open_tables)
+    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+  {}
+
+  virtual void
+  run()
+  {
+    db->thread_init();
+    const ssize_t bsize = db->txn_max_batch_size();
+    void *txn = db->new_txn(txn_flags);
+    try {
+      uint cnt = 0;
+      for (uint i = 1; i <= NumItems(); i++) {
+        for (uint w = 1; w <= NumWarehouses(); w++, cnt++) {
+          tpcc::stock stock;
+          stock.s_i_id = i;
+          stock.s_w_id = w;
+          stock.s_quantity = RandomNumber(r, 10, 100);
+          stock.s_ytd = 0;
+          stock.s_order_cnt = 0;
+          stock.s_remote_cnt = 0;
+          int len = RandomNumber(r, 26, 50);
+          if (RandomNumber(r, 1, 100) > 10) {
+            string s_data = RandomStr(r, len);
+            stock.s_data.assign(s_data);
+          } else {
+            int startOriginal = RandomNumber(r, 2, (len - 8));
+            string s_data = RandomStr(r, startOriginal - 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 9);
+            stock.s_data.assign(s_data);
+          }
+          stock.s_dist_01.assign(RandomStr(r, 24));
+          stock.s_dist_02.assign(RandomStr(r, 24));
+          stock.s_dist_03.assign(RandomStr(r, 24));
+          stock.s_dist_04.assign(RandomStr(r, 24));
+          stock.s_dist_05.assign(RandomStr(r, 24));
+          stock.s_dist_06.assign(RandomStr(r, 24));
+          stock.s_dist_07.assign(RandomStr(r, 24));
+          stock.s_dist_08.assign(RandomStr(r, 24));
+          stock.s_dist_09.assign(RandomStr(r, 24));
+          stock.s_dist_10.assign(RandomStr(r, 24));
+
+          string pk = StockPrimaryKey(w, i);
+          tbl_stock->insert(txn, pk.data(), pk.size(), (const char *) &stock, sizeof(stock));
+
+          if (bsize != -1 && !((cnt + 1) % bsize)) {
+            db->commit_txn(txn);
+            txn = db->new_txn(txn_flags);
+          }
+        }
+      }
+      db->commit_txn(txn);
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      // shouldn't abort on loading!
+      ALWAYS_ASSERT(false);
+    }
+    db->thread_end();
+  }
+
+private:
+  fast_random r;
+  abstract_db *db;
+};
+
+class tpcc_district_loader : public ndb_thread, public tpcc_worker_mixin {
+public:
+  tpcc_district_loader(unsigned long seed,
+                       abstract_db *db,
+                       const map<string, abstract_ordered_index *> &open_tables)
+    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+  {}
+
+  virtual void
+  run()
+  {
+    db->thread_init();
+    const ssize_t bsize = db->txn_max_batch_size();
+    void *txn = db->new_txn(txn_flags);
+    try {
+      uint cnt = 0;
+      for (uint w = 1; w <= NumWarehouses(); w++) {
+        for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++, cnt++) {
+          tpcc::district district;
+          district.d_w_id = w;
+          district.d_id = d;
+          district.d_ytd = 30000;
+          district.d_tax = (float) (RandomNumber(r, 0, 2000) / 10000.0);
+          district.d_next_o_id = 3001;
+          district.d_name.assign(RandomStr(r, RandomNumber(r, 6, 10)));
+          district.d_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+          district.d_street_2.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+          district.d_city.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+          district.d_state.assign(RandomStr(r, 3));
+          district.d_zip.assign("123456789");
+          string pk = DistrictPrimaryKey(w, d);
+          tbl_district->insert(txn, pk.data(), pk.size(), (const char *) &district, sizeof(district));
+
+          if (bsize != -1 && !((cnt + 1) % bsize)) {
+            db->commit_txn(txn);
+            txn = db->new_txn(txn_flags);
+          }
+        }
+      }
+      db->commit_txn(txn);
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      // shouldn't abort on loading!
+      ALWAYS_ASSERT(false);
+    }
+    db->thread_end();
+  }
+
+private:
+  fast_random r;
+  abstract_db *db;
+};
+
+class tpcc_customer_loader : public ndb_thread, public tpcc_worker_mixin {
+public:
+  tpcc_customer_loader(unsigned long seed,
+                       abstract_db *db,
+                       const map<string, abstract_ordered_index *> &open_tables)
+    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+  {}
+
+  virtual void
+  run()
+  {
+    db->thread_init();
+    const ssize_t bsize = db->txn_max_batch_size();
+    void *txn = db->new_txn(txn_flags);
+    try {
+      uint ctr = 0;
+      for (uint w = 1; w <= NumWarehouses(); w++) {
+        for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+          for (uint c = 1; c < NumCustomersPerDistrict(); c++) {
+            tpcc::customer customer;
+
+            customer.c_w_id = w;
+            customer.c_d_id = d;
+            customer.c_id = c;
+
+            customer.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
+            if (RandomNumber(r, 1, 100) <= 10)
+              customer.c_credit.assign("BC");
+            else
+              customer.c_credit.assign("GC");
+
+            if (c <= 1000)
+              customer.c_last.assign(GetCustomerLastName(r, c - 1));
+            else
+              customer.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
+
+            customer.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
+            customer.c_credit_lim = 50000;
+
+            customer.c_balance = -10;
+            customer.c_ytd_payment = 10;
+            customer.c_payment_cnt = 1;
+            customer.c_delivery_cnt = 0;
+
+            customer.c_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+            customer.c_street_2.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+            customer.c_city.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+            customer.c_state.assign(RandomStr(r, 3));
+            customer.c_zip.assign(RandomNStr(r, 4) + "11111");
+            customer.c_phone.assign(RandomNStr(r, 16));
+            customer.c_since = GetCurrentTimeMillis();
+            customer.c_middle.assign("OE");
+            customer.c_data.assign(RandomStr(r, RandomNumber(r, 300, 500)));
+
+            string pk = CustomerPrimaryKey(w, d, c);
+            tbl_customer->insert(txn, pk.data(), pk.size(), (const char *) &customer, sizeof(customer));
+
+            if (bsize != -1 && !((++ctr) % bsize)) {
+              db->commit_txn(txn);
+              txn = db->new_txn(txn_flags);
+            }
+
+            tpcc::history history;
+            history.h_c_id = c;
+            history.h_c_d_id = d;
+            history.h_c_w_id = w;
+            history.h_d_id = d;
+            history.h_w_id = w;
+            history.h_date = GetCurrentTimeMillis();
+            history.h_amount = 10;
+            history.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
+
+            string hpk = HistoryPrimaryKey(c, d, w, d, w, history.h_date);
+            tbl_history->insert(txn, pk.data(), pk.size(), (const char *) &hpk, sizeof(hpk));
+
+            if (bsize != -1 && !((++ctr) % bsize)) {
+              db->commit_txn(txn);
+              txn = db->new_txn(txn_flags);
+            }
+          }
+        }
+      }
+      db->commit_txn(txn);
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      // shouldn't abort on loading!
+      ALWAYS_ASSERT(false);
+    }
+    db->thread_end();
+  }
+
+private:
+  fast_random r;
+  abstract_db *db;
+};
+
+class tpcc_order_loader : public ndb_thread, public tpcc_worker_mixin {
+public:
+  tpcc_order_loader(unsigned long seed,
+                    abstract_db *db,
+                    const map<string, abstract_ordered_index *> &open_tables)
+    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+  {}
+
+  virtual void
+  run()
+  {
+    db->thread_init();
+    const ssize_t bsize = db->txn_max_batch_size();
+    void *txn = db->new_txn(txn_flags);
+    try {
+      uint ctr = 0;
+      for (uint w = 1; w <= NumWarehouses(); w++) {
+        for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+          set<uint> c_ids_s;
+          while (c_ids_s.size() != NumCustomersPerDistrict())
+            c_ids_s.insert((r.next() % NumCustomersPerDistrict()) + 1);
+          vector<uint> c_ids(c_ids_s.begin(), c_ids_s.end());
+          for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
+            tpcc::oorder oorder;
+            oorder.o_id = c;
+            oorder.o_w_id = w;
+            oorder.o_d_id = d;
+            oorder.o_c_id = c_ids[c - 1];
+            if (oorder.o_id < 2101)
+              oorder.o_carrier_id = RandomNumber(r, 1, 10);
+            else
+              oorder.o_carrier_id = 0;
+            oorder.o_ol_cnt = RandomNumber(r, 5, 15);
+            oorder.o_all_local = 1;
+            oorder.o_entry_d = GetCurrentTimeMillis();
+
+            string oorderPK = OOrderPrimaryKey(w, d, c);
+            tbl_oorder->insert(txn, oorderPK.data(), oorderPK.size(), (const char *) &oorder, sizeof(oorder));
+
+            if (bsize != -1 && !((++ctr) % bsize)) {
+              db->commit_txn(txn);
+              txn = db->new_txn(txn_flags);
+            }
+
+            if (c >= 2101) {
+              tpcc::new_order new_order;
+              new_order.no_w_id = w;
+              new_order.no_d_id = d;
+              new_order.no_o_id = c;
+              string newOrderPK = NewOrderPrimaryKey(w, d, c);
+              tbl_new_order->insert(txn, newOrderPK.data(), newOrderPK.size(), (const char *) &new_order, sizeof(new_order));
+
+              if (bsize != -1 && !((++ctr) % bsize)) {
+                db->commit_txn(txn);
+                txn = db->new_txn(txn_flags);
+              }
+            }
+
+            for (uint l = 1; l <= uint(oorder.o_ol_cnt); l++) {
+              tpcc::order_line order_line;
+              order_line.ol_w_id = w;
+              order_line.ol_d_id = d;
+              order_line.ol_o_id = c;
+              order_line.ol_number = l; // ol_number
+              order_line.ol_i_id = RandomNumber(r, 1, 100000);
+              if (order_line.ol_o_id < 2101) {
+                order_line.ol_delivery_d = oorder.o_entry_d;
+                order_line.ol_amount = 0;
+              } else {
+                order_line.ol_delivery_d = 0;
+                // random within [0.01 .. 9,999.99]
+                order_line.ol_amount = (float) (RandomNumber(r, 1, 999999) / 100.0);
+              }
+
+              order_line.ol_supply_w_id = order_line.ol_w_id;
+              order_line.ol_quantity = 5;
+              order_line.ol_dist_info = RandomStr(r, 24);
+
+              string orderLinePK = OrderLinePrimaryKey(w, d, c);
+              tbl_order_line->insert(txn, orderLinePK.data(), orderLinePK.size(), (const char *) &order_line, sizeof(order_line));
+
+              if (bsize != -1 && !((++ctr) % bsize)) {
+                db->commit_txn(txn);
+                txn = db->new_txn(txn_flags);
+              }
+            }
+          }
+        }
+      }
+      db->commit_txn(txn);
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      // shouldn't abort on loading!
+      ALWAYS_ASSERT(false);
+    }
+    db->thread_end();
   }
 
 private:
@@ -338,6 +724,7 @@ tpcc_worker::txn_new_order()
   }
 
   // XXX(stephentu): implement rollback
+  vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags);
   try {
     // GetCustWhse:
@@ -351,6 +738,7 @@ tpcc_worker::txn_new_order()
     ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
     ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
     tpcc::customer *customer = (tpcc::customer *) customer_v;
+    delete_me.push_back(customer_v);
 
     string warehousePK = WarehousePrimaryKey(warehouse_id);
     char *warehouse_v = 0;
@@ -358,6 +746,7 @@ tpcc_worker::txn_new_order()
     ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
     ALWAYS_ASSERT(warehouse_vlen == sizeof(tpcc::warehouse));
     tpcc::warehouse *warehouse = (tpcc::warehouse *) warehouse_v;
+    delete_me.push_back(warehouse_v);
 
     string districtPK = DistrictPrimaryKey(warehouse_id, districtID);
     char *district_v = 0;
@@ -365,6 +754,7 @@ tpcc_worker::txn_new_order()
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
     ALWAYS_ASSERT(district_vlen == sizeof(tpcc::district));
     tpcc::district *district = (tpcc::district *) district_v;
+    delete_me.push_back(district_v);
 
     tpcc::new_order new_order;
     new_order.no_w_id = int32_t(warehouse_id);
@@ -401,6 +791,7 @@ tpcc_worker::txn_new_order()
       ALWAYS_ASSERT(tbl_item->get(txn, itemPK.data(), itemPK.size(), item_v, item_vlen));
       ALWAYS_ASSERT(item_vlen == sizeof(tpcc::item));
       tpcc::item *item = (tpcc::item *) item_v;
+      delete_me.push_back(item_v);
 
       string stockPK = StockPrimaryKey(warehouse_id, ol_i_id);
       char *stock_v = 0;
@@ -408,6 +799,7 @@ tpcc_worker::txn_new_order()
       ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
       ALWAYS_ASSERT(stock_vlen == sizeof(tpcc::stock));
       tpcc::stock *stock = (tpcc::stock *) stock_v;
+      delete_me.push_back(stock_v);
 
       if (stock->s_quantity - ol_quantity >= 10)
         stock->s_quantity -= ol_quantity;
@@ -417,7 +809,7 @@ tpcc_worker::txn_new_order()
       stock->s_ytd += ol_quantity;
       stock->s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
 
-      tbl_stock->put(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen);
+      tbl_stock->insert(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen);
 
       tpcc::order_line order_line;
       order_line.ol_w_id = int32_t(warehouse_id);
@@ -479,6 +871,9 @@ tpcc_worker::txn_new_order()
     db->abort_txn(txn);
     ntxn_aborts++;
   }
+  for (vector<char *>::iterator it = delete_me.begin();
+       it != delete_me.end(); ++it)
+    free(*it);
 }
 
 
@@ -497,6 +892,17 @@ tpcc_do_test(abstract_db *db)
   open_tables["stock"]      = db->open_index("stock");
   open_tables["warehouse"]  = db->open_index("warehouse");
 
+  // load data
+  tpcc_warehouse_loader l0(9324, db, open_tables);
+  tpcc_item_loader l1(235443, db, open_tables);
+  tpcc_stock_loader l2(89785943, db, open_tables);
+  tpcc_district_loader l3(129856349, db, open_tables);
+  tpcc_customer_loader l4(923587856425, db, open_tables);
+  tpcc_order_loader l5(2343352, db, open_tables);
 
-
+  ndb_thread *thds[] = { &l0, &l1, &l2, &l3, &l4, &l5 };
+  for (uint i = 0; i < ARRAY_NELEMS(thds); i++)
+    thds[i]->start();
+  for (uint i = 0; i < ARRAY_NELEMS(thds); i++)
+    thds[i]->join();
 }

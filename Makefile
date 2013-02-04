@@ -1,5 +1,6 @@
 CXXFLAGS := -Wall -g -O2 
-LDFLAGS  := -lpthread -ljemalloc 
+#LDFLAGS  := -lpthread -ljemalloc 
+LDFLAGS  := -lpthread
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h

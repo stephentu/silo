@@ -134,7 +134,8 @@ public:
   {
     assert(n <= N);
     memcpy(&buf[0], s, n);
-    memset(&buf[n], ' ', N - n); // pad with spaces
+    if ((N - n) > 0) // to suppress compiler warning
+      memset(&buf[n], ' ', N - n); // pad with spaces
   }
 
   inline ALWAYS_INLINE void
