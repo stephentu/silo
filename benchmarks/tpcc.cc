@@ -42,6 +42,8 @@ protected:
   abstract_ordered_index *tbl_stock;
   abstract_ordered_index *tbl_warehouse;
 
+public:
+
   static inline uint32_t
   GetCurrentTimeMillis()
   {
@@ -275,9 +277,24 @@ public:
       warehouse_id(warehouse_id)
   {
     assert(warehouse_id >= 1);
+    assert(warehouse_id <= NumWarehouses());
   }
 
   void txn_new_order();
+
+  static void
+  TxnNewOrder(bench_worker *w)
+  {
+    static_cast<tpcc_worker *>(w)->txn_new_order();
+  }
+
+  virtual workload_desc
+  get_workload()
+  {
+    workload_desc w;
+    w.push_back(make_pair(1.00, TxnNewOrder));
+    return w;
+  }
 
 private:
   uint warehouse_id;
@@ -912,4 +929,44 @@ tpcc_do_test(abstract_db *db)
     thds[i]->start();
   for (uint i = 0; i < ARRAY_NELEMS(thds); i++)
     thds[i]->join();
+
+  // XXX(stephentu): don't dup code between here and ycsb.cc
+
+  spin_barrier barrier_a(nthreads);
+  spin_barrier barrier_b(1);
+
+  fast_random r(23984543);
+  vector<tpcc_worker *> workers;
+  for (size_t i = 0; i < nthreads; i++)
+    workers.push_back(new tpcc_worker(r.next(), db, open_tables, &barrier_a, &barrier_b, (i % tpcc_worker_mixin::NumWarehouses()) + 1));
+  for (size_t i = 0; i < nthreads; i++)
+    workers[i]->start();
+  barrier_a.wait_for();
+  barrier_b.count_down();
+  timer t;
+  sleep(30);
+  running = false;
+  __sync_synchronize();
+  unsigned long elapsed = t.lap();
+  size_t n_commits = 0;
+  size_t n_aborts = 0;
+  for (size_t i = 0; i < nthreads; i++) {
+    workers[i]->join();
+    n_commits += workers[i]->get_ntxn_commits();
+    n_aborts += workers[i]->get_ntxn_aborts();
+  }
+
+  double agg_throughput = double(n_commits) / (double(elapsed) / 1000000.0);
+  double avg_per_core_throughput = agg_throughput / double(nthreads);
+
+  double agg_abort_rate = double(n_aborts) / (double(elapsed) / 1000000.0);
+  double avg_per_core_abort_rate = agg_abort_rate / double(nthreads);
+
+  if (verbose) {
+    cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
+    cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+    cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
+    cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
+  }
+  cout << agg_throughput << endl;
 }

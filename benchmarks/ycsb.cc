@@ -141,10 +141,10 @@ public:
   get_workload()
   {
     workload_desc w;
-    w.push_back(make_pair(0.85, ycsb_worker::TxnRead));
-    w.push_back(make_pair(0.10, ycsb_worker::TxnScan));
-    w.push_back(make_pair(0.04, ycsb_worker::TxnRmw));
-    w.push_back(make_pair(0.01, ycsb_worker::TxnWrite));
+    w.push_back(make_pair(0.85, TxnRead));
+    w.push_back(make_pair(0.10, TxnScan));
+    w.push_back(make_pair(0.04, TxnRmw));
+    w.push_back(make_pair(0.01, TxnWrite));
     return w;
   }
 
