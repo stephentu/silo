@@ -506,7 +506,10 @@ public:
   transaction(uint64_t flags);
   virtual ~transaction();
 
-  void commit();
+  // returns TRUE on successful commit, FALSE on abort
+  // if doThrow, signals success by returning true, and
+  // failure by throwing an abort exception
+  bool commit(bool doThrow = false);
 
   // abort() always succeeds
   void abort();

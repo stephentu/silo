@@ -25,8 +25,7 @@ ndb_wrapper::commit_txn(void *txn)
 {
   bool ret;
   try {
-    ((transaction *) txn)->commit();
-    ret = true;
+    ret = ((transaction *) txn)->commit();
   } catch (transaction_abort_exception &ex) {
     ret = false;
   }

@@ -279,7 +279,7 @@ test1()
       btr.insert(t, u64_varkey(0), (txn_btree::value_type) &recs[0]);
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
       ALWAYS_ASSERT_COND_IN_TXN(t, v == (txn_btree::value_type) &recs[0]);
-      t.commit();
+      t.commit(true);
       VERBOSE(cerr << "------" << endl);
     }
 
@@ -295,9 +295,9 @@ test1()
       ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1));
       ALWAYS_ASSERT_COND_IN_TXN(t1, v1 == (txn_btree::value_type) &recs[0]);
 
-      t0.commit();
+      t0.commit(true);
       try {
-        t1.commit();
+        t1.commit(true);
         // if we have a consistent snapshot, then this txn should not abort
         ALWAYS_ASSERT_COND_IN_TXN(t1, t1.consistent_snapshot_tid().first);
       } catch (transaction_abort_exception &e) {
@@ -320,10 +320,10 @@ test1()
       ALWAYS_ASSERT_COND_IN_TXN(t1, v1 == (txn_btree::value_type) &recs[1]);
       btr.insert(t1, u64_varkey(0), (txn_btree::value_type) &recs[3]);
 
-      t0.commit(); // succeeds
+      t0.commit(true); // succeeds
 
       try {
-        t1.commit(); // fails
+        t1.commit(true); // fails
         ALWAYS_ASSERT_COND_IN_TXN(t1, false);
       } catch (transaction_abort_exception &e) {
 
@@ -341,11 +341,11 @@ test1()
       ALWAYS_ASSERT_COND_IN_TXN(t0, ctr == 0);
 
       btr.insert(t1, u64_varkey(2), (txn_btree::value_type) &recs[4]);
-      t1.commit();
+      t1.commit(true);
 
       btr.insert(t0, u64_varkey(0), (txn_btree::value_type) &recs[0]);
       try {
-        t0.commit(); // fails
+        t0.commit(true); // fails
         ALWAYS_ASSERT_COND_IN_TXN(t0, false);
       } catch (transaction_abort_exception &e) {
 
@@ -360,7 +360,7 @@ test1()
       btr.search_range(t, u64_varkey(10), &vend, test_callback_ctr(&ctr));
       ALWAYS_ASSERT_COND_IN_TXN(t, ctr == 0);
       btr.insert(t, u64_varkey(15), (txn_btree::value_type) &recs[5]);
-      t.commit();
+      t.commit(true);
       VERBOSE(cerr << "------" << endl);
     }
   }
@@ -378,7 +378,7 @@ test2()
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
       btr.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
-      t.commit();
+      t.commit(true);
     }
   }
 }
@@ -396,7 +396,7 @@ test_multi_btree()
       TxnType t(txn_flags);
       btr0.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
       btr1.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
-      t.commit();
+      t.commit(true);
     }
 
     for (size_t i = 0; i < 100; i++) {
@@ -404,7 +404,7 @@ test_multi_btree()
       txn_btree::value_type v0 = 0, v1 = 0;
       bool ret0 = btr0.search(t, u64_varkey(i), v0);
       bool ret1 = btr1.search(t, u64_varkey(i), v1);
-      t.commit();
+      t.commit(true);
       ALWAYS_ASSERT_COND_IN_TXN(t, ret0);
       ALWAYS_ASSERT_COND_IN_TXN(t, ret1);
       ALWAYS_ASSERT_COND_IN_TXN(t, v0 == (txn_btree::value_type) 123);
@@ -431,7 +431,7 @@ test_read_only_snapshot()
     {
       TxnType t(txn_flags);
       btr.insert(t, u64_varkey(0), (txn_btree::value_type) &recs[0]);
-      t.commit();
+      t.commit(true);
     }
 
     // XXX(stephentu): HACK! we need to wait for the GC to
@@ -450,8 +450,8 @@ test_read_only_snapshot()
       ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1));
       ALWAYS_ASSERT_COND_IN_TXN(t1, v1 == (txn_btree::value_type) &recs[0]);
 
-      t0.commit();
-      t1.commit();
+      t0.commit(true);
+      t1.commit(true);
     }
   }
 }
@@ -502,7 +502,7 @@ namespace mp_test1_ns {
             rec->v++;
           }
           btr->insert(t, u64_varkey(0), (txn_btree::value_type) rec);
-          t.commit();
+          t.commit(true);
         } catch (transaction_abort_exception &e) {
           goto retry;
         }
@@ -536,7 +536,7 @@ mp_test1()
     txn_btree::value_type v = 0;
     ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
     ALWAYS_ASSERT_COND_IN_TXN(t,  ((record *) v)->v == (niters * 2) );
-    t.commit();
+    t.commit(true);
   }
 }
 
@@ -572,7 +572,7 @@ namespace mp_test2_ns {
               v_ctr = (txn_btree::value_type)(size_t(v_ctr) + 1);
             }
             btr->insert(t, u64_varkey(ctr_key), v_ctr);
-            t.commit();
+            t.commit(true);
           } catch (transaction_abort_exception &e) {
             naborts++;
             goto retry;
@@ -604,7 +604,7 @@ namespace mp_test2_ns {
           ctr = 0;
           u64_varkey kend(range_end);
           btr->search_range_call(t, u64_varkey(range_begin), &kend, *this);
-          t.commit();
+          t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, ctr == size_t(v_ctr));
           validations++;
         } catch (transaction_abort_exception &e) {
@@ -638,7 +638,7 @@ mp_test2()
           n++;
         }
       btr.insert(t, u64_varkey(ctr_key), (txn_btree::value_type) n);
-      t.commit();
+      t.commit(true);
     }
 
     // XXX(stephentu): HACK! we need to wait for the GC to
@@ -715,7 +715,7 @@ namespace mp_test3_ns {
             brec_new->v = brec->v + xfer;
             btr->insert(t, u64_varkey(a), (txn_btree::value_type) arec_new);
             btr->insert(t, u64_varkey(b), (txn_btree::value_type) brec_new);
-            t.commit();
+            t.commit(true);
           }
         } catch (transaction_abort_exception &e) {
           goto retry;
@@ -741,7 +741,7 @@ namespace mp_test3_ns {
           TxnType t(txn_flags);
           sum = 0;
           btr->search_range_call(t, u64_varkey(0), NULL, *this);
-          t.commit();
+          t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, sum == (naccounts * amount_per_person));
           validations++;
         } catch (transaction_abort_exception &e) {
@@ -777,7 +777,7 @@ namespace mp_test3_ns {
             ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(i), v));
             sum += ((record *) v)->v;
           }
-          t.commit();
+          t.commit(true);
           if (sum != (naccounts * amount_per_person)) {
             cerr << "sum: " << sum << endl;
             cerr << "naccounts * amount_per_person: " << (naccounts * amount_per_person) << endl;
@@ -817,7 +817,7 @@ mp_test3()
         r->v = amount_per_person;
         btr.insert(t, u64_varkey(i), (txn_btree::value_type) r);
       }
-      t.commit();
+      t.commit(true);
     }
 
     txn_epoch_sync<TxnType>::sync();
@@ -888,7 +888,7 @@ namespace read_only_perf_ns {
           TxnType t(txn_flags);
           btree::value_type v = 0;
           bool found = btr->search(t, u64_varkey(k), v);
-          t.commit();
+          t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, found);
           ALWAYS_ASSERT_COND_IN_TXN(t, v == (btree::value_type) (k + 1));
         } catch (transaction_abort_exception &e) {
@@ -922,7 +922,7 @@ read_only_perf()
         size_t end = (i == (nkeys / nkeyspertxn - 1)) ? nkeys : ((i + 1) * nkeyspertxn);
         for (size_t j = i * nkeyspertxn; j < end; j++)
           btr.insert(t, u64_varkey(j), (btree::value_type) (j + 1));
-        t.commit();
+        t.commit(true);
         cerr << "batch " << i << " completed" << endl;
       }
       cerr << "btree loaded, test starting" << endl;

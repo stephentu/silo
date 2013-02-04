@@ -120,17 +120,19 @@ transaction::~transaction()
   rcu::region_end();
 }
 
-void
-transaction::commit()
+bool
+transaction::commit(bool doThrow)
 {
   switch (state) {
   case TXN_EMBRYO:
   case TXN_ACTIVE:
     break;
   case TXN_COMMITED:
-    return;
+    return true;
   case TXN_ABRT:
-    throw transaction_abort_exception();
+    if (doThrow)
+      throw transaction_abort_exception();
+    return false;
   }
 
   // fetch logical_nodes for insert
@@ -299,7 +301,7 @@ transaction::commit()
   if (commit_tid.first)
     on_tid_finish(commit_tid.second);
   clear();
-  return;
+  return true;
 
 do_abort:
   // XXX: these values are possibly un-initialized
@@ -315,7 +317,9 @@ do_abort:
   if (commit_tid.first)
     on_tid_finish(commit_tid.second);
   clear();
-  throw transaction_abort_exception();
+  if (doThrow)
+    throw transaction_abort_exception();
+  return false;
 }
 
 void

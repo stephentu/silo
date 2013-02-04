@@ -56,7 +56,10 @@ public:
   virtual void *new_txn(uint64_t txn_flags) = 0;
 
   /**
-   * XXX
+   * Returns true on successful commit.
+   *
+   * On failure, can either throw abstract_abort_exception, or
+   * return false- caller should be prepared to deal with both cases
    */
   virtual bool commit_txn(void *txn) = 0;
 
