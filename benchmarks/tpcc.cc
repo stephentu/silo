@@ -81,6 +81,14 @@ public:
   // utils for generating random #s and strings
 
   static inline ALWAYS_INLINE int
+  CheckBetweenInclusive(int v, int lower, int upper)
+  {
+    INVARIANT(v >= lower);
+    INVARIANT(v <= upper);
+    return v;
+  }
+
+  static inline ALWAYS_INLINE int
   RandomNumber(fast_random &r, int min, int max)
   {
     return (int) (r.next_uniform() * (max - min + 1) + min);
@@ -95,13 +103,13 @@ public:
   static inline ALWAYS_INLINE int
   GetItemId(fast_random &r)
   {
-    return NonUniformRandom(r, 8191, 7911, 1, 100000);
+    return CheckBetweenInclusive(NonUniformRandom(r, 8191, 7911, 1, NumItems()), 1, NumItems());
   }
 
   static inline ALWAYS_INLINE int
   GetCustomerId(fast_random &r)
   {
-    return NonUniformRandom(r, 1023, 259, 1, 3000);
+    return CheckBetweenInclusive(NonUniformRandom(r, 1023, 259, 1, NumCustomersPerDistrict()), 1, NumCustomersPerDistrict());
   }
 
   static const char *NameTokens[];
@@ -543,7 +551,7 @@ public:
       uint ctr = 0;
       for (uint w = 1; w <= NumWarehouses(); w++) {
         for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-          for (uint c = 1; c < NumCustomersPerDistrict(); c++) {
+          for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
             tpcc::customer customer;
 
             customer.c_w_id = w;
@@ -759,7 +767,10 @@ tpcc_worker::txn_new_order()
     string customerPK = CustomerPrimaryKey(warehouse_id, districtID, customerID);
     char *customer_v = 0;
     size_t customer_vlen = 0;
-    ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
+    if (!tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen)) {
+      cerr << "error, w_id=" << warehouse_id << ", d_id=" << districtID << ", c_id=" << customerID << endl;
+      ALWAYS_ASSERT(false);
+    }
     ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
     tpcc::customer *customer = (tpcc::customer *) customer_v;
     delete_me.push_back(customer_v);
