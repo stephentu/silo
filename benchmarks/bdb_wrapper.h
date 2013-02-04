@@ -22,6 +22,23 @@ public:
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
 
+  virtual abstract_ordered_index *
+  open_index(const std::string &name);
+
+  virtual void
+  close_index(abstract_ordered_index *idx);
+
+private:
+  DbEnv *env;
+};
+
+class bdb_ordered_index : public abstract_ordered_index {
+public:
+
+  // takes ownership of db
+  bdb_ordered_index(Db *db) : db(db) {}
+  ~bdb_ordered_index();
+
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
@@ -41,9 +58,7 @@ public:
   {
     NDB_UNIMPLEMENTED("scan");
   }
-
 private:
-  DbEnv *env;
   Db *db;
 };
 

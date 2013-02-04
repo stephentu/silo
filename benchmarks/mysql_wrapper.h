@@ -8,6 +8,7 @@
 #include "../macros.h"
 
 class mysql_wrapper : public abstract_db {
+  friend class mysql_ordered_index;
 public:
   mysql_wrapper(const std::string &dir, const std::string &db);
   ~mysql_wrapper();
@@ -18,6 +19,22 @@ public:
   virtual void *new_txn(uint64_t txn_flags);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
+
+  virtual abstract_ordered_index *
+  open_index(const std::string &name);
+
+  virtual void
+  close_index(abstract_ordered_index *idx);
+
+private:
+  std::string db;
+  MYSQL *new_connection(const std::string &db);
+  static __thread MYSQL *tl_conn;
+};
+
+class mysql_ordered_index : public abstract_ordered_index {
+public:
+  mysql_ordered_index(const std::string &name) : name(name) {}
 
   virtual bool get(
       void *txn,
@@ -44,11 +61,8 @@ public:
     NDB_UNIMPLEMENTED("scan");
   }
 
-
 private:
-  std::string db;
-  MYSQL *new_connection(const std::string &db);
-  static __thread MYSQL *tl_conn;
+  std::string name;
 };
 
 #endif /* _MYSQL_WRAPPER_H_ */

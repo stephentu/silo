@@ -78,23 +78,10 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
   check_result(0, mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0));
 
   MYSQL *conn = new_connection("");
-
   stringstream b;
   b << "CREATE DATABASE IF NOT EXISTS " << db << ";";
   check_result(conn, mysql_query(conn, b.str().c_str()));
   check_result(conn, mysql_select_db(conn, db.c_str()));
-
-  const char *cmd_create =
-    "CREATE TABLE IF NOT EXISTS tbl ("
-    "  tbl_key VARBINARY(256) PRIMARY KEY, "
-    "  tbl_value VARBINARY(256) "
-    ") ENGINE=InnoDB;";
-  const char *cmd_truncate =
-    "TRUNCATE TABLE tbl;";
-
-  check_result(conn, mysql_query(conn, cmd_create));
-  check_result(conn, mysql_query(conn, cmd_truncate));
-  check_result(conn, mysql_commit(conn));
   mysql_close(conn);
 }
 
@@ -143,6 +130,31 @@ mysql_wrapper::abort_txn(void *p)
   check_result(tl_conn, mysql_rollback(tl_conn));
 }
 
+abstract_ordered_index *
+mysql_wrapper::open_index(const string &name)
+{
+  MYSQL *conn = new_connection(db);
+  stringstream b_create, b_truncate;
+  b_create <<
+    "CREATE TABLE IF NOT EXISTS " << name << " ("
+    "  tbl_key VARBINARY(256) PRIMARY KEY, "
+    "  tbl_value VARBINARY(256) "
+    ") ENGINE=InnoDB;";
+  b_truncate <<
+    "TRUNCATE TABLE " << name << ";";
+  check_result(conn, mysql_query(conn, b_create.str().c_str()));
+  check_result(conn, mysql_query(conn, b_truncate.str().c_str()));
+  check_result(conn, mysql_commit(conn));
+  mysql_close(conn);
+  return new mysql_ordered_index(name);
+}
+
+void
+mysql_wrapper::close_index(abstract_ordered_index *idx)
+{
+  delete idx;
+}
+
 static inline string
 my_escape(MYSQL *conn, const char *p, size_t l)
 {
@@ -152,18 +164,18 @@ my_escape(MYSQL *conn, const char *p, size_t l)
 }
 
 bool
-mysql_wrapper::get(
+mysql_ordered_index::get(
     void *txn,
     const char *key, size_t keylen,
     char *&value, size_t &valuelen)
 {
-  INVARIANT(txn == tl_conn);
+  INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
   stringstream b;
-  b << "SELECT tbl_value FROM tbl WHERE tbl_key = '" << my_escape(tl_conn, key, keylen) << "';";
+  b << "SELECT tbl_value FROM " << name << " WHERE tbl_key = '" << my_escape(mysql_wrapper::tl_conn, key, keylen) << "';";
   string q = b.str();
-  check_result(tl_conn, mysql_real_query(tl_conn, q.data(), q.size()));
-  MYSQL_RES *res = mysql_store_result(tl_conn);
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
+  MYSQL_RES *res = mysql_store_result(mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(res);
   MYSQL_ROW row = mysql_fetch_row(res);
   bool ret = false;
@@ -179,46 +191,46 @@ mysql_wrapper::get(
 }
 
 void
-mysql_wrapper::put(
+mysql_ordered_index::put(
     void *txn,
     const char *key, size_t keylen,
     const char *value, size_t valuelen)
 {
-  INVARIANT(txn == tl_conn);
+  INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
   ALWAYS_ASSERT(valuelen <= 256);
-  string escaped_key = my_escape(tl_conn, key, keylen);
-  string escaped_value = my_escape(tl_conn, value, valuelen);
+  string escaped_key = my_escape(mysql_wrapper::tl_conn, key, keylen);
+  string escaped_value = my_escape(mysql_wrapper::tl_conn, value, valuelen);
   stringstream b;
-  b << "UPDATE tbl SET tbl_value='" << escaped_value << "' WHERE tbl_key='" << escaped_key << "';";
+  b << "UPDATE " << name << " SET tbl_value='" << escaped_value << "' WHERE tbl_key='" << escaped_key << "';";
   string q = b.str();
-  check_result(tl_conn, mysql_real_query(tl_conn, q.data(), q.size()));
-  my_ulonglong ret = mysql_affected_rows(tl_conn);
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
+  my_ulonglong ret = mysql_affected_rows(mysql_wrapper::tl_conn);
   if (unlikely(ret == (my_ulonglong) -1))
-    print_error_and_bail(tl_conn);
+    print_error_and_bail(mysql_wrapper::tl_conn);
   if (ret)
     return;
   stringstream b1;
-  b1 << "INSERT INTO tbl VALUES ('" << escaped_key << "', '" << escaped_value << "');";
+  b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
-  check_result(tl_conn, mysql_real_query(tl_conn, q1.data(), q1.size()));
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
 }
 
 void
-mysql_wrapper::insert(
+mysql_ordered_index::insert(
     void *txn,
     const char *key, size_t keylen,
     const char *value, size_t valuelen)
 {
-  INVARIANT(txn == tl_conn);
+  INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
   ALWAYS_ASSERT(valuelen <= 256);
-  string escaped_key = my_escape(tl_conn, key, keylen);
-  string escaped_value = my_escape(tl_conn, value, valuelen);
+  string escaped_key = my_escape(mysql_wrapper::tl_conn, key, keylen);
+  string escaped_value = my_escape(mysql_wrapper::tl_conn, value, valuelen);
   stringstream b1;
-  b1 << "INSERT INTO tbl VALUES ('" << escaped_key << "', '" << escaped_value << "');";
+  b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
-  check_result(tl_conn, mysql_real_query(tl_conn, q1.data(), q1.size()));
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
 }
 
 MYSQL *

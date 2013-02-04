@@ -17,6 +17,19 @@ public:
   virtual void *new_txn(uint64_t txn_flags);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
+
+  virtual abstract_ordered_index *
+  open_index(const std::string &name);
+
+  virtual void
+  close_index(abstract_ordered_index *idx);
+
+private:
+  Proto proto;
+};
+
+class ndb_ordered_index : public abstract_ordered_index {
+public:
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
@@ -31,9 +44,7 @@ public:
       const char *end_key, size_t end_len,
       bool has_end_key,
       scan_callback &callback);
-
 private:
-  Proto proto;
   txn_btree btr;
 };
 

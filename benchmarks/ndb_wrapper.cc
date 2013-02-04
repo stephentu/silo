@@ -4,6 +4,8 @@
 #include "../varkey.h"
 #include "../macros.h"
 
+using namespace std;
+
 void *
 ndb_wrapper::new_txn(uint64_t txn_flags)
 {
@@ -39,8 +41,20 @@ ndb_wrapper::abort_txn(void *txn)
   delete (transaction *) txn;
 }
 
+abstract_ordered_index *
+ndb_wrapper::open_index(const string &name)
+{
+  return new ndb_ordered_index;
+}
+
+void
+ndb_wrapper::close_index(abstract_ordered_index *idx)
+{
+  delete idx;
+}
+
 bool
-ndb_wrapper::get(
+ndb_ordered_index::get(
     void *txn,
     const char *key, size_t keylen,
     char *&value, size_t &valuelen)
@@ -58,12 +72,12 @@ ndb_wrapper::get(
     memcpy(value, v + sizeof(size_t), valuelen);
     return true;
   } catch (transaction_abort_exception &ex) {
-    throw abstract_abort_exception();
+    throw abstract_db::abstract_abort_exception();
   }
 }
 
 void
-ndb_wrapper::put(
+ndb_ordered_index::put(
     void *txn,
     const char *key, size_t keylen,
     const char *value, size_t valuelen)
@@ -76,13 +90,13 @@ ndb_wrapper::put(
     btr.insert(*((transaction *) txn), varkey((const uint8_t *) key, keylen), record);
   } catch (transaction_abort_exception &ex) {
     delete [] record;
-    throw abstract_abort_exception();
+    throw abstract_db::abstract_abort_exception();
   }
 }
 
 class ndb_wrapper_search_range_callback : public txn_btree::search_range_callback {
 public:
-  ndb_wrapper_search_range_callback(ndb_wrapper::scan_callback &upcall)
+  ndb_wrapper_search_range_callback(ndb_ordered_index::scan_callback &upcall)
     : upcall(&upcall) {}
 
   virtual bool
@@ -99,11 +113,11 @@ public:
   }
 
 private:
-  ndb_wrapper::scan_callback *upcall;
+  ndb_ordered_index::scan_callback *upcall;
 };
 
 void
-ndb_wrapper::scan(
+ndb_ordered_index::scan(
     void *txn,
     const char *start_key, size_t start_len,
     const char *end_key, size_t end_len,
@@ -126,9 +140,9 @@ ndb_wrapper::scan(
 static void
 record_cleanup_callback(uint8_t *record)
 {
-  if (!record)
+  INVARIANT(rcu::in_rcu_region());
+  if (unlikely(!record))
     return;
-  scoped_rcu_region rcu;
   rcu::free_array(record);
 }
 NDB_TXN_REGISTER_CLEANUP_CALLBACK(record_cleanup_callback);

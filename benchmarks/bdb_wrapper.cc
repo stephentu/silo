@@ -6,7 +6,7 @@
 using namespace std;
 
 bdb_wrapper::bdb_wrapper(const string &envdir, const string &dbfile)
-  : env(0), db(0)
+  : env(0)
 {
   env = new DbEnv(0);
   ALWAYS_ASSERT(env->log_set_config(DB_LOG_IN_MEMORY, 1) == 0);
@@ -16,18 +16,10 @@ bdb_wrapper::bdb_wrapper(const string &envdir, const string &dbfile)
   ALWAYS_ASSERT(env->set_flags(DB_TXN_NOSYNC, 1) == 0);
   ALWAYS_ASSERT(env->set_cachesize(4, 0, 1) == 0);
   ALWAYS_ASSERT(env->open(envdir.c_str(), DB_INIT_LOCK | DB_INIT_LOG | DB_INIT_MPOOL | DB_INIT_TXN | DB_PRIVATE | DB_THREAD | DB_CREATE, 0) == 0);
-
-  db = new Db(env, 0);
-  ALWAYS_ASSERT(db->set_flags(DB_TXN_NOT_DURABLE) == 0);
-  DbTxn *txn = NULL;
-  ALWAYS_ASSERT(env->txn_begin(NULL, &txn, 0) == 0);
-  ALWAYS_ASSERT(db->open(txn, dbfile.c_str(), NULL, DB_BTREE, DB_CREATE, 0) == 0);
-  ALWAYS_ASSERT(txn->commit(0) == 0);
 }
 
 bdb_wrapper::~bdb_wrapper()
 {
-  delete db;
   delete env;
 }
 
@@ -52,8 +44,32 @@ bdb_wrapper::abort_txn(void *p)
   ALWAYS_ASSERT(((DbTxn *) p)->abort() == 0);
 }
 
+abstract_ordered_index *
+bdb_wrapper::open_index(const string &name)
+{
+  Db *db = new Db(env, 0);
+  ALWAYS_ASSERT(db->set_flags(DB_TXN_NOT_DURABLE) == 0);
+  DbTxn *txn = NULL;
+  ALWAYS_ASSERT(env->txn_begin(NULL, &txn, 0) == 0);
+  ALWAYS_ASSERT(db->open(txn, name.c_str(), NULL, DB_BTREE, DB_CREATE, 0) == 0);
+  ALWAYS_ASSERT(txn->commit(0) == 0);
+  return new bdb_ordered_index(db);
+}
+
+void
+bdb_wrapper::close_index(abstract_ordered_index *idx)
+{
+  bdb_ordered_index *bidx = static_cast<bdb_ordered_index *>(idx);
+  delete bidx;
+}
+
+bdb_ordered_index::~bdb_ordered_index()
+{
+  delete db;
+}
+
 bool
-bdb_wrapper::get(
+bdb_ordered_index::get(
     void *txn,
     const char *key, size_t keylen,
     char *&value, size_t &valuelen)
@@ -69,7 +85,7 @@ bdb_wrapper::get(
 }
 
 void
-bdb_wrapper::put(
+bdb_ordered_index::put(
     void *txn,
     const char *key, size_t keylen,
     const char *value, size_t valuelen)
