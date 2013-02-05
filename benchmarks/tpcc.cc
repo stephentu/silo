@@ -231,15 +231,14 @@ public:
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
-  // we depart from OLTPBench here, since we don't include
-  // ol_number in the primary key
   static inline string
-  OrderLinePrimaryKey(int32_t ol_w_id, int32_t ol_d_id, int32_t ol_o_id) {
+  OrderLinePrimaryKey(int32_t ol_w_id, int32_t ol_d_id, int32_t ol_o_id, int32_t ol_number) {
     char buf[4 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
     *p++ = ol_w_id;
     *p++ = ol_d_id;
     *p++ = ol_o_id;
+    *p++ = ol_number;
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
@@ -303,6 +302,14 @@ public:
   TxnNewOrder(bench_worker *w)
   {
     static_cast<tpcc_worker *>(w)->txn_new_order();
+  }
+
+  void txn_delivery();
+
+  static void
+  TxnDelivery(bench_worker *w)
+  {
+    static_cast<tpcc_worker *>(w)->txn_delivery();
   }
 
   virtual workload_desc
@@ -716,7 +723,7 @@ public:
               order_line.ol_quantity = 5;
               order_line.ol_dist_info = RandomStr(r, 24);
 
-              string orderLinePK = OrderLinePrimaryKey(w, d, c);
+              string orderLinePK = OrderLinePrimaryKey(w, d, c, l);
               tbl_order_line->insert(txn, orderLinePK.data(), orderLinePK.size(), (const char *) &order_line, sizeof(order_line));
 
               if (bsize != -1 && !((++ctr) % bsize)) {
@@ -905,7 +912,7 @@ tpcc_worker::txn_new_order()
 
       memcpy(&order_line.ol_dist_info, (const char *) ol_dist_info, sizeof(order_line.ol_dist_info));
 
-      string orderLinePK = OrderLinePrimaryKey(warehouse_id, districtID, new_order.no_o_id);
+      string orderLinePK = OrderLinePrimaryKey(warehouse_id, districtID, new_order.no_o_id, ol_number);
       tbl_order_line->insert(txn, orderLinePK.data(), orderLinePK.size(), (const char *) &order_line, sizeof(order_line));
     }
 
@@ -922,7 +929,107 @@ tpcc_worker::txn_new_order()
     free(*it);
 }
 
+class limit_callback : public abstract_ordered_index::scan_callback {
+public:
+  limit_callback(ssize_t limit = -1)
+    : limit(limit), n(n)
+  {
+    ALWAYS_ASSERT(limit == -1 || limit > 0);
+  }
 
+  virtual bool invoke(
+      const char *key, size_t key_len,
+      const char *value, size_t value_len)
+  {
+    INVARIANT(limit == -1 || n < size_t(limit));
+    values.push_back(make_pair(string(key, key_len), string(value, value_len)));
+    return limit != -1 && (++n == size_t(limit));
+  }
+
+  typedef pair<string, string> kv_pair;
+  vector<kv_pair> values;
+
+  const ssize_t limit;
+private:
+  size_t n;
+};
+
+
+void
+tpcc_worker::txn_delivery()
+{
+  const uint o_carrier_id = RandomNumber(r, 1, 10);
+  const uint32_t ts = GetCurrentTimeMillis();
+
+  vector<char *> delete_me;
+  void *txn = db->new_txn(txn_flags);
+  try {
+    for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+      string lowkey = NewOrderPrimaryKey(warehouse_id, d, 0);
+      string highkey = NewOrderPrimaryKey(warehouse_id, d, numeric_limits<int32_t>::max());
+      limit_callback lone_callback(1);
+      tbl_new_order->scan(txn, lowkey.data(), lowkey.size(),
+                          highkey.data(), highkey.size(), true,
+                          lone_callback);
+      if (lone_callback.values.empty())
+        continue;
+      tpcc::new_order *new_order = (tpcc::new_order *) lone_callback.values.front().second.data();
+
+      string oorderPK = OOrderPrimaryKey(warehouse_id, d, new_order->no_o_id);
+      char *oorder_v;
+      size_t oorder_len;
+      ALWAYS_ASSERT(tbl_oorder->get(txn, oorderPK.data(), oorderPK.size(), oorder_v, oorder_len));
+      delete_me.push_back(oorder_v);
+      tpcc::oorder *oorder = (tpcc::oorder *) oorder_v;
+      limit_callback c(-1);
+      string order_line_lowkey = OrderLinePrimaryKey(warehouse_id, d, new_order->no_o_id, 0);
+      string order_line_highkey = OrderLinePrimaryKey(warehouse_id, d, new_order->no_o_id,
+                                           numeric_limits<int32_t>::max());
+      tbl_order_line->scan(txn, order_line_lowkey.data(), order_line_lowkey.size(),
+                           order_line_highkey.data(), order_line_highkey.size(), true,
+                           c);
+      float sum = 0.0;
+      for (vector<limit_callback::kv_pair>::iterator it = c.values.begin();
+           it != c.values.end(); ++it) {
+        tpcc::order_line *order_line = (tpcc::order_line *) it->second.data();
+        sum += order_line->ol_amount;
+        order_line->ol_delivery_d = ts;
+        tbl_order_line->put(txn, it->first.data(), it->first.size(), it->second.data(), it->second.size());
+      }
+
+      // delete new order
+      string new_orderPK = NewOrderPrimaryKey(warehouse_id, d, new_order->no_o_id);
+      tbl_new_order->remove(txn, new_orderPK.data(), new_orderPK.size());
+
+      // update oorder
+      oorder->o_carrier_id = o_carrier_id;
+      tbl_oorder->put(txn, oorderPK.data(), oorderPK.size(), (const char *) oorder, sizeof(*oorder));
+
+      // update orderlines
+
+      const uint c_id = oorder->o_c_id;
+      const float ol_total = sum;
+
+      string customerPK = CustomerPrimaryKey(warehouse_id, d, c_id);
+      char *customer_v;
+      size_t customer_len;
+      ALWAYS_ASSERT(tbl_customer->get(
+            txn, customerPK.data(), customerPK.size(),
+            customer_v, customer_len));
+      delete_me.push_back(customer_v);
+      tpcc::customer *customer = (tpcc::customer *) customer_v;
+      customer->c_balance += ol_total;
+      tbl_customer->put(txn, customerPK.data(), customerPK.size(), customer_v, customer_len);
+    }
+    if (db->commit_txn(txn))
+      ntxn_commits++;
+    else
+      ntxn_aborts++;
+  } catch (abstract_db::abstract_abort_exception &ex) {
+    db->abort_txn(txn);
+    ntxn_aborts++;
+  }
+}
 
 void
 tpcc_do_test(abstract_db *db)

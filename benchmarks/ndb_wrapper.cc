@@ -136,6 +136,19 @@ ndb_ordered_index::scan(
     btr.search_range_call(t, lower, NULL, c);
 }
 
+void
+ndb_ordered_index::remove(
+    void *txn,
+    const char *key, size_t keylen)
+{
+  transaction &t = *((transaction *) txn);
+  try {
+    btr.remove(t, varkey((const uint8_t *) key, keylen));
+  } catch (transaction_abort_exception &ex) {
+    throw abstract_db::abstract_abort_exception();
+  }
+}
+
 static void
 record_cleanup_callback(uint8_t *record)
 {

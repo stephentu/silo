@@ -44,6 +44,9 @@ public:
       const char *end_key, size_t end_len,
       bool has_end_key,
       scan_callback &callback);
+  virtual void remove(
+      void *txn,
+      const char *key, size_t keylen);
 private:
   txn_btree btr;
 };

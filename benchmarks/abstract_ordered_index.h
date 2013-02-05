@@ -70,6 +70,16 @@ public:
   {
     put(txn, key, keylen, value, valuelen);
   }
+
+  /**
+   * Default implementation calls put() with NULL (zero-length) value
+   */
+  virtual void remove(
+      void *txn,
+      const char *key, size_t keylen)
+  {
+    put(txn, key, keylen, NULL, 0);
+  }
 };
 
 #endif /* _ABSTRACT_ORDERED_INDEX_H_ */
