@@ -123,34 +123,78 @@ hexify(const std::string &input)
   return output;
 }
 
-// xor-shift:
-// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
+//// xor-shift:
+//// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
+//class fast_random {
+//public:
+//  fast_random(unsigned long seed)
+//    : seed(seed == 0 ? 0xABCD1234 : seed)
+//  {}
+//
+//  inline unsigned long
+//  next()
+//  {
+//    seed ^= (seed << 21);
+//    seed ^= (seed >> 35);
+//    seed ^= (seed << 4);
+//    return seed;
+//  }
+//
+//  /** [0.0, 1.0) */
+//  inline double
+//  next_uniform()
+//  {
+//    return double(next())/double(std::numeric_limits<unsigned long>::max());
+//  }
+//
+//  inline char
+//  next_char()
+//  {
+//    return next() % 256;
+//  }
+//
+//  inline std::string
+//  next_string(size_t len)
+//  {
+//    std::string s(len, 0);
+//    for (size_t i = 0; i < len; i++)
+//      s[i] = next_char();
+//    return s;
+//  }
+//
+//private:
+//  unsigned long seed;
+//};
+
+// not thread-safe
+//
+// taken from java:
+//   http://developer.classpath.org/doc/java/util/Random-source.html
 class fast_random {
 public:
   fast_random(unsigned long seed)
-    : seed(seed == 0 ? 0xABCD1234 : seed)
-  {}
+    : seed(0)
+  {
+    set_seed(seed);
+  }
 
   inline unsigned long
   next()
   {
-    seed ^= (seed << 21);
-    seed ^= (seed >> 35);
-    seed ^= (seed << 4);
-    return seed;
+    return ((unsigned long) next(32) << 32) + next(32);
   }
 
-  /** [0, 1] */
+  /** [0.0, 1.0) */
   inline double
   next_uniform()
   {
-    return double(next())/double(std::numeric_limits<unsigned long>::max());
+    return (((unsigned long) next(26) << 27) + next(27)) / (double) (1L << 53);
   }
 
   inline char
   next_char()
   {
-    return next() % 256;
+    return next(8) % 256;
   }
 
   inline std::string
@@ -163,6 +207,19 @@ public:
   }
 
 private:
+  inline void
+  set_seed(unsigned long seed)
+  {
+    this->seed = (seed ^ 0x5DEECE66DL) & ((1L << 48) - 1);
+  }
+
+  inline unsigned long
+  next(unsigned int bits)
+  {
+    seed = (seed * 0x5DEECE66DL + 0xBL) & ((1L << 48) - 1);
+    return (unsigned long) (seed >> (48 - bits));
+  }
+
   unsigned long seed;
 };
 

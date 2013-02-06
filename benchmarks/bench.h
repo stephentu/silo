@@ -47,6 +47,7 @@ public:
   virtual void run()
   {
     workload_desc workload = get_workload();
+    txn_counts.resize(workload.size());
     db->thread_init();
     barrier_a->count_down();
     barrier_b->wait_for();
@@ -55,8 +56,10 @@ public:
       for (size_t i = 0; i < workload.size(); i++) {
         if ((i + 1) == workload.size() || d < workload[i].first) {
           workload[i].second(this);
+          txn_counts[i]++;
           break;
         }
+        d -= workload[i].first;
       }
     }
     db->thread_end();
@@ -64,6 +67,12 @@ public:
 
   inline size_t get_ntxn_commits() const { return ntxn_commits; }
   inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
+
+  inline const std::vector<size_t> &
+  get_txn_counts() const
+  {
+    return txn_counts;
+  }
 
 protected:
 
@@ -74,6 +83,8 @@ protected:
   spin_barrier *barrier_b;
   size_t ntxn_commits;
   size_t ntxn_aborts;
+
+  std::vector<size_t> txn_counts; // breakdown of txns
 };
 
 #endif /* _NDB_BENCH_H_ */

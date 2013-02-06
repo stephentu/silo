@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <set>
+#include <vector>
 
 #include "bench.h"
 #include "tpcc.h"
@@ -103,7 +104,7 @@ public:
   static inline ALWAYS_INLINE int
   RandomNumber(fast_random &r, int min, int max)
   {
-    return (int) (r.next_uniform() * (max - min + 1) + min);
+    return CheckBetweenInclusive((int) (r.next_uniform() * (max - min + 1) + min), min, max);
   }
 
   static inline ALWAYS_INLINE int
@@ -159,7 +160,7 @@ public:
     uint i = 0;
     stringstream buf;
     while (i < (len - 1)) {
-      char c = (char) (r.next_uniform() * 128);
+      char c = (char) r.next_char();
       // XXX(stephentu): oltpbench uses java's Character.isLetter(), which
       // is a less restrictive filter than isalnum()
       if (!isalnum(c))
@@ -633,6 +634,8 @@ public:
             else
               customer.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
 
+            cerr << "inserting (c_w_id=" << customer.c_w_id << ", c_d_id=" << customer.c_d_id << ", c_last=" << customer.c_last.str() << ")" << endl;
+
             customer.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
             customer.c_credit_lim = 50000;
 
@@ -666,6 +669,7 @@ public:
             string customerNameKey = CustomerNameIdxKey(
                 customer.c_w_id, customer.c_d_id,
                 customer.c_last.str(true), customer.c_first.str(true));
+            cerr << "  insert with 2nd key: " << hexify(customerNameKey) << endl;
             if (customer_p) {
               // index structure is:
               // (c_w_id, c_d_id, c_last, c_first) -> (c_id, c_ptr)
@@ -1155,11 +1159,16 @@ tpcc_worker::txn_payment()
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       string lastname = GetNonUniformCustomerLastNameRun(r);
+      lastname.resize(16);
+
       string lowkey = CustomerNameIdxKey(customerWarehouseID, customerDistrictID, lastname, string(16, 0));
       string highkey = CustomerNameIdxKey(customerWarehouseID, customerDistrictID, lastname, string(16, 255));
       limit_callback c(-1);
       tbl_customer_name_idx->scan(txn, lowkey.data(), lowkey.size(),
                                   highkey.data(), highkey.size(), true, c);
+      cerr << "searching for lastname: (c_w_id=" << customerWarehouseID << ", c_d_id=" << customerDistrictID << ", c_last=" << lastname << ")" << endl;
+      cerr << "  hexify lowkey: " << hexify(lowkey) << endl;
+      cerr << "  hexify highkey: " << hexify(highkey) << endl;
       ALWAYS_ASSERT(!c.values.empty());
       int index = c.values.size() / 2;
       if (c.values.size() % 2 == 0)
@@ -1252,6 +1261,7 @@ tpcc_worker::txn_order_status()
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       string lastname = GetNonUniformCustomerLastNameRun(r);
+      lastname.resize(16);
       string lowkey = CustomerNameIdxKey(warehouse_id, districtID, lastname, string(16, 0));
       string highkey = CustomerNameIdxKey(warehouse_id, districtID, lastname, string(16, 255));
       limit_callback c(-1);
@@ -1375,6 +1385,17 @@ tpcc_worker::txn_stock_level()
     free(*it);
 }
 
+template <typename T>
+static vector<T>
+elemwise_sum(const vector<T> &a, const vector<T> &b)
+{
+  INVARIANT(a.size() == b.size());
+  vector<T> ret(a.size());
+  for (size_t i = 0; i < a.size(); i++)
+    ret[i] = a[i] + b[i];
+  return ret;
+}
+
 void
 tpcc_do_test(abstract_db *db)
 {
@@ -1437,10 +1458,14 @@ tpcc_do_test(abstract_db *db)
   double avg_per_core_abort_rate = agg_abort_rate / double(nthreads);
 
   if (verbose) {
+    vector<size_t> agg_txn_counts = workers[0]->get_txn_counts();
+    for (size_t i = 1; i < nthreads; i++)
+      agg_txn_counts = elemwise_sum(agg_txn_counts, workers[i]->get_txn_counts());
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
+    cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
   }
   cout << agg_throughput << endl;
 }
