@@ -186,11 +186,12 @@ public:
   static inline string
   CustomerPrimaryKey(int32_t c_w_id, int32_t c_d_id, int32_t c_id)
   {
+    big_endian_trfm<int32_t> t;
     char buf[3 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = c_w_id;
-    *p++ = c_d_id;
-    *p++ = c_id;
+    *p++ = t(c_w_id);
+    *p++ = t(c_d_id);
+    *p++ = t(c_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
@@ -198,12 +199,13 @@ public:
   CustomerNameIdxKey(int32_t c_w_id, int32_t c_d_id,
                      const string &c_last, const string &c_first)
   {
+    big_endian_trfm<int32_t> t;
     INVARIANT(c_last.size() == 16);
     INVARIANT(c_first.size() == 16);
     char buf[2 * sizeof(int32_t) + 2 * 16];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = c_w_id;
-    *p++ = c_d_id;
+    *p++ = t(c_w_id);
+    *p++ = t(c_d_id);
     memcpy(((char *) p), c_last.data(), 16);
     memcpy(((char *) p) + 16, c_first.data(), 16);
     return string(&buf[0], ARRAY_NELEMS(buf));
@@ -212,62 +214,68 @@ public:
   static inline string
   DistrictPrimaryKey(int32_t d_w_id, int32_t d_id)
   {
+    big_endian_trfm<int32_t> t;
     char buf[2 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = d_w_id;
-    *p++ = d_id;
+    *p++ = t(d_w_id);
+    *p++ = t(d_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
   static inline string
   ItemPrimaryKey(int32_t i_id)
   {
+    big_endian_trfm<int32_t> t;
     char buf[1 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = i_id;
+    *p++ = t(i_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
   static inline string
   NewOrderPrimaryKey(int32_t no_w_id, int32_t no_d_id, int32_t no_o_id)
   {
+    big_endian_trfm<int32_t> t;
     char buf[3 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = no_w_id;
-    *p++ = no_d_id;
-    *p++ = no_o_id;
+    *p++ = t(no_w_id);
+    *p++ = t(no_d_id);
+    *p++ = t(no_o_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
   static inline string
   OOrderPrimaryKey(int32_t o_w_id, int32_t o_d_id, int32_t o_id)
   {
+    big_endian_trfm<int32_t> t;
     char buf[3 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = o_w_id;
-    *p++ = o_d_id;
-    *p++ = o_id;
+    *p++ = t(o_w_id);
+    *p++ = t(o_d_id);
+    *p++ = t(o_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
   static inline string
   OrderLinePrimaryKey(int32_t ol_w_id, int32_t ol_d_id, int32_t ol_o_id, int32_t ol_number) {
+    big_endian_trfm<int32_t> t;
     char buf[4 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = ol_w_id;
-    *p++ = ol_d_id;
-    *p++ = ol_o_id;
-    *p++ = ol_number;
+    *p++ = t(ol_w_id);
+    *p++ = t(ol_d_id);
+    *p++ = t(ol_o_id);
+    *p++ = t(ol_number);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
   static inline string
   StockPrimaryKey(int32_t s_w_id, int32_t s_i_id)
   {
+    big_endian_trfm<int32_t> t;
     char buf[2 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = s_w_id;
-    *p++ = s_i_id;
+    *p++ = t(s_w_id);
+    *p++ = t(s_i_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
@@ -276,23 +284,25 @@ public:
   HistoryPrimaryKey(int32_t h_c_id, int32_t h_c_d_id, int32_t h_c_w_id,
                     int32_t h_d_id, int32_t h_w_id, uint32_t h_date)
   {
+    big_endian_trfm<int32_t> t;
     char buf[6 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = h_c_id;
-    *p++ = h_c_d_id;
-    *p++ = h_c_w_id;
-    *p++ = h_d_id;
-    *p++ = h_w_id;
-    *p++ = h_date;
+    *p++ = t(h_c_id);
+    *p++ = t(h_c_d_id);
+    *p++ = t(h_c_w_id);
+    *p++ = t(h_d_id);
+    *p++ = t(h_w_id);
+    *p++ = t(h_date);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 
   static inline string
   WarehousePrimaryKey(int32_t w_id)
   {
+    big_endian_trfm<int32_t> t;
     char buf[1 * sizeof(int32_t)];
     int32_t *p = (int32_t *) &buf[0];
-    *p++ = w_id;
+    *p++ = t(w_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
 };
