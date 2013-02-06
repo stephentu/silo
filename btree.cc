@@ -417,6 +417,8 @@ btree::search_range_at_layer(
     // grab all keys in [lower_slice, upper_slice]. we'll do boundary condition
     // checking later (outside of the critical section)
     for (size_t i = 0; i < leaf->key_slots_used(); i++)
+      // XXX(stephentu): this 1st filter is overly conservative and we can do
+      // better
       if ((leaf->keys[i] > lower_slice ||
            (leaf->keys[i] == lower_slice && leaf->keyslice_length(i) >= min(lower.size(), size_t(9)))) &&
           (!upper || leaf->keys[i] <= upper_slice))
@@ -439,12 +441,7 @@ btree::search_range_at_layer(
       // check to see if we already omitted a key <= buf[i]: if so, don't omit it
       if (emitted_last_keyslice &&
           ((buf[i].key < last_keyslice) ||
-           (buf[i].key == last_keyslice &&
-            (buf[i].length < last_keyslice_len ||
-             (buf[i].length == last_keyslice_len &&
-              (last_keyslice_len <= 8 ||
-               (last_keyslice_len == 9 && !buf[i].layer &&
-                buf[i].suffix <= varkey(last_keyslice_suffix))))))))
+           (buf[i].key == last_keyslice && buf[i].length <= last_keyslice_len)))
         continue;
       size_t ncpy = min(buf[i].length, size_t(8));
       slice_buffer.resize(prefix_size + ncpy);
@@ -454,6 +451,7 @@ btree::search_range_at_layer(
         leaf_node *next_layer = leftmost_descend_layer(buf[i].vn.n);
         varkey zerokey;
         if (emitted_last_keyslice && last_keyslice == buf[i].key)
+          // NB(stephentu): this is implied by the filter above
           INVARIANT(last_keyslice_len <= 8);
         if (!search_range_at_layer(next_layer, slice_buffer, zerokey, false, NULL, callback))
           return false;
