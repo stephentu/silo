@@ -86,8 +86,9 @@ txn_btree::txn_search_range_callback::invoke(
   string sk(k.str());
   if (!(t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
     transaction::key_range_t r =
-      invoked ? transaction::key_range_t(prev_key, sk) :
+      invoked ? transaction::key_range_t(next_key(prev_key), sk) :
                 transaction::key_range_t(lower, sk);
+    VERBOSE(cerr << "  range: " << r << endl);
     if (!r.is_empty_range())
       ctx->add_absent_range(r);
   }
@@ -144,14 +145,6 @@ txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_typ
   return !failed_flag;
 }
 
-static inline
-string next_key(const string &s)
-{
-  string s0(s);
-  s0.resize(s.size() + 1);
-  return s0;
-}
-
 void
 txn_btree::search_range_call(transaction &t,
                              const key_type &lower,
@@ -193,7 +186,7 @@ txn_btree::search_range_call(transaction &t,
     else
       ctx.add_absent_range(
           transaction::key_range_t(
-            c.invoked ? c.prev_key : lower.str()));
+            c.invoked ? next_key(c.prev_key) : lower.str()));
   }
 }
 
@@ -452,6 +445,73 @@ test_read_only_snapshot()
 
       t0.commit(true);
       t1.commit(true);
+    }
+  }
+}
+
+
+namespace test_long_keys_ns {
+
+static inline string
+make_long_key(int32_t a, int32_t b, int32_t c, int32_t d) {
+  char buf[4 * sizeof(int32_t)];
+  int32_t *p = (int32_t *) &buf[0];
+  *p++ = a;
+  *p++ = b;
+  *p++ = c;
+  *p++ = d;
+  return string(&buf[0], ARRAY_NELEMS(buf));
+}
+
+class counting_scan_callback : public txn_btree::search_range_callback {
+public:
+  counting_scan_callback() : ctr(0) {}
+
+  virtual bool
+  invoke(const txn_btree::key_type &k, txn_btree::value_type v)
+  {
+    ctr++;
+    return true;
+  }
+  size_t ctr;
+};
+
+}
+
+template <typename TxnType>
+static void
+test_long_keys()
+{
+  using namespace test_long_keys_ns;
+  const size_t N = 10;
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    txn_btree btr;
+
+    {
+      TxnType t(txn_flags);
+      struct { uint64_t v; } r;
+      for (size_t a = 0; a < N; a++)
+        for (size_t b = 0; b < N; b++)
+          for (size_t c = 0; c < N; c++)
+            for (size_t d = 0; d < N; d++) {
+              string k = make_long_key(a, b, c, d);
+              btr.insert(t, varkey(k), (txn_btree::value_type) &r);
+            }
+      t.commit(true);
+    }
+
+    {
+      TxnType t(txn_flags);
+      string lowkey_s = make_long_key(1, 2, 3, 0);
+      string highkey_s = make_long_key(1, 2, 3, N);
+      varkey highkey(highkey_s);
+      counting_scan_callback c;
+      btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
+      t.commit(true);
+      ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == N);
     }
   }
 }
@@ -963,6 +1023,8 @@ txn_btree::Test()
   test1<transaction_proto1>();
   test2<transaction_proto1>();
   test_multi_btree<transaction_proto1>();
+  test_read_only_snapshot<transaction_proto1>();
+  test_long_keys<transaction_proto1>();
   mp_test1<transaction_proto1>();
   mp_test2<transaction_proto1>();
   mp_test3<transaction_proto1>();
@@ -972,6 +1034,7 @@ txn_btree::Test()
   test2<transaction_proto2>();
   test_multi_btree<transaction_proto2>();
   test_read_only_snapshot<transaction_proto2>();
+  test_long_keys<transaction_proto2>();
   mp_test1<transaction_proto2>();
   mp_test2<transaction_proto2>();
   mp_test3<transaction_proto2>();

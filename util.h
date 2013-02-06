@@ -349,6 +349,14 @@ unsafe_share_with(T &dst, T &src)
   dst.unsafe_share_with(src);
 }
 
+inline std::string
+next_key(const std::string &s)
+{
+  std::string s0(s);
+  s0.resize(s.size() + 1);
+  return s0;
+}
+
 }
 
 #endif /* _UTIL_H_ */

@@ -375,7 +375,9 @@ btree::search_range_at_layer(
     const key_type *upper,
     low_level_search_range_callback &callback) const
 {
-  INVARIANT(lower.size() <= 8);
+  //INVARIANT(lower.size() <= 8);
+
+  VERBOSE(cerr << "lower (size=" << lower.size() << "): " << hexify(lower.str()) << endl);
 
   key_slice last_keyslice = 0;
   size_t last_keyslice_len = 0;
@@ -519,7 +521,7 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
     prefix.insert(prefix.end(), lower.data(), lower.data() + 8 * leaf_nodes.size());
     key_type layer_upper;
     bool layer_has_upper = false;
-    if (upper && round_up(upper->size(), size_t(8)) >= round_up(lower.size(), size_t(8))) {
+    if (upper && upper->size() >= (8 * leaf_nodes.size())) {
       layer_upper = upper->shift_many(leaf_nodes.size());
       layer_has_upper = true;
     }

@@ -411,7 +411,7 @@ transaction::dump_debug_info() const
   }
 }
 
-inline ostream &
+ostream &
 operator<<(ostream &o, const transaction::key_range_t &range)
 {
   o << "[" << hexify(range.a) << ", ";
