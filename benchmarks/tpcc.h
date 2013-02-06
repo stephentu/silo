@@ -79,6 +79,13 @@ struct oorder {
   bool o_all_local;
   uint32_t o_entry_d;
 } PACKED;
+struct oorder_c_id_idx_mem {
+	int32_t o_id;
+	struct oorder *o_ptr;
+} PACKED;
+struct oorder_c_id_idx_nomem {
+	int32_t o_id;
+} PACKED;
 struct order_line {
   int32_t ol_w_id;
   int32_t ol_d_id;

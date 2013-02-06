@@ -29,6 +29,7 @@ public:
       tbl_item(open_tables.at("item")),
       tbl_new_order(open_tables.at("new_order")),
       tbl_oorder(open_tables.at("oorder")),
+      tbl_oorder_c_id_idx(open_tables.at("oorder_c_id_idx")),
       tbl_order_line(open_tables.at("order_line")),
       tbl_stock(open_tables.at("stock")),
       tbl_warehouse(open_tables.at("warehouse"))
@@ -45,6 +46,7 @@ protected:
   abstract_ordered_index *tbl_item;
   abstract_ordered_index *tbl_new_order;
   abstract_ordered_index *tbl_oorder;
+  abstract_ordered_index *tbl_oorder_c_id_idx;
   abstract_ordered_index *tbl_order_line;
   abstract_ordered_index *tbl_stock;
   abstract_ordered_index *tbl_warehouse;
@@ -252,6 +254,19 @@ public:
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(o_w_id);
     *p++ = t(o_d_id);
+    *p++ = t(o_id);
+    return string(&buf[0], ARRAY_NELEMS(buf));
+  }
+
+  static inline string
+  OOrderCIDKey(int32_t o_w_id, int32_t o_d_id, int32_t o_c_id, int32_t o_id)
+  {
+    big_endian_trfm<int32_t> t;
+    char buf[4 * sizeof(int32_t)];
+    int32_t *p = (int32_t *) &buf[0];
+    *p++ = t(o_w_id);
+    *p++ = t(o_d_id);
+    *p++ = t(o_c_id);
     *p++ = t(o_id);
     return string(&buf[0], ARRAY_NELEMS(buf));
   }
@@ -644,7 +659,7 @@ public:
             else
               customer.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
 
-            cerr << "inserting (c_w_id=" << customer.c_w_id << ", c_d_id=" << customer.c_d_id << ", c_last=" << customer.c_last.str() << ")" << endl;
+            //cerr << "inserting (c_w_id=" << customer.c_w_id << ", c_d_id=" << customer.c_d_id << ", c_last=" << customer.c_last.str() << ")" << endl;
 
             customer.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
             customer.c_credit_lim = 50000;
@@ -679,7 +694,7 @@ public:
             string customerNameKey = CustomerNameIdxKey(
                 customer.c_w_id, customer.c_d_id,
                 customer.c_last.str(true), customer.c_first.str(true));
-            cerr << "  insert with 2nd key: " << hexify(customerNameKey) << endl;
+            //cerr << "  insert with 2nd key: " << hexify(customerNameKey) << endl;
             if (customer_p) {
               // index structure is:
               // (c_w_id, c_d_id, c_last, c_first) -> (c_id, c_ptr)
@@ -775,7 +790,23 @@ public:
             oorder.o_entry_d = GetCurrentTimeMillis();
 
             string oorderPK = OOrderPrimaryKey(w, d, c);
-            tbl_oorder->insert(txn, oorderPK.data(), oorderPK.size(), (const char *) &oorder, sizeof(oorder));
+            const char *oorder_ret =
+              tbl_oorder->insert(txn, oorderPK.data(), oorderPK.size(),
+                  (const char *) &oorder, sizeof(oorder));
+
+            string oorderCIDPK = OOrderCIDKey(w, d, oorder.o_c_id, c);
+            if (oorder_ret) {
+              tpcc::oorder_c_id_idx_mem rec;
+              rec.o_id = oorder.o_id;
+              rec.o_ptr = (tpcc::oorder *) oorder_ret;
+              tbl_oorder_c_id_idx->insert(txn, oorderCIDPK.data(),
+                  oorderCIDPK.size(), (const char *) &rec, sizeof(rec));
+            } else {
+              tpcc::oorder_c_id_idx_nomem rec;
+              rec.o_id = oorder.o_id;
+              tbl_oorder_c_id_idx->insert(txn, oorderCIDPK.data(),
+                  oorderCIDPK.size(), (const char *) &rec, sizeof(rec));
+            }
 
             if (bsize != -1 && !((++ctr) % bsize)) {
               ALWAYS_ASSERT(db->commit_txn(txn));
@@ -844,7 +875,7 @@ private:
 class limit_callback : public abstract_ordered_index::scan_callback {
 public:
   limit_callback(ssize_t limit = -1)
-    : limit(limit), n(n)
+    : limit(limit), n(0)
   {
     ALWAYS_ASSERT(limit == -1 || limit > 0);
   }
@@ -855,7 +886,7 @@ public:
   {
     INVARIANT(limit == -1 || n < size_t(limit));
     values.push_back(make_pair(string(key, key_len), string(value, value_len)));
-    return limit != -1 && (++n == size_t(limit));
+    return (limit == -1) || (++n < size_t(limit));
   }
 
   typedef pair<string, string> kv_pair;
@@ -1176,9 +1207,9 @@ tpcc_worker::txn_payment()
       limit_callback c(-1);
       tbl_customer_name_idx->scan(txn, lowkey.data(), lowkey.size(),
                                   highkey.data(), highkey.size(), true, c);
-      cerr << "searching for lastname: (c_w_id=" << customerWarehouseID << ", c_d_id=" << customerDistrictID << ", c_last=" << lastname << ")" << endl;
-      cerr << "  hexify lowkey: " << hexify(lowkey) << endl;
-      cerr << "  hexify highkey: " << hexify(highkey) << endl;
+      //cerr << "searching for lastname: (c_w_id=" << customerWarehouseID << ", c_d_id=" << customerDistrictID << ", c_last=" << lastname << ")" << endl;
+      //cerr << "  hexify lowkey: " << hexify(lowkey) << endl;
+      //cerr << "  hexify highkey: " << hexify(highkey) << endl;
       ALWAYS_ASSERT(!c.values.empty());
       int index = c.values.size() / 2;
       if (c.values.size() % 2 == 0)
@@ -1308,21 +1339,31 @@ tpcc_worker::txn_order_status()
       delete_me.push_back(customer_v);
     }
 
-    string new_orderPK = NewOrderPrimaryKey(warehouse_id, districtID, customer->c_id);
-    char *new_order_v = 0;
-    size_t new_order_vlen = 0;
-    ALWAYS_ASSERT(tbl_new_order->get(txn, new_orderPK.data(), new_orderPK.size(), new_order_v, new_order_vlen));
-    ALWAYS_ASSERT(new_order_vlen == sizeof(tpcc::new_order));
-    tpcc::new_order *new_order = (tpcc::new_order *) new_order_v;
-    delete_me.push_back(new_order_v);
+    limit_callback c_oorder(-1);
+    string oorder_lowkey = OOrderCIDKey(warehouse_id, districtID, customer->c_id, 0);
+    string oorder_highkey = OOrderCIDKey(warehouse_id, districtID, customer->c_id,
+        numeric_limits<int32_t>::max());
+    tbl_oorder_c_id_idx->scan(txn, oorder_lowkey.data(), oorder_lowkey.size(),
+        oorder_highkey.data(), oorder_highkey.size(), true, c_oorder);
+    ALWAYS_ASSERT(!c_oorder.values.empty());
 
-    limit_callback c(-1);
-    string order_line_lowkey = OrderLinePrimaryKey(warehouse_id, districtID, new_order->no_o_id, 0);
-    string order_line_highkey = OrderLinePrimaryKey(warehouse_id, districtID, new_order->no_o_id,
+    uint o_id;
+    if (direct_mem) {
+      tpcc::oorder_c_id_idx_mem *rec =
+        (tpcc::oorder_c_id_idx_mem *) c_oorder.values.back().second.data();
+      o_id = rec->o_id;
+    } else {
+      tpcc::oorder_c_id_idx_nomem *rec =
+        (tpcc::oorder_c_id_idx_nomem *) c_oorder.values.back().second.data();
+      o_id = rec->o_id;
+    }
+
+    limit_callback c_order_line(-1);
+    string order_line_lowkey = OrderLinePrimaryKey(warehouse_id, districtID, o_id, 0);
+    string order_line_highkey = OrderLinePrimaryKey(warehouse_id, districtID, o_id,
         numeric_limits<int32_t>::max());
     tbl_order_line->scan(txn, order_line_lowkey.data(), order_line_lowkey.size(),
-        order_line_highkey.data(), order_line_highkey.size(), true,
-        c);
+        order_line_highkey.data(), order_line_highkey.size(), true, c_order_line);
 
     if (db->commit_txn(txn))
       ntxn_commits++;
@@ -1417,6 +1458,7 @@ tpcc_do_test(abstract_db *db)
   open_tables["item"]              = db->open_index("item");
   open_tables["new_order"]         = db->open_index("new_order");
   open_tables["oorder"]            = db->open_index("oorder");
+  open_tables["oorder_c_id_idx"]   = db->open_index("oorder_c_id_idx");
   open_tables["order_line"]        = db->open_index("order_line");
   open_tables["stock"]             = db->open_index("stock");
   open_tables["warehouse"]         = db->open_index("warehouse");
