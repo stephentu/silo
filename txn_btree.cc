@@ -60,9 +60,10 @@ void
 txn_btree::txn_search_range_callback::on_resp_node(
     const btree::node_opaque_t *n, uint64_t version)
 {
+  VERBOSE(cerr << "on_resp_node(): <node=0x" << hexify(intptr_t(n))
+               << ", version=" << version << ">" << endl);
+  VERBOSE(cerr << "  " << btree::NodeStringify(n) << endl);
   if (t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN) {
-    VERBOSE(cerr << "on_resp_node(): <node=0x" << hexify(intptr_t(n))
-                 << ", version=" << version << ">" << endl);
     transaction::node_scan_map::iterator it = ctx->node_scan.find(n);
     if (it == ctx->node_scan.end()) {
       ctx->node_scan[n] = version;
@@ -512,6 +513,58 @@ test_long_keys()
       btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       t.commit(true);
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == N);
+    }
+  }
+}
+
+template <typename TxnType>
+static void
+test_long_keys2()
+{
+  using namespace test_long_keys_ns;
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+
+    const char lowkey_cstr[] = {
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x45, 0x49, 0x4E, 0x47,
+      0x41, 0x54, 0x49, 0x4F, 0x4E, 0x45, 0x49, 0x4E, 0x47, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+    };
+    const string lowkey_s(lowkey_cstr, ARRAY_NELEMS(lowkey_cstr));
+    const char highkey_cstr[] = {
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x45, 0x49, 0x4E, 0x47,
+      0x41, 0x54, 0x49, 0x4F, 0x4E, 0x45, 0x49, 0x4E, 0x47, 0x00, 0x00, 0x00,
+      0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+      0xFF, 0xFF, 0xFF, 0xFF
+    };
+    const string highkey_s(highkey_cstr, ARRAY_NELEMS(highkey_cstr));
+
+    struct { uint64_t v; } r;
+    txn_btree btr;
+    {
+      TxnType t(txn_flags);
+      btr.insert(t, varkey(lowkey_s), (txn_btree::value_type) &r);
+      t.commit(true);
+    }
+
+    {
+      TxnType t(txn_flags);
+      txn_btree::value_type v = 0;
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, varkey(lowkey_s), v));
+      t.commit(true);
+      ALWAYS_ASSERT_COND_IN_TXN(t, v == (txn_btree::value_type) &r);
+    }
+
+    {
+      TxnType t(txn_flags);
+      counting_scan_callback c;
+      varkey highkey(highkey_s);
+      btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
+      t.commit(true);
+      ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == 1);
     }
   }
 }
@@ -1025,6 +1078,7 @@ txn_btree::Test()
   test_multi_btree<transaction_proto1>();
   test_read_only_snapshot<transaction_proto1>();
   test_long_keys<transaction_proto1>();
+  test_long_keys2<transaction_proto1>();
   mp_test1<transaction_proto1>();
   mp_test2<transaction_proto1>();
   mp_test3<transaction_proto1>();
@@ -1035,6 +1089,7 @@ txn_btree::Test()
   test_multi_btree<transaction_proto2>();
   test_read_only_snapshot<transaction_proto2>();
   test_long_keys<transaction_proto2>();
+  test_long_keys2<transaction_proto2>();
   mp_test1<transaction_proto2>();
   mp_test2<transaction_proto2>();
   mp_test3<transaction_proto2>();

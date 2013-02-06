@@ -14,7 +14,7 @@ public:
   run()
   {
     //transaction::Test();
-    //btree::Test();
+    btree::Test();
     txn_btree::Test();
     ret = 0;
   }

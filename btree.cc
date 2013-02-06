@@ -362,8 +362,7 @@ struct btree::leaf_kvinfo {
 
 // recursively read the range from the layer down
 //
-// all args relative to prefix. The lower key must end at the leaf layer
-// (lower.size() <= 8)
+// all args relative to prefix.
 //
 // returns true if we keep going
 bool
@@ -375,9 +374,11 @@ btree::search_range_at_layer(
     const key_type *upper,
     low_level_search_range_callback &callback) const
 {
+  // XXX(stephentu): why did I think this was a reasonable invariant before?
   //INVARIANT(lower.size() <= 8);
 
-  VERBOSE(cerr << "lower (size=" << lower.size() << "): " << hexify(lower.str()) << endl);
+  VERBOSE(cerr << "lower (size=" << lower.size() << ", inc=" << inc_lower
+               << "): " << hexify(lower.str()) << endl);
 
   key_slice last_keyslice = 0;
   size_t last_keyslice_len = 0;
@@ -385,7 +386,7 @@ btree::search_range_at_layer(
   bool emitted_last_keyslice = false;
   if (!inc_lower) {
     last_keyslice = lower.slice();
-    last_keyslice_len = lower.size();
+    last_keyslice_len = min(lower.size(), size_t(9));
     emitted_last_keyslice = true;
   }
 
@@ -417,7 +418,7 @@ btree::search_range_at_layer(
     // checking later (outside of the critical section)
     for (size_t i = 0; i < leaf->key_slots_used(); i++)
       if ((leaf->keys[i] > lower_slice ||
-           (leaf->keys[i] == lower_slice && leaf->keyslice_length(i) >= lower.size())) &&
+           (leaf->keys[i] == lower_slice && leaf->keyslice_length(i) >= min(lower.size(), size_t(9)))) &&
           (!upper || leaf->keys[i] <= upper_slice))
         buf.push_back(
             leaf_kvinfo(
@@ -513,6 +514,7 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
   scoped_rcu_region rcu_region;
   search_impl(lower, v, leaf_nodes);
   INVARIANT(!leaf_nodes.empty());
+  VERBOSE(cerr << "search_range_call(): leaf_nodes.size() = " << leaf_nodes.size() << endl);
   bool first = true;
   while (!leaf_nodes.empty()) {
     leaf_node *cur = leaf_nodes.back();
@@ -3366,4 +3368,34 @@ btree::Test()
   //perf_test();
   //read_only_perf_test();
   //write_only_perf_test();
+}
+
+string
+btree::NodeStringify(const node_opaque_t *n)
+{
+  vector<string> keys;
+  for (size_t i = 0; i < n->key_slots_used(); i++)
+    keys.push_back(string("0x") + hexify(n->keys[i]));
+
+  stringstream b;
+  b << "node[v=" << node::VersionInfoStr(n->unstable_version())
+    << ", keys=" << format_list(keys.begin(), keys.end())
+    ;
+
+  if (n->is_leaf_node()) {
+    const leaf_node *leaf = AsLeaf(n);
+    vector<string> lengths;
+    for (size_t i = 0; i < leaf->key_slots_used(); i++) {
+      stringstream inf;
+      inf << "<l=" << leaf->keyslice_length(i) << ",is_layer=" << leaf->value_is_layer(i) << ">";
+      lengths.push_back(inf.str());
+    }
+    b << ", lengths=" << format_list(lengths.begin(), lengths.end());
+  } else {
+    //const internal_node *internal = AsInternal(n);
+    // nothing for now
+  }
+
+  b << "]";
+  return b.str();
 }

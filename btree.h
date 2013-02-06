@@ -925,6 +925,12 @@ public:
     return node::Version(n->stable_version());
   }
 
+  /**
+   * Not well defined if n is being concurrently modified, just for debugging
+   */
+  static std::string
+  NodeStringify(const node_opaque_t *n);
+
   static void Test();
 
 private:
