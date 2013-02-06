@@ -1176,6 +1176,7 @@ tpcc_worker::txn_payment()
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
         ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
+        customer = (tpcc::customer *) customer_v;
         delete_me.push_back(customer_v);
       }
     } else {
@@ -1272,6 +1273,7 @@ tpcc_worker::txn_order_status()
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
         ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
+        customer = (tpcc::customer *) customer_v;
         delete_me.push_back(customer_v);
       }
     } else {
