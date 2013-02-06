@@ -1,7 +1,6 @@
 #ifndef _NDB_BENCH_INLINE_STR_H_
 #define _NDB_BENCH_INLINE_STR_H_
 
-#include <assert.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -32,10 +31,17 @@ public:
     assign(s);
   }
 
-  inline ALWAYS_INLINE std::string
-  str() const
+  inline std::string
+  str(bool zeropad = false) const
   {
-    return std::string(&buf[0], sz);
+		if (zeropad) {
+			INVARIANT(N >= sz);
+			std::string r(N, 0);
+			memcpy((char *) r.data(), &buf[0], sz);
+			return r;
+		} else {
+			return std::string(&buf[0], sz);
+		}
   }
 
   inline ALWAYS_INLINE const char *
@@ -59,7 +65,7 @@ public:
   inline void
   assign(const char *s, size_t n)
   {
-    assert(n <= N);
+    INVARIANT(n <= N);
     memcpy(&buf[0], s, n);
     sz = n;
   }
@@ -132,7 +138,7 @@ public:
   inline void
   assign(const char *s, size_t n)
   {
-    assert(n <= N);
+    INVARIANT(n <= N);
     memcpy(&buf[0], s, n);
     if ((N - n) > 0) // to suppress compiler warning
       memset(&buf[n], ' ', N - n); // pad with spaces

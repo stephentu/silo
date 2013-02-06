@@ -14,6 +14,8 @@ public:
 
   ndb_wrapper(Proto proto) : proto(proto) {}
 
+	virtual bool index_supports_direct_mem_access() const { return true; }
+
   virtual void *new_txn(uint64_t txn_flags);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
@@ -34,7 +36,7 @@ public:
       void *txn,
       const char *key, size_t keylen,
       char *&value, size_t &valuelen);
-  virtual void put(
+  virtual const char * put(
       void *txn,
       const char *key, size_t keylen,
       const char *value, size_t valuelen);

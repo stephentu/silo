@@ -39,6 +39,13 @@ public:
   virtual ssize_t txn_max_batch_size() const { return -1; }
 
   /**
+   * True if the indexes opened by this DB support direct memory access to
+   * values- that is, if put()/insert() return pointers to stable memory where
+   * the value is stored
+   */
+  virtual bool index_supports_direct_mem_access() const { return false; }
+
+  /**
    * for cruftier APIs
    */
   virtual void thread_init() {}

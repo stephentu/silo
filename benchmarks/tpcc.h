@@ -27,6 +27,13 @@ struct customer {
   inline_str_fixed<2> c_middle;
   inline_str_16<500> c_data;
 } PACKED;
+struct customer_name_idx_mem {
+	int32_t c_id;
+	struct customer *c_ptr;
+} PACKED;
+struct customer_name_idx_nomem {
+	int32_t c_id;
+} PACKED;
 struct district {
   int32_t d_w_id;
   int32_t d_id;

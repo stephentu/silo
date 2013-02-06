@@ -84,7 +84,7 @@ bdb_ordered_index::get(
   return retno == 0;
 }
 
-void
+const char *
 bdb_ordered_index::put(
     void *txn,
     const char *key, size_t keylen,
@@ -93,4 +93,5 @@ bdb_ordered_index::put(
   Dbt kdbt((void *) key, keylen);
   Dbt vdbt((void *) value, valuelen);
   ALWAYS_ASSERT(db->put((DbTxn *) txn, &kdbt, &vdbt, 0) == 0);
+  return 0;
 }

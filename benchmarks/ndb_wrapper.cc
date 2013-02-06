@@ -75,7 +75,7 @@ ndb_ordered_index::get(
   }
 }
 
-void
+const char *
 ndb_ordered_index::put(
     void *txn,
     const char *key, size_t keylen,
@@ -91,6 +91,7 @@ ndb_ordered_index::put(
     delete [] record;
     throw abstract_db::abstract_abort_exception();
   }
+  return (const char *) record + sizeof(size_t);
 }
 
 class ndb_wrapper_search_range_callback : public txn_btree::search_range_callback {

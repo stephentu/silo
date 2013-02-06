@@ -44,7 +44,7 @@ public:
       const char *key, size_t keylen,
       char *&value, size_t &valuelen);
 
-  virtual void put(
+  virtual const char * put(
       void *txn,
       const char *key, size_t keylen,
       const char *value, size_t valuelen);

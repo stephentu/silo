@@ -3,6 +3,11 @@
 
 #include <stdint.h>
 
+/**
+ * The underlying index manages memory for keys/values, but
+ * may choose to expose the underlying memory to callers
+ * (see put() and inesrt()).
+ */
 class abstract_ordered_index {
 public:
 
@@ -49,9 +54,16 @@ public:
    * (a copy is made).
    *
    * If a record with key k exists, overwrites. Otherwise, inserts.
+   *
+   * If the return value is not NULL, then it points to the actual stable
+   * location in memory where the value is located. Thus, [ret, ret+valuelen)
+   * will be valid memory, bytewise equal to [value, value+valuelen), since the
+   * implementations have immutable values for the time being. The value
+   * returned is guaranteed to be valid memory until the key associated with
+   * value is overriden.
    */
-  virtual void put(
-      void *txn,
+  virtual const char *
+  put(void *txn,
       const char *key, size_t keylen,
       const char *value, size_t valuelen) = 0;
 
@@ -61,14 +73,14 @@ public:
    * If a record with key k exists, behavior is unspecified- this function
    * is only to be used when you can guarantee no such key exists (ie in loading phase)
    *
-   * Default implementation calls put()
+   * Default implementation calls put(). See put() for meaning of return value.
    */
-  virtual void insert(
-      void *txn,
-      const char *key, size_t keylen,
-      const char *value, size_t valuelen)
+  virtual const char *
+  insert(void *txn,
+         const char *key, size_t keylen,
+         const char *value, size_t valuelen)
   {
-    put(txn, key, keylen, value, valuelen);
+    return put(txn, key, keylen, value, valuelen);
   }
 
   /**

@@ -190,7 +190,7 @@ mysql_ordered_index::get(
   return ret;
 }
 
-void
+const char *
 mysql_ordered_index::put(
     void *txn,
     const char *key, size_t keylen,
@@ -209,14 +209,15 @@ mysql_ordered_index::put(
   if (unlikely(ret == (my_ulonglong) -1))
     print_error_and_bail(mysql_wrapper::tl_conn);
   if (ret)
-    return;
+    return 0;
   stringstream b1;
   b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
   check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
+  return 0;
 }
 
-void
+const char *
 mysql_ordered_index::insert(
     void *txn,
     const char *key, size_t keylen,
@@ -231,6 +232,7 @@ mysql_ordered_index::insert(
   b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
   check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
+  return 0;
 }
 
 MYSQL *
