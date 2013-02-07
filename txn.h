@@ -12,6 +12,8 @@
 #include <string>
 #include <utility>
 
+#include <tr1/unordered_map>
+
 #include "btree.h"
 #include "macros.h"
 #include "varkey.h"
@@ -587,11 +589,15 @@ protected:
   friend std::ostream &
   operator<<(std::ostream &o, const transaction::read_record_t &rr);
 
-  // XXX: use hash tables for the read/write set
-  typedef std::map<std::string, read_record_t> read_set_map;
-  typedef std::map<std::string, record_t> write_set_map;
+  //typedef std::map<std::string, read_record_t> read_set_map;
+  //typedef std::map<std::string, record_t> write_set_map;
+  //typedef std::vector<key_range_t> absent_range_vec;
+  //typedef std::map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+
+  typedef std::tr1::unordered_map<std::string, read_record_t> read_set_map;
+  typedef std::tr1::unordered_map<std::string, record_t> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec;
-  typedef std::map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+  typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 
   struct txn_context {
     read_set_map read_set;

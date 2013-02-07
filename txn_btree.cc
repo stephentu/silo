@@ -100,7 +100,7 @@ txn_btree::txn_search_range_callback::invoke(
   bool ret = true; // true means keep going, false means stop
   if (local_read && local_v)
     ret = caller_callback->invoke(k, local_v);
-  map<string, transaction::read_record_t>::const_iterator it =
+  transaction::read_set_map::const_iterator it =
     ctx->read_set.find(sk);
   if (it == ctx->read_set.end()) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
