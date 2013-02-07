@@ -357,12 +357,20 @@ public:
     inline bool
     stable_is_latest_version(tid_t t) const
     {
-      while (true) {
-        uint64_t v = stable_version();
-        bool ret = is_latest_version(t);
-        if (likely(check_version(v)))
-          return ret;
-      }
+      const uint64_t v = unstable_version();
+      if (unlikely(IsLocked(v)))
+        return false;
+      COMPILER_MEMORY_FENCE;
+      // now v is a stable version
+      bool ret = is_latest_version(t);
+      // only check_version() if the answer would be true- otherwise,
+      // no point in doing a version check
+      if (ret && check_version(v))
+        return true;
+      else
+        // no point in retrying, since we know it will fail (since we had a
+        // version change)
+        return false;
     }
 
     inline tid_t
