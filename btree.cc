@@ -416,11 +416,12 @@ btree::search_range_at_layer(
 
     // grab all keys in [lower_slice, upper_slice]. we'll do boundary condition
     // checking later (outside of the critical section)
-    for (size_t i = 0; i < leaf->key_slots_used(); i++)
+    for (size_t i = 0; i < leaf->key_slots_used(); i++) {
       // XXX(stephentu): this 1st filter is overly conservative and we can do
       // better
       if ((leaf->keys[i] > lower_slice ||
-           (leaf->keys[i] == lower_slice && leaf->keyslice_length(i) >= min(lower.size(), size_t(9)))) &&
+           (leaf->keys[i] == lower_slice &&
+            leaf->keyslice_length(i) >= min(lower.size(), size_t(9)))) &&
           (!upper || leaf->keys[i] <= upper_slice))
         buf.push_back(
             leaf_kvinfo(
@@ -429,6 +430,7 @@ btree::search_range_at_layer(
               leaf->value_is_layer(i),
               leaf->keyslice_length(i),
               varkey(leaf->suffixes[i])));
+    }
 
     leaf_node *right_sibling = leaf->next;
     key_slice leaf_max_key = right_sibling ? right_sibling->min_key : 0;
@@ -456,6 +458,21 @@ btree::search_range_at_layer(
         if (!search_range_at_layer(next_layer, slice_buffer, zerokey, false, NULL, callback))
           return false;
       } else {
+        // check if we are before the start
+        if (buf[i].key == lower_slice) {
+          if (buf[i].length <= 8) {
+            if (buf[i].length < lower.size())
+              // skip
+              continue;
+          } else {
+            INVARIANT(buf[i].length == 9);
+            if (lower.size() > 8 && buf[i].suffix < lower.shift())
+              // skip
+              continue;
+          }
+        }
+
+        // check if we are after the end
         if (upper && buf[i].key == upper_slice) {
           if (buf[i].length == 9) {
             if (upper->size() <= 8)
@@ -2082,6 +2099,8 @@ public:
   virtual bool
   invoke(const btree::key_type &k, btree::value_type v)
   {
+    VERBOSE(cerr << "test_range_scan_helper::invoke(): received key(size="
+                 << k.str().size() << "): " << hexify(k.str()) << endl);
     string cur_key = k.str();
     if (!keys.empty())
       ALWAYS_ASSERT(keys.back() < cur_key);
@@ -2160,6 +2179,37 @@ test_two_layer_range_scan()
 
   test_range_scan_helper::expect ex(set<string>(keys, keys + ARRAY_NELEMS(keys)));
   test_range_scan_helper tester(btr, varkey(""), NULL, ex);
+  tester.test();
+}
+
+static void
+test_multi_layer_scan()
+{
+  const uint8_t lokey_cstr[] = {
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x45, 0x49, 0x4E, 0x47,
+    0x41, 0x54, 0x49, 0x4F, 0x4E, 0x45, 0x49, 0x4E, 0x47, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+  };
+  const uint8_t hikey_cstr[] = {
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x45, 0x49, 0x4E, 0x47,
+    0x41, 0x54, 0x49, 0x4F, 0x4E, 0x45, 0x49, 0x4E, 0x47, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF
+  };
+  const string lokey_s((const char *) &lokey_cstr[0], ARRAY_NELEMS(lokey_cstr));
+  const string hikey_s((const char *) &hikey_cstr[0], ARRAY_NELEMS(hikey_cstr));
+
+  string lokey_s_next(lokey_s);
+  lokey_s_next.resize(lokey_s_next.size() + 1);
+
+  const varkey hikey(hikey_s);
+
+  btree btr;
+  ALWAYS_ASSERT(btr.insert(varkey(lokey_s), (btree::value_type) 0x123));
+
+  test_range_scan_helper::expect ex(0);
+  test_range_scan_helper tester(btr, varkey(lokey_s_next), &hikey, ex);
   tester.test();
 }
 
@@ -3350,6 +3400,7 @@ btree::Test()
   test_varlen_multi_layer();
   test_two_layer();
   test_two_layer_range_scan();
+  test_multi_layer_scan();
   test_null_keys();
   test_null_keys_2();
   test_random_keys();
