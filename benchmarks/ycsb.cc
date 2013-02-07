@@ -141,8 +141,14 @@ public:
   get_workload()
   {
     workload_desc w;
-    w.push_back(make_pair(0.85, TxnRead));
-    w.push_back(make_pair(0.10, TxnScan));
+    //w.push_back(make_pair(1.00, TxnRead));
+
+    //w.push_back(make_pair(0.85, TxnRead));
+    //w.push_back(make_pair(0.10, TxnScan));
+    //w.push_back(make_pair(0.04, TxnRmw));
+    //w.push_back(make_pair(0.01, TxnWrite));
+
+    w.push_back(make_pair(0.95, TxnRead));
     w.push_back(make_pair(0.04, TxnRmw));
     w.push_back(make_pair(0.01, TxnWrite));
     return w;
