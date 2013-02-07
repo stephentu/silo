@@ -397,17 +397,23 @@ transaction::dump_debug_info() const
        it != ctx_map.end(); ++it) {
     cerr << "    Btree @ " << hexify(it->first) << ":" << endl;
 
+    cerr << "      === Read Set ===" << endl;
     // read-set
     for (read_set_map::const_iterator rs_it = it->second.read_set.begin();
          rs_it != it->second.read_set.end(); ++rs_it)
       cerr << "      Key 0x" << hexify(rs_it->first) << " @ " << rs_it->second << endl;
 
+    cerr << "      === Write Set ===" << endl;
     // write-set
     for (write_set_map::const_iterator ws_it = it->second.write_set.begin();
          ws_it != it->second.write_set.end(); ++ws_it)
       cerr << "      Key 0x" << hexify(ws_it->first) << " @ " << hexify(ws_it->second) << endl;
 
     // XXX: node set + absent ranges
+    cerr << "      === Absent Ranges ===" << endl;
+    for (absent_range_vec::const_iterator ar_it = it->second.absent_range_set.begin();
+         ar_it != it->second.absent_range_set.end(); ++ar_it)
+      cerr << "      " << *ar_it << endl;
   }
 }
 

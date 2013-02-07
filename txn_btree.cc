@@ -97,7 +97,7 @@ txn_btree::txn_search_range_callback::invoke(
   invoked = true;
   value_type local_v = 0;
   bool local_read = ctx->local_search_str(sk, local_v);
-  bool ret = true;
+  bool ret = true; // true means keep going, false means stop
   if (local_read && local_v)
     ret = caller_callback->invoke(k, local_v);
   map<string, transaction::read_record_t>::const_iterator it =
@@ -123,7 +123,7 @@ txn_btree::txn_search_range_callback::invoke(
     if (!local_read && r)
       ret = caller_callback->invoke(k, r);
   }
-  if (ret)
+  if (!ret)
     caller_stopped = true;
   return ret;
 }
@@ -135,6 +135,7 @@ txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_typ
   INVARIANT(ln);
   VERBOSE(cerr << "absent_range_validation_callback: key " << k
                << " found logical_node 0x" << hexify(ln) << endl);
+
   bool did_write = ctx->write_set.find(k.str()) != ctx->write_set.end();
   // NB(stephentu): I don't think it matters here whether or not we use
   // snapshot_tid or MIN_TID, since this record did not exist @ snapshot_tid,
@@ -143,6 +144,9 @@ txn_btree::absent_range_validation_callback::invoke(const key_type &k, value_typ
   failed_flag = did_write ?
     !ln->is_snapshot_consistent(transaction::MIN_TID, commit_tid) :
     !ln->stable_is_snapshot_consistent(transaction::MIN_TID, commit_tid);
+  if (failed_flag)
+    VERBOSE(cerr << "absent_range_validation_callback: key " << k
+                 << " found logical_node 0x" << hexify(ln) << endl);
   return !failed_flag;
 }
 
@@ -156,10 +160,10 @@ txn_btree::search_range_call(transaction &t,
   transaction::txn_context &ctx = t.ctx_map[this];
 
   if (upper)
-    VERBOSE(cerr << "txn_btree::search_range_call [" << lower
+    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this)) << ")::search_range_call [" << lower
                  << ", " << *upper << ")" << endl);
   else
-    VERBOSE(cerr << "txn_btree::search_range_call [" << lower
+    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this)) << ")::search_range_call [" << lower
                  << ", +inf)" << endl);
 
   // many cases to consider:
