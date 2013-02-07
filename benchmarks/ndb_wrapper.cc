@@ -131,10 +131,14 @@ ndb_ordered_index::scan(
 
   ndb_wrapper_search_range_callback c(callback);
 
-  if (has_end_key)
-    btr.search_range_call(t, lower, &upper, c);
-  else
-    btr.search_range_call(t, lower, NULL, c);
+  try {
+    if (has_end_key)
+      btr.search_range_call(t, lower, &upper, c);
+    else
+      btr.search_range_call(t, lower, NULL, c);
+  } catch (transaction_abort_exception &ex) {
+    throw abstract_db::abstract_abort_exception();
+  }
 }
 
 void
