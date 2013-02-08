@@ -1,4 +1,5 @@
 #include "macros.h"
+#include "amd64.h"
 #include "txn.h"
 #include "txn_btree.h"
 
@@ -675,7 +676,7 @@ transaction_proto1::on_tid_finish(tid_t commit_tid)
   INVARIANT(commit_tid > last_consistent_global_tid);
   while (!__sync_bool_compare_and_swap(
          &last_consistent_global_tid, commit_tid - 1, commit_tid))
-    ;
+    nop_pause();
 }
 
 transaction::tid_t

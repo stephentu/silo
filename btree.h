@@ -15,6 +15,7 @@
 
 #include "varkey.h"
 #include "macros.h"
+#include "amd64.h"
 #include "rcu.h"
 #include "static_assert.h"
 #include "util.h"
@@ -197,8 +198,10 @@ private:
     lock()
     {
       uint64_t v = hdr;
-      while (IsLocked(v) || !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK))
+      while (IsLocked(v) || !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
+        nop_pause();
         v = hdr;
+      }
 #ifdef LOCK_OWNERSHIP_CHECKING
       lock_owner = pthread_self();
 #endif
@@ -326,8 +329,10 @@ private:
     stable_version() const
     {
       uint64_t v = hdr;
-      while (is_modifying())
+      while (is_modifying()) {
+        nop_pause();
         v = hdr;
+      }
       COMPILER_MEMORY_FENCE;
       return v;
     }

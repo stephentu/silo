@@ -242,8 +242,10 @@ public:
     {
       uint64_t v = hdr;
       while (IsLocked(v) ||
-             !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK))
+             !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
+        nop_pause();
         v = hdr;
+      }
       COMPILER_MEMORY_FENCE;
     }
 
@@ -292,8 +294,10 @@ public:
     stable_version() const
     {
       uint64_t v = hdr;
-      while (IsLocked(v))
+      while (IsLocked(v)) {
+        nop_pause();
         v = hdr;
+      }
       COMPILER_MEMORY_FENCE;
       return v;
     }
