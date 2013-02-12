@@ -66,9 +66,7 @@ ndb_ordered_index::get(
     INVARIANT(v != NULL);
     size_t *sp = (size_t *) v;
     valuelen = *sp;
-    value = (char *) malloc(valuelen);
-    INVARIANT(value != NULL); // XXX: deal with this later
-    memcpy(value, v + sizeof(size_t), valuelen);
+    value = (char *) (v + sizeof(size_t)); // points directly to record
     return true;
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();

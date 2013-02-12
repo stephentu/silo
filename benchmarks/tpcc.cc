@@ -937,6 +937,7 @@ tpcc_worker::txn_new_order()
   // XXX(stephentu): implement rollback
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags);
+  const bool direct_mem = db->index_supports_direct_mem_access();
   try {
     // GetCustWhse:
     // SELECT c_discount, c_last, c_credit, w_tax
@@ -949,7 +950,7 @@ tpcc_worker::txn_new_order()
     ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
     ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
     //tpcc::customer *customer = (tpcc::customer *) customer_v;
-    delete_me.push_back(customer_v);
+    if (!direct_mem) delete_me.push_back(customer_v);
 
     string warehousePK = WarehousePrimaryKey(warehouse_id);
     char *warehouse_v = 0;
@@ -957,7 +958,7 @@ tpcc_worker::txn_new_order()
     ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
     ALWAYS_ASSERT(warehouse_vlen == sizeof(tpcc::warehouse));
     //tpcc::warehouse *warehouse = (tpcc::warehouse *) warehouse_v;
-    delete_me.push_back(warehouse_v);
+    if (!direct_mem) delete_me.push_back(warehouse_v);
 
     string districtPK = DistrictPrimaryKey(warehouse_id, districtID);
     char *district_v = 0;
@@ -965,7 +966,7 @@ tpcc_worker::txn_new_order()
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
     ALWAYS_ASSERT(district_vlen == sizeof(tpcc::district));
     tpcc::district *district = (tpcc::district *) district_v;
-    delete_me.push_back(district_v);
+    if (!direct_mem) delete_me.push_back(district_v);
 
     tpcc::new_order new_order;
     new_order.no_w_id = int32_t(warehouse_id);
@@ -1002,7 +1003,7 @@ tpcc_worker::txn_new_order()
       ALWAYS_ASSERT(tbl_item->get(txn, itemPK.data(), itemPK.size(), item_v, item_vlen));
       ALWAYS_ASSERT(item_vlen == sizeof(tpcc::item));
       tpcc::item *item = (tpcc::item *) item_v;
-      delete_me.push_back(item_v);
+      if (!direct_mem) delete_me.push_back(item_v);
 
       string stockPK = StockPrimaryKey(warehouse_id, ol_i_id);
       char *stock_v = 0;
@@ -1010,7 +1011,7 @@ tpcc_worker::txn_new_order()
       ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
       ALWAYS_ASSERT(stock_vlen == sizeof(tpcc::stock));
       tpcc::stock *stock = (tpcc::stock *) stock_v;
-      delete_me.push_back(stock_v);
+      if (!direct_mem) delete_me.push_back(stock_v);
 
       if (stock->s_quantity - ol_quantity >= 10)
         stock->s_quantity -= ol_quantity;
@@ -1097,6 +1098,7 @@ tpcc_worker::txn_delivery()
 
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags);
+  const bool direct_mem = db->index_supports_direct_mem_access();
   try {
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       string lowkey = NewOrderPrimaryKey(warehouse_id, d, 0);
@@ -1113,7 +1115,7 @@ tpcc_worker::txn_delivery()
       char *oorder_v;
       size_t oorder_len;
       ALWAYS_ASSERT(tbl_oorder->get(txn, oorderPK.data(), oorderPK.size(), oorder_v, oorder_len));
-      delete_me.push_back(oorder_v);
+      if (!direct_mem) delete_me.push_back(oorder_v);
       tpcc::oorder *oorder = (tpcc::oorder *) oorder_v;
       limit_callback c(-1);
       string order_line_lowkey = OrderLinePrimaryKey(warehouse_id, d, new_order->no_o_id, 0);
@@ -1150,7 +1152,7 @@ tpcc_worker::txn_delivery()
       ALWAYS_ASSERT(tbl_customer->get(
             txn, customerPK.data(), customerPK.size(),
             customer_v, customer_len));
-      delete_me.push_back(customer_v);
+      if (!direct_mem) delete_me.push_back(customer_v);
       tpcc::customer *customer = (tpcc::customer *) customer_v;
       customer->c_balance += ol_total;
       tbl_customer->put(txn, customerPK.data(), customerPK.size(), customer_v, customer_len);
@@ -1194,7 +1196,7 @@ tpcc_worker::txn_payment()
     ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
     ALWAYS_ASSERT(warehouse_vlen == sizeof(tpcc::warehouse));
     tpcc::warehouse *warehouse = (tpcc::warehouse *) warehouse_v;
-    delete_me.push_back(warehouse_v);
+    if (!direct_mem) delete_me.push_back(warehouse_v);
     warehouse->w_ytd += paymentAmount;
     tbl_warehouse->put(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen);
 
@@ -1204,7 +1206,7 @@ tpcc_worker::txn_payment()
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
     ALWAYS_ASSERT(district_vlen == sizeof(tpcc::district));
     tpcc::district *district = (tpcc::district *) district_v;
-    delete_me.push_back(district_v);
+    if (!direct_mem) delete_me.push_back(district_v);
     district->d_ytd += paymentAmount;
     tbl_district->put(txn, districtPK.data(), districtPK.size(), district_v, district_vlen);
 
@@ -1241,7 +1243,7 @@ tpcc_worker::txn_payment()
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
         ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
         customer = (tpcc::customer *) customer_v;
-        delete_me.push_back(customer_v);
+        if (!direct_mem) delete_me.push_back(customer_v);
       }
     } else {
       // cust by ID
@@ -1252,7 +1254,7 @@ tpcc_worker::txn_payment()
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
       ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
       customer = (tpcc::customer *) customer_v;
-      delete_me.push_back(customer_v);
+      if (!direct_mem) delete_me.push_back(customer_v);
     }
 
     customer->c_balance -= paymentAmount;
@@ -1339,7 +1341,7 @@ tpcc_worker::txn_order_status()
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
         ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
         customer = (tpcc::customer *) customer_v;
-        delete_me.push_back(customer_v);
+        if (!direct_mem) delete_me.push_back(customer_v);
       }
     } else {
       // cust by ID
@@ -1350,7 +1352,7 @@ tpcc_worker::txn_order_status()
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
       ALWAYS_ASSERT(customer_vlen == sizeof(tpcc::customer));
       customer = (tpcc::customer *) customer_v;
-      delete_me.push_back(customer_v);
+      if (!direct_mem) delete_me.push_back(customer_v);
     }
 
     limit_callback c_oorder(-1);
@@ -1397,6 +1399,7 @@ tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
+  const bool direct_mem = db->index_supports_direct_mem_access();
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
   try {
@@ -1407,7 +1410,7 @@ tpcc_worker::txn_stock_level()
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
     ALWAYS_ASSERT(district_vlen == sizeof(tpcc::district));
     tpcc::district *district = (tpcc::district *) district_v;
-    delete_me.push_back(district_v);
+    if (!direct_mem) delete_me.push_back(district_v);
 
     // manual joins are fun!
     limit_callback c(-1);
@@ -1432,7 +1435,7 @@ tpcc_worker::txn_stock_level()
       ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
       ALWAYS_ASSERT(stock_vlen == sizeof(tpcc::stock));
       tpcc::stock *stock = (tpcc::stock *) stock_v;
-      delete_me.push_back(stock_v);
+      if (!direct_mem) delete_me.push_back(stock_v);
       if (stock->s_quantity < int(threshold))
         s_i_ids_distinct.insert(stock->s_i_id);
     }

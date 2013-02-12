@@ -1,5 +1,5 @@
 CXXFLAGS := -Wall -g -O2
-LDFLAGS  := -lpthread -ljemalloc 
+LDFLAGS  := -lpthread -ljemalloc
 
 #CXXFLAGS := -Wall -g 
 #LDFLAGS  := -lpthread
