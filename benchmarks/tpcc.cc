@@ -1514,6 +1514,8 @@ tpcc_do_test(abstract_db *db)
   for (uint i = 0; i < ARRAY_NELEMS(thds); i++)
     thds[i]->join();
 
+  db->do_txn_epoch_sync();
+
   // XXX(stephentu): don't dup code between here and ycsb.cc
   if (verbose) {
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();

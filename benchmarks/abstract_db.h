@@ -46,6 +46,11 @@ public:
   virtual bool index_supports_direct_mem_access() const { return false; }
 
   /**
+   * XXX(stephentu): hack
+   */
+  virtual void do_txn_epoch_sync() const {}
+
+  /**
    * for cruftier APIs
    */
   virtual void thread_init() {}

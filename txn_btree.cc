@@ -43,10 +43,26 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
 
     pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
+
+    //if (!ln->stable_read(snapshot_tid, start_t, r)) {
+    //  cerr << "snapshot_tid: "  << snapshot_tid << endl;
+    //  t.dump_debug_info();
+    //  t.abort();
+    //  throw transaction_abort_exception();
+    //}
+
+    //if (!t.can_read_tid(start_t)) {
+    //  cerr << "snapshot_tid: " << snapshot_tid << ", start_tid: "  << start_t << endl;
+    //  t.dump_debug_info();
+    //  t.abort();
+    //  throw transaction_abort_exception();
+    //}
+
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t.can_read_tid(start_t))) {
       t.abort();
       throw transaction_abort_exception();
     }
+
     transaction::read_record_t *read_rec = &ctx.read_set[sk];
     read_rec->t = start_t;
     read_rec->r = r;
@@ -220,15 +236,6 @@ struct test_callback_ctr {
 
 // all combinations of txn flags to test
 static uint64_t TxnFlags[] = { 0, transaction::TXN_FLAG_LOW_LEVEL_SCAN };
-
-// stupid hacks
-template <typename TxnType>
-struct txn_epoch_sync { static inline void sync() {} };
-
-template <>
-struct txn_epoch_sync<transaction_proto2> {
-  static inline void sync() { transaction_proto2::wait_an_epoch(); }
-};
 
 static void
 always_assert_cond_in_txn(

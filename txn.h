@@ -877,4 +877,15 @@ private:
     g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
 };
 
+// XXX(stephentu): stupid hacks
+template <typename TxnType>
+struct txn_epoch_sync {
+  static inline void sync() {}
+};
+
+template <>
+struct txn_epoch_sync<transaction_proto2> {
+  static inline void sync() { transaction_proto2::wait_an_epoch(); }
+};
+
 #endif /* _NDB_TXN_H_ */
