@@ -152,6 +152,12 @@ ndb_ordered_index::remove(
   }
 }
 
+size_t
+ndb_ordered_index::size() const
+{
+  return btr.size_estimate();
+}
+
 static void
 record_cleanup_callback(uint8_t *record)
 {

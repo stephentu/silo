@@ -353,6 +353,7 @@ public:
   {
     INVARIANT(warehouse_id >= 1);
     INVARIANT(warehouse_id <= NumWarehouses());
+    memset(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
   }
 
   void txn_new_order();
@@ -404,11 +405,21 @@ public:
     w.push_back(make_pair(0.04, TxnDelivery));
     w.push_back(make_pair(0.04, TxnOrderStatus));
     w.push_back(make_pair(0.04, TxnStockLevel));
+
+    //w.push_back(make_pair(1.00, TxnNewOrder));
+    //w.push_back(make_pair(1.00, TxnPayment));
+    //w.push_back(make_pair(1.00, TxnDelivery));
+    //w.push_back(make_pair(1.00, TxnOrderStatus));
+    //w.push_back(make_pair(1.00, TxnStockLevel));
+
+    //w.push_back(make_pair(0.50, TxnNewOrder));
+    //w.push_back(make_pair(0.50, TxnPayment));
     return w;
   }
 
 private:
-  uint warehouse_id;
+  const uint warehouse_id;
+  int32_t last_no_o_ids[10]; // XXX(stephentu): hack
 };
 
 class tpcc_warehouse_loader : public ndb_thread, public tpcc_worker_mixin {
@@ -1101,15 +1112,20 @@ tpcc_worker::txn_delivery()
   const bool direct_mem = db->index_supports_direct_mem_access();
   try {
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-      string lowkey = NewOrderPrimaryKey(warehouse_id, d, 0);
+      string lowkey = NewOrderPrimaryKey(warehouse_id, d, last_no_o_ids[d]);
       string highkey = NewOrderPrimaryKey(warehouse_id, d, numeric_limits<int32_t>::max());
       limit_callback lone_callback(1);
-      tbl_new_order->scan(txn, lowkey.data(), lowkey.size(),
-                          highkey.data(), highkey.size(), true,
-                          lone_callback);
+      //{
+      //  scoped_timer st("NewOrderScan");
+        tbl_new_order->scan(txn, lowkey.data(), lowkey.size(),
+                            highkey.data(), highkey.size(), true,
+                            lone_callback);
+      //}
       if (lone_callback.values.empty())
         continue;
+      ALWAYS_ASSERT(lone_callback.values.size() == 1);
       tpcc::new_order *new_order = (tpcc::new_order *) lone_callback.values.front().second.data();
+      last_no_o_ids[d] = new_order->no_o_id + 1;
 
       string oorderPK = OOrderPrimaryKey(warehouse_id, d, new_order->no_o_id);
       char *oorder_v;
@@ -1122,8 +1138,8 @@ tpcc_worker::txn_delivery()
       string order_line_highkey = OrderLinePrimaryKey(warehouse_id, d, new_order->no_o_id,
                                            numeric_limits<int32_t>::max());
       tbl_order_line->scan(txn, order_line_lowkey.data(), order_line_lowkey.size(),
-                           order_line_highkey.data(), order_line_highkey.size(), true,
-                           c);
+          order_line_highkey.data(), order_line_highkey.size(), true,
+          c);
       float sum = 0.0;
       for (vector<limit_callback::kv_pair>::iterator it = c.values.begin();
            it != c.values.end(); ++it) {
@@ -1142,7 +1158,6 @@ tpcc_worker::txn_delivery()
       tbl_oorder->put(txn, oorderPK.data(), oorderPK.size(), (const char *) oorder, sizeof(*oorder));
 
       // update orderlines
-
       const uint c_id = oorder->o_c_id;
       const float ol_total = sum;
 
@@ -1289,6 +1304,11 @@ tpcc_worker::txn_payment()
     history.h_date = ts;
     history.h_amount = paymentAmount;
     history.h_data.assign(h_data);
+
+    string historyPK = HistoryPrimaryKey(history.h_c_id, history.h_c_d_id, history.h_c_w_id,
+                                         history.h_d_id, history.h_w_id, history.h_date);
+    tbl_history->insert(txn, historyPK.data(), historyPK.size(),
+                        (const char *) &history, sizeof(history));
 
     if (db->commit_txn(txn))
       ntxn_commits++;
@@ -1495,6 +1515,11 @@ tpcc_do_test(abstract_db *db)
     thds[i]->join();
 
   // XXX(stephentu): don't dup code between here and ycsb.cc
+  if (verbose) {
+    for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
+         it != open_tables.end(); ++it)
+      cerr << "table " << it->first << " size " << it->second->size() << endl;
+  }
 
   spin_barrier barrier_a(nthreads);
   spin_barrier barrier_b(1);
@@ -1505,10 +1530,14 @@ tpcc_do_test(abstract_db *db)
     workers.push_back(new tpcc_worker(r.next(), db, open_tables, &barrier_a, &barrier_b, (i % tpcc_worker_mixin::NumWarehouses()) + 1));
   for (size_t i = 0; i < nthreads; i++)
     workers[i]->start();
+
+  if (verbose)
+    cerr << "starting tpcc benchmark..." << endl;
+
   barrier_a.wait_for();
   barrier_b.count_down();
   timer t;
-  sleep(30);
+  sleep(runtime);
   running = false;
   __sync_synchronize();
   unsigned long elapsed = t.lap();

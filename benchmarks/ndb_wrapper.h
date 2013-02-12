@@ -49,6 +49,7 @@ public:
   virtual void remove(
       void *txn,
       const char *key, size_t keylen);
+  virtual size_t size() const;
 private:
   txn_btree btr;
 };

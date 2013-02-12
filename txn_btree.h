@@ -53,6 +53,12 @@ public:
 
   static void Test();
 
+  inline size_t
+  size_estimate() const
+  {
+    return underlying_btree.size();
+  }
+
 private:
 
   struct txn_search_range_callback : public btree::low_level_search_range_callback {

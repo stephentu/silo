@@ -101,6 +101,11 @@ public:
   {
     put(txn, key, keylen, NULL, 0);
   }
+
+  /**
+   * Only an estimate, not transactional!
+   */
+  virtual size_t size() const = 0;
 };
 
 #endif /* _ABSTRACT_ORDERED_INDEX_H_ */

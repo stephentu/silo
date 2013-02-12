@@ -202,7 +202,7 @@ ycsb_do_test(abstract_db *db)
   barrier_a.wait_for();
   barrier_b.count_down();
   timer t;
-  sleep(30);
+  sleep(runtime);
   running = false;
   __sync_synchronize();
   unsigned long elapsed = t.lap();

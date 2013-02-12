@@ -21,13 +21,14 @@ volatile bool running = true;
 int verbose = 0;
 uint64_t txn_flags = 0;
 double scale_factor = 1.0;
+uint64_t runtime = 30;
 
 int
 main(int argc, char **argv)
 {
   abstract_db *db = NULL;
   void (*test_fn)(abstract_db *) = NULL;
-  string bench_type;
+  string bench_type = "ycsb";
   string db_type = "ndb-proto2";
   char *curdir = get_current_dir_name();
   string basedir = curdir;
@@ -42,10 +43,11 @@ main(int argc, char **argv)
       {"db-type",      required_argument, 0,       'd'},
       {"basedir",      required_argument, 0,       'B'},
       {"txn-flags",    required_argument, 0,       'f'},
+      {"runtime",      required_argument, 0,       'r'},
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "vb:s:t:d:B:f:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "vb:s:t:d:B:f:r:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -80,6 +82,11 @@ main(int argc, char **argv)
 
     case 'f':
       txn_flags = strtoul(optarg, NULL, 10);
+      break;
+
+    case 'r':
+      runtime = strtoul(optarg, NULL, 10);
+      ALWAYS_ASSERT(runtime > 0);
       break;
 
     case '?':
@@ -121,6 +128,7 @@ main(int argc, char **argv)
     cerr << "  db-type     : " << db_type           << endl;
     cerr << "  basedir     : " << basedir           << endl;
     cerr << "  txn-flags   : " << hexify(txn_flags) << endl;
+    cerr << "  runtime     : " << runtime           << endl;
   }
 
   test_fn(db);

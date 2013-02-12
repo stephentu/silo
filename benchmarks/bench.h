@@ -23,6 +23,7 @@ extern volatile bool running;
 extern int verbose;
 extern uint64_t txn_flags;
 extern double scale_factor;
+extern uint64_t runtime;
 
 class bench_worker : public ndb_thread {
 public:

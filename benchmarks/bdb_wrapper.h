@@ -58,6 +58,13 @@ public:
   {
     NDB_UNIMPLEMENTED("scan");
   }
+
+  virtual size_t
+  size() const
+  {
+    NDB_UNIMPLEMENTED("size");
+  }
+
 private:
   Db *db;
 };
