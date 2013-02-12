@@ -18,7 +18,7 @@ using namespace util;
 string
 btree::node::VersionInfoStr(uint64_t v)
 {
-  stringstream buf;
+  ostringstream buf;
   buf << "[";
 
   if (IsLeafNode(v))
@@ -3426,7 +3426,7 @@ btree::NodeStringify(const node_opaque_t *n)
   for (size_t i = 0; i < n->key_slots_used(); i++)
     keys.push_back(string("0x") + hexify(n->keys[i]));
 
-  stringstream b;
+  ostringstream b;
   b << "node[v=" << node::VersionInfoStr(n->unstable_version())
     << ", keys=" << format_list(keys.begin(), keys.end())
     ;
@@ -3435,7 +3435,7 @@ btree::NodeStringify(const node_opaque_t *n)
     const leaf_node *leaf = AsLeaf(n);
     vector<string> lengths;
     for (size_t i = 0; i < leaf->key_slots_used(); i++) {
-      stringstream inf;
+      ostringstream inf;
       inf << "<l=" << leaf->keyslice_length(i) << ",is_layer=" << leaf->value_is_layer(i) << ">";
       lengths.push_back(inf.str());
     }

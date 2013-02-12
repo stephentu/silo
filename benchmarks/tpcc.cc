@@ -132,7 +132,7 @@ public:
   static inline string
   GetCustomerLastName(fast_random &r, int num)
   {
-    stringstream buf;
+    ostringstream buf;
     buf << NameTokens[num / 100];
     buf << NameTokens[(num / 10) % 10];
     buf << NameTokens[num % 10];
@@ -160,7 +160,7 @@ public:
       return "";
 
     uint i = 0;
-    stringstream buf;
+    ostringstream buf;
     while (i < (len - 1)) {
       char c = (char) r.next_char();
       // XXX(stephentu): oltpbench uses java's Character.isLetter(), which
@@ -177,7 +177,7 @@ public:
   RandomNStr(fast_random &r, uint len)
   {
     char base = '0';
-    stringstream buf;
+    ostringstream buf;
     for (uint i = 0; i < len; i++)
       buf << (char)(base + (r.next() % 10));
     return buf.str();
@@ -1245,7 +1245,7 @@ tpcc_worker::txn_payment()
     customer->c_ytd_payment += paymentAmount;
     customer->c_payment_cnt++;
     if (strncmp(customer->c_credit.data(), "BC", 2) == 0) {
-      stringstream b;
+      ostringstream b;
       b << customer->c_id << " " << customer->c_d_id << " " << customer->c_w_id
         << " " << districtID << " " << warehouse_id << " " << paymentAmount
         << " | " << customer->c_data.str();

@@ -227,7 +227,7 @@ template <typename ForwardIterator>
 std::string
 format_list(ForwardIterator begin, ForwardIterator end)
 {
-  std::stringstream ss;
+  std::ostringstream ss;
   ss << "[";
   bool first = true;
   while (begin != end) {

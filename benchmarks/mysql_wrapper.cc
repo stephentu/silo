@@ -78,7 +78,7 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db)
   check_result(0, mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0));
 
   MYSQL *conn = new_connection("");
-  stringstream b;
+  ostringstream b;
   b << "CREATE DATABASE IF NOT EXISTS " << db << ";";
   check_result(conn, mysql_query(conn, b.str().c_str()));
   check_result(conn, mysql_select_db(conn, db.c_str()));
@@ -134,7 +134,7 @@ abstract_ordered_index *
 mysql_wrapper::open_index(const string &name)
 {
   MYSQL *conn = new_connection(db);
-  stringstream b_create, b_truncate;
+  ostringstream b_create, b_truncate;
   b_create <<
     "CREATE TABLE IF NOT EXISTS " << name << " ("
     "  tbl_key VARBINARY(256) PRIMARY KEY, "
@@ -171,7 +171,7 @@ mysql_ordered_index::get(
 {
   INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
-  stringstream b;
+  ostringstream b;
   b << "SELECT tbl_value FROM " << name << " WHERE tbl_key = '" << my_escape(mysql_wrapper::tl_conn, key, keylen) << "';";
   string q = b.str();
   check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
@@ -201,7 +201,7 @@ mysql_ordered_index::put(
   ALWAYS_ASSERT(valuelen <= 256);
   string escaped_key = my_escape(mysql_wrapper::tl_conn, key, keylen);
   string escaped_value = my_escape(mysql_wrapper::tl_conn, value, valuelen);
-  stringstream b;
+  ostringstream b;
   b << "UPDATE " << name << " SET tbl_value='" << escaped_value << "' WHERE tbl_key='" << escaped_key << "';";
   string q = b.str();
   check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
@@ -210,7 +210,7 @@ mysql_ordered_index::put(
     print_error_and_bail(mysql_wrapper::tl_conn);
   if (ret)
     return 0;
-  stringstream b1;
+  ostringstream b1;
   b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
   check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
@@ -228,7 +228,7 @@ mysql_ordered_index::insert(
   ALWAYS_ASSERT(valuelen <= 256);
   string escaped_key = my_escape(mysql_wrapper::tl_conn, key, keylen);
   string escaped_value = my_escape(mysql_wrapper::tl_conn, value, valuelen);
-  stringstream b1;
+  ostringstream b1;
   b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
   check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));

@@ -34,7 +34,7 @@ transaction::logical_node_spillblock::gc_chain()
 string
 transaction::logical_node::VersionInfoStr(uint64_t v)
 {
-  stringstream buf;
+  ostringstream buf;
   buf << "[";
   if (IsLocked(v))
     buf << "LOCKED";
