@@ -127,16 +127,21 @@ public:
     return CheckBetweenInclusive(NonUniformRandom(r, 1023, 259, 1, NumCustomersPerDistrict()), 1, NumCustomersPerDistrict());
   }
 
-  static const char *NameTokens[];
+  static string NameTokens[];
 
   static inline string
   GetCustomerLastName(fast_random &r, int num)
   {
-    ostringstream buf;
-    buf << NameTokens[num / 100];
-    buf << NameTokens[(num / 10) % 10];
-    buf << NameTokens[num % 10];
-    return buf.str();
+    // all tokens are at most 5 chars long
+    string ret;
+    ret.reserve(5 * 3);
+    const string &s0 = NameTokens[num / 100];
+    ret.insert(ret.end(), s0.begin(), s0.end());
+    const string &s1 = NameTokens[(num / 10) % 10];
+    ret.insert(ret.end(), s1.begin(), s1.end());
+    const string &s2 = NameTokens[num % 10];
+    ret.insert(ret.end(), s2.begin(), s2.end());
+    return ret;
   }
 
   static inline ALWAYS_INLINE string
@@ -160,27 +165,27 @@ public:
       return "";
 
     uint i = 0;
-    ostringstream buf;
+    string buf(len - 1, 0);
     while (i < (len - 1)) {
       char c = (char) r.next_char();
       // XXX(stephentu): oltpbench uses java's Character.isLetter(), which
       // is a less restrictive filter than isalnum()
       if (!isalnum(c))
         continue;
-      i++;
+      buf[i++] = c;
     }
-    return buf.str();
+    return buf;
   }
 
   // RandomNStr() actually produces a string of length len
   static inline string
   RandomNStr(fast_random &r, uint len)
   {
-    char base = '0';
-    ostringstream buf;
+    const char base = '0';
+    string buf(len, 0);
     for (uint i = 0; i < len; i++)
-      buf << (char)(base + (r.next() % 10));
-    return buf.str();
+      buf[i] = (char)(base + (r.next() % 10));
+    return buf;
   }
 
   // should autogenerate this crap
@@ -189,12 +194,12 @@ public:
   CustomerPrimaryKey(int32_t c_w_id, int32_t c_d_id, int32_t c_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[3 * sizeof(int32_t)];
+    string buf(3 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(c_w_id);
     *p++ = t(c_d_id);
     *p++ = t(c_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
@@ -204,94 +209,94 @@ public:
     big_endian_trfm<int32_t> t;
     INVARIANT(c_last.size() == 16);
     INVARIANT(c_first.size() == 16);
-    char buf[2 * sizeof(int32_t) + 2 * 16];
+    string buf(2 * sizeof(int32_t) + 2 * 16, 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(c_w_id);
     *p++ = t(c_d_id);
     memcpy(((char *) p), c_last.data(), 16);
     memcpy(((char *) p) + 16, c_first.data(), 16);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   DistrictPrimaryKey(int32_t d_w_id, int32_t d_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[2 * sizeof(int32_t)];
+    string buf(2 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(d_w_id);
     *p++ = t(d_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   ItemPrimaryKey(int32_t i_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[1 * sizeof(int32_t)];
+    string buf(1 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(i_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   NewOrderPrimaryKey(int32_t no_w_id, int32_t no_d_id, int32_t no_o_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[3 * sizeof(int32_t)];
+    string buf(3 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(no_w_id);
     *p++ = t(no_d_id);
     *p++ = t(no_o_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   OOrderPrimaryKey(int32_t o_w_id, int32_t o_d_id, int32_t o_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[3 * sizeof(int32_t)];
+    string buf(3 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(o_w_id);
     *p++ = t(o_d_id);
     *p++ = t(o_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   OOrderCIDKey(int32_t o_w_id, int32_t o_d_id, int32_t o_c_id, int32_t o_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[4 * sizeof(int32_t)];
+    string buf(4 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(o_w_id);
     *p++ = t(o_d_id);
     *p++ = t(o_c_id);
     *p++ = t(o_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   OrderLinePrimaryKey(int32_t ol_w_id, int32_t ol_d_id, int32_t ol_o_id, int32_t ol_number) {
     big_endian_trfm<int32_t> t;
-    char buf[4 * sizeof(int32_t)];
+    string buf(4 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(ol_w_id);
     *p++ = t(ol_d_id);
     *p++ = t(ol_o_id);
     *p++ = t(ol_number);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   StockPrimaryKey(int32_t s_w_id, int32_t s_i_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[2 * sizeof(int32_t)];
+    string buf(2 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(s_w_id);
     *p++ = t(s_i_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   // artificial
@@ -300,7 +305,7 @@ public:
                     int32_t h_d_id, int32_t h_w_id, uint32_t h_date)
   {
     big_endian_trfm<int32_t> t;
-    char buf[6 * sizeof(int32_t)];
+    string buf(6 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(h_c_id);
     *p++ = t(h_c_d_id);
@@ -308,24 +313,33 @@ public:
     *p++ = t(h_d_id);
     *p++ = t(h_w_id);
     *p++ = t(h_date);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 
   static inline string
   WarehousePrimaryKey(int32_t w_id)
   {
     big_endian_trfm<int32_t> t;
-    char buf[1 * sizeof(int32_t)];
+    string buf(1 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(w_id);
-    return string(&buf[0], ARRAY_NELEMS(buf));
+    return buf;
   }
 };
 
-const char *tpcc_worker_mixin::NameTokens[] = {
- "BAR", "OUGHT", "ABLE", "PRI", "PRES", "ESE", "ANTI", "CALLY", "ATION",
- "EING",
-};
+string tpcc_worker_mixin::NameTokens[] =
+  {
+    string("BAR"),
+    string("OUGHT"),
+    string("ABLE"),
+    string("PRI"),
+    string("PRES"),
+    string("ESE"),
+    string("ANTI"),
+    string("CALLY"),
+    string("ATION"),
+    string("EING"),
+  };
 
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
@@ -337,8 +351,8 @@ public:
       tpcc_worker_mixin(open_tables),
       warehouse_id(warehouse_id)
   {
-    assert(warehouse_id >= 1);
-    assert(warehouse_id <= NumWarehouses());
+    INVARIANT(warehouse_id >= 1);
+    INVARIANT(warehouse_id <= NumWarehouses());
   }
 
   void txn_new_order();
