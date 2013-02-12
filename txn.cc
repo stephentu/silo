@@ -167,8 +167,10 @@ transaction::commit(bool doThrow)
           INVARIANT(insert_info.first);
           node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
           if (nit != outer_it->second.node_scan.end()) {
-            if (unlikely(nit->second != insert_info.second))
+            if (unlikely(nit->second != insert_info.second)) {
+              abort_trap();
               goto do_abort;
+            }
             VERBOSE(cerr << "bump node=" << hexify(nit->first) << " from v=" << (nit->second)
                          << " -> v=" << (nit->second + 1) << endl);
             // otherwise, bump the version by 1
@@ -191,9 +193,11 @@ transaction::commit(bool doThrow)
       VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
       it->first->lock();
       it->second.first = true; // we locked the node
-      if (!can_read_tid(it->first->latest_version()))
+      if (!can_read_tid(it->first->latest_version())) {
         // XXX(stephentu): overly conservative
+        abort_trap();
         goto do_abort;
+      }
     }
 
     // acquire commit tid (if not read-only txn)
@@ -246,6 +250,7 @@ transaction::commit(bool doThrow)
             continue;
 
         //}
+        abort_trap();
         goto do_abort;
       }
 
@@ -257,6 +262,7 @@ transaction::commit(bool doThrow)
           if (unlikely(v != it->second)) {
             VERBOSE(cerr << "expected node " << hexify(it->first) << " at v="
                          << it->second << ", got v=" << v << endl);
+            abort_trap();
             goto do_abort;
           }
         }
@@ -268,8 +274,10 @@ transaction::commit(bool doThrow)
           txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid.second);
           varkey upper(it->b);
           outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
-          if (unlikely(c.failed()))
+          if (unlikely(c.failed())) {
+            abort_trap();
             goto do_abort;
+          }
         }
       }
     }
@@ -333,6 +341,7 @@ transaction::clear()
 void
 transaction::abort()
 {
+  abort_trap();
   switch (state) {
   case TXN_EMBRYO:
   case TXN_ACTIVE:
@@ -793,15 +802,20 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
 
   // chase the pointers until we find a value which has epoch < gc_epoch. Then we gc the
   // entire chain
+  bool do_gc = false;
   while (p) {
     INVARIANT(p->size());
-    // don't GC non-full blocks
-    if (p->is_full() &&
-        EpochId(p->versions[logical_node_spillblock::NElems - 1]) < gc_epoch) {
+    if (do_gc) {
+      // victim found
       *pp = 0;
       p->gc_chain();
       break;
     }
+    if (p->is_full() /* don't GC non-full blocks */ &&
+        EpochId(p->versions[logical_node_spillblock::NElems - 1]) < gc_epoch)
+      // NB(stephentu): gc the NEXT spillblock- this guarantees us that we'll
+      // still be able to perform a consistent read at the gc_epoch
+      do_gc = true;
     pp = &p->spillblock_next;
     p = p->spillblock_next;
   }

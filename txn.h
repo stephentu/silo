@@ -542,6 +542,20 @@ public:
 
   static void Test();
 
+#ifdef DIE_ON_ABORT
+  void
+  abort_trap() const
+  {
+    dump_debug_info();
+    ::abort();
+  }
+#else
+  inline ALWAYS_INLINE void
+  abort_trap() const
+  {
+  }
+#endif
+
   /**
    * XXX: document
    */

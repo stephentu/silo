@@ -45,6 +45,8 @@
 // XXX: would be nice if we checked these during single threaded execution
 #define SINGLE_THREADED_INVARIANT(expr) ((void)0)
 
+//#define DIE_ON_ABORT
+
 #ifdef NODE_PREFETCH
   #define prefetch_node(n) \
     do { \

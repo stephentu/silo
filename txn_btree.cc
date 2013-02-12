@@ -44,16 +44,14 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
     pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
 
-    //if (!ln->stable_read(snapshot_tid, start_t, r)) {
+    //if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
     //  cerr << "snapshot_tid: "  << snapshot_tid << endl;
-    //  t.dump_debug_info();
     //  t.abort();
     //  throw transaction_abort_exception();
     //}
 
-    //if (!t.can_read_tid(start_t)) {
+    //if (unlikely(!t.can_read_tid(start_t))) {
     //  cerr << "snapshot_tid: " << snapshot_tid << ", start_tid: "  << start_t << endl;
-    //  t.dump_debug_info();
     //  t.abort();
     //  throw transaction_abort_exception();
     //}
