@@ -17,6 +17,8 @@ transaction::logical_node::~logical_node()
   INVARIANT(is_deleting());
   INVARIANT(!is_locked());
 
+  cerr << "logical_node: " << hexify(intptr_t(this)) << " is being deleted" << endl;
+
   // gc the chain
   if (spillblock_head)
     spillblock_head->gc_chain();
@@ -28,35 +30,6 @@ transaction::logical_node::~logical_node()
     for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
         inner_it != callbacks.end(); ++inner_it)
       (*inner_it)(values[i]);
-}
-
-struct try_delete_info {
-  try_delete_info(txn_btree *btr, const string &key, transaction::logical_node *ln)
-    : btr(btr), key(key), ln(ln) {}
-  txn_btree *btr;
-  string key;
-  transaction::logical_node *ln;
-};
-
-void
-transaction::logical_node::try_delete(void *p)
-{
-  try_delete_info *info = (try_delete_info *) p;
-  btree::value_type removed = 0;
-  scoped_rcu_region rcu_region;
-  info->ln->lock();
-  INVARIANT(info->ln->is_enqueued());
-  INVARIANT(!info->ln->is_deleting());
-  info->ln->set_enqueued(false); // we are processing this record
-  if (info->ln->latest_value())
-    // somebody added a record again, so we don't want to delete it
-    goto unlock;
-  ALWAYS_ASSERT(info->btr->underlying_btree.remove(varkey(info->key), &removed));
-  ALWAYS_ASSERT(removed == (btree::value_type) info->ln);
-  logical_node::release(info->ln);
-unlock:
-  info->ln->unlock();
-  delete info;
 }
 
 void
@@ -84,8 +57,8 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   ostringstream buf;
   buf << "[";
   buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
-  buf << (IsLocked(v) ? "DEL" : "-") << " | ";
-  buf << (IsLocked(v) ? "ENQ" : "-") << " | ";
+  buf << (IsDeleting(v) ? "DEL" : "-") << " | ";
+  buf << (IsEnqueued(v) ? "ENQ" : "-") << " | ";
   buf << Size(v) << " | ";
   buf << Version(v);
   buf << "]";
@@ -126,27 +99,48 @@ format_tid_list(const vector<transaction::tid_t> &tids)
   return s;
 }
 
+static vector<string>
+format_rec_list(const vector<transaction::record_t> &recs)
+{
+  vector<string> s;
+  for (vector<transaction::record_t>::const_iterator it = recs.begin();
+       it != recs.end(); ++it)
+    s.push_back(hexify(intptr_t(*it)));
+  return s;
+}
+
 inline ostream &
 operator<<(ostream &o, const transaction::logical_node &ln)
 {
   vector<transaction::tid_t> tids;
+  vector<transaction::record_t> recs;
   const size_t n = ln.size();
-  for (size_t i = 0 ; i < n; i++)
+  for (size_t i = 0 ; i < n; i++) {
     tids.push_back(ln.versions[i]);
+    recs.push_back(ln.values[i]);
+  }
   vector<string> tids_s = format_tid_list(tids);
+  vector<string> recs_s = format_rec_list(recs);
   bool has_spill = ln.spillblock_head;
-  o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) << ", tids="
-    << format_list(tids_s.rbegin(), tids_s.rend()) << ", has_spill="
-    <<  has_spill << "]";
+  o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) <<
+    ", tids=" << format_list(tids_s.rbegin(), tids_s.rend()) <<
+    ", recs=" << format_list(recs_s.rbegin(), recs_s.rend()) <<
+    ", has_spill=" <<  has_spill << "]";
   o << endl;
   const struct transaction::logical_node_spillblock *p = ln.spillblock_head;
   for (; p; p = p->spillblock_next) {
     const size_t in = p->size();
     vector<transaction::tid_t> itids;
-    for (size_t j = 0; j < in; j++)
+    vector<transaction::record_t> irecs;
+    for (size_t j = 0; j < in; j++) {
       itids.push_back(p->versions[j]);
+      irecs.push_back(p->values[j]);
+    }
     vector<string> itids_s = format_tid_list(itids);
-    o << format_list(itids_s.rbegin(), itids_s.rend()) << endl;
+    vector<string> irecs_s = format_rec_list(irecs);
+    o << "[tids=" << format_list(itids_s.rbegin(), itids_s.rend())
+      << ", recs=" << format_list(irecs_s.begin(), irecs_s.end())
+      << "]" << endl;
   }
   return o;
 }
@@ -502,8 +496,9 @@ transaction_flags_to_str(uint64_t flags)
 inline ostream &
 operator<<(ostream &o, const transaction::read_record_t &rr)
 {
-  o << "[tid=" << g_proto_version_str(rr.t) << ", record=0x"
-    << hexify(intptr_t(rr.r))
+  o << "[tid=" << g_proto_version_str(rr.t)
+    << ", record=0x" << hexify(intptr_t(rr.r))
+    << ", ln_ptr=0x" << hexify(intptr_t(rr.ln))
     << ", ln=" << *rr.ln << "]";
   return o;
 }
@@ -945,6 +940,14 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
   }
 }
 
+struct try_delete_info {
+  try_delete_info(txn_btree *btr, const string &key, transaction::logical_node *ln)
+    : btr(btr), key(key), ln(ln) {}
+  txn_btree *btr;
+  string key;
+  transaction::logical_node *ln;
+};
+
 void
 transaction_proto2::on_logical_delete(
     txn_btree *btr, const string &key, logical_node *ln)
@@ -956,7 +959,9 @@ transaction_proto2::on_logical_delete(
     return;
   ln->set_enqueued(true);
   struct try_delete_info *info = new try_delete_info(btr, key, ln);
-  enqueue_work_after_current_epoch(logical_node::try_delete, (void *) info);
+  cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(info->ln))
+       << " at current_epoch=" << current_epoch << endl;
+  enqueue_work_after_current_epoch(current_epoch, try_delete_logical_node, (void *) info);
 }
 
 size_t
@@ -973,10 +978,36 @@ transaction_proto2::core_id()
 
 void
 transaction_proto2::enqueue_work_after_current_epoch(
-    work_callback_t work, void *p)
+    uint64_t epoch, work_callback_t work, void *p)
 {
   const size_t id = core_id();
-  g_work_queues[id].elem->push_back(work_record_t(work, p));
+  g_work_queues[id].elem->push_back(work_record_t(epoch, work, p));
+}
+
+void
+transaction_proto2::try_delete_logical_node(void *p)
+{
+  try_delete_info *info = (try_delete_info *) p;
+  btree::value_type removed = 0;
+  scoped_rcu_region rcu_region;
+  info->ln->lock();
+  INVARIANT(info->ln->is_enqueued());
+  INVARIANT(!info->ln->is_deleting());
+  info->ln->set_enqueued(false); // we are processing this record
+  if (info->ln->latest_value())
+    // somebody added a record again, so we don't want to delete it
+    goto unlock;
+  // NB(stephentu): must be > (not >=)
+  cerr << "logical_node: 0x" << hexify(intptr_t(info->ln)) << " is being unlinked" << endl
+       << "  g_last_consistent_epoch=" << g_last_consistent_epoch << endl
+       << "  ln=" << *info->ln << endl;
+  INVARIANT(g_last_consistent_epoch > EpochId(info->ln->latest_version()));
+  ALWAYS_ASSERT(info->btr->underlying_btree.remove(varkey(info->key), &removed));
+  ALWAYS_ASSERT(removed == (btree::value_type) info->ln);
+  logical_node::release(info->ln);
+unlock:
+  info->ln->unlock();
+  delete info;
 }
 
 bool
@@ -984,7 +1015,7 @@ transaction_proto2::InitEpochScheme()
 {
   for (size_t i = 0; i < NMaxCores; i++) {
     ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
-    g_work_queues[i].elem = new work_pq;
+    g_work_queues[i].elem = new work_q;
   }
   static epoch_loop thd;
   thd.start();
@@ -998,16 +1029,6 @@ transaction_proto2::epoch_loop::run()
 {
   work_pq pq;
   for (;;) {
-    // run work
-    for (work_pq::iterator it = pq.begin(); it != pq.end(); ++it) {
-      try {
-        it->first(it->second);
-      } catch (...) {
-        cerr << "epoch_loop: uncaught exception from enqueued work fn" << endl;
-      }
-    }
-    pq.clear();
-
     // XXX(stephentu): better solution for epoch intervals?
     // this interval time defines the staleness of our consistent
     // snapshots
@@ -1020,7 +1041,7 @@ transaction_proto2::epoch_loop::run()
     // bump epoch number
     // NB(stephentu): no need to do this as an atomic operation because we are
     // the only writer!
-    g_current_epoch++;
+    const uint64_t l_current_epoch = g_current_epoch++;
 
     // XXX(stephentu): document why we need this memory fence
     __sync_synchronize();
@@ -1029,13 +1050,35 @@ transaction_proto2::epoch_loop::run()
     const size_t l_core_count = g_core_count;
     for (size_t i = 0; i < l_core_count; i++) {
       scoped_spinlock l(&g_epoch_spinlocks[i].elem);
-      work_pq &core_pq = *g_work_queues[i].elem;
-      pq.insert(pq.end(), core_pq.begin(), core_pq.end());
-      core_pq.clear();
+      work_q &core_q = *g_work_queues[i].elem;
+      for (work_q::iterator it = core_q.begin(); it != core_q.end(); ++it)
+        pq.push(*it);
+      core_q.clear();
     }
 
     COMPILER_MEMORY_FENCE;
     g_last_consistent_epoch = g_current_epoch;
+    __sync_synchronize(); // XXX(stephentu): do we need this?
+
+    // l_current_epoch = (g_current_epoch - 1) is now finished. at this point:
+    // A) all threads will be operating at epoch=g_current_epoch
+    // B) all consistent reads will be operating at g_last_consistent_epoch =
+    //    g_current_epoch, which means they will be reading changes up to
+    //    and including (g_current_epoch - 1)
+    cerr << "epoch_loop: running work <= (l_current_epoch=" << l_current_epoch << ")" << endl;
+    while (!pq.empty()) {
+      const work_record_t &work = pq.top();
+      if (work.epoch > l_current_epoch)
+        break;
+      try {
+        work.work(work.p);
+      } catch (...) {
+        cerr << "epoch_loop: uncaught exception from enqueued work fn" << endl;
+      }
+      pq.pop();
+    }
+
+    COMPILER_MEMORY_FENCE; // XXX(stephentu) do we need?
   }
 }
 
@@ -1047,4 +1090,4 @@ volatile uint64_t transaction_proto2::g_current_epoch = 0;
 volatile uint64_t transaction_proto2::g_last_consistent_epoch = 0;
 volatile transaction::tid_t transaction_proto2::g_core_count = 0;
 volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];
-volatile aligned_padded_elem<transaction_proto2::work_pq*> transaction_proto2::g_work_queues[NMaxCores];
+volatile aligned_padded_elem<transaction_proto2::work_q*> transaction_proto2::g_work_queues[NMaxCores];

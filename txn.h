@@ -617,9 +617,6 @@ public:
     static std::string
     VersionInfoStr(uint64_t v);
 
-    static void
-    try_delete(void *p);
-
   } PACKED_CACHE_ALIGNED;
 
   friend std::ostream &
@@ -972,8 +969,11 @@ private:
 
   typedef void (*work_callback_t)(void *);
 
-  // work will get called after current epoch finishes
-  void enqueue_work_after_current_epoch(work_callback_t work, void *p);
+  // work will get called after epoch finishes
+  void enqueue_work_after_current_epoch(uint64_t epoch, work_callback_t work, void *p);
+
+  static void
+  try_delete_logical_node(void *p);
 
   // XXX(stephentu): need to implement core ID recycling
   static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
@@ -1042,21 +1042,27 @@ private:
   static volatile util::aligned_padded_elem<pthread_spinlock_t>
     g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
 
-  //typedef std::pair<uint64_t, work_callback_t> work_record_t;
-  //typedef std::priority_queue<
-  //  work_record_t,
-  //  std::vector<work_record_t>,
-  //  util::std_pair_first_cmp<
-  //    work_record_t,
-  //    greater<work_record_t::first_type>
-  //  >
-  //> work_pq;
+  struct work_record_t {
+    work_record_t() {}
+    work_record_t(uint64_t epoch, work_callback_t work, void *p)
+      : epoch(epoch), work(work), p(p)
+    {}
+    // for work_pq
+    inline bool
+    operator>(const work_record_t &that) const
+    {
+      return epoch > that.epoch;
+    }
+    uint64_t epoch;
+    work_callback_t work;
+    void *p;
+  };
 
-  typedef std::pair<work_callback_t, void *> work_record_t;
-  typedef std::vector<work_record_t> work_pq;
+  typedef std::vector<work_record_t> work_q;
+  typedef util::std_reverse_pq<work_record_t>::type work_pq;
 
   // for passing work to the epoch loop
-  static volatile util::aligned_padded_elem<work_pq*>
+  static volatile util::aligned_padded_elem<work_q*>
     g_work_queues[NMaxCores] CACHE_ALIGNED;
 };
 

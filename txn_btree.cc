@@ -719,6 +719,8 @@ namespace mp_test2_ns {
           u64_varkey kend(range_end);
           btr->search_range_call(t, u64_varkey(range_begin), &kend, *this);
           t.commit(true);
+          if (ctr != size_t(v_ctr))
+            cerr << "ctr: " << ctr << ", v_ctr: " << size_t(v_ctr) << endl;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctr == size_t(v_ctr));
           validations++;
         } catch (transaction_abort_exception &e) {
