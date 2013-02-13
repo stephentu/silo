@@ -1567,5 +1567,5 @@ tpcc_do_test(abstract_db *db)
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
   }
-  cout << agg_throughput << endl;
+  cout << agg_throughput << " " << agg_abort_rate << endl;
 }
