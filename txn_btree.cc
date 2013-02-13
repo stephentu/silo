@@ -44,21 +44,10 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
     pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
 
-    //if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
-    //  cerr << "snapshot_tid: "  << snapshot_tid << endl;
-    //  t.abort();
-    //  throw transaction_abort_exception();
-    //}
-
-    //if (unlikely(!t.can_read_tid(start_t))) {
-    //  cerr << "snapshot_tid: " << snapshot_tid << ", start_tid: "  << start_t << endl;
-    //  t.abort();
-    //  throw transaction_abort_exception();
-    //}
-
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t.can_read_tid(start_t))) {
-      t.abort();
-      throw transaction_abort_exception();
+      transaction::abort_reason r = transaction::ABORT_REASON_UNSTABLE_READ;
+      t.abort_impl(r);
+      throw transaction_abort_exception(r);
     }
 
     transaction::read_record_t *read_rec = &ctx.read_set[sk];
@@ -83,8 +72,9 @@ txn_btree::txn_search_range_callback::on_resp_node(
       ctx->node_scan[n] = version;
     } else {
       if (unlikely(it->second != version)) {
-        t->abort();
-        throw transaction_abort_exception();
+        transaction::abort_reason r = transaction::ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED;
+        t->abort_impl(r);
+        throw transaction_abort_exception(r);
       }
     }
   }
@@ -125,8 +115,9 @@ txn_btree::txn_search_range_callback::invoke(
     pair<bool, transaction::tid_t> snapshot_tid_t = t->consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t->can_read_tid(start_t))) {
-      t->abort();
-      throw transaction_abort_exception();
+      transaction::abort_reason r = transaction::ABORT_REASON_UNSTABLE_READ;
+      t->abort_impl(r);
+      throw transaction_abort_exception(r);
     }
     transaction::read_record_t *read_rec = &ctx->read_set[sk];
     read_rec->t = start_t;
@@ -215,8 +206,9 @@ txn_btree::insert_impl(transaction &t, const key_type &k, value_type v)
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
   if (unlikely(t.get_flags() & transaction::TXN_FLAG_READ_ONLY)) {
-    t.abort();
-    throw transaction_abort_exception();
+    transaction::abort_reason r = transaction::ABORT_REASON_USER;
+    t.abort_impl(r);
+    throw transaction_abort_exception(r);
   }
   ctx.write_set[k.str()] = v;
 }
@@ -247,7 +239,7 @@ always_assert_cond_in_txn(
   ALWAYS_ASSERT(pthread_mutex_lock(&g_report_lock) == 0);
   cerr << func << " (" << filename << ":" << lineno << ") - Condition `"
        << condstr << "' failed!" << endl;
-  t.dump_debug_info();
+  t.dump_debug_info(transaction::ABORT_REASON_USER);
   sleep(1); // XXX(stephentu): give time for debug dump to reach console
             // why doesn't flushing solve this?
   abort();
@@ -1081,16 +1073,16 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  cerr << "Test proto1" << endl;
-  test1<transaction_proto1>();
-  test2<transaction_proto1>();
-  test_multi_btree<transaction_proto1>();
-  test_read_only_snapshot<transaction_proto1>();
-  test_long_keys<transaction_proto1>();
-  test_long_keys2<transaction_proto1>();
-  mp_test1<transaction_proto1>();
-  mp_test2<transaction_proto1>();
-  mp_test3<transaction_proto1>();
+  //cerr << "Test proto1" << endl;
+  //test1<transaction_proto1>();
+  //test2<transaction_proto1>();
+  //test_multi_btree<transaction_proto1>();
+  //test_read_only_snapshot<transaction_proto1>();
+  //test_long_keys<transaction_proto1>();
+  //test_long_keys2<transaction_proto1>();
+  //mp_test1<transaction_proto1>();
+  //mp_test2<transaction_proto1>();
+  //mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();

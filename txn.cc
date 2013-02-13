@@ -42,20 +42,21 @@ void
 transaction::logical_node::try_delete(void *p)
 {
   try_delete_info *info = (try_delete_info *) p;
-  scoped_rcu_region rcu_region;
-  if (info->ln->is_deleting())
-    return;
-  info->ln->lock();
   btree::value_type removed = 0;
-  if (info->ln->is_deleting() || info->ln->latest_value())
-    // somebody already deleted, or added a record again, so we don't want to
-    // delete it
+  scoped_rcu_region rcu_region;
+  info->ln->lock();
+  INVARIANT(info->ln->is_enqueued());
+  INVARIANT(!info->ln->is_deleting());
+  info->ln->set_enqueued(false); // we are processing this record
+  if (info->ln->latest_value())
+    // somebody added a record again, so we don't want to delete it
     goto unlock;
   ALWAYS_ASSERT(info->btr->underlying_btree.remove(varkey(info->key), &removed));
   ALWAYS_ASSERT(removed == (btree::value_type) info->ln);
   logical_node::release(info->ln);
 unlock:
   info->ln->unlock();
+  delete info;
 }
 
 void
@@ -82,11 +83,9 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
 {
   ostringstream buf;
   buf << "[";
-  if (IsLocked(v))
-    buf << "LOCKED";
-  else
-    buf << "-";
-  buf << " | ";
+  buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
+  buf << (IsLocked(v) ? "DEL" : "-") << " | ";
+  buf << (IsLocked(v) ? "ENQ" : "-") << " | ";
   buf << Size(v) << " | ";
   buf << Version(v);
   buf << "]";
@@ -199,7 +198,7 @@ transaction::commit(bool doThrow)
     return true;
   case TXN_ABRT:
     if (doThrow)
-      throw transaction_abort_exception();
+      throw transaction_abort_exception(reason);
     return false;
   }
 
@@ -235,7 +234,7 @@ transaction::commit(bool doThrow)
           node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
           if (nit != outer_it->second.node_scan.end()) {
             if (unlikely(nit->second != insert_info.second)) {
-              abort_trap();
+              abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
               goto do_abort;
             }
             VERBOSE(cerr << "bump node=" << hexify(nit->first) << " from v=" << (nit->second)
@@ -264,7 +263,7 @@ transaction::commit(bool doThrow)
       it->second.locked = true; // we locked the node
       if (unlikely(it->first->is_deleting() || !can_read_tid(it->first->latest_version()))) {
         // XXX(stephentu): overly conservative (with the can_read_tid() check)
-        abort_trap();
+        abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
         goto do_abort;
       }
       lnodes.push_back(it->first);
@@ -297,18 +296,18 @@ transaction::commit(bool doThrow)
         }
 
         if (unlikely(!ln)) {
+          INVARIANT(!it->second.ln); // otherwise ln == it->second.ln
           INVARIANT(!did_write); // otherwise it would be there in the tree
-          if (unlikely(it->second.ln && it->second.r)) {
-            abort_trap();
-            goto do_abort;
-          }
-          // validated
+          INVARIANT(!it->second.r); // b/c ln did not exist when we read it
+          // trivially validated
           continue;
         } else if (unlikely(!it->second.ln)) {
-          // have in tree but we didnt read it
-          // XXX(stephentu): conservative- could check if is_deleting() or the
-          // latest value is deleted
-          abort_trap();
+          // have in tree now but we didnt read it initially
+          if (ln->is_deleting() || !ln->latest_value())
+            // NB(stephentu): optimization: the logical value is the same
+            // as when we read it (not existing)
+            continue;
+          abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
           goto do_abort;
         }
 
@@ -336,7 +335,7 @@ transaction::commit(bool doThrow)
 
         //}
 
-        abort_trap();
+        abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
         goto do_abort;
       }
 
@@ -348,7 +347,7 @@ transaction::commit(bool doThrow)
           if (unlikely(v != it->second)) {
             VERBOSE(cerr << "expected node " << hexify(it->first) << " at v="
                          << it->second << ", got v=" << v << endl);
-            abort_trap();
+            abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
             goto do_abort;
           }
         }
@@ -361,7 +360,7 @@ transaction::commit(bool doThrow)
           varkey upper(it->b);
           outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
           if (unlikely(c.failed())) {
-            abort_trap();
+            abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
             goto do_abort;
           }
         }
@@ -416,7 +415,7 @@ do_abort:
     on_tid_finish(commit_tid.second);
   clear();
   if (doThrow)
-    throw transaction_abort_exception();
+    throw transaction_abort_exception(reason);
   return false;
 }
 
@@ -427,10 +426,33 @@ transaction::clear()
   //ctx_map.clear();
 }
 
-void
-transaction::abort()
+const char *
+transaction::AbortReasonStr(abort_reason reason)
 {
-  abort_trap();
+	switch (reason) {
+	case ABORT_REASON_USER:
+		return "ABORT_REASON_USER";
+	case ABORT_REASON_UNSTABLE_READ:
+		return "ABORT_REASON_UNSTABLE_READ";
+	case ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED:
+		return "ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED";
+	case ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED:
+		return "ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED";
+	case ABORT_REASON_WRITE_NODE_INTERFERENCE:
+		return "ABORT_REASON_WRITE_NODE_INTERFERENCE";
+	case ABORT_REASON_READ_NODE_INTEREFERENCE:
+		return "ABORT_REASON_READ_NODE_INTEREFERENCE";
+	default:
+		break;
+	}
+  ALWAYS_ASSERT(false);
+  return 0;
+}
+
+void
+transaction::abort_impl(abort_reason reason)
+{
+  abort_trap(reason);
   switch (state) {
   case TXN_EMBRYO:
   case TXN_ACTIVE:
@@ -441,6 +463,7 @@ transaction::abort()
     throw transaction_unusable_exception();
   }
   state = TXN_ABRT;
+  this->reason = reason;
   clear();
 }
 
@@ -486,10 +509,11 @@ operator<<(ostream &o, const transaction::read_record_t &rr)
 }
 
 void
-transaction::dump_debug_info() const
+transaction::dump_debug_info(abort_reason reason) const
 {
   cerr << "Transaction (obj=0x" << hexify(this) << ") -- state "
        << transaction_state_to_cstr(state) << endl;
+  cerr << "  Abort Reason: " << AbortReasonStr(reason) << endl;
   cerr << "  Flags: " << transaction_flags_to_str(flags) << endl;
   cerr << "  Read/Write sets:" << endl;
   for (map<txn_btree *, txn_context>::const_iterator it = ctx_map.begin();
@@ -737,9 +761,9 @@ transaction_proto1::consistent_snapshot_tid() const
 }
 
 void
-transaction_proto1::dump_debug_info() const
+transaction_proto1::dump_debug_info(abort_reason reason) const
 {
-  transaction::dump_debug_info();
+  transaction::dump_debug_info(reason);
   cerr << "  snapshot_tid: " << snapshot_tid << endl;
   cerr << "  global_tid: " << global_tid << endl;
 }
@@ -831,9 +855,9 @@ transaction_proto2::consistent_snapshot_tid() const
 }
 
 void
-transaction_proto2::dump_debug_info() const
+transaction_proto2::dump_debug_info(abort_reason reason) const
 {
-  transaction::dump_debug_info();
+  transaction::dump_debug_info(reason);
   cerr << "  current_epoch: " << current_epoch << endl;
   cerr << "  last_consistent_tid: " << g_proto_version_str(last_consistent_tid) << endl;
 }
@@ -927,7 +951,12 @@ transaction_proto2::on_logical_delete(
 {
   INVARIANT(ln->is_locked());
   INVARIANT(!ln->latest_value());
-  enqueue_work_after_current_epoch(logical_node::try_delete, (void *) ln);
+  INVARIANT(!ln->is_deleting());
+  if (ln->is_enqueued())
+    return;
+  ln->set_enqueued(true);
+  struct try_delete_info *info = new try_delete_info(btr, key, ln);
+  enqueue_work_after_current_epoch(logical_node::try_delete, (void *) info);
 }
 
 size_t
@@ -957,8 +986,7 @@ transaction_proto2::InitEpochScheme()
     ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
     g_work_queues[i].elem = new work_pq;
   }
-
-  epoch_loop thd;
+  static epoch_loop thd;
   thd.start();
   return true;
 }

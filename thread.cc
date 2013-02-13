@@ -4,6 +4,11 @@
 #include <iostream>
 
 using namespace std;
+using namespace util;
+
+ndb_thread::~ndb_thread()
+{
+}
 
 void
 ndb_thread::start()
@@ -12,7 +17,7 @@ ndb_thread::start()
   ALWAYS_ASSERT(pthread_attr_init(&attr) == 0);
   if (daemon)
     ALWAYS_ASSERT(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0);
-  ALWAYS_ASSERT(pthread_create(&p, &attr, pthread_bootstrap, this) == 0);
+  ALWAYS_ASSERT(pthread_create(&p, &attr, pthread_bootstrap, (void *) this) == 0);
   ALWAYS_ASSERT(pthread_attr_destroy(&attr) == 0);
 }
 
@@ -26,7 +31,7 @@ ndb_thread::join()
 void
 ndb_thread::run()
 {
-  assert(body);
+  ALWAYS_ASSERT(body);
   body();
 }
 
@@ -57,11 +62,12 @@ ndb_thread::on_complete()
 void *
 ndb_thread::pthread_bootstrap(void *p)
 {
-  ndb_thread *self = (ndb_thread *) p;
+  ndb_thread *self = static_cast<ndb_thread *>(p);
   try {
     self->run();
   } catch (...) {
-    cerr << "[Thread " << self->p << "] - terminating due to uncaught exception" << endl;
+    cerr << "[Thread " << self->p << " (" << self->name << ")] - "
+         << "terminating due to uncaught exception" << endl;
     self->on_complete();
     throw;
   }

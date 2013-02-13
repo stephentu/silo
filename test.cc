@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include "thread.h"
 #include "txn.h"
 #include "btree.h"
@@ -7,12 +9,16 @@ using namespace std;
 class main_thread : public ndb_thread {
 public:
   main_thread(int argc, char **argv)
-    : argc(argc), argv(argv), ret(0)
+    : ndb_thread(false, string("main")),
+      argc(argc), argv(argv), ret(0)
   {}
 
   virtual void
   run()
   {
+#ifndef CHECK_INVARIANTS
+    cerr << "WARNING: tests are running without invariant checking" << endl;
+#endif
     //transaction::Test();
     //btree::Test();
     txn_btree::Test();
@@ -25,8 +31,8 @@ public:
     return ret;
   }
 private:
-  int argc;
-  char **argv;
+  const int argc;
+  char **const argv;
   volatile int ret;
 };
 

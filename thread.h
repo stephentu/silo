@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <vector>
+#include <string>
 
 #include "macros.h"
 #include "util.h"
@@ -22,16 +23,23 @@ public:
 
   typedef void (*run_t)(void);
 
-  ndb_thread(bool daemon = false)
-    : body(NULL), daemon(daemon) {}
-  ndb_thread(run_t body, bool daemon = false)
-    : body(body), daemon(daemon) {}
-  virtual ~ndb_thread() {}
+  ndb_thread(bool daemon = false, const std::string &name = "thd")
+    : body(NULL), daemon(daemon), name(name) {}
+  ndb_thread(run_t body, bool daemon = false, const std::string &name = "thd")
+    : body(body), daemon(daemon), name(name) {}
+
+  virtual ~ndb_thread();
 
   inline pthread_t
   pthread_id() const
   {
     return p;
+  }
+
+  inline const std::string &
+  get_name() const
+  {
+    return name;
   }
 
   void start();
@@ -50,6 +58,8 @@ private:
   pthread_t p;
   run_t body;
   const bool daemon;
+  const std::string name;
+
   static std::vector<callback_t> &completion_callbacks();
 
   void on_complete();

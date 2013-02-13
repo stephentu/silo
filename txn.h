@@ -11,6 +11,7 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <stdexcept>
 
 #include <tr1/unordered_map>
 
@@ -22,10 +23,11 @@
 #include "rcu.h"
 #include "thread.h"
 
-class transaction_abort_exception {};
+// forward decl
+class txn_btree;
+
 class transaction_unusable_exception {};
 class transaction_read_only_exception {};
-class txn_btree;
 
 class transaction : private util::noncopyable {
 protected:
@@ -55,6 +57,20 @@ public:
 
     // XXX: more flags in the future, things like consistency levels
   };
+
+  enum abort_reason {
+    ABORT_REASON_USER,
+
+    ABORT_REASON_UNSTABLE_READ,
+
+    ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED,
+    ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED,
+
+    ABORT_REASON_WRITE_NODE_INTERFERENCE,
+    ABORT_REASON_READ_NODE_INTEREFERENCE,
+  };
+
+  static const char * AbortReasonStr(abort_reason reason);
 
   static const tid_t MIN_TID = 0;
   static const tid_t MAX_TID = (tid_t) -1;
@@ -199,19 +215,26 @@ public:
     static const uint64_t HDR_DELETING_SHIFT = 1;
     static const uint64_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
 
-    static const uint64_t HDR_SIZE_SHIFT = 2;
+    static const uint64_t HDR_ENQUEUED_SHIFT = 2;
+    static const uint64_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
+
+    static const uint64_t HDR_SIZE_SHIFT = 3;
     static const uint64_t HDR_SIZE_MASK = 0xf << HDR_SIZE_SHIFT;
 
-    static const uint64_t HDR_VERSION_SHIFT = 6;
+    static const uint64_t HDR_VERSION_SHIFT = 7;
     static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
 
   public:
 
     static const size_t NVersions = logical_node_spillblock::NSpillSize;
 
-    // [ locked | deleted | num_versions | version ]
-    // [  0..1  |  1..2   |     2..6     |  6..64  ]
+    // [ locked | deleted | enqueued | num_versions | version ]
+    // [  0..1  |  1..2   |   2..3   |     3..7     |  7..64  ]
     volatile uint64_t hdr;
+
+    // constraints:
+    //   * enqueued => !deleted
+    //   * deleted  => !enqueued
 
     // in each logical_node, the latest verison/value is stored in
     // versions[size() - 1] and values[size() - 1]. each
@@ -262,7 +285,7 @@ public:
     {
       uint64_t v = hdr;
       INVARIANT(IsLocked(v));
-      uint64_t n = Version(v);
+      const uint64_t n = Version(v);
       v &= ~HDR_VERSION_MASK;
       v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       v &= ~HDR_LOCKED_MASK;
@@ -287,8 +310,32 @@ public:
     mark_deleting()
     {
       INVARIANT(is_locked());
+      INVARIANT(!is_enqueued());
       INVARIANT(!is_deleting());
       hdr |= HDR_DELETING_MASK;
+    }
+
+    inline bool
+    is_enqueued() const
+    {
+      return IsEnqueued(hdr);
+    }
+
+    static inline bool
+    IsEnqueued(uint64_t v)
+    {
+      return v & HDR_ENQUEUED_MASK;
+    }
+
+    inline void
+    set_enqueued(bool enqueued)
+    {
+      INVARIANT(is_locked());
+      INVARIANT(!is_deleting());
+      if (enqueued)
+        hdr |= HDR_ENQUEUED_MASK;
+      else
+        hdr &= ~HDR_ENQUEUED_MASK;
     }
 
     inline size_t
@@ -359,7 +406,7 @@ public:
       // because we expect t's to be relatively recent, instead of
       // doing binary search, we simply do a linear scan from the
       // end- most of the time we should find a match on the first try
-      size_t n = size();
+      const size_t n = size();
       const struct logical_node_spillblock *p = spillblock_head;
       INVARIANT(n > 0 && n <= NVersions);
       bool found = false;
@@ -587,7 +634,11 @@ public:
   bool commit(bool doThrow = false);
 
   // abort() always succeeds
-  void abort();
+  inline void
+  abort()
+  {
+    abort_impl(ABORT_REASON_USER);
+  }
 
   inline uint64_t
   get_flags() const
@@ -595,7 +646,7 @@ public:
     return flags;
   }
 
-  virtual void dump_debug_info() const;
+  virtual void dump_debug_info(abort_reason reason) const;
 
   typedef void (*callback_t)(record_t);
   /** not thread-safe */
@@ -605,14 +656,14 @@ public:
 
 #ifdef DIE_ON_ABORT
   void
-  abort_trap() const
+  abort_trap(abort_reason reason) const
   {
-    dump_debug_info();
+    dump_debug_info(reason);
     ::abort();
   }
 #else
   inline ALWAYS_INLINE void
-  abort_trap() const
+  abort_trap(abort_reason reason) const
   {
   }
 #endif
@@ -623,6 +674,8 @@ public:
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const = 0;
 
 protected:
+
+  void abort_impl(abort_reason r);
 
   /**
    * create a new, unique TID for a txn. at the point which gen_commit_tid(),
@@ -792,8 +845,27 @@ protected:
       const std::vector<key_range_t> &range_set);
 
   txn_state state;
+  abort_reason reason;
   const uint64_t flags;
   std::map<txn_btree *, txn_context> ctx_map;
+};
+
+class transaction_abort_exception : public std::exception {
+public:
+  transaction_abort_exception(transaction::abort_reason r)
+    : r(r) {}
+  inline transaction::abort_reason
+  get_reason() const
+  {
+    return r;
+  }
+  virtual const char *
+  what() const throw()
+  {
+    return transaction::AbortReasonStr(r);
+  }
+private:
+  transaction::abort_reason r;
 };
 
 #define NDB_TXN_REGISTER_CLEANUP_CALLBACK(fn) \
@@ -805,7 +877,7 @@ class transaction_proto1 : public transaction {
 public:
   transaction_proto1(uint64_t flags = 0);
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
-  virtual void dump_debug_info() const;
+  virtual void dump_debug_info(abort_reason reason) const;
 
 protected:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
@@ -840,7 +912,7 @@ public:
 
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
-  virtual void dump_debug_info() const;
+  virtual void dump_debug_info(abort_reason reason) const;
 
   static inline ALWAYS_INLINE
   uint64_t CoreId(uint64_t v)
@@ -935,7 +1007,7 @@ private:
 
   class epoch_loop : public ndb_thread {
   public:
-    epoch_loop() : ndb_thread(true) {}
+    epoch_loop() : ndb_thread(true, std::string("epochloop")) {}
     virtual void run();
   };
 
