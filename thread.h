@@ -22,8 +22,10 @@ public:
 
   typedef void (*run_t)(void);
 
-  ndb_thread() : body(NULL) {}
-  ndb_thread(run_t body) : body(body) {}
+  ndb_thread(bool daemon = false)
+    : body(NULL), daemon(daemon) {}
+  ndb_thread(run_t body, bool daemon = false)
+    : body(body), daemon(daemon) {}
   virtual ~ndb_thread() {}
 
   inline pthread_t
@@ -47,6 +49,7 @@ public:
 private:
   pthread_t p;
   run_t body;
+  const bool daemon;
   static std::vector<callback_t> &completion_callbacks();
 
   void on_complete();

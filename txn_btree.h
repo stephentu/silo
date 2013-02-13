@@ -17,6 +17,8 @@
  */
 class txn_btree {
   friend class transaction;
+  friend class transaction_proto1;
+  friend class transaction_proto2;
 public:
   typedef btree::key_type key_type;
   typedef btree::value_type value_type;

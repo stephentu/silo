@@ -3192,6 +3192,7 @@ mp_test_long_keys()
     delete running_workers[i];
 }
 
+static void perf_test() UNUSED;
 static void
 perf_test()
 {
@@ -3283,6 +3284,7 @@ namespace read_only_perf_test_ns {
   };
 }
 
+static void read_only_perf_test() UNUSED;
 static void
 read_only_perf_test()
 {
@@ -3360,6 +3362,7 @@ namespace write_only_perf_test_ns {
   };
 }
 
+static void write_only_perf_test() UNUSED;
 static void
 write_only_perf_test()
 {

@@ -20,6 +20,7 @@
 #include "util.h"
 #include "static_assert.h"
 #include "rcu.h"
+#include "thread.h"
 
 class transaction_abort_exception {};
 class transaction_unusable_exception {};
@@ -67,7 +68,7 @@ public:
     return false;
   }
 
-  struct logical_node_spillblock {
+  struct logical_node_spillblock : public util::noncopyable {
 
     static const size_t NSpills = 5; // makes each spillblock about 4 cachelines
     static const size_t NSpillSize = 3;
@@ -77,7 +78,9 @@ public:
     volatile uint64_t gc_opaque_value; // an opaque 64-bit value for GC, initialized to 0
 
     tid_t versions[NElems];
-    record_t values[NElems];
+    record_t values[NElems]; // has ownership over the values pointed to:
+                             // gc_chain() is responsible for free-ing the
+                             // values (via the completion callbacks)
 
     struct logical_node_spillblock *spillblock_next;
 
@@ -189,22 +192,25 @@ public:
    *
    * A logical node is one cache line wide
    */
-  struct logical_node {
+  struct logical_node : public util::noncopyable {
   private:
     static const uint64_t HDR_LOCKED_MASK = 0x1;
 
-    static const uint64_t HDR_SIZE_SHIFT = 1;
+    static const uint64_t HDR_DELETING_SHIFT = 1;
+    static const uint64_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
+
+    static const uint64_t HDR_SIZE_SHIFT = 2;
     static const uint64_t HDR_SIZE_MASK = 0xf << HDR_SIZE_SHIFT;
 
-    static const uint64_t HDR_VERSION_SHIFT = 5;
+    static const uint64_t HDR_VERSION_SHIFT = 6;
     static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
 
   public:
 
     static const size_t NVersions = logical_node_spillblock::NSpillSize;
 
-    // [ locked | num_versions | version ]
-    // [  0..1  |     1..5     |  5..64  ]
+    // [ locked | deleted | num_versions | version ]
+    // [  0..1  |  1..2   |     2..6     |  6..64  ]
     volatile uint64_t hdr;
 
     // in each logical_node, the latest verison/value is stored in
@@ -224,6 +230,8 @@ public:
       versions[0] = MIN_TID;
       values[0] = NULL;
     }
+
+    ~logical_node();
 
     inline bool
     is_locked() const
@@ -261,6 +269,26 @@ public:
       INVARIANT(!IsLocked(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
+    }
+
+    inline bool
+    is_deleting() const
+    {
+      return IsDeleting(hdr);
+    }
+
+    static inline bool
+    IsDeleting(uint64_t v)
+    {
+      return v & HDR_DELETING_MASK;
+    }
+
+    inline void
+    mark_deleting()
+    {
+      INVARIANT(is_locked());
+      INVARIANT(!is_deleting());
+      hdr |= HDR_DELETING_MASK;
     }
 
     inline size_t
@@ -387,6 +415,14 @@ public:
       return versions[n - 1];
     }
 
+    inline record_t
+    latest_value() const
+    {
+      size_t n = size();
+      INVARIANT(n > 0 && n <= NVersions);
+      return values[n - 1];
+    }
+
     /**
      * Is the valid read at snapshot_tid still consistent at commit_tid
      */
@@ -498,19 +534,44 @@ public:
       return new (p) logical_node;
     }
 
+    static void
+    deleter(void *p)
+    {
+      logical_node *n = (logical_node *) p;
+      INVARIANT(n->is_deleting());
+      INVARIANT(!n->is_locked());
+      n->~logical_node();
+      free(n);
+    }
+
     static inline void
     release(logical_node *n)
     {
-      // XXX: currently not RCU GC-ed (since we only free when we cannot put
-      // the logical_node into the shared data structure)
       if (unlikely(!n))
         return;
+      n->mark_deleting();
+      rcu::free_with_fn(n, deleter);
+    }
+
+    static inline void
+    release_no_rcu(logical_node *n)
+    {
+      if (unlikely(!n))
+        return;
+#ifdef CHECK_INVARIANTS
+      n->lock();
+      n->mark_deleting();
+      n->unlock();
+#endif
       n->~logical_node();
       free(n);
     }
 
     static std::string
     VersionInfoStr(uint64_t v);
+
+    static void
+    try_delete(void *p);
 
   } PACKED_CACHE_ALIGNED;
 
@@ -569,7 +630,7 @@ protected:
    * successfully
    */
   virtual tid_t gen_commit_tid(
-      const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes) = 0;
+      const std::vector<logical_node *> &write_nodes) = 0;
 
   virtual bool can_read_tid(tid_t t) const { return true; }
 
@@ -578,6 +639,12 @@ protected:
   //
   // Is also called within an RCU read region
   virtual void on_logical_node_spill(logical_node *ln) = 0;
+
+  // Called when the latest value written to ln is an empty
+  // (delete) marker. The protocol can then decide how to schedule
+  // the logical node for actual deletion
+  virtual void on_logical_delete(
+      txn_btree *btr, const std::string &key, logical_node *ln) = 0;
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called
   // with the commit tid. before on_tid_finish() is called, state is updated
@@ -744,8 +811,10 @@ protected:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
 
   virtual tid_t gen_commit_tid(
-      const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes);
+      const std::vector<logical_node *> &write_nodes);
   virtual void on_logical_node_spill(logical_node *ln);
+  virtual void on_logical_delete(
+      txn_btree *btr, const std::string &key, logical_node *ln);
   virtual void on_tid_finish(tid_t commit_tid);
 
 private:
@@ -808,7 +877,7 @@ public:
 
 protected:
   virtual tid_t gen_commit_tid(
-      const std::map<logical_node *, std::pair<bool, record_t> > &write_nodes);
+      const std::vector<logical_node *> &write_nodes);
 
   // can only read elements in this epoch or previous epochs
   virtual bool
@@ -818,6 +887,8 @@ protected:
   }
 
   virtual void on_logical_node_spill(logical_node *ln);
+  virtual void on_logical_delete(
+      txn_btree *btr, const std::string &key, logical_node *ln);
   virtual void on_tid_finish(tid_t commit_tid) {}
 
 private:
@@ -826,6 +897,11 @@ private:
   uint64_t last_consistent_tid;
 
   static size_t core_id();
+
+  typedef void (*work_callback_t)(void *);
+
+  // work will get called after current epoch finishes
+  void enqueue_work_after_current_epoch(work_callback_t work, void *p);
 
   // XXX(stephentu): need to implement core ID recycling
   static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
@@ -857,7 +933,11 @@ private:
   static bool InitEpochScheme();
   static bool _init_epoch_scheme_flag;
 
-  static void *EpochLoop(void *p);
+  class epoch_loop : public ndb_thread {
+  public:
+    epoch_loop() : ndb_thread(true) {}
+    virtual void run();
+  };
 
   /**
    * Get a (possibly stale) consistent TID
@@ -889,6 +969,23 @@ private:
   // for synchronizing with the epoch incrementor loop
   static volatile util::aligned_padded_elem<pthread_spinlock_t>
     g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
+
+  //typedef std::pair<uint64_t, work_callback_t> work_record_t;
+  //typedef std::priority_queue<
+  //  work_record_t,
+  //  std::vector<work_record_t>,
+  //  util::std_pair_first_cmp<
+  //    work_record_t,
+  //    greater<work_record_t::first_type>
+  //  >
+  //> work_pq;
+
+  typedef std::pair<work_callback_t, void *> work_record_t;
+  typedef std::vector<work_record_t> work_pq;
+
+  // for passing work to the epoch loop
+  static volatile util::aligned_padded_elem<work_pq*>
+    g_work_queues[NMaxCores] CACHE_ALIGNED;
 };
 
 // XXX(stephentu): stupid hacks

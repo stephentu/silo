@@ -8,12 +8,18 @@ using namespace std;
 void
 ndb_thread::start()
 {
-  ALWAYS_ASSERT(pthread_create(&p, NULL, pthread_bootstrap, this) == 0);
+  pthread_attr_t attr;
+  ALWAYS_ASSERT(pthread_attr_init(&attr) == 0);
+  if (daemon)
+    ALWAYS_ASSERT(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0);
+  ALWAYS_ASSERT(pthread_create(&p, &attr, pthread_bootstrap, this) == 0);
+  ALWAYS_ASSERT(pthread_attr_destroy(&attr) == 0);
 }
 
 void
 ndb_thread::join()
 {
+  ALWAYS_ASSERT(!daemon);
   ALWAYS_ASSERT(pthread_join(p, NULL) == 0);
 }
 

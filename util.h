@@ -5,6 +5,8 @@
 #include <sstream>
 #include <string>
 #include <limits>
+#include <queue>
+#include <utility>
 
 #include <stdint.h>
 #include <pthread.h>
@@ -356,6 +358,21 @@ next_key(const std::string &s)
   s0.resize(s.size() + 1);
   return s0;
 }
+
+template <typename T, typename Container = std::vector<T> >
+struct std_reverse_pq {
+  typedef std::priority_queue<T, Container, std::greater<T> > type;
+};
+
+template <typename PairType, typename FirstComp>
+struct std_pair_first_cmp {
+  inline bool
+  operator()(const PairType &lhs, const PairType &rhs) const
+  {
+    FirstComp c;
+    return c(lhs.first, rhs.first);
+  }
+};
 
 }
 

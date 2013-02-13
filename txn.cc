@@ -12,17 +12,63 @@
 using namespace std;
 using namespace util;
 
+transaction::logical_node::~logical_node()
+{
+  INVARIANT(is_deleting());
+  INVARIANT(!is_locked());
+
+  // gc the chain
+  if (spillblock_head)
+    spillblock_head->gc_chain();
+
+  // rcu-free the values
+  const vector<callback_t> &callbacks = completion_callbacks();
+  const size_t n = size();
+  for (size_t i = 0; i < n; i++)
+    for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
+        inner_it != callbacks.end(); ++inner_it)
+      (*inner_it)(values[i]);
+}
+
+struct try_delete_info {
+  try_delete_info(txn_btree *btr, const string &key, transaction::logical_node *ln)
+    : btr(btr), key(key), ln(ln) {}
+  txn_btree *btr;
+  string key;
+  transaction::logical_node *ln;
+};
+
+void
+transaction::logical_node::try_delete(void *p)
+{
+  try_delete_info *info = (try_delete_info *) p;
+  scoped_rcu_region rcu_region;
+  if (info->ln->is_deleting())
+    return;
+  info->ln->lock();
+  btree::value_type removed = 0;
+  if (info->ln->is_deleting() || info->ln->latest_value())
+    // somebody already deleted, or added a record again, so we don't want to
+    // delete it
+    goto unlock;
+  ALWAYS_ASSERT(info->btr->underlying_btree.remove(varkey(info->key), &removed));
+  ALWAYS_ASSERT(removed == (btree::value_type) info->ln);
+  logical_node::release(info->ln);
+unlock:
+  info->ln->unlock();
+}
+
 void
 transaction::logical_node_spillblock::gc_chain()
 {
   INVARIANT(rcu::in_rcu_region());
   struct logical_node_spillblock *cur = this;
+  const vector<callback_t> &callbacks = completion_callbacks();
   while (cur) {
     // free all the records
-    vector<callback_t> &callbacks = completion_callbacks();
     const size_t n = cur->size();
     for (size_t i = 0; i < n; i++)
-      for (vector<callback_t>::iterator inner_it = callbacks.begin();
+      for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
            inner_it != callbacks.end(); ++inner_it)
         (*inner_it)(cur->values[i]);
     struct logical_node_spillblock *next = cur->spillblock_next;
@@ -69,7 +115,7 @@ proto2_version_str(uint64_t v)
 }
 
 // XXX(stephentu): hacky!
-static string (*g_proto_version_str)(uint64_t v) = proto1_version_str;
+static string (*g_proto_version_str)(uint64_t v) = proto2_version_str;
 
 static vector<string>
 format_tid_list(const vector<transaction::tid_t> &tids)
@@ -121,9 +167,30 @@ transaction::~transaction()
   rcu::region_end();
 }
 
+struct lnode_info {
+  lnode_info() {}
+  lnode_info(txn_btree *btr,
+             const string &key,
+             bool locked,
+             transaction::record_t r)
+    : btr(btr),
+      key(key),
+      locked(locked),
+      r(r)
+  {}
+  txn_btree *btr;
+  string key;
+  bool locked;
+  transaction::record_t r;
+};
+
 bool
 transaction::commit(bool doThrow)
 {
+  // XXX(stephentu): specific abort counters, to see which
+  // case we are aborting the most on (could integrate this with
+  // abort_trap())
+
   switch (state) {
   case TXN_EMBRYO:
   case TXN_ACTIVE:
@@ -137,7 +204,7 @@ transaction::commit(bool doThrow)
   }
 
   // fetch logical_nodes for insert
-  map<logical_node *, pair<bool, record_t> > logical_nodes;
+  map<logical_node *, lnode_info> logical_nodes;
   const pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
   pair<bool, tid_t> commit_tid(false, 0);
 
@@ -150,7 +217,7 @@ transaction::commit(bool doThrow)
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
-        logical_nodes[(logical_node *) v] = make_pair(false, it->second);
+        logical_nodes[(logical_node *) v] = lnode_info(outer_it->first, it->first, false, it->second);
       } else {
         logical_node *ln = logical_node::alloc();
         // XXX: underlying btree api should return the existing value if
@@ -158,7 +225,7 @@ transaction::commit(bool doThrow)
         pair<const btree::node_opaque_t *, uint64_t> insert_info;
         if (!outer_it->first->underlying_btree.insert_if_absent(
               varkey(it->first), (btree::value_type) ln, &insert_info)) {
-          logical_node::release(ln);
+          logical_node::release_no_rcu(ln);
           goto retry;
         }
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
@@ -179,7 +246,7 @@ transaction::commit(bool doThrow)
             SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
           }
         }
-        logical_nodes[ln] = make_pair(false, it->second);
+        logical_nodes[ln] = lnode_info(outer_it->first, it->first, false, it->second);
       }
     }
   }
@@ -188,22 +255,25 @@ transaction::commit(bool doThrow)
     // we don't have consistent tids, or not a read-only txn
 
     // lock the logical nodes in sort order
-    for (map<logical_node *, pair<bool, record_t> >::iterator it = logical_nodes.begin();
+    vector<logical_node *> lnodes;
+    lnodes.reserve(logical_nodes.size());
+    for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
       VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
       it->first->lock();
-      it->second.first = true; // we locked the node
-      if (!can_read_tid(it->first->latest_version())) {
-        // XXX(stephentu): overly conservative
+      it->second.locked = true; // we locked the node
+      if (unlikely(it->first->is_deleting() || !can_read_tid(it->first->latest_version()))) {
+        // XXX(stephentu): overly conservative (with the can_read_tid() check)
         abort_trap();
         goto do_abort;
       }
+      lnodes.push_back(it->first);
     }
 
     // acquire commit tid (if not read-only txn)
     if (!logical_nodes.empty()) {
       commit_tid.first = true;
-      commit_tid.second = gen_commit_tid(logical_nodes);
+      commit_tid.second = gen_commit_tid(lnodes);
     }
 
     if (logical_nodes.empty())
@@ -225,8 +295,23 @@ transaction::commit(bool doThrow)
           if (outer_it->first->underlying_btree.search(varkey(it->first), v))
             ln = (transaction::logical_node *) v;
         }
-        if (unlikely(!ln))
+
+        if (unlikely(!ln)) {
+          INVARIANT(!did_write); // otherwise it would be there in the tree
+          if (unlikely(it->second.ln && it->second.r)) {
+            abort_trap();
+            goto do_abort;
+          }
+          // validated
           continue;
+        } else if (unlikely(!it->second.ln)) {
+          // have in tree but we didnt read it
+          // XXX(stephentu): conservative- could check if is_deleting() or the
+          // latest value is deleted
+          abort_trap();
+          goto do_abort;
+        }
+
         VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
                      << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
@@ -250,6 +335,7 @@ transaction::commit(bool doThrow)
             continue;
 
         //}
+
         abort_trap();
         goto do_abort;
       }
@@ -284,15 +370,18 @@ transaction::commit(bool doThrow)
 
     // commit actual records
     vector<record_t> removed_vec;
-    for (map<logical_node *, pair<bool, record_t> >::iterator it = logical_nodes.begin();
+    for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
-      INVARIANT(it->second.first);
+      INVARIANT(it->second.locked);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid.second << endl);
       record_t removed = 0;
-      if (it->first->write_record_at(this, commit_tid.second, it->second.second, &removed))
+      if (it->first->write_record_at(this, commit_tid.second, it->second.r, &removed))
         // signal for GC
         on_logical_node_spill(it->first);
+      if (!it->second.r)
+        // schedule deletion
+        on_logical_delete(it->second.btr, it->second.key, it->first);
       it->first->unlock();
       if (removed)
         removed_vec.push_back(removed);
@@ -318,9 +407,9 @@ do_abort:
     VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
     VERBOSE(cerr << "aborting txn" << endl);
-  for (map<logical_node *, pair<bool, record_t> >::iterator it = logical_nodes.begin();
+  for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
        it != logical_nodes.end(); ++it)
-    if (it->second.first)
+    if (it->second.locked)
       it->first->unlock();
   state = TXN_ABRT;
   if (commit_tid.first)
@@ -656,7 +745,7 @@ transaction_proto1::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto1::gen_commit_tid(const map<logical_node *, pair<bool, record_t> > &write_nodes)
+transaction_proto1::gen_commit_tid(const vector<logical_node *> &write_nodes)
 {
   return incr_and_get_global_tid();
 }
@@ -675,6 +764,18 @@ transaction_proto1::on_logical_node_spill(logical_node *ln)
     *pp = 0;
     p->gc_chain();
   }
+}
+
+void
+transaction_proto1::on_logical_delete(
+    txn_btree *btr, const string &key, logical_node *ln)
+{
+  INVARIANT(ln->is_locked());
+  INVARIANT(!ln->latest_value());
+  btree::value_type removed = 0;
+  ALWAYS_ASSERT(btr->underlying_btree.remove(varkey(key), &removed));
+  ALWAYS_ASSERT(removed == (btree::value_type) ln);
+  logical_node::release(ln);
 }
 
 void
@@ -738,7 +839,7 @@ transaction_proto2::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto2::gen_commit_tid(const map<logical_node *, pair<bool, record_t> > &write_nodes)
+transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
 {
   size_t my_core_id = core_id();
   tid_t l_last_commit_tid = tl_last_commit_tid;
@@ -757,11 +858,10 @@ transaction_proto2::gen_commit_tid(const map<logical_node *, pair<bool, record_t
       if (it->second.t > ret)
         ret = it->second.t;
     }
-  for (map<logical_node *, pair<bool, record_t> >::const_iterator it = write_nodes.begin();
+  for (vector<logical_node *>::const_iterator it = write_nodes.begin();
        it != write_nodes.end(); ++it) {
-    INVARIANT(it->first->is_locked());
-    INVARIANT(it->second.first);
-    tid_t t = it->first->latest_version();
+    INVARIANT((*it)->is_locked());
+    tid_t t = (*it)->latest_version();
     // XXX(stephentu): we are overly conservative for now- technically this
     // abort isn't necessary (we really should just write the value in the correct
     // position)
@@ -821,6 +921,15 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
   }
 }
 
+void
+transaction_proto2::on_logical_delete(
+    txn_btree *btr, const string &key, logical_node *ln)
+{
+  INVARIANT(ln->is_locked());
+  INVARIANT(!ln->latest_value());
+  enqueue_work_after_current_epoch(logical_node::try_delete, (void *) ln);
+}
+
 size_t
 transaction_proto2::core_id()
 {
@@ -833,35 +942,51 @@ transaction_proto2::core_id()
   return tl_core_id;
 }
 
+void
+transaction_proto2::enqueue_work_after_current_epoch(
+    work_callback_t work, void *p)
+{
+  const size_t id = core_id();
+  g_work_queues[id].elem->push_back(work_record_t(work, p));
+}
+
 bool
 transaction_proto2::InitEpochScheme()
 {
-  for (size_t i = 0; i < NMaxCores; i++)
+  for (size_t i = 0; i < NMaxCores; i++) {
     ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
+    g_work_queues[i].elem = new work_pq;
+  }
 
-  // NB(stephentu): we don't use ndb_thread here, because the EpochLoop
-  // does not participate in any transactions.
-  pthread_t p;
-  pthread_attr_t attr;
-  ALWAYS_ASSERT(pthread_attr_init(&attr) == 0);
-  ALWAYS_ASSERT(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0);
-  ALWAYS_ASSERT(pthread_create(&p, &attr, EpochLoop, NULL) == 0);
-  ALWAYS_ASSERT(pthread_attr_destroy(&attr) == 0);
+  epoch_loop thd;
+  thd.start();
   return true;
 }
 
 bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
 
-void *
-transaction_proto2::EpochLoop(void *p)
+void
+transaction_proto2::epoch_loop::run()
 {
+  work_pq pq;
   for (;;) {
+    // run work
+    for (work_pq::iterator it = pq.begin(); it != pq.end(); ++it) {
+      try {
+        it->first(it->second);
+      } catch (...) {
+        cerr << "epoch_loop: uncaught exception from enqueued work fn" << endl;
+      }
+    }
+    pq.clear();
+
     // XXX(stephentu): better solution for epoch intervals?
     // this interval time defines the staleness of our consistent
     // snapshots
     struct timespec t;
     memset(&t, 0, sizeof(t));
-    t.tv_sec = 2;
+    t.tv_sec = 2; // XXX(stephentu): time how much time we spent
+                  // executing work, and subtract that time from here
     nanosleep(&t, NULL);
 
     // bump epoch number
@@ -876,12 +1001,14 @@ transaction_proto2::EpochLoop(void *p)
     const size_t l_core_count = g_core_count;
     for (size_t i = 0; i < l_core_count; i++) {
       scoped_spinlock l(&g_epoch_spinlocks[i].elem);
+      work_pq &core_pq = *g_work_queues[i].elem;
+      pq.insert(pq.end(), core_pq.begin(), core_pq.end());
+      core_pq.clear();
     }
 
     COMPILER_MEMORY_FENCE;
     g_last_consistent_epoch = g_current_epoch;
   }
-  return 0;
 }
 
 __thread ssize_t transaction_proto2::tl_core_id = -1;
@@ -892,3 +1019,4 @@ volatile uint64_t transaction_proto2::g_current_epoch = 0;
 volatile uint64_t transaction_proto2::g_last_consistent_epoch = 0;
 volatile transaction::tid_t transaction_proto2::g_core_count = 0;
 volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];
+volatile aligned_padded_elem<transaction_proto2::work_pq*> transaction_proto2::g_work_queues[NMaxCores];
