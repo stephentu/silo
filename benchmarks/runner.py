@@ -30,7 +30,7 @@ def mk_grid(nthds):
       'txn_flags' : TXN_FLAGS,
   }
 
-grids = [mk_grid(n) for n in THREADS]
+grids = reversed([mk_grid(n) for n in THREADS])
 
 def run_configuration(basedir, dbtype, bench, scale_factor, txn_flags, nthreads):
   args = [
@@ -41,7 +41,7 @@ def run_configuration(basedir, dbtype, bench, scale_factor, txn_flags, nthreads)
       '--num-threads', str(nthreads),
       '--scale-factor', str(scale_factor),
       '--txn-flags', '%d' % (txn_flags),
-      '--runtime', '30',
+      '--runtime', '60',
   ]
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
