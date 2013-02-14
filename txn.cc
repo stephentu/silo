@@ -424,29 +424,6 @@ transaction::clear()
   //ctx_map.clear();
 }
 
-const char *
-transaction::AbortReasonStr(abort_reason reason)
-{
-	switch (reason) {
-	case ABORT_REASON_USER:
-		return "ABORT_REASON_USER";
-	case ABORT_REASON_UNSTABLE_READ:
-		return "ABORT_REASON_UNSTABLE_READ";
-	case ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED:
-		return "ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED";
-	case ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED:
-		return "ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED";
-	case ABORT_REASON_WRITE_NODE_INTERFERENCE:
-		return "ABORT_REASON_WRITE_NODE_INTERFERENCE";
-	case ABORT_REASON_READ_NODE_INTEREFERENCE:
-		return "ABORT_REASON_READ_NODE_INTEREFERENCE";
-	default:
-		break;
-	}
-  ALWAYS_ASSERT(false);
-  return 0;
-}
-
 void
 transaction::abort_impl(abort_reason reason)
 {
@@ -550,6 +527,11 @@ operator<<(ostream &o, const transaction::key_range_t &range)
   o << ")";
   return o;
 }
+
+#define EVENT_COUNTER_IMPL_X(x) \
+  event_counter transaction::g_ ## x ## _ctr(#x);
+ABORT_REASONS(EVENT_COUNTER_IMPL_X)
+#undef EVENT_COUNTER_IMPL_X
 
 #ifdef CHECK_INVARIANTS
 void

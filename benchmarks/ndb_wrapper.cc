@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "ndb_wrapper.h"
+#include "../counter.h"
 #include "../rcu.h"
 #include "../varkey.h"
 #include "../macros.h"
@@ -160,6 +161,8 @@ ndb_ordered_index::size() const
   return btr.size_estimate();
 }
 
+static event_counter evt_rec_cleanup("record_cleanups");
+
 static void
 record_cleanup_callback(uint8_t *record, bool outstanding_refs)
 {
@@ -169,6 +172,7 @@ record_cleanup_callback(uint8_t *record, bool outstanding_refs)
   VERBOSE(cerr << "record_cleanup_callback(refs="
                << outstanding_refs << "): 0x"
                << hexify(intptr_t(record)) << endl);
+  ++evt_rec_cleanup;
   if (outstanding_refs)
     rcu::free_array(record);
   else

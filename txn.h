@@ -18,6 +18,7 @@
 #include "amd64.h"
 #include "btree.h"
 #include "core.h"
+#include "counter.h"
 #include "macros.h"
 #include "varkey.h"
 #include "util.h"
@@ -60,19 +61,52 @@ public:
     // XXX: more flags in the future, things like consistency levels
   };
 
+#define ABORT_REASONS(x) \
+    x(ABORT_REASON_USER) \
+    x(ABORT_REASON_UNSTABLE_READ) \
+    x(ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED) \
+    x(ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED) \
+    x(ABORT_REASON_WRITE_NODE_INTERFERENCE) \
+    x(ABORT_REASON_READ_NODE_INTEREFERENCE) \
+
   enum abort_reason {
-    ABORT_REASON_USER,
-
-    ABORT_REASON_UNSTABLE_READ,
-
-    ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED,
-    ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED,
-
-    ABORT_REASON_WRITE_NODE_INTERFERENCE,
-    ABORT_REASON_READ_NODE_INTEREFERENCE,
+#define ENUM_X(x) x,
+    ABORT_REASONS(ENUM_X)
+#undef ENUM_X
   };
 
-  static const char * AbortReasonStr(abort_reason reason);
+  static const char *
+  AbortReasonStr(abort_reason reason)
+  {
+    switch (reason) {
+#define CASE_X(x) case x: return #x;
+    ABORT_REASONS(CASE_X)
+#undef CASE_X
+    default:
+      break;
+    }
+    ALWAYS_ASSERT(false);
+    return 0;
+  }
+
+#define EVENT_COUNTER_DEF_X(x) \
+  static event_counter g_ ## x ## _ctr;
+  ABORT_REASONS(EVENT_COUNTER_DEF_X)
+#undef EVENT_COUNTER_DEF_X
+
+  static event_counter *
+  AbortReasonCounter(abort_reason reason)
+  {
+    switch (reason) {
+#define EVENT_COUNTER_CASE_X(x) case x: return &g_ ## x ## _ctr;
+    ABORT_REASONS(EVENT_COUNTER_CASE_X)
+#undef EVENT_COUNTER_CASE_X
+    default:
+      break;
+    }
+    ALWAYS_ASSERT(false);
+    return 0;
+  }
 
   static const tid_t MIN_TID = 0;
   static const tid_t MAX_TID = (tid_t) -1;
@@ -660,6 +694,7 @@ public:
   void
   abort_trap(abort_reason reason) const
   {
+    AbortReasonCounter(reason)->inc();
     dump_debug_info(reason);
     ::abort();
   }
@@ -667,6 +702,7 @@ public:
   inline ALWAYS_INLINE void
   abort_trap(abort_reason reason) const
   {
+    AbortReasonCounter(reason)->inc();
   }
 #endif
 

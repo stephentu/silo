@@ -42,19 +42,24 @@ private:
 public:
   event_counter(const std::string &name);
 
-  inline event_counter &
-  operator++()
-  {
-    const size_t id = coreid::core_id();
-    ctx->tl_counts[id].elem++;
-    return *this;
-  }
-
-  inline event_counter &
-  operator+=(uint64_t i)
+  inline ALWAYS_INLINE void
+  inc(uint64_t i = 1)
   {
     const size_t id = coreid::core_id();
     ctx->tl_counts[id].elem += i;
+  }
+
+  inline ALWAYS_INLINE event_counter &
+  operator++()
+  {
+    inc();
+    return *this;
+  }
+
+  inline ALWAYS_INLINE event_counter &
+  operator+=(uint64_t i)
+  {
+    inc(i);
     return *this;
   }
 
