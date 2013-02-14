@@ -829,7 +829,7 @@ volatile transaction::tid_t transaction_proto1::last_consistent_global_tid = 0;
 transaction_proto2::transaction_proto2(uint64_t flags)
   : transaction(flags), current_epoch(0), last_consistent_tid(0)
 {
-  size_t my_core_id = core_id();
+  size_t my_core_id = coreid::core_id();
   VERBOSE(cerr << "new transaction_proto2 (core=" << my_core_id
                << ", nest=" << tl_nest_level << ")" << endl);
   if (tl_nest_level++ == 0)
@@ -841,7 +841,7 @@ transaction_proto2::transaction_proto2(uint64_t flags)
 
 transaction_proto2::~transaction_proto2()
 {
-  size_t my_core_id = core_id();
+  size_t my_core_id = coreid::core_id();
   VERBOSE(cerr << "destroy transaction_proto2 (core=" << my_core_id
                << ", nest=" << tl_nest_level << ")" << endl);
   ALWAYS_ASSERT(tl_nest_level > 0);
@@ -869,7 +869,7 @@ transaction_proto2::dump_debug_info(abort_reason reason) const
 transaction::tid_t
 transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
 {
-  size_t my_core_id = core_id();
+  size_t my_core_id = coreid::core_id();
   tid_t l_last_commit_tid = tl_last_commit_tid;
   INVARIANT(l_last_commit_tid == MIN_TID || CoreId(l_last_commit_tid) == my_core_id);
 
@@ -978,23 +978,13 @@ transaction_proto2::on_logical_delete(
       (void *) info);
 }
 
-size_t
-transaction_proto2::core_id()
-{
-  if (unlikely(tl_core_id == -1)) {
-    // initialize per-core data structures
-    tl_core_id = __sync_fetch_and_add(&g_core_count, 1);
-    // did we exceed max cores?
-    ALWAYS_ASSERT(tl_core_id < (1 << CoreBits));
-  }
-  return tl_core_id;
-}
+
 
 void
 transaction_proto2::enqueue_work_after_current_epoch(
     uint64_t epoch, work_callback_t work, void *p)
 {
-  const size_t id = core_id();
+  const size_t id = coreid::core_id();
   g_work_queues[id].elem->push_back(work_record_t(epoch, work, p));
 }
 
@@ -1081,7 +1071,7 @@ transaction_proto2::epoch_loop::run()
     __sync_synchronize();
 
     // wait for each core to finish epoch (g_current_epoch - 1)
-    const size_t l_core_count = g_core_count;
+    const size_t l_core_count = coreid::core_count();
     for (size_t i = 0; i < l_core_count; i++) {
       scoped_spinlock l(&g_epoch_spinlocks[i].elem);
       work_q &core_q = *g_work_queues[i].elem;
@@ -1127,12 +1117,11 @@ transaction_proto2::epoch_loop::run()
 
 transaction_proto2::epoch_loop transaction_proto2::g_epoch_loop;
 
-__thread ssize_t transaction_proto2::tl_core_id = -1;
 __thread unsigned int transaction_proto2::tl_nest_level = 0;
 __thread uint64_t transaction_proto2::tl_last_commit_tid = MIN_TID;
 
 volatile uint64_t transaction_proto2::g_current_epoch = 0;
 volatile uint64_t transaction_proto2::g_last_consistent_epoch = 0;
-volatile transaction::tid_t transaction_proto2::g_core_count = 0;
+
 volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];
 volatile aligned_padded_elem<transaction_proto2::work_q*> transaction_proto2::g_work_queues[NMaxCores];

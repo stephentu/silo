@@ -13,6 +13,8 @@
 #include "ndb_wrapper.h"
 #include "mysql_wrapper.h"
 
+#include "../counter.h"
+
 using namespace std;
 using namespace util;
 
@@ -102,6 +104,11 @@ bench_runner::run()
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
+    cerr << "--- system statistics ---" << endl;
+    map<string, uint64_t> ctrs = event_counter::get_all_counters();
+    for (map<string, uint64_t>::iterator it = ctrs.begin();
+         it != ctrs.end(); ++it)
+      cerr << it->first << ": " << it->second << endl;
   }
 
   // output for plotting script

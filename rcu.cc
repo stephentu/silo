@@ -7,6 +7,7 @@
 #include "macros.h"
 #include "util.h"
 #include "thread.h"
+#include "counter.h"
 
 using namespace std;
 using namespace util;
@@ -154,6 +155,8 @@ rcu::in_rcu_region()
   return tl_crit_section_depth;
 }
 
+static event_counter evt_rcu_deletes("rcu_deletes");
+
 void *
 rcu::gc_thread_loop(void *p)
 {
@@ -199,12 +202,13 @@ rcu::gc_thread_loop(void *p)
          it != elems.end(); ++it)
       it->second(it->first);
 
-    //cerr << "deleted " << elems.size() << " elements" << endl;
+    VERBOSE(cerr << "deleted " << elems.size() << " elements" << endl);
+    evt_rcu_deletes += elems.size();
 
     // XXX: better solution for GC intervals?
     struct timespec t;
     memset(&t, 0, sizeof(t));
-    t.tv_sec = 2;
+    t.tv_nsec = 100 * 1000000; // 100 ms
     nanosleep(&t, NULL);
   }
   return NULL;

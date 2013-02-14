@@ -3,8 +3,10 @@
 #include "../rcu.h"
 #include "../varkey.h"
 #include "../macros.h"
+#include "../util.h"
 
 using namespace std;
+using namespace util;
 
 void *
 ndb_wrapper::new_txn(uint64_t txn_flags)
@@ -164,6 +166,9 @@ record_cleanup_callback(uint8_t *record, bool outstanding_refs)
   INVARIANT(!outstanding_refs || rcu::in_rcu_region());
   if (unlikely(!record))
     return;
+  VERBOSE(cerr << "record_cleanup_callback(refs="
+               << outstanding_refs << "): 0x"
+               << hexify(intptr_t(record)) << endl);
   if (outstanding_refs)
     rcu::free_array(record);
   else

@@ -17,6 +17,7 @@
 
 #include "amd64.h"
 #include "btree.h"
+#include "core.h"
 #include "macros.h"
 #include "varkey.h"
 #include "util.h"
@@ -989,10 +990,10 @@ private:
   try_delete_logical_node(void *p, uint64_t &epoch);
 
   // XXX(stephentu): need to implement core ID recycling
-  static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
-  static const size_t NMaxCores = (1 << CoreBits);
+  static const size_t CoreBits = NMAXCOREBITS; // allow 2^CoreShift distinct threads
+  static const size_t NMaxCores = NMAXCORES;
 
-  static const uint64_t CoreMask = ((1 << CoreBits) - 1);
+  static const uint64_t CoreMask = (NMaxCores - 1);
 
   static const uint64_t NumIdShift = CoreBits;
   static const uint64_t NumIdMask = ((((uint64_t)1) << 27) - 1) << NumIdShift;
@@ -1035,9 +1036,6 @@ private:
    */
   static uint64_t GetConsistentTid();
 
-  // the core ID of this core: -1 if not set
-  static __thread ssize_t tl_core_id;
-
   // allows a single core to run multiple transactions at the same time
   // XXX(stephentu): should we allow this? this seems potentially troubling
   static __thread unsigned int tl_nest_level;
@@ -1054,8 +1052,6 @@ private:
   // (this means g_last_consistent_epoch - 1 is the last epoch fully completed)
   static volatile uint64_t g_last_consistent_epoch CACHE_ALIGNED;
 
-  // contains a running count of all the cores
-  static volatile size_t g_core_count CACHE_ALIGNED;
 
   // for synchronizing with the epoch incrementor loop
   static volatile util::aligned_padded_elem<pthread_spinlock_t>
