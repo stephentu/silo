@@ -23,6 +23,96 @@ uint64_t txn_flags = 0;
 double scale_factor = 1.0;
 uint64_t runtime = 30;
 
+template <typename T>
+static void
+delete_pointers(const vector<T *> &pts)
+{
+  for (size_t i = 0; i < pts.size(); i++)
+    delete pts[i];
+}
+
+template <typename T>
+static vector<T>
+elemwise_sum(const vector<T> &a, const vector<T> &b)
+{
+  INVARIANT(a.size() == b.size());
+  vector<T> ret(a.size());
+  for (size_t i = 0; i < a.size(); i++)
+    ret[i] = a[i] + b[i];
+  return ret;
+}
+
+void
+bench_runner::run()
+{
+  // load data
+  const vector<bench_loader *> loaders = make_loaders();
+  {
+    scoped_timer t("dataloading", verbose);
+    for (vector<bench_loader *>::const_iterator it = loaders.begin();
+         it != loaders.end(); ++it)
+      (*it)->start();
+    for (vector<bench_loader *>::const_iterator it = loaders.begin();
+         it != loaders.end(); ++it)
+      (*it)->join();
+  }
+
+  db->do_txn_epoch_sync();
+
+  if (verbose) {
+    for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
+         it != open_tables.end(); ++it)
+      cerr << "table " << it->first << " size " << it->second->size() << endl;
+    cerr << "starting benchmark..." << endl;
+  }
+
+  const vector<bench_worker *> workers = make_workers();
+  ALWAYS_ASSERT(!workers.empty());
+  for (vector<bench_worker *>::const_iterator it = workers.begin();
+       it != workers.end(); ++it)
+    (*it)->start();
+
+  barrier_a.wait_for(); // wait for all threads to start up
+  barrier_b.count_down(); // bombs away!
+  timer t;
+  sleep(runtime);
+  running = false;
+  __sync_synchronize();
+  const unsigned long elapsed = t.lap();
+  size_t n_commits = 0;
+  size_t n_aborts = 0;
+  for (size_t i = 0; i < nthreads; i++) {
+    workers[i]->join();
+    n_commits += workers[i]->get_ntxn_commits();
+    n_aborts += workers[i]->get_ntxn_aborts();
+  }
+
+  const double agg_throughput = double(n_commits) / (double(elapsed) / 1000000.0);
+  const double avg_per_core_throughput = agg_throughput / double(workers.size());
+
+  const double agg_abort_rate = double(n_aborts) / (double(elapsed) / 1000000.0);
+  const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
+
+  if (verbose) {
+    vector<size_t> agg_txn_counts = workers[0]->get_txn_counts();
+    for (size_t i = 1; i < workers.size(); i++)
+      agg_txn_counts = elemwise_sum(agg_txn_counts, workers[i]->get_txn_counts());
+    cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
+    cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+    cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
+    cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
+    cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
+  }
+
+  // output for plotting script
+  cout << agg_throughput << " " << agg_abort_rate << endl;
+
+  db->do_txn_finish();
+
+  delete_pointers(loaders);
+  delete_pointers(workers);
+}
+
 int
 main(int argc, char **argv)
 {

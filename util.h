@@ -277,15 +277,19 @@ class scoped_timer {
 private:
   timer t;
   std::string region;
+  bool enabled;
 
 public:
-  scoped_timer(const std::string &region) : region(region)
+  scoped_timer(const std::string &region, bool enabled = true)
+    : region(region), enabled(enabled)
   {}
 
   ~scoped_timer()
   {
-    double x = t.lap() / 1000.0; // ms
-    std::cerr << "timed region `" << region << "' took " << x << " ms" << std::endl;
+    if (enabled) {
+      const double x = t.lap() / 1000.0; // ms
+      std::cerr << "timed region " << region << " took " << x << " ms" << std::endl;
+    }
   }
 };
 

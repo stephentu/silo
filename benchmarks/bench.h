@@ -25,6 +25,41 @@ extern uint64_t txn_flags;
 extern double scale_factor;
 extern uint64_t runtime;
 
+class scoped_db_thread_ctx : private util::noncopyable {
+public:
+  scoped_db_thread_ctx(abstract_db *db)
+    : db(db)
+  {
+    db->thread_init();
+  }
+  ~scoped_db_thread_ctx()
+  {
+    db->thread_end();
+  }
+private:
+  abstract_db *const db;
+};
+
+class bench_loader : public ndb_thread {
+public:
+  bench_loader(unsigned long seed, abstract_db *db,
+               const std::map<std::string, abstract_ordered_index *> &open_tables)
+    : r(seed), db(db), open_tables(open_tables)
+  {}
+  virtual void
+  run()
+  {
+    scoped_db_thread_ctx ctx(db);
+    load();
+  }
+protected:
+  virtual void load() = 0;
+
+  util::fast_random r;
+  abstract_db *const db;
+  std::map<std::string, abstract_ordered_index *> open_tables;
+};
+
 class bench_worker : public ndb_thread {
 public:
 
@@ -45,11 +80,12 @@ public:
 
   virtual workload_desc get_workload() = 0;
 
-  virtual void run()
+  virtual void
+  run()
   {
-    workload_desc workload = get_workload();
+    scoped_db_thread_ctx ctx(db);
+    const workload_desc workload = get_workload();
     txn_counts.resize(workload.size());
-    db->thread_init();
     barrier_a->count_down();
     barrier_b->wait_for();
     while (running) {
@@ -63,7 +99,6 @@ public:
         d -= workload[i].first;
       }
     }
-    db->thread_end();
   }
 
   inline size_t get_ntxn_commits() const { return ntxn_commits; }
@@ -78,14 +113,35 @@ public:
 protected:
 
   util::fast_random r;
-  abstract_db *db;
+  abstract_db *const db;
   std::map<std::string, abstract_ordered_index *> open_tables;
-  spin_barrier *barrier_a;
-  spin_barrier *barrier_b;
+  spin_barrier *const barrier_a;
+  spin_barrier *const barrier_b;
   size_t ntxn_commits;
   size_t ntxn_aborts;
 
   std::vector<size_t> txn_counts; // breakdown of txns
+};
+
+class bench_runner : private util::noncopyable {
+public:
+  bench_runner(abstract_db *db)
+    : db(db), barrier_a(nthreads), barrier_b(1) {}
+  virtual ~bench_runner() {}
+  void run();
+protected:
+  // only called once
+  virtual std::vector<bench_loader*> make_loaders() = 0;
+
+  // only called once
+  virtual std::vector<bench_worker*> make_workers() = 0;
+
+  abstract_db *const db;
+  std::map<std::string, abstract_ordered_index *> open_tables;
+
+  // barriers for actual benchmark execution
+  spin_barrier barrier_a;
+  spin_barrier barrier_b;
 };
 
 #endif /* _NDB_BENCH_H_ */

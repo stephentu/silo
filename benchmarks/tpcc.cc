@@ -422,18 +422,19 @@ private:
   int32_t last_no_o_ids[10]; // XXX(stephentu): hack
 };
 
-class tpcc_warehouse_loader : public ndb_thread, public tpcc_worker_mixin {
+class tpcc_warehouse_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_warehouse_loader(unsigned long seed,
                         abstract_db *db,
                         const map<string, abstract_ordered_index *> &open_tables)
-    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+    : bench_loader(seed, db, open_tables),
+      tpcc_worker_mixin(open_tables)
   {}
 
+protected:
   virtual void
-  run()
+  load()
   {
-    db->thread_init();
     void *txn = db->new_txn(txn_flags);
     try {
       for (uint i = 1; i <= NumWarehouses(); i++) {
@@ -464,27 +465,24 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    db->thread_end();
-    cerr << "[INFO] finished loading warehouse" << endl;
+    if (verbose)
+      cerr << "[INFO] finished loading warehouse" << endl;
   }
-
-private:
-  fast_random r;
-  abstract_db *db;
 };
 
-class tpcc_item_loader : public ndb_thread, public tpcc_worker_mixin {
+class tpcc_item_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_item_loader(unsigned long seed,
                    abstract_db *db,
                    const map<string, abstract_ordered_index *> &open_tables)
-    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+    : bench_loader(seed, db, open_tables),
+      tpcc_worker_mixin(open_tables)
   {}
 
+protected:
   virtual void
-  run()
+  load()
   {
-    db->thread_init();
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
     try {
@@ -517,27 +515,24 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    db->thread_end();
-    cerr << "[INFO] finished loading item" << endl;
+    if (verbose)
+      cerr << "[INFO] finished loading item" << endl;
   }
-
-private:
-  fast_random r;
-  abstract_db *db;
 };
 
-class tpcc_stock_loader : public ndb_thread, public tpcc_worker_mixin {
+class tpcc_stock_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_stock_loader(unsigned long seed,
-                        abstract_db *db,
-                        const map<string, abstract_ordered_index *> &open_tables)
-    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+                    abstract_db *db,
+                    const map<string, abstract_ordered_index *> &open_tables)
+    : bench_loader(seed, db, open_tables),
+      tpcc_worker_mixin(open_tables)
   {}
 
+protected:
   virtual void
-  run()
+  load()
   {
-    db->thread_init();
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
     try {
@@ -585,27 +580,24 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    db->thread_end();
-    cerr << "[INFO] finished loading stock" << endl;
+    if (verbose)
+      cerr << "[INFO] finished loading stock" << endl;
   }
-
-private:
-  fast_random r;
-  abstract_db *db;
 };
 
-class tpcc_district_loader : public ndb_thread, public tpcc_worker_mixin {
+class tpcc_district_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_district_loader(unsigned long seed,
                        abstract_db *db,
                        const map<string, abstract_ordered_index *> &open_tables)
-    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+    : bench_loader(seed, db, open_tables),
+      tpcc_worker_mixin(open_tables)
   {}
 
+protected:
   virtual void
-  run()
+  load()
   {
-    db->thread_init();
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
     try {
@@ -638,27 +630,24 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    db->thread_end();
-    cerr << "[INFO] finished loading district" << endl;
+    if (verbose)
+      cerr << "[INFO] finished loading district" << endl;
   }
-
-private:
-  fast_random r;
-  abstract_db *db;
 };
 
-class tpcc_customer_loader : public ndb_thread, public tpcc_worker_mixin {
+class tpcc_customer_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_customer_loader(unsigned long seed,
                        abstract_db *db,
                        const map<string, abstract_ordered_index *> &open_tables)
-    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+    : bench_loader(seed, db, open_tables),
+      tpcc_worker_mixin(open_tables)
   {}
 
+protected:
   virtual void
-  run()
+  load()
   {
-    db->thread_init();
     const ssize_t bsize = db->txn_max_batch_size();
     const bool direct_mem = db->index_supports_direct_mem_access();
     void *txn = db->new_txn(txn_flags);
@@ -769,27 +758,24 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    db->thread_end();
-    cerr << "[INFO] finished loading customer" << endl;
+    if (verbose)
+      cerr << "[INFO] finished loading customer" << endl;
   }
-
-private:
-  fast_random r;
-  abstract_db *db;
 };
 
-class tpcc_order_loader : public ndb_thread, public tpcc_worker_mixin {
+class tpcc_order_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_order_loader(unsigned long seed,
                     abstract_db *db,
                     const map<string, abstract_ordered_index *> &open_tables)
-    : tpcc_worker_mixin(open_tables), r(seed), db(db)
+    : bench_loader(seed, db, open_tables),
+      tpcc_worker_mixin(open_tables)
   {}
 
+protected:
   virtual void
-  run()
+  load()
   {
-    db->thread_init();
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
     try {
@@ -888,13 +874,9 @@ public:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    db->thread_end();
-    cerr << "[INFO] finished loading order" << endl;
+    if (verbose)
+      cerr << "[INFO] finished loading order" << endl;
   }
-
-private:
-  fast_random r;
-  abstract_db *db;
 };
 
 class limit_callback : public abstract_ordered_index::scan_callback {
@@ -1473,101 +1455,56 @@ tpcc_worker::txn_stock_level()
     free(*it);
 }
 
-template <typename T>
-static vector<T>
-elemwise_sum(const vector<T> &a, const vector<T> &b)
-{
-  INVARIANT(a.size() == b.size());
-  vector<T> ret(a.size());
-  for (size_t i = 0; i < a.size(); i++)
-    ret[i] = a[i] + b[i];
-  return ret;
-}
+class tpcc_bench_runner : public bench_runner {
+public:
+  tpcc_bench_runner(abstract_db *db)
+    : bench_runner(db)
+  {
+    open_tables["customer"]          = db->open_index("customer");
+    open_tables["customer_name_idx"] = db->open_index("customer_name_idx");
+    open_tables["district"]          = db->open_index("district");
+    open_tables["history"]           = db->open_index("history");
+    open_tables["item"]              = db->open_index("item");
+    open_tables["new_order"]         = db->open_index("new_order");
+    open_tables["oorder"]            = db->open_index("oorder");
+    open_tables["oorder_c_id_idx"]   = db->open_index("oorder_c_id_idx");
+    open_tables["order_line"]        = db->open_index("order_line");
+    open_tables["stock"]             = db->open_index("stock");
+    open_tables["warehouse"]         = db->open_index("warehouse");
+  }
+
+protected:
+  virtual vector<bench_loader *>
+  make_loaders()
+  {
+    vector<bench_loader *> ret;
+    ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables));
+    ret.push_back(new tpcc_item_loader(235443, db, open_tables));
+    ret.push_back(new tpcc_stock_loader(89785943, db, open_tables));
+    ret.push_back(new tpcc_district_loader(129856349, db, open_tables));
+    ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables));
+    ret.push_back(new tpcc_order_loader(2343352, db, open_tables));
+    return ret;
+  }
+
+  virtual vector<bench_worker *>
+  make_workers()
+  {
+    fast_random r(23984543);
+    vector<bench_worker *> ret;
+    for (size_t i = 0; i < nthreads; i++)
+      ret.push_back(
+        new tpcc_worker(
+          r.next(), db, open_tables,
+          &barrier_a, &barrier_b,
+          (i % tpcc_worker_mixin::NumWarehouses()) + 1));
+    return ret;
+  }
+};
 
 void
 tpcc_do_test(abstract_db *db)
 {
-  map<string, abstract_ordered_index *> open_tables;
-  open_tables["customer"]          = db->open_index("customer");
-  open_tables["customer_name_idx"] = db->open_index("customer_name_idx");
-  open_tables["district"]          = db->open_index("district");
-  open_tables["history"]           = db->open_index("history");
-  open_tables["item"]              = db->open_index("item");
-  open_tables["new_order"]         = db->open_index("new_order");
-  open_tables["oorder"]            = db->open_index("oorder");
-  open_tables["oorder_c_id_idx"]   = db->open_index("oorder_c_id_idx");
-  open_tables["order_line"]        = db->open_index("order_line");
-  open_tables["stock"]             = db->open_index("stock");
-  open_tables["warehouse"]         = db->open_index("warehouse");
-
-  // load data
-  tpcc_warehouse_loader l0(9324, db, open_tables);
-  tpcc_item_loader l1(235443, db, open_tables);
-  tpcc_stock_loader l2(89785943, db, open_tables);
-  tpcc_district_loader l3(129856349, db, open_tables);
-  tpcc_customer_loader l4(923587856425, db, open_tables);
-  tpcc_order_loader l5(2343352, db, open_tables);
-
-  ndb_thread *thds[] = { &l0, &l1, &l2, &l3, &l4, &l5 };
-  for (uint i = 0; i < ARRAY_NELEMS(thds); i++)
-    thds[i]->start();
-  for (uint i = 0; i < ARRAY_NELEMS(thds); i++)
-    thds[i]->join();
-
-  db->do_txn_epoch_sync();
-
-  // XXX(stephentu): don't dup code between here and ycsb.cc
-  if (verbose) {
-    for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
-         it != open_tables.end(); ++it)
-      cerr << "table " << it->first << " size " << it->second->size() << endl;
-  }
-
-  spin_barrier barrier_a(nthreads);
-  spin_barrier barrier_b(1);
-
-  fast_random r(23984543);
-  vector<tpcc_worker *> workers;
-  for (size_t i = 0; i < nthreads; i++)
-    workers.push_back(new tpcc_worker(r.next(), db, open_tables, &barrier_a, &barrier_b, (i % tpcc_worker_mixin::NumWarehouses()) + 1));
-  for (size_t i = 0; i < nthreads; i++)
-    workers[i]->start();
-
-  if (verbose)
-    cerr << "starting tpcc benchmark..." << endl;
-
-  barrier_a.wait_for();
-  barrier_b.count_down();
-  timer t;
-  sleep(runtime);
-  running = false;
-  __sync_synchronize();
-  unsigned long elapsed = t.lap();
-  size_t n_commits = 0;
-  size_t n_aborts = 0;
-  for (size_t i = 0; i < nthreads; i++) {
-    workers[i]->join();
-    n_commits += workers[i]->get_ntxn_commits();
-    n_aborts += workers[i]->get_ntxn_aborts();
-  }
-
-  double agg_throughput = double(n_commits) / (double(elapsed) / 1000000.0);
-  double avg_per_core_throughput = agg_throughput / double(nthreads);
-
-  double agg_abort_rate = double(n_aborts) / (double(elapsed) / 1000000.0);
-  double avg_per_core_abort_rate = agg_abort_rate / double(nthreads);
-
-  if (verbose) {
-    vector<size_t> agg_txn_counts = workers[0]->get_txn_counts();
-    for (size_t i = 1; i < nthreads; i++)
-      agg_txn_counts = elemwise_sum(agg_txn_counts, workers[i]->get_txn_counts());
-    cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
-    cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
-    cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
-    cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
-    cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
-  }
-  cout << agg_throughput << " " << agg_abort_rate << endl;
-
-  db->do_txn_finish();
+  tpcc_bench_runner r(db);
+  r.run();
 }

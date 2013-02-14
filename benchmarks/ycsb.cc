@@ -160,88 +160,94 @@ private:
   abstract_ordered_index *tbl;
 };
 
+class ycsb_usertable_loader : public bench_loader {
+public:
+  ycsb_usertable_loader(unsigned long seed,
+                        abstract_db *db,
+                        const map<string, abstract_ordered_index *> &open_tables)
+    : bench_loader(seed, db, open_tables)
+  {}
+
+protected:
+  virtual void
+  load()
+  {
+    abstract_ordered_index *tbl = open_tables.at("USERTABLE");
+    try {
+      // load
+      const size_t batchsize = (db->txn_max_batch_size() == -1) ?
+        10000 : db->txn_max_batch_size();
+      ALWAYS_ASSERT(batchsize > 0);
+      const size_t nbatches = nkeys / batchsize;
+      if (nbatches == 0) {
+        void *txn = db->new_txn(txn_flags);
+        for (size_t j = 0; j < nkeys; j++) {
+          string k = u64_varkey(j).str();
+          string v(128, 'a');
+          tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
+        }
+        if (verbose)
+          cerr << "batch 1/1 done" << endl;
+        ALWAYS_ASSERT(db->commit_txn(txn));
+      } else {
+        for (size_t i = 0; i < nbatches; i++) {
+          size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
+          void *txn = db->new_txn(txn_flags);
+          for (size_t j = i * batchsize; j < keyend; j++) {
+            string k = u64_varkey(j).str();
+            string v(128, 'a');
+            tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
+          }
+          if (verbose)
+            cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+          ALWAYS_ASSERT(db->commit_txn(txn));
+        }
+      }
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      // shouldn't abort on loading!
+      ALWAYS_ASSERT(false);
+    }
+    if (verbose)
+      cerr << "[INFO] finished loading USERTABLE" << endl;
+  }
+};
+
+class ycsb_bench_runner : public bench_runner {
+public:
+  ycsb_bench_runner(abstract_db *db)
+    : bench_runner(db)
+  {
+    open_tables["USERTABLE"] = db->open_index("USERTABLE");
+  }
+
+protected:
+  virtual vector<bench_loader *>
+  make_loaders()
+  {
+    vector<bench_loader *> ret;
+    ret.push_back(new ycsb_usertable_loader(0, db, open_tables));
+    return ret;
+  }
+
+  virtual vector<bench_worker *>
+  make_workers()
+  {
+    fast_random r(8544290);
+    vector<bench_worker *> ret;
+    for (size_t i = 0; i < nthreads; i++)
+      ret.push_back(
+        new ycsb_worker(
+          r.next(), db, open_tables,
+          &barrier_a, &barrier_b));
+    return ret;
+  }
+};
+
 void
 ycsb_do_test(abstract_db *db)
 {
   nkeys = size_t(scale_factor * 1000.0);
-  assert(nkeys > 0);
-
-  spin_barrier barrier_a(nthreads);
-  spin_barrier barrier_b(1);
-
-  db->thread_init();
-
-  abstract_ordered_index *tbl = db->open_index("USERTABLE");
-  map<string, abstract_ordered_index *> open_tables;
-  open_tables["USERTABLE"] = tbl;
-
-  // load
-  const size_t batchsize = (db->txn_max_batch_size() == -1) ?
-    10000 : db->txn_max_batch_size();
-  ALWAYS_ASSERT(batchsize > 0);
-  const size_t nbatches = nkeys / batchsize;
-  if (nbatches == 0) {
-    void *txn = db->new_txn(txn_flags);
-    for (size_t j = 0; j < nkeys; j++) {
-      string k = u64_varkey(j).str();
-      string v(128, 'a');
-      tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
-    }
-    if (verbose)
-      cerr << "batch 1/1 done" << endl;
-    ALWAYS_ASSERT(db->commit_txn(txn));
-  } else {
-    for (size_t i = 0; i < nbatches; i++) {
-      size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
-      void *txn = db->new_txn(txn_flags);
-      for (size_t j = i * batchsize; j < keyend; j++) {
-        string k = u64_varkey(j).str();
-        string v(128, 'a');
-        tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
-      }
-      if (verbose)
-        cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
-      ALWAYS_ASSERT(db->commit_txn(txn));
-    }
-  }
-
-  db->do_txn_epoch_sync();
-
-  fast_random r(8544290);
-  vector<ycsb_worker *> workers;
-  for (size_t i = 0; i < nthreads; i++)
-    workers.push_back(new ycsb_worker(r.next(), db, open_tables, &barrier_a, &barrier_b));
-  for (size_t i = 0; i < nthreads; i++)
-    workers[i]->start();
-  barrier_a.wait_for();
-  barrier_b.count_down();
-  timer t;
-  sleep(runtime);
-  running = false;
-  __sync_synchronize();
-  unsigned long elapsed = t.lap();
-  size_t n_commits = 0;
-  size_t n_aborts = 0;
-  for (size_t i = 0; i < nthreads; i++) {
-    workers[i]->join();
-    n_commits += workers[i]->get_ntxn_commits();
-    n_aborts += workers[i]->get_ntxn_aborts();
-  }
-
-  double agg_throughput = double(n_commits) / (double(elapsed) / 1000000.0);
-  double avg_per_core_throughput = agg_throughput / double(nthreads);
-
-  double agg_abort_rate = double(n_aborts) / (double(elapsed) / 1000000.0);
-  double avg_per_core_abort_rate = agg_abort_rate / double(nthreads);
-
-  if (verbose) {
-    cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
-    cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
-    cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
-    cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
-  }
-  cout << agg_throughput << endl;
-
-  db->do_txn_finish();
-  db->thread_end();
+  ALWAYS_ASSERT(nkeys > 0);
+  ycsb_bench_runner r(db);
+  r.run();
 }
