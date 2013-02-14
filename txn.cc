@@ -963,10 +963,10 @@ transaction_proto2::on_logical_delete(
     return;
   ln->set_enqueued(true);
   struct try_delete_info *info = new try_delete_info(btr, key, ln);
-  cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(info->ln))
-       << " at current_epoch=" << current_epoch
-       << ", latest_version_epoch=" << EpochId(ln->latest_version()) << endl;
-  cerr << "  ln=" << *info->ln << endl;
+  VERBOSE(cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(info->ln))
+               << " at current_epoch=" << current_epoch
+               << ", latest_version_epoch=" << EpochId(ln->latest_version()) << endl
+               << "  ln=" << *info->ln << endl);
   enqueue_work_after_current_epoch(
       EpochId(ln->latest_version()),
       try_delete_logical_node,
@@ -1059,8 +1059,11 @@ transaction_proto2::epoch_loop::run()
     // snapshots
     struct timespec t;
     memset(&t, 0, sizeof(t));
-    t.tv_sec = 2; // XXX(stephentu): time how much time we spent
-                  // executing work, and subtract that time from here
+
+    // XXX(stephentu): time how much time we spent
+    // executing work, and subtract that time from here
+    t.tv_nsec = 100 * 1000000; // 100 ms
+
     nanosleep(&t, NULL);
 
     // bump epoch number
