@@ -1105,16 +1105,16 @@ read_only_perf()
 void
 txn_btree::Test()
 {
-  //cerr << "Test proto1" << endl;
-  //test1<transaction_proto1>();
-  //test2<transaction_proto1>();
-  //test_multi_btree<transaction_proto1>();
-  //test_read_only_snapshot<transaction_proto1>();
-  //test_long_keys<transaction_proto1>();
-  //test_long_keys2<transaction_proto1>();
-  //mp_test1<transaction_proto1>();
-  //mp_test2<transaction_proto1>();
-  //mp_test3<transaction_proto1>();
+  cerr << "Test proto1" << endl;
+  test1<transaction_proto1>();
+  test2<transaction_proto1>();
+  test_multi_btree<transaction_proto1>();
+  test_read_only_snapshot<transaction_proto1>();
+  test_long_keys<transaction_proto1>();
+  test_long_keys2<transaction_proto1>();
+  mp_test1<transaction_proto1>();
+  mp_test2<transaction_proto1>();
+  mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();

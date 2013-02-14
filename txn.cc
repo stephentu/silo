@@ -795,10 +795,15 @@ transaction_proto1::on_logical_delete(
 {
   INVARIANT(ln->is_locked());
   INVARIANT(!ln->latest_value());
-  btree::value_type removed = 0;
-  ALWAYS_ASSERT(btr->underlying_btree.remove(varkey(key), &removed));
-  ALWAYS_ASSERT(removed == (btree::value_type) ln);
-  logical_node::release(ln);
+  //btree::value_type removed = 0;
+  //ALWAYS_ASSERT(btr->underlying_btree.remove(varkey(key), &removed));
+  //ALWAYS_ASSERT(removed == (btree::value_type) ln);
+  //logical_node::release(ln);
+
+  // XXX(stephentu): cannot do the above, b/c some consistent
+  // reads might break. we need to enqueue this work to run
+  // after no consistent reads are running at the latest version
+  // of this node
 }
 
 void
