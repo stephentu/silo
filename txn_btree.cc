@@ -663,11 +663,13 @@ mp_test1()
     w0.start(); w1.start();
     w0.join(); w1.join();
 
-    TxnType t(txn_flags);
-    txn_btree::value_type v = 0;
-    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
-    ALWAYS_ASSERT_COND_IN_TXN(t,  ((record *) v)->v == (niters * 2) );
-    t.commit(true);
+    {
+      TxnType t(txn_flags);
+      txn_btree::value_type v = 0;
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
+      ALWAYS_ASSERT_COND_IN_TXN(t,  ((record *) v)->v == (niters * 2) );
+      t.commit(true);
+    }
 
     txn_epoch_sync<TxnType>::sync();
     txn_epoch_sync<TxnType>::finish();
@@ -1115,15 +1117,15 @@ txn_btree::Test()
   //mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  //test1<transaction_proto2>();
-  //test2<transaction_proto2>();
-  //test_multi_btree<transaction_proto2>();
-  //test_read_only_snapshot<transaction_proto2>();
-  //test_long_keys<transaction_proto2>();
-  //test_long_keys2<transaction_proto2>();
-  //mp_test1<transaction_proto2>();
+  test1<transaction_proto2>();
+  test2<transaction_proto2>();
+  test_multi_btree<transaction_proto2>();
+  test_read_only_snapshot<transaction_proto2>();
+  test_long_keys<transaction_proto2>();
+  test_long_keys2<transaction_proto2>();
+  mp_test1<transaction_proto2>();
   mp_test2<transaction_proto2>();
-  //mp_test3<transaction_proto2>();
+  mp_test3<transaction_proto2>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();

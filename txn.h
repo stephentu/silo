@@ -937,6 +937,7 @@ public:
   static void
   wait_an_epoch()
   {
+    ALWAYS_ASSERT(!tl_nest_level);
     const uint64_t e = g_last_consistent_epoch;
     while (g_last_consistent_epoch == e)
       nop_pause();

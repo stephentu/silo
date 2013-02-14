@@ -1032,6 +1032,7 @@ unlock_and_free:
 void
 transaction_proto2::wait_for_empty_work_queue()
 {
+  ALWAYS_ASSERT(!tl_nest_level);
   while (!g_epoch_loop.is_wq_empty)
     nop_pause();
 }
