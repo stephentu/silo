@@ -51,6 +51,11 @@ public:
   virtual void do_txn_epoch_sync() const {}
 
   /**
+   * XXX(stephentu): hack
+   */
+  virtual void do_txn_finish() const {}
+
+  /**
    * for cruftier APIs
    */
   virtual void thread_init() {}

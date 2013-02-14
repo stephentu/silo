@@ -1568,4 +1568,6 @@ tpcc_do_test(abstract_db *db)
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
   }
   cout << agg_throughput << " " << agg_abort_rate << endl;
+
+  db->do_txn_finish();
 }

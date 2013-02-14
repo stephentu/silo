@@ -32,6 +32,22 @@ public:
     }
   }
 
+  virtual void
+  do_txn_finish() const
+  {
+    switch (proto) {
+    case PROTO_1:
+      txn_epoch_sync<transaction_proto1>::finish();
+      break;
+    case PROTO_2:
+      txn_epoch_sync<transaction_proto2>::finish();
+      break;
+    default:
+      ALWAYS_ASSERT(false);
+      break;
+    }
+  }
+
   virtual void *new_txn(uint64_t txn_flags);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);

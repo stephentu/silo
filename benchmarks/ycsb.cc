@@ -179,19 +179,33 @@ ycsb_do_test(abstract_db *db)
   const size_t batchsize = (db->txn_max_batch_size() == -1) ?
     10000 : db->txn_max_batch_size();
   ALWAYS_ASSERT(batchsize > 0);
-  size_t nbatches = nkeys / batchsize;
-  for (size_t i = 0; i < nbatches; i++) {
-    size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
+  const size_t nbatches = nkeys / batchsize;
+  if (nbatches == 0) {
     void *txn = db->new_txn(txn_flags);
-    for (size_t j = i * batchsize; j < keyend; j++) {
+    for (size_t j = 0; j < nkeys; j++) {
       string k = u64_varkey(j).str();
       string v(128, 'a');
       tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
     }
     if (verbose)
-      cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+      cerr << "batch 1/1 done" << endl;
     ALWAYS_ASSERT(db->commit_txn(txn));
+  } else {
+    for (size_t i = 0; i < nbatches; i++) {
+      size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
+      void *txn = db->new_txn(txn_flags);
+      for (size_t j = i * batchsize; j < keyend; j++) {
+        string k = u64_varkey(j).str();
+        string v(128, 'a');
+        tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
+      }
+      if (verbose)
+        cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+      ALWAYS_ASSERT(db->commit_txn(txn));
+    }
   }
+
+  db->do_txn_epoch_sync();
 
   fast_random r(8544290);
   vector<ycsb_worker *> workers;
@@ -228,5 +242,6 @@ ycsb_do_test(abstract_db *db)
   }
   cout << agg_throughput << endl;
 
+  db->do_txn_finish();
   db->thread_end();
 }
