@@ -15,6 +15,7 @@
 
 #include <tr1/unordered_map>
 
+#include "amd64.h"
 #include "btree.h"
 #include "macros.h"
 #include "varkey.h"
@@ -195,10 +196,8 @@ public:
 
     /**
      * Put this spillblock and all the spillblocks later in the chain up for GC
-     *
-     * **must be called within an RCU region **
      */
-    void gc_chain();
+    void gc_chain(bool do_rcu);
 
   }; // XXX(stephentu): do we care about cache alignment for spill blocks?
 
@@ -645,7 +644,12 @@ public:
 
   virtual void dump_debug_info(abort_reason reason) const;
 
-  typedef void (*callback_t)(record_t);
+  /**
+   * If outstanding_refs, then there *could* still be outstanding
+   * refs (but then we would be in a RCU region)
+   */
+  typedef void (*callback_t)(record_t, bool outstanding_refs);
+
   /** not thread-safe */
   static bool register_cleanup_callback(callback_t callback);
 
@@ -930,13 +934,17 @@ public:
   }
 
   // XXX(stephentu): HACK
-  static void wait_an_epoch()
+  static void
+  wait_an_epoch()
   {
     const uint64_t e = g_last_consistent_epoch;
     while (g_last_consistent_epoch == e)
-      ;
+      nop_pause();
     COMPILER_MEMORY_FENCE;
   }
+
+  // XXX(stephentu): HACK
+  static void wait_for_empty_work_queue();
 
   virtual bool
   can_overwrite_record_tid(tid_t prev, tid_t cur) const
@@ -967,13 +975,17 @@ private:
 
   static size_t core_id();
 
-  typedef void (*work_callback_t)(void *);
+  /**
+   * If true is returned, reschedule the job to run after epoch.
+   * Otherwise, the task is finished
+   */
+  typedef bool (*work_callback_t)(void *, uint64_t &epoch);
 
   // work will get called after epoch finishes
   void enqueue_work_after_current_epoch(uint64_t epoch, work_callback_t work, void *p);
 
-  static void
-  try_delete_logical_node(void *p);
+  static bool
+  try_delete_logical_node(void *p, uint64_t &epoch);
 
   // XXX(stephentu): need to implement core ID recycling
   static const size_t CoreBits = 10; // allow 2^CoreShift distinct threads
@@ -1006,10 +1018,16 @@ private:
   static bool _init_epoch_scheme_flag;
 
   class epoch_loop : public ndb_thread {
+    friend class transaction_proto2;
   public:
-    epoch_loop() : ndb_thread(true, std::string("epochloop")) {}
+    epoch_loop()
+      : ndb_thread(true, std::string("epochloop")), is_wq_empty(true) {}
     virtual void run();
+  private:
+    volatile bool is_wq_empty;
   };
+
+  static epoch_loop g_epoch_loop;
 
   /**
    * Get a (possibly stale) consistent TID
@@ -1069,12 +1087,16 @@ private:
 // XXX(stephentu): stupid hacks
 template <typename TxnType>
 struct txn_epoch_sync {
+  // block until the next epoch
   static inline void sync() {}
+  // finish any async jobs
+  static inline void finish() {}
 };
 
 template <>
 struct txn_epoch_sync<transaction_proto2> {
   static inline void sync() { transaction_proto2::wait_an_epoch(); }
+  static inline void finish() { transaction_proto2::wait_for_empty_work_queue(); }
 };
 
 #endif /* _NDB_TXN_H_ */

@@ -256,7 +256,7 @@ test1()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
     VERBOSE(cerr << "Testing with flags=0x" << hexify(txn_flags) << endl);
 
@@ -358,6 +358,9 @@ test1()
       t.commit(true);
       VERBOSE(cerr << "------" << endl);
     }
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -368,13 +371,15 @@ test2()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree btr;
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
       btr.insert(t, u64_varkey(i), (txn_btree::value_type) 123);
       t.commit(true);
     }
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -385,7 +390,7 @@ test_multi_btree()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree btr0, btr1;
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
@@ -405,6 +410,9 @@ test_multi_btree()
       ALWAYS_ASSERT_COND_IN_TXN(t, v0 == (txn_btree::value_type) 123);
       ALWAYS_ASSERT_COND_IN_TXN(t, v1 == (txn_btree::value_type) 123);
     }
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -448,6 +456,9 @@ test_read_only_snapshot()
       t0.commit(true);
       t1.commit(true);
     }
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -489,7 +500,7 @@ test_long_keys()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree btr;
 
     {
@@ -515,6 +526,9 @@ test_long_keys()
       t.commit(true);
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == N);
     }
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -526,7 +540,7 @@ test_long_keys2()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
     const uint8_t lowkey_cstr[] = {
       0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x45, 0x49, 0x4E, 0x47,
@@ -567,6 +581,9 @@ test_long_keys2()
       t.commit(true);
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == 1);
     }
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -637,7 +654,7 @@ mp_test1()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree btr;
 
     worker<TxnType> w0(btr, txn_flags);
@@ -651,6 +668,9 @@ mp_test1()
     ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
     ALWAYS_ASSERT_COND_IN_TXN(t,  ((record *) v)->v == (niters * 2) );
     t.commit(true);
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -743,7 +763,7 @@ mp_test2()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree btr;
     {
       TxnType t(txn_flags);
@@ -782,6 +802,8 @@ mp_test2()
     cerr << "read-only reader naborts: " << w2.naborts << endl;
     cerr << "read-only reader validations: " << w2.validations << endl;
 
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -921,7 +943,7 @@ mp_test3()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
     vector<record *> recs;
     txn_btree btr;
@@ -961,6 +983,9 @@ mp_test3()
     for (vector<record *>::iterator it = recs.begin();
         it != recs.end(); ++it)
       delete *it;
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -1027,7 +1052,7 @@ read_only_perf()
   for (size_t txn_flags_idx = 0;
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
-    uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
     txn_btree btr;
 
@@ -1069,6 +1094,9 @@ read_only_perf()
 
     cerr << "agg_read_throughput: " << agg_throughput << " gets/sec" << endl;
     cerr << "avg_per_core_read_throughput: " << avg_per_core_throughput << " gets/sec/core" << endl;
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
   }
 }
 
@@ -1087,15 +1115,15 @@ txn_btree::Test()
   //mp_test3<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  test1<transaction_proto2>();
-  test2<transaction_proto2>();
-  test_multi_btree<transaction_proto2>();
-  test_read_only_snapshot<transaction_proto2>();
-  test_long_keys<transaction_proto2>();
-  test_long_keys2<transaction_proto2>();
-  mp_test1<transaction_proto2>();
+  //test1<transaction_proto2>();
+  //test2<transaction_proto2>();
+  //test_multi_btree<transaction_proto2>();
+  //test_read_only_snapshot<transaction_proto2>();
+  //test_long_keys<transaction_proto2>();
+  //test_long_keys2<transaction_proto2>();
+  //mp_test1<transaction_proto2>();
   mp_test2<transaction_proto2>();
-  mp_test3<transaction_proto2>();
+  //mp_test3<transaction_proto2>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();

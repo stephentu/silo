@@ -159,11 +159,14 @@ ndb_ordered_index::size() const
 }
 
 static void
-record_cleanup_callback(uint8_t *record)
+record_cleanup_callback(uint8_t *record, bool outstanding_refs)
 {
-  INVARIANT(rcu::in_rcu_region());
+  INVARIANT(!outstanding_refs || rcu::in_rcu_region());
   if (unlikely(!record))
     return;
-  rcu::free_array(record);
+  if (outstanding_refs)
+    rcu::free_array(record);
+  else
+    delete [] record;
 }
 NDB_TXN_REGISTER_CLEANUP_CALLBACK(record_cleanup_callback);
