@@ -341,11 +341,11 @@ transaction::commit(bool doThrow)
         INVARIANT(outer_it->second.absent_range_set.empty());
         for (node_scan_map::iterator it = outer_it->second.node_scan.begin();
              it != outer_it->second.node_scan.end(); ++it) {
-          uint64_t v = btree::ExtractVersionNumber(it->first);
+          const uint64_t v = btree::ExtractVersionNumber(it->first);
           if (unlikely(v != it->second)) {
             VERBOSE(cerr << "expected node " << hexify(it->first) << " at v="
                          << it->second << ", got v=" << v << endl);
-            abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
+            abort_trap((reason = ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED));
             goto do_abort;
           }
         }

@@ -16,6 +16,7 @@
 
 extern void ycsb_do_test(abstract_db *db);
 extern void tpcc_do_test(abstract_db *db);
+extern void queue_do_test(abstract_db *db);
 
 // benchmark global variables
 extern size_t nthreads;
@@ -76,27 +77,38 @@ public:
   virtual ~bench_worker() {}
 
   typedef void (*txn_fn_t)(bench_worker *);
-  typedef std::vector< std::pair<double, txn_fn_t> > workload_desc;
-
-  virtual workload_desc get_workload() = 0;
+  struct workload_desc {
+    workload_desc() {}
+    workload_desc(const std::string &name, double frequency, txn_fn_t fn)
+      : name(name), frequency(frequency), fn(fn)
+    {
+      ALWAYS_ASSERT(frequency > 0.0);
+      ALWAYS_ASSERT(frequency <= 1.0);
+    }
+    std::string name;
+    double frequency;
+    txn_fn_t fn;
+  };
+  typedef std::vector<workload_desc> workload_desc_vec;
+  virtual workload_desc_vec get_workload() const = 0;
 
   virtual void
   run()
   {
     scoped_db_thread_ctx ctx(db);
-    const workload_desc workload = get_workload();
+    const workload_desc_vec workload = get_workload();
     txn_counts.resize(workload.size());
     barrier_a->count_down();
     barrier_b->wait_for();
     while (running) {
       double d = r.next_uniform();
       for (size_t i = 0; i < workload.size(); i++) {
-        if ((i + 1) == workload.size() || d < workload[i].first) {
-          workload[i].second(this);
+        if ((i + 1) == workload.size() || d < workload[i].frequency) {
+          workload[i].fn(this);
           txn_counts[i]++;
           break;
         }
-        d -= workload[i].first;
+        d -= workload[i].frequency;
       }
     }
   }
@@ -104,11 +116,7 @@ public:
   inline size_t get_ntxn_commits() const { return ntxn_commits; }
   inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
 
-  inline const std::vector<size_t> &
-  get_txn_counts() const
-  {
-    return txn_counts;
-  }
+  std::map<std::string, size_t> get_txn_counts() const;
 
 protected:
 
@@ -142,6 +150,33 @@ protected:
   // barriers for actual benchmark execution
   spin_barrier barrier_a;
   spin_barrier barrier_b;
+};
+
+class limit_callback : public abstract_ordered_index::scan_callback {
+public:
+  limit_callback(ssize_t limit = -1)
+    : limit(limit), n(0)
+  {
+    ALWAYS_ASSERT(limit == -1 || limit > 0);
+  }
+
+  virtual bool invoke(
+      const char *key, size_t key_len,
+      const char *value, size_t value_len)
+  {
+    INVARIANT(limit == -1 || n < size_t(limit));
+    values.push_back(
+        std::make_pair(
+          std::string(key, key_len), std::string(value, value_len)));
+    return (limit == -1) || (++n < size_t(limit));
+  }
+
+  typedef std::pair<std::string, std::string> kv_pair;
+  std::vector<kv_pair> values;
+
+  const ssize_t limit;
+private:
+  size_t n;
 };
 
 #endif /* _NDB_BENCH_H_ */

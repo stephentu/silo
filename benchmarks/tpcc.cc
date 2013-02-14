@@ -396,24 +396,15 @@ public:
     static_cast<tpcc_worker *>(w)->txn_stock_level();
   }
 
-  virtual workload_desc
-  get_workload()
+  virtual workload_desc_vec
+  get_workload() const
   {
-    workload_desc w;
-    w.push_back(make_pair(0.45, TxnNewOrder));
-    w.push_back(make_pair(0.43, TxnPayment));
-    w.push_back(make_pair(0.04, TxnDelivery));
-    w.push_back(make_pair(0.04, TxnOrderStatus));
-    w.push_back(make_pair(0.04, TxnStockLevel));
-
-    //w.push_back(make_pair(1.00, TxnNewOrder));
-    //w.push_back(make_pair(1.00, TxnPayment));
-    //w.push_back(make_pair(1.00, TxnDelivery));
-    //w.push_back(make_pair(1.00, TxnOrderStatus));
-    //w.push_back(make_pair(1.00, TxnStockLevel));
-
-    //w.push_back(make_pair(0.50, TxnNewOrder));
-    //w.push_back(make_pair(0.50, TxnPayment));
+    workload_desc_vec w;
+    w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
+    w.push_back(workload_desc("Payment", 0.43, TxnPayment));
+    w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
+    w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
+    w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
     return w;
   }
 
@@ -877,31 +868,6 @@ protected:
     if (verbose)
       cerr << "[INFO] finished loading order" << endl;
   }
-};
-
-class limit_callback : public abstract_ordered_index::scan_callback {
-public:
-  limit_callback(ssize_t limit = -1)
-    : limit(limit), n(0)
-  {
-    ALWAYS_ASSERT(limit == -1 || limit > 0);
-  }
-
-  virtual bool invoke(
-      const char *key, size_t key_len,
-      const char *value, size_t value_len)
-  {
-    INVARIANT(limit == -1 || n < size_t(limit));
-    values.push_back(make_pair(string(key, key_len), string(value, value_len)));
-    return (limit == -1) || (++n < size_t(limit));
-  }
-
-  typedef pair<string, string> kv_pair;
-  vector<kv_pair> values;
-
-  const ssize_t limit;
-private:
-  size_t n;
 };
 
 void

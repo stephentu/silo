@@ -44,6 +44,15 @@ elemwise_sum(const vector<T> &a, const vector<T> &b)
   return ret;
 }
 
+template <typename K, typename V>
+static void
+map_agg(map<K, V> &agg, const map<K, V> &m)
+{
+  for (typename map<K, V>::const_iterator it = m.begin();
+       it != m.end(); ++it)
+    agg[it->first] += it->second;
+}
+
 void
 bench_runner::run()
 {
@@ -96,9 +105,9 @@ bench_runner::run()
   const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
 
   if (verbose) {
-    vector<size_t> agg_txn_counts = workers[0]->get_txn_counts();
+    map<string, size_t> agg_txn_counts = workers[0]->get_txn_counts();
     for (size_t i = 1; i < workers.size(); i++)
-      agg_txn_counts = elemwise_sum(agg_txn_counts, workers[i]->get_txn_counts());
+      map_agg(agg_txn_counts, workers[i]->get_txn_counts());
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
@@ -118,6 +127,16 @@ bench_runner::run()
 
   delete_pointers(loaders);
   delete_pointers(workers);
+}
+
+map<string, size_t>
+bench_worker::get_txn_counts() const
+{
+  map<string, size_t> m;
+  const workload_desc_vec workload = get_workload();
+  for (size_t i = 0; i < txn_counts.size(); i++)
+    m[workload[i].name] = txn_counts[i];
+  return m;
 }
 
 int
@@ -199,6 +218,8 @@ main(int argc, char **argv)
     test_fn = ycsb_do_test;
   else if (bench_type == "tpcc")
     test_fn = tpcc_do_test;
+  else if (bench_type == "queue")
+    test_fn = queue_do_test;
   else
     ALWAYS_ASSERT(false);
 

@@ -139,20 +139,13 @@ public:
     static_cast<ycsb_worker *>(w)->txn_scan();
   }
 
-  virtual workload_desc
-  get_workload()
+  virtual workload_desc_vec
+  get_workload() const
   {
-    workload_desc w;
-    //w.push_back(make_pair(1.00, TxnRead));
-
-    //w.push_back(make_pair(0.85, TxnRead));
-    //w.push_back(make_pair(0.10, TxnScan));
-    //w.push_back(make_pair(0.04, TxnRmw));
-    //w.push_back(make_pair(0.01, TxnWrite));
-
-    w.push_back(make_pair(0.95, TxnRead));
-    w.push_back(make_pair(0.04, TxnRmw));
-    w.push_back(make_pair(0.01, TxnWrite));
+    workload_desc_vec w;
+    w.push_back(workload_desc("Read", 0.95, TxnRead));
+    w.push_back(workload_desc("ReadModifyWrite", 0.04, TxnRmw));
+    w.push_back(workload_desc("Write", 0.01, TxnWrite));
     return w;
   }
 

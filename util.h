@@ -381,4 +381,13 @@ struct std_pair_first_cmp {
 
 }
 
+// pretty printer for std::pair<A, B>
+template <typename A, typename B>
+inline std::ostream &
+operator<<(std::ostream &o, const std::pair<A, B> &p)
+{
+  o << "[" << p.first << ", " << p.second << "]";
+  return o;
+}
+
 #endif /* _UTIL_H_ */

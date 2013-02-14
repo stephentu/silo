@@ -29,7 +29,8 @@ BENCH_SRCFILES = \
 	benchmarks/ndb_wrapper.cc \
 	benchmarks/mysql_wrapper.cc \
 	benchmarks/tpcc.cc \
-	benchmarks/ycsb.cc
+	benchmarks/ycsb.cc \
+	benchmarks/queue.cc 
 BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
 
 all: test
