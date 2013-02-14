@@ -120,6 +120,10 @@ main(int argc, char **argv)
   } else
     ALWAYS_ASSERT(false);
 
+#ifdef CHECK_INVARIANTS
+  cerr << "WARNING: invariant checking is enabled - should disable for benchmark" << endl;
+#endif
+
   if (verbose) {
     cerr << "settings:"                             << endl;
     cerr << "  bench       : " << bench_type        << endl;
