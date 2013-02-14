@@ -301,11 +301,11 @@ transaction::commit(bool doThrow)
           continue;
         } else if (unlikely(!it->second.ln)) {
           // have in tree now but we didnt read it initially
-          if (ln->is_deleting() || !ln->latest_value())
+          if (!ln->latest_value())
             // NB(stephentu): optimization: the logical value is the same
             // as when we read it (not existing)
             continue;
-          abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
+          abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
           goto do_abort;
         }
 
