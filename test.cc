@@ -20,7 +20,7 @@ public:
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
     //transaction::Test();
-    btree::Test();
+    //btree::Test();
     txn_btree::Test();
     ret = 0;
   }
