@@ -333,6 +333,11 @@ transaction::commit(bool doThrow)
 
         //}
 
+        //cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
+        //             << hexify(intptr_t(ln)) << " at snapshot_tid FAILED " << snapshot_tid_t.second << endl;
+        //cerr << "  txn read version: " << g_proto_version_str(it->second.t) << endl;
+        //cerr << "  ln=" << *ln << endl;
+
         abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
         goto do_abort;
       }
@@ -506,7 +511,10 @@ transaction::dump_debug_info(abort_reason reason) const
     // write-set
     for (write_set_map::const_iterator ws_it = it->second.write_set.begin();
          ws_it != it->second.write_set.end(); ++ws_it)
-      cerr << "      Key 0x" << hexify(ws_it->first) << " @ " << hexify(ws_it->second) << endl;
+      if (ws_it->second)
+        cerr << "      Key 0x" << hexify(ws_it->first) << " @ " << hexify(ws_it->second) << endl;
+      else
+        cerr << "      Key 0x" << hexify(ws_it->first) << " : remove" << endl;
 
     // XXX: node set + absent ranges
     cerr << "      === Absent Ranges ===" << endl;
@@ -970,6 +978,10 @@ transaction_proto2::enqueue_work_after_current_epoch(
   g_work_queues[id].elem->push_back(work_record_t(epoch, work, p));
 }
 
+static event_counter evt_try_delete_revivals("try_delete_revivals");
+static event_counter evt_try_delete_reschedules("try_delete_reschedules");
+static event_counter evt_try_delete_unlinks("try_delete_unlinks");
+
 bool
 transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
 {
@@ -981,9 +993,11 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
   INVARIANT(info->ln->is_enqueued());
   INVARIANT(!info->ln->is_deleting());
   info->ln->set_enqueued(false); // we are processing this record
-  if (info->ln->latest_value())
+  if (info->ln->latest_value()) {
     // somebody added a record again, so we don't want to delete it
+    ++evt_try_delete_revivals;
     goto unlock_and_free;
+  }
   VERBOSE(cerr << "logical_node: 0x" << hexify(intptr_t(info->ln)) << " is being unlinked" << endl
                << "  g_last_consistent_epoch=" << g_last_consistent_epoch << endl
                << "  ln=" << *info->ln << endl);
@@ -995,11 +1009,13 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
     info->ln->unlock();
     // don't free, b/c we need to run again
     epoch = v;
+    ++evt_try_delete_reschedules;
     return true;
   }
   ALWAYS_ASSERT(info->btr->underlying_btree.remove(varkey(info->key), &removed));
   ALWAYS_ASSERT(removed == (btree::value_type) info->ln);
   logical_node::release(info->ln);
+  ++evt_try_delete_unlinks;
 unlock_and_free:
   info->ln->unlock();
   delete info;

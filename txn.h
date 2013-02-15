@@ -412,6 +412,19 @@ public:
       return v;
     }
 
+    inline bool
+    try_stable_version(uint64_t &v, unsigned int spins) const
+    {
+      v = hdr;
+      while (IsLocked(v) && spins) {
+        nop_pause();
+        v = hdr;
+        spins--;
+      }
+      COMPILER_MEMORY_FENCE;
+      return IsLocked(v);
+    }
+
     inline uint64_t
     unstable_version() const
     {
@@ -473,12 +486,13 @@ public:
     inline bool
     stable_is_latest_version(tid_t t) const
     {
-      const uint64_t v = unstable_version();
-      if (unlikely(IsLocked(v)))
-        return false;
-      COMPILER_MEMORY_FENCE;
+      //uint64_t v = 0;
+      //if (!try_stable_version(v, 16))
+      //  return false;
+      const uint64_t v = stable_version();
+      INVARIANT(!IsLocked(v));
       // now v is a stable version
-      bool ret = is_latest_version(t);
+      const bool ret = is_latest_version(t);
       // only check_version() if the answer would be true- otherwise,
       // no point in doing a version check
       if (ret && check_version(v))
