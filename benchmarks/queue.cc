@@ -250,8 +250,8 @@ protected:
 
 class queue_bench_runner : public bench_runner {
 public:
-  queue_bench_runner(abstract_db *db)
-    : bench_runner(db)
+  queue_bench_runner(abstract_db *db, bool write_only)
+    : bench_runner(db), write_only(write_only)
   {
     open_tables["table"] = db->open_index("table");
   }
@@ -270,21 +270,32 @@ protected:
   {
     fast_random r(8544290);
     vector<bench_worker *> ret;
-    ALWAYS_ASSERT(nthreads >= 2);
-    if (verbose && (nthreads % 2))
-      cerr << "queue_bench_runner: odd number of workers given" << endl;
-    for (size_t i = 0; i < nthreads / 2; i++) {
-      ret.push_back(
-        new queue_worker(
-          r.next(), db, open_tables,
-          &barrier_a, &barrier_b, i, true));
-      ret.push_back(
-        new queue_worker(
-          r.next(), db, open_tables,
-          &barrier_a, &barrier_b, i, false));
+    if (write_only) {
+      for (size_t i = 0; i < nthreads; i++)
+        ret.push_back(
+          new queue_worker(
+            r.next(), db, open_tables,
+            &barrier_a, &barrier_b, i, false));
+    } else {
+      ALWAYS_ASSERT(nthreads >= 2);
+      if (verbose && (nthreads % 2))
+        cerr << "queue_bench_runner: odd number of workers given" << endl;
+      for (size_t i = 0; i < nthreads / 2; i++) {
+        ret.push_back(
+          new queue_worker(
+            r.next(), db, open_tables,
+            &barrier_a, &barrier_b, i, true));
+        ret.push_back(
+          new queue_worker(
+            r.next(), db, open_tables,
+            &barrier_a, &barrier_b, i, false));
+      }
     }
     return ret;
   }
+
+private:
+  bool write_only;
 };
 
 void
@@ -292,6 +303,6 @@ queue_do_test(abstract_db *db)
 {
   nkeys = size_t(scale_factor * 1000.0);
   ALWAYS_ASSERT(nkeys > 0);
-  queue_bench_runner r(db);
+  queue_bench_runner r(db, true);
   r.run();
 }
