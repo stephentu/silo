@@ -26,11 +26,26 @@ transaction::logical_node::~logical_node()
 
   // invoke callbacks on the values
   const vector<callback_t> &callbacks = completion_callbacks();
-  const size_t n = size();
-  for (size_t i = 0; i < n; i++)
-    for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
-        inner_it != callbacks.end(); ++inner_it)
-      (*inner_it)(values[i], false);
+  for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
+      inner_it != callbacks.end(); ++inner_it)
+    (*inner_it)(value, false);
+}
+
+static event_counter evt_spillblock_creates("spillblock_creates");
+static event_counter evt_spillblock_deletes("spillblock_deletes");
+
+transaction::logical_node_spillblock::logical_node_spillblock(
+    struct logical_node_spillblock *spillblock_next)
+  : nspills(0), gc_opaque_value(0),
+    spillblock_next(spillblock_next)
+{
+  _static_assert(sizeof(logical_node_spillblock) <= (2 * CACHELINE_SIZE));
+  ++evt_spillblock_creates;
+}
+
+transaction::logical_node_spillblock::~logical_node_spillblock()
+{
+  ++evt_spillblock_deletes;
 }
 
 void
@@ -63,7 +78,6 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
   buf << (IsDeleting(v) ? "DEL" : "-") << " | ";
   buf << (IsEnqueued(v) ? "ENQ" : "-") << " | ";
-  buf << Size(v) << " | ";
   buf << Version(v);
   buf << "]";
   return buf.str();
@@ -118,14 +132,11 @@ operator<<(ostream &o, const transaction::logical_node &ln)
 {
   vector<transaction::tid_t> tids;
   vector<transaction::record_t> recs;
-  const size_t n = ln.size();
-  for (size_t i = 0 ; i < n; i++) {
-    tids.push_back(ln.versions[i]);
-    recs.push_back(ln.values[i]);
-  }
+  tids.push_back(ln.version);
+  recs.push_back(ln.value);
   vector<string> tids_s = format_tid_list(tids);
   vector<string> recs_s = format_rec_list(recs);
-  bool has_spill = ln.spillblock_head;
+  const bool has_spill = ln.spillblock_head;
   o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) <<
     ", tids=" << format_list(tids_s.rbegin(), tids_s.rend()) <<
     ", recs=" << format_list(recs_s.rbegin(), recs_s.rend()) <<
@@ -216,7 +227,7 @@ transaction::commit(bool doThrow)
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
         logical_nodes[(logical_node *) v] = lnode_info(outer_it->first, it->first, false, it->second);
       } else {
-        logical_node *ln = logical_node::alloc();
+        logical_node *ln = logical_node::alloc(null_entry_tid(), 0);
         // XXX: underlying btree api should return the existing value if
         // insert fails- this would allow us to avoid having to do another search
         pair<const btree::node_opaque_t *, uint64_t> insert_info;
@@ -482,7 +493,7 @@ transaction_flags_to_str(uint64_t flags)
 inline ostream &
 operator<<(ostream &o, const transaction::read_record_t &rr)
 {
-  o << "[tid=" << g_proto_version_str(rr.t)
+  o << "[tid_read=" << g_proto_version_str(rr.t)
     << ", record=0x" << hexify(intptr_t(rr.r))
     << ", ln_ptr=0x" << hexify(intptr_t(rr.ln))
     << ", ln=" << *rr.ln << "]";
@@ -754,6 +765,12 @@ transaction_proto1::consistent_snapshot_tid() const
   return make_pair(true, snapshot_tid);
 }
 
+transaction::tid_t
+transaction_proto1::null_entry_tid() const
+{
+  return 0;
+}
+
 void
 transaction_proto1::dump_debug_info(abort_reason reason) const
 {
@@ -851,6 +868,12 @@ transaction_proto2::consistent_snapshot_tid() const
     return make_pair(true, last_consistent_tid);
   else
     return make_pair(false, 0);
+}
+
+transaction::tid_t
+transaction_proto2::null_entry_tid() const
+{
+  return MakeTid(0, 0, current_epoch);
 }
 
 void
@@ -1085,14 +1108,23 @@ transaction_proto2::epoch_loop::run()
     }
 
     COMPILER_MEMORY_FENCE;
-    g_last_consistent_epoch = g_current_epoch;
-    __sync_synchronize(); // XXX(stephentu): do we need this?
 
-    // l_current_epoch = (g_current_epoch - 1) is now finished. at this point:
-    // A) all threads will be operating at epoch=g_current_epoch
-    // B) all consistent reads will be operating at g_last_consistent_epoch =
-    //    g_current_epoch, which means they will be reading changes up to
-    //    and including (g_current_epoch - 1)
+    // sync point 1: l_current_epoch = (g_current_epoch - 1) is now finished.
+    // at this point, all threads will be operating at epoch=g_current_epoch
+    g_last_consistent_epoch = g_current_epoch;
+    __sync_synchronize(); // XXX(stephentu): same reason as above
+
+    // XXX(stephentu): I would really like to avoid having to loop over
+    // all the threads again, but I don't know how else to ensure all the
+    // threads will finish any oustanding consistent reads at
+    // g_last_consistent_epoch - 1
+    for (size_t i = 0; i < l_core_count; i++) {
+      scoped_spinlock l(&g_epoch_spinlocks[i].elem);
+    }
+
+    // sync point 2: all consistent reads will be operating at
+    // g_last_consistent_epoch = g_current_epoch, which means they will be
+    // reading changes up to and including (g_current_epoch - 1)
     VERBOSE(cerr << "epoch_loop: running work <= (l_current_epoch=" << l_current_epoch << ")" << endl);
     while (!pq.empty()) {
       const work_record_t &work = pq.top();

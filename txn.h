@@ -126,8 +126,8 @@ public:
 
   struct logical_node_spillblock : public util::noncopyable {
 
-    static const size_t NSpills = 5; // makes each spillblock about 4 cachelines
-    static const size_t NSpillSize = 3;
+    static const size_t NSpills = 6; // makes each spillblock about 2 cachelines
+    static const size_t NSpillSize = 1;
     static const size_t NElems = NSpills * NSpillSize;
 
     volatile uint8_t nspills; // how many spills so far, the # only increases
@@ -140,11 +140,8 @@ public:
 
     struct logical_node_spillblock *spillblock_next;
 
-    logical_node_spillblock(
-        struct logical_node_spillblock *spillblock_next)
-      : nspills(0), gc_opaque_value(0),
-        spillblock_next(spillblock_next)
-    {}
+    logical_node_spillblock(struct logical_node_spillblock *spillblock_next);
+    ~logical_node_spillblock();
 
     inline size_t
     size() const
@@ -238,58 +235,56 @@ public:
      */
     void gc_chain(bool do_rcu);
 
-  }; // XXX(stephentu): do we care about cache alignment for spill blocks?
+  } PACKED;
 
   /**
    * A logical_node is the type of value which we stick
    * into underlying (non-transactional) data structures
-   *
-   * A logical node is one cache line wide
    */
   struct logical_node : public util::noncopyable {
+  public:
+    typedef uint64_t version_t;
+
   private:
-    static const uint64_t HDR_LOCKED_MASK = 0x1;
+    static const version_t HDR_LOCKED_MASK = 0x1;
 
-    static const uint64_t HDR_DELETING_SHIFT = 1;
-    static const uint64_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
+    static const version_t HDR_DELETING_SHIFT = 1;
+    static const version_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
 
-    static const uint64_t HDR_ENQUEUED_SHIFT = 2;
-    static const uint64_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
+    static const version_t HDR_ENQUEUED_SHIFT = 2;
+    static const version_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
 
-    static const uint64_t HDR_SIZE_SHIFT = 3;
-    static const uint64_t HDR_SIZE_MASK = 0xf << HDR_SIZE_SHIFT;
-
-    static const uint64_t HDR_VERSION_SHIFT = 7;
-    static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
+    static const version_t HDR_VERSION_SHIFT = 3;
+    static const version_t HDR_VERSION_MASK = ((version_t)-1) << HDR_VERSION_SHIFT;
 
   public:
 
-    static const size_t NVersions = logical_node_spillblock::NSpillSize;
-
-    // [ locked | deleted | enqueued | num_versions | version ]
-    // [  0..1  |  1..2   |   2..3   |     3..7     |  7..64  ]
-    volatile uint64_t hdr;
+    // NB(stephentu): ABA problem happens after 2^61 concurrent modifications-
+    // *very* low probability event, so we let it happen
+    //
+    // [ locked | deleted | enqueued | version ]
+    // [  0..1  |  1..2   |   2..3   |  3..64  ]
+    volatile version_t hdr;
 
     // constraints:
     //   * enqueued => !deleted
     //   * deleted  => !enqueued
 
-    // in each logical_node, the latest verison/value is stored in
-    // versions[size() - 1] and values[size() - 1]. each
-    // node can store up to 15 values
-    tid_t versions[NVersions];
-    record_t values[NVersions];
+    tid_t version;
+    record_t value;
 
     // spill in units of NVersions
     struct logical_node_spillblock *spillblock_head;
 
     logical_node()
-      : hdr(0), spillblock_head(0)
+      : hdr(0), version(MIN_TID), value(0), spillblock_head(0)
     {
       // each logical node starts with one "deleted" entry at MIN_TID
-      set_size(1);
-      versions[0] = MIN_TID;
-      values[0] = NULL;
+    }
+
+    logical_node(tid_t version, record_t value)
+      : hdr(0), version(version), value(value), spillblock_head(0)
+    {
     }
 
     ~logical_node();
@@ -301,7 +296,7 @@ public:
     }
 
     static inline bool
-    IsLocked(uint64_t v)
+    IsLocked(version_t v)
     {
       return v & HDR_LOCKED_MASK;
     }
@@ -309,7 +304,7 @@ public:
     inline void
     lock()
     {
-      uint64_t v = hdr;
+      version_t v = hdr;
       while (IsLocked(v) ||
              !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
         nop_pause();
@@ -321,9 +316,9 @@ public:
     inline void
     unlock()
     {
-      uint64_t v = hdr;
+      version_t v = hdr;
       INVARIANT(IsLocked(v));
-      const uint64_t n = Version(v);
+      const version_t n = Version(v);
       v &= ~HDR_VERSION_MASK;
       v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       v &= ~HDR_LOCKED_MASK;
@@ -339,7 +334,7 @@ public:
     }
 
     static inline bool
-    IsDeleting(uint64_t v)
+    IsDeleting(version_t v)
     {
       return v & HDR_DELETING_MASK;
     }
@@ -360,7 +355,7 @@ public:
     }
 
     static inline bool
-    IsEnqueued(uint64_t v)
+    IsEnqueued(version_t v)
     {
       return v & HDR_ENQUEUED_MASK;
     }
@@ -376,37 +371,16 @@ public:
         hdr &= ~HDR_ENQUEUED_MASK;
     }
 
-    inline size_t
-    size() const
-    {
-      return Size(hdr);
-    }
-
-    static inline size_t
-    Size(uint64_t v)
-    {
-      return (v & HDR_SIZE_MASK) >> HDR_SIZE_SHIFT;
-    }
-
-    inline void
-    set_size(size_t n)
-    {
-      INVARIANT(n > 0);
-      INVARIANT(n <= NVersions);
-      hdr &= ~HDR_SIZE_MASK;
-      hdr |= (n << HDR_SIZE_SHIFT);
-    }
-
-    static inline uint64_t
-    Version(uint64_t v)
+    static inline version_t
+    Version(version_t v)
     {
       return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
     }
 
-    inline uint64_t
+    inline version_t
     stable_version() const
     {
-      uint64_t v = hdr;
+      version_t v = hdr;
       while (IsLocked(v)) {
         nop_pause();
         v = hdr;
@@ -416,7 +390,7 @@ public:
     }
 
     inline bool
-    try_stable_version(uint64_t &v, unsigned int spins) const
+    try_stable_version(version_t &v, unsigned int spins) const
     {
       v = hdr;
       while (IsLocked(v) && spins) {
@@ -428,14 +402,14 @@ public:
       return IsLocked(v);
     }
 
-    inline uint64_t
+    inline version_t
     unstable_version() const
     {
       return hdr;
     }
 
     inline bool
-    check_version(uint64_t version) const
+    check_version(version_t version) const
     {
       COMPILER_MEMORY_FENCE;
       return hdr == version;
@@ -453,24 +427,18 @@ public:
     record_at(tid_t t, tid_t &start_t, record_t &r) const
     {
     retry:
-      uint64_t v = stable_version();
+      const version_t v = stable_version();
       // because we expect t's to be relatively recent, instead of
       // doing binary search, we simply do a linear scan from the
       // end- most of the time we should find a match on the first try
-      const size_t n = size();
       const struct logical_node_spillblock *p = spillblock_head;
-      INVARIANT(n > 0 && n <= NVersions);
-      bool found = false;
-      for (ssize_t i = n - 1; i >= 0; i--)
-        if (versions[i] <= t) {
-          start_t = versions[i];
-          r = values[i];
-          found = true;
-          break;
-        }
+      const bool found = is_latest_version(t);
+      if (found) {
+        start_t = version;
+        r = value;
+      }
       if (unlikely(!check_version(v)))
         goto retry;
-
       return found ? true : (p ? p->record_at(t, start_t, r) : false);
     }
 
@@ -483,17 +451,16 @@ public:
     inline bool
     is_latest_version(tid_t t) const
     {
-      return latest_version() <= t;
+      return version <= t;
     }
 
     inline bool
     stable_is_latest_version(tid_t t) const
     {
-      //uint64_t v = 0;
+      //version_t v = 0;
       //if (!try_stable_version(v, 16))
       //  return false;
-      const uint64_t v = stable_version();
-      INVARIANT(!IsLocked(v));
+      const version_t v = stable_version();
       // now v is a stable version
       const bool ret = is_latest_version(t);
       // only check_version() if the answer would be true- otherwise,
@@ -509,17 +476,13 @@ public:
     inline tid_t
     latest_version() const
     {
-      size_t n = size();
-      INVARIANT(n > 0 && n <= NVersions);
-      return versions[n - 1];
+      return version;
     }
 
     inline record_t
     latest_value() const
     {
-      size_t n = size();
-      INVARIANT(n > 0 && n <= NVersions);
-      return values[n - 1];
+      return value;
     }
 
     /**
@@ -530,38 +493,16 @@ public:
     is_snapshot_consistent_impl(tid_t snapshot_tid, tid_t commit_tid) const
     {
     retry:
-      const uint64_t v = check ? stable_version() : unstable_version();
-
-      const size_t n = size();
-      INVARIANT(n > 0 && n <= NVersions);
-
-      // fast path
-      if (versions[n - 1] <= snapshot_tid) {
+      const version_t v = check ? stable_version() : unstable_version();
+      const struct logical_node_spillblock *p = spillblock_head;
+      if (version <= snapshot_tid) {
         if (unlikely(check && !check_version(v)))
           goto retry;
         return true;
       }
-
-      // slow path
-      ssize_t i = n - 2; /* we already checked @ (n-1) */
-      bool ret = false;
-      const struct logical_node_spillblock *p = spillblock_head;
-      tid_t oldest_version = versions[0];
-      for (; i >= 0; i--)
-        if (versions[i] <= snapshot_tid) {
-          // see if theres any conflict between the version we read, and
-          // the next modification. there is no conflict (conservatively)
-          // if the next modification happens *after* our commit tid
-          INVARIANT(versions[i + 1] != commit_tid);
-          ret = versions[i + 1] > commit_tid;
-          break;
-        }
       if (unlikely(check && !check_version(v)))
         goto retry;
-      if (i == -1)
-        return p ? p->is_snapshot_consistent(snapshot_tid, commit_tid, oldest_version) : false;
-      else
-        return ret;
+      return p ? p->is_snapshot_consistent(snapshot_tid, commit_tid, version) : false;
     }
 
     inline bool
@@ -587,52 +528,36 @@ public:
     write_record_at(const transaction *txn, tid_t t, record_t r, record_t *removed)
     {
       INVARIANT(is_locked());
-      const size_t n = size();
-      INVARIANT(n > 0 && n <= NVersions);
-      INVARIANT(versions[n - 1] < t);
 
       if (removed)
         *removed = 0;
 
       // easy case
-      if (txn->can_overwrite_record_tid(versions[n - 1], t)) {
-        versions[n - 1] = t;
+      if (txn->can_overwrite_record_tid(version, t)) {
+        version = t;
         if (removed)
-          *removed = values[n - 1];
-        values[n - 1] = r;
+          *removed = value;
+        value = r;
         return false;
       }
 
-      if (n == NVersions) {
-        // need to spill
-        struct logical_node_spillblock *sb = spillblock_head;
-        if (!spillblock_head || spillblock_head->is_full())
-          sb = new logical_node_spillblock(spillblock_head);
-        sb->spill_into(&versions[0], &values[0]);
-        if (sb != spillblock_head)
-          spillblock_head = sb;
-        versions[0] = t;
-        values[0] = r;
-        set_size(1);
-
-        return true;
-      } else {
-        versions[n] = t;
-        values[n] = r;
-        set_size(n + 1);
-
-        return false;
-      }
+      // need to spill
+      struct logical_node_spillblock *sb = spillblock_head;
+      if (!spillblock_head || spillblock_head->is_full())
+        sb = new logical_node_spillblock(spillblock_head);
+      _static_assert(logical_node_spillblock::NSpillSize == 1);
+      sb->spill_into(&version, &value);
+      if (sb != spillblock_head)
+        spillblock_head = sb;
+      version = t;
+      value = r;
+      return true;
     }
 
     static inline logical_node *
-    alloc()
+    alloc(tid_t version, record_t value)
     {
-      _static_assert(sizeof(logical_node) == CACHELINE_SIZE);
-      //void *p = memalign(CACHELINE_SIZE, sizeof(logical_node));
-      void *p = malloc(sizeof(logical_node));
-      ALWAYS_ASSERT(p);
-      return new (p) logical_node;
+      return new logical_node(version, value);
     }
 
     static void
@@ -641,8 +566,7 @@ public:
       logical_node *n = (logical_node *) p;
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
-      n->~logical_node();
-      free(n);
+      delete n;
     }
 
     static inline void
@@ -664,14 +588,13 @@ public:
       n->mark_deleting();
       n->unlock();
 #endif
-      n->~logical_node();
-      free(n);
+      delete n;
     }
 
     static std::string
-    VersionInfoStr(uint64_t v);
+    VersionInfoStr(version_t v);
 
-  } PACKED_CACHE_ALIGNED;
+  } PACKED;
 
   friend std::ostream &
   operator<<(std::ostream &o, const logical_node &ln);
@@ -730,6 +653,8 @@ public:
    * XXX: document
    */
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const = 0;
+
+  virtual tid_t null_entry_tid() const = 0;
 
 protected:
 
@@ -935,6 +860,7 @@ class transaction_proto1 : public transaction {
 public:
   transaction_proto1(uint64_t flags = 0);
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
+  virtual tid_t null_entry_tid() const;
   virtual void dump_debug_info(abort_reason reason) const;
 
 protected:
@@ -969,6 +895,8 @@ public:
   ~transaction_proto2();
 
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
+
+  virtual tid_t null_entry_tid() const;
 
   virtual void dump_debug_info(abort_reason reason) const;
 
@@ -1007,6 +935,8 @@ public:
   virtual bool
   can_overwrite_record_tid(tid_t prev, tid_t cur) const
   {
+    INVARIANT(prev < cur);
+    INVARIANT(EpochId(cur) >= g_last_consistent_epoch);
     return EpochId(prev) == EpochId(cur);
   }
 
