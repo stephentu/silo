@@ -124,7 +124,7 @@ public:
     return false;
   }
 
-  struct logical_node_spillblock : public util::noncopyable {
+  struct logical_node_spillblock : private util::noncopyable {
 
     static const size_t NSpills = 6; // makes each spillblock about 2 cachelines
     static const size_t NSpillSize = 1;
@@ -241,7 +241,7 @@ public:
    * A logical_node is the type of value which we stick
    * into underlying (non-transactional) data structures
    */
-  struct logical_node : public util::noncopyable {
+  struct logical_node : private util::noncopyable {
   public:
     typedef uint64_t version_t;
 
