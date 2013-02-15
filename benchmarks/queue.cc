@@ -179,9 +179,9 @@ public:
   {
     workload_desc_vec w;
     if (consumer)
-      //w.push_back(workload_desc("Consume", 1.0, TxnConsume));
+      w.push_back(workload_desc("Consume", 1.0, TxnConsume));
+      //w.push_back(workload_desc("ConsumeScanHint", 1.0, TxnConsumeScanHint));
       //w.push_back(workload_desc("ConsumeNoScan", 1.0, TxnConsumeNoScan));
-      w.push_back(workload_desc("ConsumeScanHint", 1.0, TxnConsumeScanHint));
     else
       w.push_back(workload_desc("Produce", 1.0, TxnProduce));
     return w;

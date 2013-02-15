@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/sysinfo.h>
 
 #include "bench.h"
 #include "bdb_wrapper.h"
@@ -53,6 +54,15 @@ map_agg(map<K, V> &agg, const map<K, V> &m)
     agg[it->first] += it->second;
 }
 
+// returns <free_bytes, total_bytes>
+static pair<uint64_t, uint64_t>
+get_system_memory_info()
+{
+  struct sysinfo inf;
+  sysinfo(&inf);
+  return make_pair(inf.mem_unit * inf.freeram, inf.mem_unit * inf.totalram);
+}
+
 void
 bench_runner::run()
 {
@@ -77,6 +87,8 @@ bench_runner::run()
     cerr << "starting benchmark..." << endl;
   }
 
+  const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
+
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());
   for (vector<bench_worker *>::const_iterator it = workers.begin();
@@ -98,16 +110,23 @@ bench_runner::run()
     n_aborts += workers[i]->get_ntxn_aborts();
   }
 
-  const double agg_throughput = double(n_commits) / (double(elapsed) / 1000000.0);
+  const double elapsed_sec = (double(elapsed) / 1000000.0);
+  const double agg_throughput = double(n_commits) / elapsed_sec;
   const double avg_per_core_throughput = agg_throughput / double(workers.size());
 
-  const double agg_abort_rate = double(n_aborts) / (double(elapsed) / 1000000.0);
+  const double agg_abort_rate = double(n_aborts) / elapsed_sec;
   const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
 
   if (verbose) {
+    const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
+    const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first); // free mem
+    const double delta_mb = double(delta)/1048576.0;
+
     map<string, size_t> agg_txn_counts = workers[0]->get_txn_counts();
     for (size_t i = 1; i < workers.size(); i++)
       map_agg(agg_txn_counts, workers[i]->get_txn_counts());
+    cerr << "memory delta: " << delta_mb  << " MB" << endl;
+    cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB" << endl;
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
@@ -118,6 +137,7 @@ bench_runner::run()
     for (map<string, uint64_t>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
+    cerr << "-------------------------" << endl;
   }
 
   // output for plotting script

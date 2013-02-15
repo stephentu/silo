@@ -541,6 +541,11 @@ operator<<(ostream &o, const transaction::key_range_t &range)
 ABORT_REASONS(EVENT_COUNTER_IMPL_X)
 #undef EVENT_COUNTER_IMPL_X
 
+event_counter transaction::g_evt_read_logical_deleted_node_search(
+    "read_logical_deleted_node_search");
+event_counter transaction::g_evt_read_logical_deleted_node_scan(
+    "read_logical_deleted_node_scan");
+
 #ifdef CHECK_INVARIANTS
 void
 transaction::AssertValidRangeSet(const vector<key_range_t> &range_set)

@@ -109,6 +109,9 @@ public:
     return 0;
   }
 
+  static event_counter g_evt_read_logical_deleted_node_search;
+  static event_counter g_evt_read_logical_deleted_node_scan;
+
   static const tid_t MIN_TID = 0;
   static const tid_t MAX_TID = (tid_t) -1;
 
@@ -625,8 +628,10 @@ public:
     static inline logical_node *
     alloc()
     {
-      void *p = memalign(CACHELINE_SIZE, sizeof(logical_node));
-      assert(p);
+      _static_assert(sizeof(logical_node) == CACHELINE_SIZE);
+      //void *p = memalign(CACHELINE_SIZE, sizeof(logical_node));
+      void *p = malloc(sizeof(logical_node));
+      ALWAYS_ASSERT(p);
       return new (p) logical_node;
     }
 

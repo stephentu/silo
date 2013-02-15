@@ -50,6 +50,9 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
       throw transaction_abort_exception(r);
     }
 
+    if (!r)
+      ++transaction::g_evt_read_logical_deleted_node_search;
+
     transaction::read_record_t *read_rec = &ctx.read_set[sk];
     read_rec->t = start_t;
     read_rec->r = r;
@@ -119,6 +122,8 @@ txn_btree::txn_search_range_callback::invoke(
       t->abort_impl(r);
       throw transaction_abort_exception(r);
     }
+    if (!r)
+      ++transaction::g_evt_read_logical_deleted_node_scan;
     transaction::read_record_t *read_rec = &ctx->read_set[sk];
     read_rec->t = start_t;
     read_rec->r = r;
