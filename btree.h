@@ -386,11 +386,8 @@ private:
 
     imstring suffixes[NKeysPerNode];
 
-    leaf_node()
-      : min_key(0), prev(NULL), next(NULL)
-    {
-      hdr = 0;
-    }
+    leaf_node();
+    ~leaf_node();
 
     static const uint64_t LEN_LEN_MASK = 0xf;
 
@@ -530,10 +527,8 @@ private:
      */
     node *children[NKeysPerNode + 1];
 
-    internal_node()
-    {
-      hdr = 1;
-    }
+    internal_node();
+    ~internal_node();
 
     /**
      * keys[key_search(k).first] == k if key_search(k).first != -1

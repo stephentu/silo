@@ -134,6 +134,21 @@ btree::node::invariant_checker(const key_slice *min_key,
     AsInternal(this)->invariant_checker_impl(min_key, max_key, left_sibling, right_sibling, is_root) ;
 }
 
+static event_counter evt_btree_leaf_node_creates("btree_leaf_node_creates");
+static event_counter evt_btree_leaf_node_deletes("btree_leaf_node_deletes");
+
+btree::leaf_node::leaf_node()
+  : min_key(0), prev(NULL), next(NULL)
+{
+  hdr = 0;
+  ++evt_btree_leaf_node_creates;
+}
+
+btree::leaf_node::~leaf_node()
+{
+  ++evt_btree_leaf_node_deletes;
+}
+
 void
 btree::leaf_node::invariant_checker_impl(const key_slice *min_key,
                                          const key_slice *max_key,
@@ -150,6 +165,20 @@ btree::leaf_node::invariant_checker_impl(const key_slice *min_key,
   for (size_t i = 0; i < n; i++)
     if (value_is_layer(i))
       values[i].n->invariant_checker(NULL, NULL, NULL, NULL, true);
+}
+
+static event_counter evt_btree_internal_node_creates("btree_internal_node_creates");
+static event_counter evt_btree_internal_node_deletes("btree_internal_node_deletes");
+
+btree::internal_node::internal_node()
+{
+  hdr = 1;
+  ++evt_btree_internal_node_creates;
+}
+
+btree::internal_node::~internal_node()
+{
+  ++evt_btree_internal_node_deletes;
 }
 
 void
