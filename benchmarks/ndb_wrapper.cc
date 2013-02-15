@@ -67,9 +67,9 @@ ndb_ordered_index::get(
     if (!ret)
       return false;
     INVARIANT(v != NULL);
-    size_t *sp = (size_t *) v;
+    uint32_t *sp = (uint32_t *) v;
     valuelen = *sp;
-    value = (char *) (v + sizeof(size_t)); // points directly to record
+    value = (char *) (v + sizeof(uint32_t)); // points directly to record
     return true;
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
@@ -77,6 +77,7 @@ ndb_ordered_index::get(
 }
 
 static event_counter evt_rec_creates("record_creates");
+static event_counter evt_rec_bytes_alloc("record_bytes_alloc");
 
 const char *
 ndb_ordered_index::put(
@@ -84,10 +85,11 @@ ndb_ordered_index::put(
     const char *key, size_t keylen,
     const char *value, size_t valuelen)
 {
-  uint8_t *record = new uint8_t[sizeof(size_t) + valuelen];
-  size_t *sp = (size_t *) record;
+  ALWAYS_ASSERT(valuelen <= numeric_limits<uint32_t>::max());
+  uint8_t *record = new uint8_t[sizeof(uint32_t) + valuelen];
+  uint32_t *sp = (uint32_t *) record;
   *sp = valuelen;
-  memcpy(record + sizeof(size_t), value, valuelen);
+  memcpy(record + sizeof(uint32_t), value, valuelen);
   try {
     btr.insert(*((transaction *) txn), varkey((const uint8_t *) key, keylen), record);
   } catch (transaction_abort_exception &ex) {
@@ -95,7 +97,8 @@ ndb_ordered_index::put(
     throw abstract_db::abstract_abort_exception();
   }
   ++evt_rec_creates;
-  return (const char *) record + sizeof(size_t);
+  evt_rec_bytes_alloc += valuelen;
+  return (const char *) record + sizeof(uint32_t);
 }
 
 class ndb_wrapper_search_range_callback : public txn_btree::search_range_callback {
@@ -109,8 +112,8 @@ public:
     const char *key = (const char *) k.data();
     const size_t keylen = k.size();
 
-    const size_t *sp = (const size_t *) v;
-    const size_t valuelen = *sp;
+    const uint32_t *sp = (const uint32_t *) v;
+    const uint32_t valuelen = *sp;
     const char *value = (const char *) (sp + 1);
 
     return upcall->invoke(key, keylen, value, valuelen);
@@ -165,6 +168,7 @@ ndb_ordered_index::size() const
 }
 
 static event_counter evt_rec_deletes("record_deletes");
+static event_counter evt_rec_bytes_free("record_bytes_free");
 
 static void
 record_cleanup_callback(uint8_t *record, bool outstanding_refs)
@@ -176,6 +180,7 @@ record_cleanup_callback(uint8_t *record, bool outstanding_refs)
                << outstanding_refs << "): 0x"
                << hexify(intptr_t(record)) << endl);
   ++evt_rec_deletes;
+  evt_rec_bytes_free += *((uint32_t *) record);
   if (outstanding_refs)
     rcu::free_array(record);
   else
