@@ -944,110 +944,132 @@ btree::insert0(node *np,
       locked_nodes.push_back(new_leaf);
 #endif /* CHECK_INVARIANTS */
 
-      // compute how many keys the smaller node would have if we put the
-      // new key in the left (old) or right (new) side of the split.
-      // then choose the split which maximizes the mininum.
-      //
-      // XXX: do this in a more elegant way
+      if (!leaf->next && leaf->keys[n - 1] < kslice) {
+        // sequential insert optimization- in this case, we don't bother
+        // splitting the node. instead, keep the current leaf node full, and
+        // insert the new key into the new leaf node (violating the btree invariant)
+        //
+        // this optimization is commonly implemented, including in masstree and
+        // berkeley db- w/o this optimization, sequential inserts leave the all
+        // nodes half full
 
-      // a split point S is a number such that indices [0, s) go into the left
-      // partition, and indices [s, N) go into the right partition
-      size_t left_split_point, right_split_point;
-
-      left_split_point = NKeysPerNode / 2;
-      for (ssize_t i = left_split_point - 1; i >= 0; i--) {
-        if (likely(leaf->keys[i] != leaf->keys[left_split_point]))
-          break;
-        left_split_point--;
-      }
-      INVARIANT(left_split_point <= NKeysPerNode);
-      INVARIANT(left_split_point == 0 || leaf->keys[left_split_point - 1] != leaf->keys[left_split_point]);
-
-      right_split_point = NKeysPerNode / 2;
-      for (ssize_t i = right_split_point - 1; i >= 0 && i < ssize_t(NKeysPerNode) - 1; i++) {
-        if (likely(leaf->keys[i] != leaf->keys[right_split_point]))
-          break;
-        right_split_point++;
-      }
-      INVARIANT(right_split_point <= NKeysPerNode);
-      INVARIANT(right_split_point == 0 || leaf->keys[right_split_point - 1] != leaf->keys[right_split_point]);
-
-      size_t split_point;
-      if (min(left_split_point, NKeysPerNode - left_split_point) <
-          min(right_split_point, NKeysPerNode - right_split_point))
-        split_point = right_split_point;
-      else
-        split_point = left_split_point;
-
-      if (split_point <= size_t(lenlowerbound + 1) && leaf->keys[split_point - 1] != kslice) {
-        // put new key in new leaf (right)
-        size_t pos = lenlowerbound + 1 - split_point;
-
-        copy_into(&new_leaf->keys[0], leaf->keys, split_point, lenlowerbound + 1);
-        new_leaf->keys[pos] = kslice;
-        copy_into(&new_leaf->keys[pos + 1], leaf->keys, lenlowerbound + 1, NKeysPerNode);
-
-        copy_into(&new_leaf->values[0], leaf->values, split_point, lenlowerbound + 1);
-        new_leaf->values[pos].v = v;
-        copy_into(&new_leaf->values[pos + 1], leaf->values, lenlowerbound + 1, NKeysPerNode);
-
-        copy_into(&new_leaf->lengths[0], leaf->lengths, split_point, lenlowerbound + 1);
-        new_leaf->keyslice_set_length(pos, kslicelen, false);
-        copy_into(&new_leaf->lengths[pos + 1], leaf->lengths, lenlowerbound + 1, NKeysPerNode);
-
-        swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, lenlowerbound + 1);
+        new_leaf->keys[0] = kslice;
+        new_leaf->values[0].v = v;
+        new_leaf->keyslice_set_length(0, kslicelen, false);
         if (kslicelen == 9) {
           rcu_imstring i(k.data() + 8, k.size() - 8);
-          new_leaf->suffixes[pos].swap(i);
-        } else {
-          rcu_imstring i;
-          new_leaf->suffixes[pos].swap(i);
+          new_leaf->suffixes[0].swap(i);
         }
-        swap_with(&new_leaf->suffixes[pos + 1], leaf->suffixes, lenlowerbound + 1, NKeysPerNode);
-
-        leaf->set_key_slots_used(split_point);
-        new_leaf->set_key_slots_used(NKeysPerNode - split_point + 1);
-
-#ifdef CHECK_INVARIANTS
-        leaf->base_invariant_unique_keys_check();
-        new_leaf->base_invariant_unique_keys_check();
-        INVARIANT(leaf->keys[split_point - 1] < new_leaf->keys[0]);
-#endif /* CHECK_INVARIANTS */
+        new_leaf->set_key_slots_used(1);
 
       } else {
-        // XXX: not really sure if this invariant is true, but we rely
-        // on it for now
-        INVARIANT(size_t(lenlowerbound + 1) <= split_point);
+        // regular case
 
-        // put new key in original leaf
-        copy_into(&new_leaf->keys[0], leaf->keys, split_point, NKeysPerNode);
-        copy_into(&new_leaf->values[0], leaf->values, split_point, NKeysPerNode);
-        copy_into(&new_leaf->lengths[0], leaf->lengths, split_point, NKeysPerNode);
-        swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, NKeysPerNode);
+        // compute how many keys the smaller node would have if we put the
+        // new key in the left (old) or right (new) side of the split.
+        // then choose the split which maximizes the mininum.
+        //
+        // XXX: do this in a more elegant way
 
-        sift_right(leaf->keys, lenlowerbound + 1, split_point);
-        leaf->keys[lenlowerbound + 1] = kslice;
-        sift_right(leaf->values, lenlowerbound + 1, split_point);
-        leaf->values[lenlowerbound + 1].v = v;
-        sift_right(leaf->lengths, lenlowerbound + 1, split_point);
-        leaf->keyslice_set_length(lenlowerbound + 1, kslicelen, false);
-        sift_swap_right(leaf->suffixes, lenlowerbound + 1, split_point);
-        if (kslicelen == 9) {
-          rcu_imstring i(k.data() + 8, k.size() - 8);
-          leaf->suffixes[lenlowerbound + 1].swap(i);
-        } else {
-          rcu_imstring i;
-          leaf->suffixes[lenlowerbound + 1].swap(i);
+        // a split point S is a number such that indices [0, s) go into the left
+        // partition, and indices [s, N) go into the right partition
+        size_t left_split_point, right_split_point;
+
+        left_split_point = NKeysPerNode / 2;
+        for (ssize_t i = left_split_point - 1; i >= 0; i--) {
+          if (likely(leaf->keys[i] != leaf->keys[left_split_point]))
+            break;
+          left_split_point--;
         }
+        INVARIANT(left_split_point <= NKeysPerNode);
+        INVARIANT(left_split_point == 0 || leaf->keys[left_split_point - 1] != leaf->keys[left_split_point]);
 
-        leaf->set_key_slots_used(split_point + 1);
-        new_leaf->set_key_slots_used(NKeysPerNode - split_point);
+        right_split_point = NKeysPerNode / 2;
+        for (ssize_t i = right_split_point - 1; i >= 0 && i < ssize_t(NKeysPerNode) - 1; i++) {
+          if (likely(leaf->keys[i] != leaf->keys[right_split_point]))
+            break;
+          right_split_point++;
+        }
+        INVARIANT(right_split_point <= NKeysPerNode);
+        INVARIANT(right_split_point == 0 || leaf->keys[right_split_point - 1] != leaf->keys[right_split_point]);
+
+        size_t split_point;
+        if (min(left_split_point, NKeysPerNode - left_split_point) <
+            min(right_split_point, NKeysPerNode - right_split_point))
+          split_point = right_split_point;
+        else
+          split_point = left_split_point;
+
+        if (split_point <= size_t(lenlowerbound + 1) && leaf->keys[split_point - 1] != kslice) {
+          // put new key in new leaf (right)
+          size_t pos = lenlowerbound + 1 - split_point;
+
+          copy_into(&new_leaf->keys[0], leaf->keys, split_point, lenlowerbound + 1);
+          new_leaf->keys[pos] = kslice;
+          copy_into(&new_leaf->keys[pos + 1], leaf->keys, lenlowerbound + 1, NKeysPerNode);
+
+          copy_into(&new_leaf->values[0], leaf->values, split_point, lenlowerbound + 1);
+          new_leaf->values[pos].v = v;
+          copy_into(&new_leaf->values[pos + 1], leaf->values, lenlowerbound + 1, NKeysPerNode);
+
+          copy_into(&new_leaf->lengths[0], leaf->lengths, split_point, lenlowerbound + 1);
+          new_leaf->keyslice_set_length(pos, kslicelen, false);
+          copy_into(&new_leaf->lengths[pos + 1], leaf->lengths, lenlowerbound + 1, NKeysPerNode);
+
+          swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, lenlowerbound + 1);
+          if (kslicelen == 9) {
+            rcu_imstring i(k.data() + 8, k.size() - 8);
+            new_leaf->suffixes[pos].swap(i);
+          } else {
+            rcu_imstring i;
+            new_leaf->suffixes[pos].swap(i);
+          }
+          swap_with(&new_leaf->suffixes[pos + 1], leaf->suffixes, lenlowerbound + 1, NKeysPerNode);
+
+          leaf->set_key_slots_used(split_point);
+          new_leaf->set_key_slots_used(NKeysPerNode - split_point + 1);
 
 #ifdef CHECK_INVARIANTS
-        leaf->base_invariant_unique_keys_check();
-        new_leaf->base_invariant_unique_keys_check();
-        INVARIANT(leaf->keys[split_point] < new_leaf->keys[0]);
+          leaf->base_invariant_unique_keys_check();
+          new_leaf->base_invariant_unique_keys_check();
+          INVARIANT(leaf->keys[split_point - 1] < new_leaf->keys[0]);
 #endif /* CHECK_INVARIANTS */
+
+        } else {
+          // XXX: not really sure if this invariant is true, but we rely
+          // on it for now
+          INVARIANT(size_t(lenlowerbound + 1) <= split_point);
+
+          // put new key in original leaf
+          copy_into(&new_leaf->keys[0], leaf->keys, split_point, NKeysPerNode);
+          copy_into(&new_leaf->values[0], leaf->values, split_point, NKeysPerNode);
+          copy_into(&new_leaf->lengths[0], leaf->lengths, split_point, NKeysPerNode);
+          swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, NKeysPerNode);
+
+          sift_right(leaf->keys, lenlowerbound + 1, split_point);
+          leaf->keys[lenlowerbound + 1] = kslice;
+          sift_right(leaf->values, lenlowerbound + 1, split_point);
+          leaf->values[lenlowerbound + 1].v = v;
+          sift_right(leaf->lengths, lenlowerbound + 1, split_point);
+          leaf->keyslice_set_length(lenlowerbound + 1, kslicelen, false);
+          sift_swap_right(leaf->suffixes, lenlowerbound + 1, split_point);
+          if (kslicelen == 9) {
+            rcu_imstring i(k.data() + 8, k.size() - 8);
+            leaf->suffixes[lenlowerbound + 1].swap(i);
+          } else {
+            rcu_imstring i;
+            leaf->suffixes[lenlowerbound + 1].swap(i);
+          }
+
+          leaf->set_key_slots_used(split_point + 1);
+          new_leaf->set_key_slots_used(NKeysPerNode - split_point);
+
+#ifdef CHECK_INVARIANTS
+          leaf->base_invariant_unique_keys_check();
+          new_leaf->base_invariant_unique_keys_check();
+          INVARIANT(leaf->keys[split_point] < new_leaf->keys[0]);
+#endif /* CHECK_INVARIANTS */
+        }
       }
 
       // pointer adjustment
