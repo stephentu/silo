@@ -78,7 +78,6 @@ public:
   void
   txn_consume()
   {
-    vector<char *> delete_me;
     void *txn = db->new_txn(txn_flags);
     //const bool direct_mem = db->index_supports_direct_mem_access();
     try {
@@ -100,9 +99,6 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
-    for (vector<char *>::iterator it = delete_me.begin();
-         it != delete_me.end(); ++it)
-      free(*it);
   }
 
   static void
@@ -111,12 +107,81 @@ public:
     static_cast<queue_worker *>(w)->txn_consume();
   }
 
+  void
+  txn_consume_scanhint()
+  {
+    void *txn = db->new_txn(txn_flags);
+    //const bool direct_mem = db->index_supports_direct_mem_access();
+    try {
+      const string lowk = queue_key(id, ctr);
+      const string highk = queue_key(id, numeric_limits<uint64_t>::max());
+      limit_callback c(1);
+      tbl->scan(txn, lowk.data(), lowk.size(),
+                highk.data(), highk.size(), true, c);
+      const bool found = !c.values.empty();
+      if (likely(found)) {
+        ALWAYS_ASSERT(c.values.size() == 1);
+        const string &k = c.values.front().first;
+        tbl->remove(txn, k.data(), k.size());
+      }
+      if (db->commit_txn(txn)) {
+        if (likely(found)) ctr++;
+        ntxn_commits++;
+      } else {
+        ntxn_aborts++;
+      }
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      db->abort_txn(txn);
+      ntxn_aborts++;
+    }
+  }
+
+  static void
+  TxnConsumeScanHint(bench_worker *w)
+  {
+    static_cast<queue_worker *>(w)->txn_consume_scanhint();
+  }
+
+  void
+  txn_consume_noscan()
+  {
+    void *txn = db->new_txn(txn_flags);
+    const bool direct_mem = db->index_supports_direct_mem_access();
+    try {
+      const string k = queue_key(id, ctr);
+      char *v = 0;
+      size_t vlen = 0;
+      bool found = false;
+      if (likely((found = tbl->get(txn, k.data(), k.size(), v, vlen)))) {
+        if (!direct_mem) free(v);
+        tbl->remove(txn, k.data(), k.size());
+      }
+      if (db->commit_txn(txn)) {
+        if (likely(found)) ctr++;
+        ntxn_commits++;
+      } else {
+        ntxn_aborts++;
+      }
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      db->abort_txn(txn);
+      ntxn_aborts++;
+    }
+  }
+
+  static void
+  TxnConsumeNoScan(bench_worker *w)
+  {
+    static_cast<queue_worker *>(w)->txn_consume_noscan();
+  }
+
   virtual workload_desc_vec
   get_workload() const
   {
     workload_desc_vec w;
     if (consumer)
-      w.push_back(workload_desc("Consume", 1.0, TxnConsume));
+      //w.push_back(workload_desc("Consume", 1.0, TxnConsume));
+      //w.push_back(workload_desc("ConsumeNoScan", 1.0, TxnConsumeNoScan));
+      w.push_back(workload_desc("ConsumeScanHint", 1.0, TxnConsumeScanHint));
     else
       w.push_back(workload_desc("Produce", 1.0, TxnProduce));
     return w;
