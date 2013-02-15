@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <vector>
 #include <utility>
@@ -15,6 +16,12 @@
 #include "mysql_wrapper.h"
 
 #include "../counter.h"
+
+#ifdef USE_JEMALLOC
+//cannot include this header b/c conflicts with malloc.h
+//#include <jemalloc/jemalloc.h>
+extern "C" void malloc_stats_print(void (*write_cb)(void *, const char *), void *cbopaque, const char *opts);
+#endif
 
 using namespace std;
 using namespace util;
@@ -61,6 +68,27 @@ get_system_memory_info()
   struct sysinfo inf;
   sysinfo(&inf);
   return make_pair(inf.mem_unit * inf.freeram, inf.mem_unit * inf.totalram);
+}
+
+static bool
+clear_file(const char *name)
+{
+  ofstream ofs(name);
+  ofs.close();
+  return true;
+}
+
+static void
+write_cb(void *p, const char *s) UNUSED;
+static void
+write_cb(void *p, const char *s)
+{
+  const char *f = "jemalloc.stats";
+  static bool s_clear_file UNUSED = clear_file(f);
+  ofstream ofs(f, ofstream::app);
+  ofs << s;
+  ofs.flush();
+  ofs.close();
 }
 
 void
@@ -138,6 +166,10 @@ bench_runner::run()
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
     cerr << "-------------------------" << endl;
+#ifdef USE_JEMALLOC
+    cerr << "printing jemalloc stats..." << endl;
+    malloc_stats_print(write_cb, NULL, "");
+#endif
   }
 
   // output for plotting script

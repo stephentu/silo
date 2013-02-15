@@ -1,9 +1,22 @@
 CXXFLAGS := -Wall -Werror -g -O2
-#LDFLAGS  := -lpthread -ljemalloc
-LDFLAGS  := -lpthread -ltcmalloc
+#CXXFLAGS := -Wall -g
 
-#CXXFLAGS := -Wall -g 
-#LDFLAGS  := -lpthread
+LDFLAGS := -lpthread
+
+# 0 = libc malloc
+# 1 = jemalloc
+# 2 = tcmalloc
+USE_MALLOC_MODE=1
+
+ifeq ($(USE_MALLOC_MODE),1)
+        CXXFLAGS+=-DUSE_JEMALLOC
+        LDFLAGS+=-ljemalloc
+else
+ifeq ($(USE_MALLOC_MODE),2)
+        CXXFLAGS+=-DUSE_TCMALLOC
+        LDFLAGS+=-ltcmalloc
+endif
+endif
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h counter.h core.h
@@ -30,7 +43,7 @@ BENCH_SRCFILES = \
 	benchmarks/mysql_wrapper.cc \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc \
-	benchmarks/queue.cc 
+	benchmarks/queue.cc
 BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
 
 all: test
@@ -41,14 +54,14 @@ benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
 %.o: %.cc $(HEADERS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-test: test.cc $(OBJFILES) 
+test: test.cc $(OBJFILES)
 	$(CXX) $(CXXFLAGS) -o test $^ $(LDFLAGS)
 
 .PHONY: bench
 bench: benchmarks/bench
 
 benchmarks/bench: benchmarks/bench.cc $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/bench $^ $(BENCH_LDFLAGS) 
+	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/bench $^ $(BENCH_LDFLAGS)
 
 .PHONY: clean
 clean:
