@@ -7,7 +7,7 @@
 /** options */
 //#define NODE_PREFETCH
 //#define DIE_ON_ABORT
-#define CHECK_INVARIANTS
+//#define CHECK_INVARIANTS
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 

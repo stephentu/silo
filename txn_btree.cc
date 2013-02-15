@@ -44,8 +44,14 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v)
     pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
 
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t.can_read_tid(start_t))) {
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
       transaction::abort_reason r = transaction::ABORT_REASON_UNSTABLE_READ;
+      t.abort_impl(r);
+      throw transaction_abort_exception(r);
+    }
+
+    if (unlikely(!t.can_read_tid(start_t))) {
+      transaction::abort_reason r = transaction::ABORT_REASON_FUTURE_TID_READ;
       t.abort_impl(r);
       throw transaction_abort_exception(r);
     }
@@ -117,8 +123,13 @@ txn_btree::txn_search_range_callback::invoke(
     transaction::record_t r = 0;
     pair<bool, transaction::tid_t> snapshot_tid_t = t->consistent_snapshot_tid();
     transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r) || !t->can_read_tid(start_t))) {
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
       transaction::abort_reason r = transaction::ABORT_REASON_UNSTABLE_READ;
+      t->abort_impl(r);
+      throw transaction_abort_exception(r);
+    }
+    if (unlikely(!t->can_read_tid(start_t))) {
+      transaction::abort_reason r = transaction::ABORT_REASON_FUTURE_TID_READ;
       t->abort_impl(r);
       throw transaction_abort_exception(r);
     }

@@ -76,6 +76,8 @@ ndb_ordered_index::get(
   }
 }
 
+static event_counter evt_rec_creates("record_creates");
+
 const char *
 ndb_ordered_index::put(
     void *txn,
@@ -92,6 +94,7 @@ ndb_ordered_index::put(
     delete [] record;
     throw abstract_db::abstract_abort_exception();
   }
+  ++evt_rec_creates;
   return (const char *) record + sizeof(size_t);
 }
 
@@ -161,7 +164,7 @@ ndb_ordered_index::size() const
   return btr.size_estimate();
 }
 
-static event_counter evt_rec_cleanup("record_cleanups");
+static event_counter evt_rec_deletes("record_deletes");
 
 static void
 record_cleanup_callback(uint8_t *record, bool outstanding_refs)
@@ -172,7 +175,7 @@ record_cleanup_callback(uint8_t *record, bool outstanding_refs)
   VERBOSE(cerr << "record_cleanup_callback(refs="
                << outstanding_refs << "): 0x"
                << hexify(intptr_t(record)) << endl);
-  ++evt_rec_cleanup;
+  ++evt_rec_deletes;
   if (outstanding_refs)
     rcu::free_array(record);
   else

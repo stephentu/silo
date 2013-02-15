@@ -980,7 +980,7 @@ tpcc_worker::txn_new_order()
       stock->s_ytd += ol_quantity;
       stock->s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
 
-      tbl_stock->insert(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen);
+      tbl_stock->put(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen);
 
       tpcc::order_line order_line;
       order_line.ol_w_id = int32_t(warehouse_id);
