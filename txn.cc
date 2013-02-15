@@ -968,8 +968,6 @@ transaction_proto2::on_logical_delete(
       (void *) info);
 }
 
-
-
 void
 transaction_proto2::enqueue_work_after_current_epoch(
     uint64_t epoch, work_callback_t work, void *p)
