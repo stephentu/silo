@@ -187,6 +187,12 @@ public:
     return ((unsigned long) next(32) << 32) + next(32);
   }
 
+  inline uint32_t
+  next_u32()
+  {
+    return next(32);
+  }
+
   /** [0.0, 1.0) */
   inline double
   next_uniform()

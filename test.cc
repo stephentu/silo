@@ -4,6 +4,7 @@
 #include "txn.h"
 #include "btree.h"
 #include "txn_btree.h"
+#include "varint.h"
 
 using namespace std;
 class main_thread : public ndb_thread {
@@ -19,6 +20,7 @@ public:
 #ifndef CHECK_INVARIANTS
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
+    varint::Test();
     //transaction::Test();
     //btree::Test();
     txn_btree::Test();

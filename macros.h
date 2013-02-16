@@ -8,6 +8,7 @@
 //#define NODE_PREFETCH
 //#define DIE_ON_ABORT
 //#define CHECK_INVARIANTS
+//#define USE_VARINT_ENCODING
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 

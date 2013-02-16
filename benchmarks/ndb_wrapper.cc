@@ -5,6 +5,7 @@
 #include "../varkey.h"
 #include "../macros.h"
 #include "../util.h"
+#include "../varint.h"
 
 using namespace std;
 using namespace util;
@@ -61,6 +62,52 @@ ndb_wrapper::close_index(abstract_ordered_index *idx)
   delete idx;
 }
 
+static inline ALWAYS_INLINE size_t
+size_encode_uint32(uint32_t value)
+{
+#ifdef USE_VARINT_ENCODING
+  return size_uvint32(value);
+#else
+  return sizeof(uint32_t);
+#endif
+}
+
+static inline ALWAYS_INLINE uint8_t *
+write_uint32(uint8_t *buf, uint32_t value)
+{
+  uint32_t *p = (uint32_t *) buf;
+  *p = value;
+  return (uint8_t *) (p + 1);
+}
+
+static inline ALWAYS_INLINE uint8_t *
+write_encode_uint32(uint8_t *buf, uint32_t value)
+{
+#ifdef USE_VARINT_ENCODING
+  return write_uvint32(buf, value);
+#else
+  return write_uint32(buf, value);
+#endif
+}
+
+static inline ALWAYS_INLINE const uint8_t *
+read_uint32(const uint8_t *buf, uint32_t *value)
+{
+  const uint32_t *p = (const uint32_t *) buf;
+  *value = *p;
+  return (const uint8_t *) (p + 1);
+}
+
+static inline ALWAYS_INLINE const uint8_t *
+read_encode_uint32(const uint8_t *buf, uint32_t *value)
+{
+#ifdef USE_VARINT_ENCODING
+  return read_uvint32(buf, value);
+#else
+  return read_uint32(buf, value);
+#endif
+}
+
 bool
 ndb_ordered_index::get(
     void *txn,
@@ -69,13 +116,13 @@ ndb_ordered_index::get(
 {
   try {
     txn_btree::value_type v = 0;
-    bool ret = btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen), v);
-    if (!ret)
+    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen), v))
       return false;
     INVARIANT(v != NULL);
-    uint32_t *sp = (uint32_t *) v;
-    valuelen = *sp;
-    value = (char *) (v + sizeof(uint32_t)); // points directly to record
+    uint32_t valuelen0;
+    v = (txn_btree::value_type) read_encode_uint32(v, &valuelen0);
+    value = (char *) v;
+    valuelen = valuelen0;
     return true;
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
@@ -92,10 +139,9 @@ ndb_ordered_index::put(
     const char *value, size_t valuelen)
 {
   ALWAYS_ASSERT(valuelen <= numeric_limits<uint32_t>::max());
-  uint8_t *record = new uint8_t[sizeof(uint32_t) + valuelen];
-  uint32_t *sp = (uint32_t *) record;
-  *sp = valuelen;
-  memcpy(record + sizeof(uint32_t), value, valuelen);
+  const size_t s = size_encode_uint32(valuelen);
+  uint8_t *record = new uint8_t[s + valuelen];
+  memcpy(write_encode_uint32(record, valuelen), value, valuelen);
   try {
     btr.insert(*((transaction *) txn), varkey((const uint8_t *) key, keylen), record);
   } catch (transaction_abort_exception &ex) {
@@ -104,7 +150,7 @@ ndb_ordered_index::put(
   }
   ++evt_rec_creates;
   evt_rec_bytes_alloc += valuelen;
-  return (const char *) record + sizeof(uint32_t);
+  return (const char *) record + s;
 }
 
 class ndb_wrapper_search_range_callback : public txn_btree::search_range_callback {
@@ -118,9 +164,8 @@ public:
     const char *key = (const char *) k.data();
     const size_t keylen = k.size();
 
-    const uint32_t *sp = (const uint32_t *) v;
-    const uint32_t valuelen = *sp;
-    const char *value = (const char *) (sp + 1);
+    uint32_t valuelen = 0;
+    const char *value = (const char *) read_encode_uint32(v, &valuelen);
 
     return upcall->invoke(key, keylen, value, valuelen);
   }
@@ -186,7 +231,9 @@ record_cleanup_callback(uint8_t *record, bool outstanding_refs)
                << outstanding_refs << "): 0x"
                << hexify(intptr_t(record)) << endl);
   ++evt_rec_deletes;
-  evt_rec_bytes_free += *((uint32_t *) record);
+  uint32_t valuelen = 0;
+  read_encode_uint32(record, &valuelen);
+  evt_rec_bytes_free += valuelen;
   if (outstanding_refs)
     rcu::free_array(record);
   else
