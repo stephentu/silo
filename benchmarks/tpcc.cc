@@ -1109,6 +1109,7 @@ tpcc_worker::txn_delivery()
       const uint c_id = oorder->o_c_id;
       const float ol_total = sum;
 
+      // update customer
       string customerPK = CustomerPrimaryKey(warehouse_id, d, c_id);
       char *customer_v;
       size_t customer_len;
@@ -1118,7 +1119,21 @@ tpcc_worker::txn_delivery()
       if (!direct_mem) delete_me.push_back(customer_v);
       tpcc::customer *customer = (tpcc::customer *) customer_v;
       customer->c_balance += ol_total;
-      tbl_customer->put(txn, customerPK.data(), customerPK.size(), customer_v, customer_len);
+      const char *customer_p =
+        tbl_customer->put(txn, customerPK.data(), customerPK.size(), customer_v, customer_len);
+      tpcc::customer *customer_new = (tpcc::customer *) customer_p;
+      ALWAYS_ASSERT(!direct_mem || customer_p);
+      if (customer_p) {
+        // need to update secondary index
+        string customerNameKey = CustomerNameIdxKey(
+            customer_new->c_w_id, customer_new->c_d_id,
+            customer_new->c_last.str(true), customer_new->c_first.str(true));
+        tpcc::customer_name_idx_mem rec;
+        rec.c_id = customer_new->c_id;
+        rec.c_ptr = (tpcc::customer *) customer_p;
+        tbl_customer_name_idx->insert(txn, customerNameKey.data(), customerNameKey.size(),
+            (const char *) &rec, sizeof(rec));
+      }
     }
     if (db->commit_txn(txn))
       ntxn_commits++;
@@ -1234,7 +1249,22 @@ tpcc_worker::txn_payment()
       customer->c_data.assign(s);
     }
 
-    tbl_customer->put(txn, customerPK.data(), customerPK.size(), (const char *) customer, sizeof(*customer));
+    const char *customer_p =
+      tbl_customer->put(txn, customerPK.data(), customerPK.size(), (const char *) customer, sizeof(*customer));
+    tpcc::customer *customer_new = (tpcc::customer *) customer_p;
+    ALWAYS_ASSERT(!direct_mem || customer_p);
+    if (customer_p) {
+      // need to update secondary index
+      string customerNameKey = CustomerNameIdxKey(
+          customer_new->c_w_id, customer_new->c_d_id,
+          customer_new->c_last.str(true), customer_new->c_first.str(true));
+      tpcc::customer_name_idx_mem rec;
+      rec.c_id = customer_new->c_id;
+      rec.c_ptr = (tpcc::customer *) customer_p;
+      tbl_customer_name_idx->insert(txn, customerNameKey.data(), customerNameKey.size(),
+          (const char *) &rec, sizeof(rec));
+    }
+
     string w_name = warehouse->w_name.str();
     if (w_name.size() > 10)
       w_name.resize(10);
@@ -1329,6 +1359,11 @@ tpcc_worker::txn_order_status()
         numeric_limits<int32_t>::max());
     tbl_oorder_c_id_idx->scan(txn, oorder_lowkey.data(), oorder_lowkey.size(),
         oorder_highkey.data(), oorder_highkey.size(), true, c_oorder);
+    if (unlikely(c_oorder.values.empty())) {
+      cerr << "oorder_lokey: " << hexify(oorder_lowkey) << endl;
+      cerr << "oorder_hikey: " << hexify(oorder_highkey) << endl;
+      db->print_txn_debug(txn);
+    }
     ALWAYS_ASSERT(!c_oorder.values.empty());
 
     uint o_id;
