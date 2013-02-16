@@ -127,7 +127,7 @@ public:
 
   struct logical_node_spillblock : private util::noncopyable {
 
-    static const size_t NSpills = 6; // makes each spillblock about 2 cachelines
+    static const size_t NSpills = 1;
     static const size_t NSpillSize = 1;
     static const size_t NElems = NSpills * NSpillSize;
 
@@ -220,11 +220,13 @@ public:
         INVARIANT(n > 0 && n <= NElems);
         if (versions[n - 1] <= snapshot_tid)
           return oldest_tid > commit_tid;
-        for (ssize_t i = n - 2; i >= 0; i--)
-          if (versions[i] <= snapshot_tid) {
-            INVARIANT(versions[i + 1] != commit_tid);
-            return versions[i + 1] > commit_tid;
-          }
+        if (NElems > 1) {
+          for (ssize_t i = n - 2; i >= 0; i--)
+            if (versions[i] <= snapshot_tid) {
+              INVARIANT(versions[i + 1] != commit_tid);
+              return versions[i + 1] > commit_tid;
+            }
+        }
         oldest_tid = versions[0];
         cur = cur->spillblock_next;
       }

@@ -931,40 +931,54 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(rcu::in_rcu_region());
-
-  // XXX(stephentu): punt on wrap-around for now
-  if (current_epoch < 2 || !ln->spillblock_head)
-    return;
-  const uint64_t gc_epoch = current_epoch - 2;
-
+  const uint64_t epoch = g_last_consistent_epoch;
+  // no point in keeping around spill entries which have version > epoch
   struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
-
-  // we store the number of the last GC in the 1st spillblock's opaque counter
-  if (p->gc_opaque_value >= gc_epoch)
-    // don't need to GC anymore
-    return;
-
-  p->gc_opaque_value = gc_epoch;
-
-  // chase the pointers until we find a value which has epoch < gc_epoch. Then we gc the
-  // entire chain
-  bool do_gc = false;
-  while (p) {
-    INVARIANT(p->size());
-    if (do_gc) {
-      // victim found
-      *pp = 0;
-      p->gc_chain(true);
-      break;
-    }
-    if (p->is_full() /* don't GC non-full blocks */ &&
-        EpochId(p->versions[logical_node_spillblock::NElems - 1]) < gc_epoch)
-      // NB(stephentu): gc the NEXT spillblock- this guarantees us that we'll
-      // still be able to perform a consistent read at the gc_epoch
-      do_gc = true;
+  for (size_t i = 0; i < 1 && p && p->versions[logical_node_spillblock::NElems - 1] <= epoch; i++) {
     pp = &p->spillblock_next;
     p = p->spillblock_next;
   }
+  if (p) {
+    *pp = 0;
+    p->gc_chain(true);
+  }
+
+  //INVARIANT(ln->is_locked());
+  //INVARIANT(rcu::in_rcu_region());
+
+  //// XXX(stephentu): punt on wrap-around for now
+  //if (current_epoch < 2 || !ln->spillblock_head)
+  //  return;
+  //const uint64_t gc_epoch = current_epoch - 2;
+
+  //struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
+
+  //// we store the number of the last GC in the 1st spillblock's opaque counter
+  //if (p->gc_opaque_value >= gc_epoch)
+  //  // don't need to GC anymore
+  //  return;
+
+  //p->gc_opaque_value = gc_epoch;
+
+  //// chase the pointers until we find a value which has epoch < gc_epoch. Then we gc the
+  //// entire chain
+  //bool do_gc = false;
+  //while (p) {
+  //  INVARIANT(p->size());
+  //  if (do_gc) {
+  //    // victim found
+  //    *pp = 0;
+  //    p->gc_chain(true);
+  //    break;
+  //  }
+  //  if (p->is_full() /* don't GC non-full blocks */ &&
+  //      EpochId(p->versions[logical_node_spillblock::NElems - 1]) < gc_epoch)
+  //    // NB(stephentu): gc the NEXT spillblock- this guarantees us that we'll
+  //    // still be able to perform a consistent read at the gc_epoch
+  //    do_gc = true;
+  //  pp = &p->spillblock_next;
+  //  p = p->spillblock_next;
+  //}
 }
 
 struct try_delete_info {
