@@ -125,70 +125,26 @@ public:
     return false;
   }
 
+  /**
+   * Just a singly linked list for now
+   */
   struct logical_node_spillblock : private util::noncopyable {
 
-    static const size_t NSpills = 1;
-    static const size_t NSpillSize = 1;
-    static const size_t NElems = NSpills * NSpillSize;
-
-    volatile uint8_t nspills; // how many spills so far, the # only increases
-    volatile uint64_t gc_opaque_value; // an opaque 64-bit value for GC, initialized to 0
-
-    tid_t versions[NElems];
-    record_t values[NElems]; // has ownership over the values pointed to:
-                             // gc_chain() is responsible for free-ing the
-                             // values (via the completion callbacks)
+    tid_t version;
+    record_t value; // has ownership over the value pointed to:
+                    // gc_chain() is responsible for free-ing the
+                    // value (via the completion callbacks)
 
     struct logical_node_spillblock *spillblock_next;
 
-    logical_node_spillblock(struct logical_node_spillblock *spillblock_next);
+    logical_node_spillblock(
+        tid_t version, record_t value,
+        struct logical_node_spillblock *spillblock_next);
     ~logical_node_spillblock();
-
-    inline size_t
-    size() const
-    {
-      return nspills * NSpillSize;
-    }
-
-    inline uint8_t
-    version() const
-    {
-      COMPILER_MEMORY_FENCE;
-      return nspills;
-    }
-
-    inline bool
-    check_version(uint8_t version) const
-    {
-      COMPILER_MEMORY_FENCE;
-      return nspills == version;
-    }
-
-    inline bool
-    is_full() const
-    {
-      INVARIANT(nspills <= NSpills);
-      return nspills == NSpills;
-    }
-
-    inline void
-    spill_into(tid_t *intake_versions, record_t *intake_values)
-    {
-      INVARIANT(!is_full());
-      memcpy((char *) &versions[nspills * NSpillSize],
-             (const char *) intake_versions,
-             NSpillSize * sizeof(tid_t));
-      memcpy((char *) &values[nspills * NSpillSize],
-             (const char *) intake_values,
-             NSpillSize * sizeof(record_t));
-      COMPILER_MEMORY_FENCE;
-      nspills++;
-    }
 
     /**
      * Read the record at tid t. Returns true if such a record exists,
-     * false otherwise (ie the record was GC-ed). Note that
-     * record_at()'s return values must be validated using versions.
+     * false otherwise (ie the record was GC-ed)
      *
      * The cool thing about record_at() for spillblocks is we don't ever have
      * to check version numbers- the contents are never overwritten
@@ -198,14 +154,11 @@ public:
     {
       const struct logical_node_spillblock *cur = this;
       while (cur) {
-        const size_t n = cur->size();
-        INVARIANT(n > 0 && n <= NElems);
-        for (ssize_t i = n - 1; i >= 0; i--)
-          if (cur->versions[i] <= t) {
-            start_t = cur->versions[i];
-            r = cur->values[i];
-            return true;
-          }
+        if (likely(cur->version <= t)) {
+          start_t = cur->version;
+          r = cur->value;
+          return true;
+        }
         cur = cur->spillblock_next;
       }
       return false;
@@ -216,18 +169,9 @@ public:
     {
       const struct logical_node_spillblock *cur = this;
       while (cur) {
-        const size_t n = cur->size();
-        INVARIANT(n > 0 && n <= NElems);
-        if (versions[n - 1] <= snapshot_tid)
+        if (version <= snapshot_tid)
           return oldest_tid > commit_tid;
-        if (NElems > 1) {
-          for (ssize_t i = n - 2; i >= 0; i--)
-            if (versions[i] <= snapshot_tid) {
-              INVARIANT(versions[i + 1] != commit_tid);
-              return versions[i + 1] > commit_tid;
-            }
-        }
-        oldest_tid = versions[0];
+        oldest_tid = version;
         cur = cur->spillblock_next;
       }
       return false;
@@ -545,13 +489,10 @@ public:
       }
 
       // need to spill
-      struct logical_node_spillblock *sb = spillblock_head;
-      if (!spillblock_head || spillblock_head->is_full())
-        sb = new logical_node_spillblock(spillblock_head);
-      _static_assert(logical_node_spillblock::NSpillSize == 1);
-      sb->spill_into(&version, &value);
-      if (sb != spillblock_head)
-        spillblock_head = sb;
+      struct logical_node_spillblock *sb =
+        new logical_node_spillblock(version, value, spillblock_head);
+      spillblock_head = sb;
+      COMPILER_MEMORY_FENCE;
       version = t;
       value = r;
       return true;

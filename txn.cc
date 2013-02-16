@@ -35,11 +35,10 @@ static event_counter evt_spillblock_creates("spillblock_creates");
 static event_counter evt_spillblock_deletes("spillblock_deletes");
 
 transaction::logical_node_spillblock::logical_node_spillblock(
+    tid_t version, record_t value,
     struct logical_node_spillblock *spillblock_next)
-  : nspills(0), gc_opaque_value(0),
-    spillblock_next(spillblock_next)
+  : version(version), value(value), spillblock_next(spillblock_next)
 {
-  _static_assert(sizeof(logical_node_spillblock) <= (2 * CACHELINE_SIZE));
   ++evt_spillblock_creates;
 }
 
@@ -55,12 +54,10 @@ transaction::logical_node_spillblock::gc_chain(bool do_rcu)
   struct logical_node_spillblock *cur = this;
   const vector<callback_t> &callbacks = completion_callbacks();
   while (cur) {
-    // free all the records
-    const size_t n = cur->size();
-    for (size_t i = 0; i < n; i++)
-      for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
-           inner_it != callbacks.end(); ++inner_it)
-        (*inner_it)(cur->values[i], do_rcu);
+    // free the records
+    for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
+        inner_it != callbacks.end(); ++inner_it)
+      (*inner_it)(cur->value, do_rcu);
     struct logical_node_spillblock *next = cur->spillblock_next;
     if (do_rcu)
       rcu::free(cur);
@@ -144,13 +141,10 @@ operator<<(ostream &o, const transaction::logical_node &ln)
   o << endl;
   const struct transaction::logical_node_spillblock *p = ln.spillblock_head;
   for (; p; p = p->spillblock_next) {
-    const size_t in = p->size();
     vector<transaction::tid_t> itids;
     vector<transaction::record_t> irecs;
-    for (size_t j = 0; j < in; j++) {
-      itids.push_back(p->versions[j]);
-      irecs.push_back(p->values[j]);
-    }
+    itids.push_back(p->version);
+    irecs.push_back(p->value);
     vector<string> itids_s = format_tid_list(itids);
     vector<string> irecs_s = format_rec_list(irecs);
     o << "[tids=" << format_list(itids_s.rbegin(), itids_s.rend())
@@ -934,7 +928,8 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
   const uint64_t epoch = g_last_consistent_epoch;
   // no point in keeping around spill entries which have version > epoch
   struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
-  for (size_t i = 0; i < 1 && p && p->versions[logical_node_spillblock::NElems - 1] <= epoch; i++) {
+  const size_t NMaxChainLength = 1;
+  for (size_t i = 0; i < NMaxChainLength && p && p->version <= epoch; i++) {
     pp = &p->spillblock_next;
     p = p->spillblock_next;
   }
@@ -942,43 +937,6 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
     *pp = 0;
     p->gc_chain(true);
   }
-
-  //INVARIANT(ln->is_locked());
-  //INVARIANT(rcu::in_rcu_region());
-
-  //// XXX(stephentu): punt on wrap-around for now
-  //if (current_epoch < 2 || !ln->spillblock_head)
-  //  return;
-  //const uint64_t gc_epoch = current_epoch - 2;
-
-  //struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
-
-  //// we store the number of the last GC in the 1st spillblock's opaque counter
-  //if (p->gc_opaque_value >= gc_epoch)
-  //  // don't need to GC anymore
-  //  return;
-
-  //p->gc_opaque_value = gc_epoch;
-
-  //// chase the pointers until we find a value which has epoch < gc_epoch. Then we gc the
-  //// entire chain
-  //bool do_gc = false;
-  //while (p) {
-  //  INVARIANT(p->size());
-  //  if (do_gc) {
-  //    // victim found
-  //    *pp = 0;
-  //    p->gc_chain(true);
-  //    break;
-  //  }
-  //  if (p->is_full() /* don't GC non-full blocks */ &&
-  //      EpochId(p->versions[logical_node_spillblock::NElems - 1]) < gc_epoch)
-  //    // NB(stephentu): gc the NEXT spillblock- this guarantees us that we'll
-  //    // still be able to perform a consistent read at the gc_epoch
-  //    do_gc = true;
-  //  pp = &p->spillblock_next;
-  //  p = p->spillblock_next;
-  //}
 }
 
 struct try_delete_info {
