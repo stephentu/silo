@@ -43,6 +43,12 @@ ndb_wrapper::abort_txn(void *txn)
   delete (transaction *) txn;
 }
 
+void
+ndb_wrapper::print_txn_debug(void *txn) const
+{
+  ((transaction *) txn)->dump_debug_info(transaction::ABORT_REASON_USER);
+}
+
 abstract_ordered_index *
 ndb_wrapper::open_index(const string &name)
 {

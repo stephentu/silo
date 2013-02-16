@@ -85,6 +85,8 @@ public:
    */
   virtual void abort_txn(void *txn) = 0;
 
+  virtual void print_txn_debug(void *txn) const {}
+
   virtual abstract_ordered_index *
   open_index(const std::string &name) = 0;
 
