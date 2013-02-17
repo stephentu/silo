@@ -7,11 +7,13 @@
 #include <string>
 
 #include "../macros.h"
+#include "serializer.h"
 
 // equivalent to VARCHAR(N)
 
 template <typename IntSizeType, unsigned int N>
 class inline_str_base {
+  friend class serializer< inline_str_base<IntSizeType, N> >;
 public:
 
   inline_str_base() : sz(0) {}
@@ -90,6 +92,7 @@ class inline_str_16 : public inline_str_base<uint16_t, N> {} PACKED;
 // equiavlent to CHAR(N)
 template <unsigned int N>
 class inline_str_fixed {
+  friend class serializer< inline_str_fixed<N> >;
 public:
   inline_str_fixed()
   {
@@ -153,5 +156,35 @@ public:
 private:
   char buf[N];
 } PACKED;
+
+// serializer<T> specialization
+template <typename IntSizeType, unsigned int N>
+struct serializer< inline_str_base<IntSizeType, N> > {
+  typedef inline_str_base<IntSizeType, N> obj_type;
+  inline uint8_t *
+  write(uint8_t *buf, const obj_type *obj) const
+  {
+    serializer<IntSizeType> s;
+    buf = write(buf, &obj->sz);
+    memcpy(buf, &obj->buf[0], obj->sz);
+    return buf + obj->sz;
+  }
+
+  const uint8_t *
+  read(const uint8_t *buf, obj_type *obj) const
+  {
+    serializer<IntSizeType> s;
+    buf = read(buf, &obj->sz);
+    memcpy(&obj->buf[0], buf, obj->sz);
+    return buf + obj->sz;
+  }
+
+  size_t
+  nbytes(const obj_type *obj) const
+  {
+    serializer<IntSizeType> s;
+    return s.nbytes(&obj->sz) + obj->sz;
+  }
+};
 
 #endif /* _NDB_BENCH_INLINE_STR_H_ */

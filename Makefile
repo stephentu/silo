@@ -33,6 +33,7 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/abstract_ordered_index.h \
 	benchmarks/bench.h \
 	benchmarks/inline_str.h \
+	benchmarks/serializer.h \
 	benchmarks/bdb_wrapper.h \
 	benchmarks/ndb_wrapper.h \
 	benchmarks/mysql_wrapper.h \
