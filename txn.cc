@@ -1044,14 +1044,12 @@ bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
 void
 transaction_proto2::epoch_loop::run()
 {
+  // runs as daemon thread
   struct timespec t;
   memset(&t, 0, sizeof(t));
   work_pq pq;
   timer loop_timer;
   for (;;) {
-    // XXX(stephentu): better solution for epoch intervals?
-    // this interval time defines the staleness of our consistent
-    // snapshots
 
     const uint64_t last_loop_usec = loop_timer.lap();
     const uint64_t delay_time_usec = 100 * 1000; /* 100 ms */
@@ -1068,18 +1066,18 @@ transaction_proto2::epoch_loop::run()
     // XXX(stephentu): document why we need this memory fence
     __sync_synchronize();
 
-    static uint64_t pq_size_prev = 0;
-    static timer pq_timer;
-    static int _x = 0;
-    const uint64_t pq_size_cur = pq.size();
-    const double pq_loop_time = pq_timer.lap() / 1000000.0; // sec
-    if (((++_x) % 10) == 0) {
-      const double pq_growth_rate = double(pq_size_cur - pq_size_prev)/pq_loop_time;
-      cerr << "pq_growth_rate: " << pq_growth_rate << " elems/sec" << endl;
-      cerr << "pq_current_size: " << pq.size() << " elems" << endl;
-      cerr << "last_loop_time: " << double(last_loop_usec)/1000.0 << endl;
-    }
-    pq_size_prev = pq_size_cur;
+    //static uint64_t pq_size_prev = 0;
+    //static timer pq_timer;
+    //static int _x = 0;
+    //const uint64_t pq_size_cur = pq.size();
+    //const double pq_loop_time = pq_timer.lap() / 1000000.0; // sec
+    //if (((++_x) % 10) == 0) {
+    //  const double pq_growth_rate = double(pq_size_cur - pq_size_prev)/pq_loop_time;
+    //  cerr << "pq_growth_rate: " << pq_growth_rate << " elems/sec" << endl;
+    //  cerr << "pq_current_size: " << pq.size() << " elems" << endl;
+    //  cerr << "last_loop_time: " << double(last_loop_usec)/1000.0 << endl;
+    //}
+    //pq_size_prev = pq_size_cur;
 
     // wait for each core to finish epoch (g_current_epoch - 1)
     const size_t l_core_count = coreid::core_count();

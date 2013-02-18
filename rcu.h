@@ -14,6 +14,7 @@ public:
 
   typedef void (*deleter_t)(void *);
   typedef std::pair<void *, deleter_t> delete_entry;
+  typedef std::vector<delete_entry> delete_queue;
 
   template <typename T>
   static inline void
@@ -33,7 +34,7 @@ public:
   // a sync struct
   struct sync {
     volatile epoch_t local_epoch;
-    std::vector<delete_entry> local_queues[2];
+    delete_queue local_queues[2];
     pthread_spinlock_t local_critical_mutex;
     sync(epoch_t local_epoch);
     ~sync();
@@ -76,7 +77,7 @@ private:
   static pthread_spinlock_t *rcu_mutex();
 
   static volatile epoch_t global_epoch;
-  static std::vector<delete_entry> global_queues[2];
+  static delete_queue global_queues[2];
 
   static volatile bool gc_thread_started;
   static pthread_t gc_thread_p;

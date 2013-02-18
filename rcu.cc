@@ -13,7 +13,7 @@ using namespace std;
 using namespace util;
 
 volatile rcu::epoch_t rcu::global_epoch = 0;
-vector<rcu::delete_entry> rcu::global_queues[2];
+rcu::delete_queue rcu::global_queues[2];
 
 volatile bool rcu::gc_thread_started = false;
 pthread_t rcu::gc_thread_p;
@@ -157,59 +157,131 @@ rcu::in_rcu_region()
 
 static event_counter evt_rcu_deletes("rcu_deletes");
 
+class gc_reaper_thread : public ndb_thread {
+public:
+  gc_reaper_thread()
+    : ndb_thread(true, "rcu-reaper")
+  {
+    ALWAYS_ASSERT(pthread_spin_init(&lock, PTHREAD_PROCESS_PRIVATE) == 0);
+  }
+  virtual void
+  run()
+  {
+    struct timespec t;
+    memset(&t, 0, sizeof(t));
+    t.tv_nsec = 100 * 1000000; /* 100 ms */
+    timer loop_timer;
+    rcu::delete_queue stack_queue;
+    for (;;) {
+      // see if any elems to process
+      {
+        scoped_spinlock l(&lock);
+        stack_queue.swap(queue);
+      }
+      if (stack_queue.empty())
+        nanosleep(&t, NULL);
+
+      const uint64_t last_loop_usec = loop_timer.lap();
+      //static int _x = 0;
+      //if (((++_x) % 10) == 0) {
+      //  cerr << "stack_queue.size(): " << stack_queue.size() << endl;
+      //  cerr << "last_loop_ms: " << double(last_loop_usec)/1000.0 << endl;
+      //}
+      for (rcu::delete_queue::iterator it = stack_queue.begin();
+           it != stack_queue.end(); ++it) {
+        try {
+          it->second(it->first);
+        } catch (...) {
+          cerr << "rcu-reaper: uncaught exception in free routine" << endl;
+        }
+      }
+      evt_rcu_deletes += stack_queue.size();
+      stack_queue.clear();
+      VERBOSE(cerr << "deleted " << elems.size() << " elements" << endl);
+    }
+  }
+  pthread_spinlock_t lock;
+  rcu::delete_queue queue;
+};
+
 void *
 rcu::gc_thread_loop(void *p)
 {
   // runs as daemon thread
-  while (true) {
-    // increment global epoch
-    epoch_t cleaning_epoch = global_epoch++;
-    COMPILER_MEMORY_FENCE;
+  struct timespec t;
+  memset(&t, 0, sizeof(t));
+  timer loop_timer;
+  const unsigned int NReapers = 8;
+  static gc_reaper_thread reaper_loops[NReapers];
+  for (unsigned int i = 0; i < NReapers; i++)
+    reaper_loops[i].start();
+  unsigned int rr = 0;
+  for (;;) {
 
-    vector<delete_entry> elems;
+    const uint64_t last_loop_usec = loop_timer.lap();
+    const uint64_t delay_time_usec = 100 * 1000; /* 100 ms */
+    if (last_loop_usec < delay_time_usec) {
+      t.tv_nsec = (delay_time_usec - last_loop_usec) * 1000;
+      nanosleep(&t, NULL);
+    }
+
+    // increment global epoch
+    const epoch_t cleaning_epoch = global_epoch++;
+
+    __sync_synchronize();
 
     // now wait for each thread to finish any outstanding critical sections
     // from the previous epoch, and advance it forward to the global epoch
     {
-      scoped_spinlock l(rcu_mutex());
+      scoped_spinlock l(rcu_mutex()); // prevents new threads from joining
       for (map<pthread_t, sync *>::iterator it = sync_map.begin();
            it != sync_map.end(); ++it) {
         sync *s = it->second;
-        epoch_t local_epoch = s->local_epoch;
+        const epoch_t local_epoch = s->local_epoch;
         if (local_epoch != global_epoch) {
           INVARIANT(local_epoch == cleaning_epoch);
           scoped_spinlock l0(&s->local_critical_mutex);
           s->local_epoch = global_epoch;
         }
+
         // now the next time the thread enters a critical section, it
         // *must* get the new global_epoch, so we can now claim its
         // deleted pointers from global_epoch - 1
-        elems.insert(elems.end(),
-                     s->local_queues[cleaning_epoch % 2].begin(),
-                     s->local_queues[cleaning_epoch % 2].end());
-        s->local_queues[cleaning_epoch % 2].clear();
+        delete_queue &local_queue = s->local_queues[cleaning_epoch % 2];
+
+        gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NReapers];
+        scoped_spinlock l0(&reaper_loop.lock);
+        if (reaper_loop.queue.empty()) {
+          reaper_loop.queue.swap(local_queue);
+          INVARIANT(local_queue.empty());
+        } else {
+          reaper_loop.queue.reserve(reaper_loop.queue.size() + local_queue.size());
+          reaper_loop.queue.insert(
+              reaper_loop.queue.end(),
+              local_queue.begin(),
+              local_queue.end());
+          local_queue.clear();
+        }
       }
 
       // pull the ones from the global queue
-      elems.insert(
-          elems.end(),
-          global_queues[cleaning_epoch % 2].begin(),
-          global_queues[cleaning_epoch % 2].end());
-      global_queues[cleaning_epoch % 2].clear();
+      delete_queue &global_queue = global_queues[cleaning_epoch % 2];
+      if (unlikely(!global_queue.empty())) {
+        gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NReapers];
+        scoped_spinlock l0(&reaper_loop.lock);
+        if (reaper_loop.queue.empty()) {
+          reaper_loop.queue.swap(global_queue);
+          INVARIANT(global_queue.empty());
+        } else {
+          reaper_loop.queue.reserve(reaper_loop.queue.size() + global_queue.size());
+          reaper_loop.queue.insert(
+              reaper_loop.queue.end(),
+              global_queue.begin(),
+              global_queue.end());
+          global_queue.clear();
+        }
+      }
     }
-
-    for (vector<delete_entry>::iterator it = elems.begin();
-         it != elems.end(); ++it)
-      it->second(it->first);
-
-    VERBOSE(cerr << "deleted " << elems.size() << " elements" << endl);
-    evt_rcu_deletes += elems.size();
-
-    // XXX: better solution for GC intervals?
-    struct timespec t;
-    memset(&t, 0, sizeof(t));
-    t.tv_nsec = 100 * 1000000; // 100 ms
-    nanosleep(&t, NULL);
   }
   return NULL;
 }
