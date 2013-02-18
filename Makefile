@@ -6,7 +6,7 @@ LDFLAGS := -lpthread
 # 0 = libc malloc
 # 1 = jemalloc
 # 2 = tcmalloc
-USE_MALLOC_MODE=1
+USE_MALLOC_MODE=2
 
 ifeq ($(USE_MALLOC_MODE),1)
         CXXFLAGS+=-DUSE_JEMALLOC
@@ -20,7 +20,7 @@ endif
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h counter.h core.h
-SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc txn_btree.cc varint.cc
+SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc txn_btree.cc varint.cc memory.cc
 OBJFILES = $(SRCFILES:.cc=.o)
 
 MYSQL_SHARE_DIR=/x/stephentu/mysql-5.5.29/build/sql/share
