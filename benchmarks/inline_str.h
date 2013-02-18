@@ -78,6 +78,18 @@ public:
     assign(s.data(), s.size());
   }
 
+  inline bool
+  operator==(const inline_str_base &other) const
+  {
+    return memcmp(buf, other.buf, sz) == 0;
+  }
+
+  inline bool
+  operator!=(const inline_str_base &other) const
+  {
+    return !operator==(other);
+  }
+
 private:
   IntSizeType sz;
   char buf[N];
@@ -151,6 +163,18 @@ public:
   assign(const std::string &s)
   {
     assign(s.data(), s.size());
+  }
+
+  inline bool
+  operator==(const inline_str_fixed &other) const
+  {
+    return memcmp(buf, other.buf, N) == 0;
+  }
+
+  inline bool
+  operator!=(const inline_str_fixed &other) const
+  {
+    return !operator==(other);
   }
 
 private:

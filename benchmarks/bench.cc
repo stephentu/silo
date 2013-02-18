@@ -97,13 +97,21 @@ bench_runner::run()
   // load data
   const vector<bench_loader *> loaders = make_loaders();
   {
-    scoped_timer t("dataloading", verbose);
-    for (vector<bench_loader *>::const_iterator it = loaders.begin();
-         it != loaders.end(); ++it)
-      (*it)->start();
-    for (vector<bench_loader *>::const_iterator it = loaders.begin();
-         it != loaders.end(); ++it)
-      (*it)->join();
+    const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
+    {
+      scoped_timer t("dataloading", verbose);
+      for (vector<bench_loader *>::const_iterator it = loaders.begin();
+          it != loaders.end(); ++it)
+        (*it)->start();
+      for (vector<bench_loader *>::const_iterator it = loaders.begin();
+          it != loaders.end(); ++it)
+        (*it)->join();
+    }
+    const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
+    const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first); // free mem
+    const double delta_mb = double(delta)/1048576.0;
+    if (verbose)
+      cerr << "DB size: " << delta_mb << " MB" << endl;
   }
 
   db->do_txn_epoch_sync();
@@ -154,7 +162,7 @@ bench_runner::run()
     for (size_t i = 1; i < workers.size(); i++)
       map_agg(agg_txn_counts, workers[i]->get_txn_counts());
     cerr << "memory delta: " << delta_mb  << " MB" << endl;
-    cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB" << endl;
+    cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
@@ -303,6 +311,11 @@ main(int argc, char **argv)
     cerr << "  basedir     : " << basedir           << endl;
     cerr << "  txn-flags   : " << hexify(txn_flags) << endl;
     cerr << "  runtime     : " << runtime           << endl;
+#ifdef USE_VARINT_ENCODING
+    cerr << "  var-encode  : 1"                     << endl;
+#else
+    cerr << "  var-encode  : 0"                     << endl;
+#endif
   }
 
   test_fn(db);

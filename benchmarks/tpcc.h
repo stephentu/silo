@@ -16,6 +16,10 @@ template <typename T> struct encoder {};
 #define STRUCT_LAYOUT_X(tpe, name) \
   tpe name;
 
+#define STRUCT_EQ_X(tpe, name) \
+  if (this->name != other.name) \
+    return false;
+
 #define SERIALIZE_WRITE_FIELD_X(tpe, name) \
   do { \
     serializer< tpe > s; \
@@ -78,6 +82,17 @@ template <typename T> struct encoder {};
 #define DO_STRUCT(name, fields) \
   struct name { \
     fields(STRUCT_LAYOUT_X) \
+    inline bool \
+    operator==(const struct name &other) const \
+    { \
+      fields(STRUCT_EQ_X) \
+      return true; \
+    } \
+    inline bool \
+    operator!=(const struct name &other) const \
+    { \
+      return !operator==(other); \
+    } \
   } PACKED; \
   template <> \
   struct encoder< name > { \

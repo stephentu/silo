@@ -442,7 +442,10 @@ protected:
   load()
   {
     void *txn = db->new_txn(txn_flags);
+    const bool direct_mem = db->index_supports_direct_mem_access();
+    uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
+      vector<warehouse> warehouses;
       for (uint i = 1; i <= NumWarehouses(); i++) {
         warehouse warehouse;
         warehouse.w_id = i;
@@ -464,19 +467,42 @@ protected:
         warehouse.w_zip.assign(w_zip);
 
         const size_t sz = warehouse_enc.nbytes(&warehouse);
+        warehouse_total_sz += sz;
+        n_warehouses++;
         uint8_t buf[sz];
         const string pk = WarehousePrimaryKey(i);
         tbl_warehouse->insert(
             txn, pk.data(), pk.size(),
             (const char *) warehouse_enc.write(buf, &warehouse), sz);
+
+        warehouses.push_back(warehouse);
+      }
+      ALWAYS_ASSERT(db->commit_txn(txn));
+      txn = db->new_txn(txn_flags);
+      for (uint i = 1; i <= NumWarehouses(); i++) {
+        warehouse warehouse_tmp;
+        const string warehousePK = WarehousePrimaryKey(i);
+        char *warehouse_v = 0;
+        size_t warehouse_vlen = 0;
+        ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
+        warehouse warehouse_temp;
+        const warehouse *warehouse =
+          warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
+        ALWAYS_ASSERT(warehouses[i - 1] == *warehouse);
+        if (!direct_mem) free(warehouse_v);
+        //if (verbose)
+        //  cerr << "warehouse_vlen = " << warehouse_vlen << ", sizeof(warehouse) = " << sizeof(*warehouse) << endl;
       }
       ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
+    if (verbose) {
       cerr << "[INFO] finished loading warehouse" << endl;
+      cerr << "[INFO]   * average warehouse record length: "
+           << (double(warehouse_total_sz)/double(n_warehouses)) << " bytes" << endl;
+    }
   }
 };
 
@@ -495,6 +521,7 @@ protected:
   {
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
+    uint64_t total_sz = 0;
     try {
       for (uint i = 1; i <= NumItems(); i++) {
         item item;
@@ -514,6 +541,7 @@ protected:
         item.i_im_id = RandomNumber(r, 1, 10000);
 
         const size_t sz = item_enc.nbytes(&item);
+        total_sz += sz;
         uint8_t buf[sz];
         const string pk = ItemPrimaryKey(i);
         tbl_item->insert(
@@ -530,8 +558,11 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
+    if (verbose) {
       cerr << "[INFO] finished loading item" << endl;
+      cerr << "[INFO]   * average item record length: "
+           << (double(total_sz)/double(NumItems())) << " bytes" << endl;
+    }
   }
 };
 
@@ -550,6 +581,7 @@ protected:
   {
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
+    uint64_t stock_total_sz = 0, n_stocks = 0;
     try {
       uint cnt = 0;
       for (uint i = 1; i <= NumItems(); i++) {
@@ -582,6 +614,8 @@ protected:
           stock.s_dist_10.assign(RandomStr(r, 24));
 
           const size_t sz = stock_enc.nbytes(&stock);
+          stock_total_sz += sz;
+          n_stocks++;
           uint8_t buf[sz];
           const string pk = StockPrimaryKey(w, i);
           tbl_stock->insert(
@@ -599,8 +633,11 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
+    if (verbose) {
       cerr << "[INFO] finished loading stock" << endl;
+      cerr << "[INFO]   * average stock record length: "
+           << (double(stock_total_sz)/double(n_stocks)) << " bytes" << endl;
+    }
   }
 };
 
@@ -619,6 +656,7 @@ protected:
   {
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
+    uint64_t district_total_sz = 0, n_districts = 0;
     try {
       uint cnt = 0;
       for (uint w = 1; w <= NumWarehouses(); w++) {
@@ -637,6 +675,8 @@ protected:
           district.d_zip.assign("123456789");
 
           const size_t sz = district_enc.nbytes(&district);
+          district_total_sz += sz;
+          n_districts++;
           uint8_t buf[sz];
           const string pk = DistrictPrimaryKey(w, d);
           tbl_district->insert(
@@ -654,8 +694,11 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
+    if (verbose) {
       cerr << "[INFO] finished loading district" << endl;
+      cerr << "[INFO]   * average district record length: "
+           << (double(district_total_sz)/double(n_districts)) << " bytes" << endl;
+    }
   }
 };
 
@@ -675,6 +718,7 @@ protected:
     const ssize_t bsize = db->txn_max_batch_size();
     const bool direct_mem = db->index_supports_direct_mem_access();
     void *txn = db->new_txn(txn_flags);
+    uint64_t total_sz = 0;
     try {
       uint ctr = 0;
       for (uint w = 1; w <= NumWarehouses(); w++) {
@@ -718,6 +762,7 @@ protected:
             const string pk = CustomerPrimaryKey(w, d, c);
             const size_t sz = customer_enc.nbytes(&customer);
             uint8_t buf[sz];
+            total_sz += sz;
             const char *customer_p =
               tbl_customer->insert(txn, pk.data(), pk.size(),
                                    (const char *) customer_enc.write(buf, &customer), sz);
@@ -791,8 +836,12 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
+    if (verbose) {
       cerr << "[INFO] finished loading customer" << endl;
+      cerr << "[INFO]   * average customer record length: "
+           << (double(total_sz)/double(NumWarehouses()*NumDistrictsPerWarehouse()*NumCustomersPerDistrict()))
+           << " bytes " << endl;
+    }
   }
 };
 
@@ -811,6 +860,9 @@ protected:
   {
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
+    uint64_t order_line_total_sz = 0, n_order_lines = 0;
+    uint64_t oorder_total_sz = 0, n_oorders = 0;
+    uint64_t new_order_total_sz = 0, n_new_orders = 0;
     try {
       uint ctr = 0;
       for (uint w = 1; w <= NumWarehouses(); w++) {
@@ -835,6 +887,8 @@ protected:
 
             const string oorderPK = OOrderPrimaryKey(w, d, c);
             const size_t sz = oorder_enc.nbytes(&oorder);
+            oorder_total_sz += sz;
+            n_oorders++;
             uint8_t buf[sz];
             const char *oorder_ret =
               tbl_oorder->insert(txn, oorderPK.data(), oorderPK.size(),
@@ -872,6 +926,8 @@ protected:
               new_order.no_o_id = c;
               const string newOrderPK = NewOrderPrimaryKey(w, d, c);
               const size_t sz = new_order_enc.nbytes(&new_order);
+              new_order_total_sz += sz;
+              n_new_orders++;
               uint8_t buf[sz];
               tbl_new_order->insert(
                   txn, newOrderPK.data(), newOrderPK.size(),
@@ -905,6 +961,8 @@ protected:
 
               const string orderLinePK = OrderLinePrimaryKey(w, d, c, l);
               const size_t sz = order_line_enc.nbytes(&order_line);
+              order_line_total_sz += sz;
+              n_order_lines++;
               uint8_t buf[sz];
               tbl_order_line->insert(
                   txn, orderLinePK.data(), orderLinePK.size(),
@@ -923,8 +981,15 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
+    if (verbose) {
       cerr << "[INFO] finished loading order" << endl;
+      cerr << "[INFO]   * average order_line record length: "
+           << (double(order_line_total_sz)/double(n_order_lines)) << " bytes" << endl;
+      cerr << "[INFO]   * average oorder record length: "
+           << (double(oorder_total_sz)/double(n_oorders)) << " bytes" << endl;
+      cerr << "[INFO]   * average new_order record length: "
+           << (double(new_order_total_sz)/double(n_new_orders)) << " bytes" << endl;
+    }
   }
 };
 
