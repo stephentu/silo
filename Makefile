@@ -6,7 +6,7 @@ LDFLAGS := -lpthread
 # 0 = libc malloc
 # 1 = jemalloc
 # 2 = tcmalloc
-USE_MALLOC_MODE=2
+USE_MALLOC_MODE=1
 
 ifeq ($(USE_MALLOC_MODE),1)
         CXXFLAGS+=-DUSE_JEMALLOC

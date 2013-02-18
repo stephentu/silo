@@ -7,7 +7,7 @@
 /** options */
 //#define NODE_PREFETCH
 //#define DIE_ON_ABORT
-#define TRAP_LARGE_ALLOOCATIONS
+//#define TRAP_LARGE_ALLOOCATIONS
 //#define CHECK_INVARIANTS
 #define USE_VARINT_ENCODING
 

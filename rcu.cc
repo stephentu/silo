@@ -170,7 +170,7 @@ public:
     struct timespec t;
     memset(&t, 0, sizeof(t));
     t.tv_nsec = 100 * 1000000; /* 100 ms */
-    timer loop_timer;
+    //timer loop_timer;
     rcu::delete_queue stack_queue;
     for (;;) {
       // see if any elems to process
@@ -180,8 +180,7 @@ public:
       }
       if (stack_queue.empty())
         nanosleep(&t, NULL);
-
-      const uint64_t last_loop_usec = loop_timer.lap();
+      //const uint64_t last_loop_usec = loop_timer.lap();
       //static int _x = 0;
       //if (((++_x) % 10) == 0) {
       //  cerr << "stack_queue.size(): " << stack_queue.size() << endl;
