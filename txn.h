@@ -336,6 +336,9 @@ public:
       return v;
     }
 
+    /**
+     * returns true if succeeded, false otherwise
+     */
     inline bool
     try_stable_version(version_t &v, unsigned int spins) const
     {
@@ -346,7 +349,7 @@ public:
         spins--;
       }
       COMPILER_MEMORY_FENCE;
-      return IsLocked(v);
+      return !IsLocked(v);
     }
 
     inline version_t
@@ -404,10 +407,9 @@ public:
     inline bool
     stable_is_latest_version(tid_t t) const
     {
-      //version_t v = 0;
-      //if (!try_stable_version(v, 16))
-      //  return false;
-      const version_t v = stable_version();
+      version_t v = 0;
+      if (!try_stable_version(v, 16))
+        return false;
       // now v is a stable version
       const bool ret = is_latest_version(t);
       // only check_version() if the answer would be true- otherwise,
@@ -564,7 +566,7 @@ public:
     return flags;
   }
 
-  virtual void dump_debug_info(abort_reason reason) const;
+  virtual void dump_debug_info() const;
 
   /**
    * If outstanding_refs, then there *could* still be outstanding
@@ -582,7 +584,8 @@ public:
   abort_trap(abort_reason reason) const
   {
     AbortReasonCounter(reason)->inc();
-    dump_debug_info(reason);
+    this->reason = reason; // for dump_debug_info() to see
+    dump_debug_info();
     ::abort();
   }
 #else
@@ -805,7 +808,7 @@ public:
   transaction_proto1(uint64_t flags = 0);
   virtual std::pair<bool, tid_t> consistent_snapshot_tid() const;
   virtual tid_t null_entry_tid() const;
-  virtual void dump_debug_info(abort_reason reason) const;
+  virtual void dump_debug_info() const;
 
 protected:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
@@ -842,7 +845,7 @@ public:
 
   virtual tid_t null_entry_tid() const;
 
-  virtual void dump_debug_info(abort_reason reason) const;
+  virtual void dump_debug_info() const;
 
   static inline ALWAYS_INLINE
   uint64_t CoreId(uint64_t v)

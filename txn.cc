@@ -339,7 +339,7 @@ transaction::commit(bool doThrow)
         //}
 
         //cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
-        //             << hexify(intptr_t(ln)) << " at snapshot_tid FAILED " << snapshot_tid_t.second << endl;
+        //             << hexify(intptr_t(ln)) << " FAILED at snapshot_tid " << snapshot_tid_t.second << endl;
         //cerr << "  txn read version: " << g_proto_version_str(it->second.t) << endl;
         //cerr << "  ln=" << *ln << endl;
 
@@ -495,7 +495,7 @@ operator<<(ostream &o, const transaction::read_record_t &rr)
 }
 
 void
-transaction::dump_debug_info(abort_reason reason) const
+transaction::dump_debug_info() const
 {
   cerr << "Transaction (obj=0x" << hexify(this) << ") -- state "
        << transaction_state_to_cstr(state) << endl;
@@ -766,9 +766,9 @@ transaction_proto1::null_entry_tid() const
 }
 
 void
-transaction_proto1::dump_debug_info(abort_reason reason) const
+transaction_proto1::dump_debug_info() const
 {
-  transaction::dump_debug_info(reason);
+  transaction::dump_debug_info();
   cerr << "  snapshot_tid: " << snapshot_tid << endl;
   cerr << "  global_tid: " << global_tid << endl;
 }
@@ -871,9 +871,9 @@ transaction_proto2::null_entry_tid() const
 }
 
 void
-transaction_proto2::dump_debug_info(abort_reason reason) const
+transaction_proto2::dump_debug_info() const
 {
-  transaction::dump_debug_info(reason);
+  transaction::dump_debug_info();
   cerr << "  current_epoch: " << current_epoch << endl;
   cerr << "  last_consistent_tid: " << g_proto_version_str(last_consistent_tid) << endl;
 }
