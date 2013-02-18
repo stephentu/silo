@@ -16,7 +16,6 @@
 // tpcc schemas
 using namespace std;
 using namespace util;
-using namespace tpcc;
 
 typedef uint uint;
 
@@ -782,10 +781,10 @@ protected:
               // (c_w_id, c_d_id, c_last, c_first) -> (c_id, c_ptr)
 
               customer_name_idx_mem rec;
-              const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
-              uint8_t buf[sz];
               rec.c_id = customer.c_id;
               rec.c_ptr = (intptr_t) customer_p;
+              const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
+              uint8_t buf[sz];
               tbl_customer_name_idx->insert(
                   txn, customerNameKey.data(), customerNameKey.size(),
                   (const char *) customer_name_idx_mem_enc.write(buf, &rec), sz);
@@ -794,9 +793,9 @@ protected:
               // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
               customer_name_idx_nomem rec;
+              rec.c_id = customer.c_id;
               const size_t sz = customer_name_idx_nomem_enc.nbytes(&rec);
               uint8_t buf[sz];
-              rec.c_id = customer.c_id;
               tbl_customer_name_idx->insert(
                   txn, customerNameKey.data(), customerNameKey.size(),
                   (const char *) customer_name_idx_nomem_enc.write(buf, &rec), sz);
@@ -897,18 +896,18 @@ protected:
             const string oorderCIDPK = OOrderCIDKey(w, d, oorder.o_c_id, c);
             if (oorder_ret) {
               oorder_c_id_idx_mem rec;
-              const size_t sz = oorder_c_id_idx_mem_enc.nbytes(&rec);
-              uint8_t buf[sz];
               rec.o_id = oorder.o_id;
               rec.o_ptr = (intptr_t) oorder_ret;
+              const size_t sz = oorder_c_id_idx_mem_enc.nbytes(&rec);
+              uint8_t buf[sz];
               tbl_oorder_c_id_idx->insert(
                   txn, oorderCIDPK.data(), oorderCIDPK.size(),
                   (const char *) oorder_c_id_idx_mem_enc.write(buf, &rec), sz);
             } else {
               oorder_c_id_idx_nomem rec;
+              rec.o_id = oorder.o_id;
               const size_t sz = oorder_c_id_idx_nomem_enc.nbytes(&rec);
               uint8_t buf[sz];
-              rec.o_id = oorder.o_id;
               tbl_oorder_c_id_idx->insert(
                   txn, oorderCIDPK.data(), oorderCIDPK.size(),
                   (const char *) oorder_c_id_idx_nomem_enc.write(buf, &rec), sz);
@@ -1384,8 +1383,8 @@ tpcc_worker::txn_payment()
         const customer_name_idx_mem *customer_name_idx_mem =
           customer_name_idx_mem_enc.read(
               (const uint8_t *) c.values[index].second.data(), &customer_name_idx_mem_temp);
-        tpcc::customer customer_temp;
-        const tpcc::customer *c = customer_enc.read((const uint8_t *) customer_name_idx_mem->c_ptr, &customer_temp);
+        ::customer customer_temp;
+        const ::customer *c = customer_enc.read((const uint8_t *) customer_name_idx_mem->c_ptr, &customer_temp);
         customer = *c;
         customerPK = CustomerPrimaryKey(customerWarehouseID, customerDistrictID, customer.c_id);
       } else {
@@ -1398,8 +1397,8 @@ tpcc_worker::txn_payment()
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
         if (!direct_mem) delete_me.push_back(customer_v);
-        tpcc::customer customer_temp;
-        const tpcc::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+        ::customer customer_temp;
+        const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
         customer = *c;
       }
     } else {
@@ -1410,8 +1409,8 @@ tpcc_worker::txn_payment()
       size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
       if (!direct_mem) delete_me.push_back(customer_v);
-      tpcc::customer customer_temp;
-      const tpcc::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+      ::customer customer_temp;
+      const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer = *c;
     }
 
@@ -1519,8 +1518,8 @@ tpcc_worker::txn_order_status()
         const customer_name_idx_mem *customer_name_idx_mem =
           customer_name_idx_mem_enc.read(
               (const uint8_t *) c.values[index].second.data(), &customer_name_idx_mem_temp);
-        tpcc::customer customer_temp;
-        const tpcc::customer *c = customer_enc.read((const uint8_t *) customer_name_idx_mem->c_ptr, &customer_temp);
+        ::customer customer_temp;
+        const ::customer *c = customer_enc.read((const uint8_t *) customer_name_idx_mem->c_ptr, &customer_temp);
         customer = *c;
         customerPK = CustomerPrimaryKey(warehouse_id, districtID, customer.c_id);
       } else {
@@ -1533,8 +1532,8 @@ tpcc_worker::txn_order_status()
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
         if (!direct_mem) delete_me.push_back(customer_v);
-        tpcc::customer customer_temp;
-        const tpcc::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+        ::customer customer_temp;
+        const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
         customer = *c;
       }
     } else {
@@ -1545,8 +1544,8 @@ tpcc_worker::txn_order_status()
       size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
       if (!direct_mem) delete_me.push_back(customer_v);
-      tpcc::customer customer_temp;
-      const tpcc::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+      ::customer customer_temp;
+      const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer = *c;
     }
 

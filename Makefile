@@ -33,6 +33,7 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/abstract_ordered_index.h \
 	benchmarks/bench.h \
 	benchmarks/inline_str.h \
+	benchmarks/encoder.h \
 	benchmarks/serializer.h \
 	benchmarks/bdb_wrapper.h \
 	benchmarks/ndb_wrapper.h \
@@ -44,7 +45,8 @@ BENCH_SRCFILES = \
 	benchmarks/mysql_wrapper.cc \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc \
-	benchmarks/queue.cc
+	benchmarks/queue.cc \
+	benchmarks/encstress.cc
 BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
 
 all: test
