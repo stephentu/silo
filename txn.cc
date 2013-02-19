@@ -1041,6 +1041,9 @@ transaction_proto2::InitEpochScheme()
 
 bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
 
+static const uint64_t txn_epoch_us = 50 * 1000; /* 50 ms */
+//static const uint64_t txn_epoch_ns = txn_epoch_us * 1000;
+
 void
 transaction_proto2::epoch_loop::run()
 {
@@ -1052,7 +1055,7 @@ transaction_proto2::epoch_loop::run()
   for (;;) {
 
     const uint64_t last_loop_usec = loop_timer.lap();
-    const uint64_t delay_time_usec = 100 * 1000; /* 100 ms */
+    const uint64_t delay_time_usec = txn_epoch_us;
     if (last_loop_usec < delay_time_usec) {
       t.tv_nsec = (delay_time_usec - last_loop_usec) * 1000;
       nanosleep(&t, NULL);

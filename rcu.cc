@@ -156,7 +156,8 @@ rcu::in_rcu_region()
 }
 
 static event_counter evt_rcu_deletes("rcu_deletes");
-static const uint64_t rcu_epoch_ns = 50 * 1000000; /* 50 ms */
+static const uint64_t rcu_epoch_us = 50 * 1000; /* 50 ms */
+static const uint64_t rcu_epoch_ns = rcu_epoch_us * 1000;
 
 class gc_reaper_thread : public ndb_thread {
 public:
@@ -219,7 +220,7 @@ rcu::gc_thread_loop(void *p)
   for (;;) {
 
     const uint64_t last_loop_usec = loop_timer.lap();
-    const uint64_t delay_time_usec = rcu_epoch_ns;
+    const uint64_t delay_time_usec = rcu_epoch_us;
     if (last_loop_usec < delay_time_usec) {
       t.tv_nsec = (delay_time_usec - last_loop_usec) * 1000;
       nanosleep(&t, NULL);
