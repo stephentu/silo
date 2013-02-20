@@ -926,10 +926,9 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
   INVARIANT(ln->is_locked());
   INVARIANT(rcu::in_rcu_region());
   const uint64_t epoch = g_last_consistent_epoch;
-  // no point in keeping around spill entries which have version > epoch
   struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
   const size_t NMaxChainLength = 1;
-  for (size_t i = 0; i < NMaxChainLength && p && p->version <= epoch; i++) {
+  for (size_t i = 0; i < NMaxChainLength && p; i++) {
     pp = &p->spillblock_next;
     p = p->spillblock_next;
   }
