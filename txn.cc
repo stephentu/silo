@@ -340,13 +340,18 @@ transaction::commit(bool doThrow)
           (const record_type) it->second.r->data(), it->second.r->size());
       logical_node *head = ret.second ? ret.second : it->first;
       if (unlikely(ret.second)) {
-        // need to update pointer in underlying b-tree
+        INVARIANT(ret.second != it->first);
+        // need to update pointer in underlying b-tree, so that ret.second
+        // becomes the canonical representation for key k
         btree::value_type old_v = 0;
         head->lock();
         bool no_key = it->second.btr->underlying_btree.insert(
             varkey(*it->second.key), (btree::value_type) head, &old_v, NULL);
         if (no_key) INVARIANT(false);
         INVARIANT(old_v == (btree::value_type) it->first);
+        if (!ret.first)
+          // it->first was unlinked, so we need to free it up for GC
+          logical_node::release(it->first);
       }
       if (unlikely(ret.first))
         // spill happened: signal for GC

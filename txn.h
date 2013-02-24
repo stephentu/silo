@@ -449,6 +449,10 @@ public:
      *   second: if not null, points to the logical_node meant to replace this
      *           node as the latest. if not null, then this instance is set
      *           to !latest (and the returned node is set to latest)
+     *
+     * Note that if ret.second is not null, and ret.first is false, then
+     * this instance is no longer reachable (it has been unlinked).
+     * It is thus the caller's responsibility to free this instance.
      */
     std::pair<bool, logical_node *>
     write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
