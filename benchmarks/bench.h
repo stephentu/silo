@@ -27,6 +27,24 @@ extern uint64_t txn_flags;
 extern double scale_factor;
 extern uint64_t runtime;
 
+class scoped_memory_manager : private util::noncopyable {
+public:
+  scoped_memory_manager() {}
+  ~scoped_memory_manager()
+  {
+    for (std::vector<char *>::iterator it = ptrs.begin();
+         it != ptrs.end(); ++it)
+      free(*it);
+  }
+  inline void
+  manage(char *p)
+  {
+    ptrs.push_back(p);
+  }
+private:
+  std::vector<char *> ptrs;
+};
+
 class scoped_db_thread_ctx : private util::noncopyable {
 public:
   scoped_db_thread_ctx(abstract_db *db)
@@ -71,13 +89,15 @@ public:
     : r(seed), db(db), open_tables(open_tables),
       barrier_a(barrier_a), barrier_b(barrier_b),
       // the ntxn_* numbers are per worker
-      ntxn_commits(0), ntxn_aborts(0)
+      ntxn_commits(0), ntxn_aborts(0), size_delta(0)
   {
   }
 
   virtual ~bench_worker() {}
 
-  typedef void (*txn_fn_t)(bench_worker *);
+  // returns how many bytes (of values) changed by the txn
+  typedef ssize_t (*txn_fn_t)(bench_worker *);
+
   struct workload_desc {
     workload_desc() {}
     workload_desc(const std::string &name, double frequency, txn_fn_t fn)
@@ -105,7 +125,7 @@ public:
       double d = r.next_uniform();
       for (size_t i = 0; i < workload.size(); i++) {
         if ((i + 1) == workload.size() || d < workload[i].frequency) {
-          workload[i].fn(this);
+          size_delta += workload[i].fn(this);
           txn_counts[i]++;
           break;
         }
@@ -119,6 +139,8 @@ public:
 
   std::map<std::string, size_t> get_txn_counts() const;
 
+  inline ssize_t get_size_delta() const { return size_delta; }
+
 protected:
 
   util::fast_random r;
@@ -130,6 +152,7 @@ protected:
   size_t ntxn_aborts;
 
   std::vector<size_t> txn_counts; // breakdown of txns
+  ssize_t size_delta; // how many logical bytes (of values) did the worker add to the DB
 };
 
 class bench_runner : private util::noncopyable {

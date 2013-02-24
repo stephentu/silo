@@ -30,12 +30,12 @@ public:
   {
   }
 
-  void
+  ssize_t
   txn_read()
   {
     void *txn = db->new_txn(txn_flags);
     const bool idx_manages_get_mem = db->index_manages_get_memory();
-    string k = u64_varkey(r.next() % nkeys).str();
+    const string k = u64_varkey(r.next() % nkeys).str();
     try {
       char *v = 0;
       size_t vlen = 0;
@@ -47,21 +47,22 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0;
   }
 
-  static void
+  static ssize_t
   TxnRead(bench_worker *w)
   {
-    static_cast<ycsb_worker *>(w)->txn_read();
+    return static_cast<ycsb_worker *>(w)->txn_read();
   }
 
-  void
+  ssize_t
   txn_write()
   {
     void *txn = db->new_txn(txn_flags);
-    string k = u64_varkey(r.next() % nkeys).str();
+    const string k = u64_varkey(r.next() % nkeys).str();
     try {
-      string v(128, 'b');
+      const string v(128, 'b');
       tbl->put(txn, k.data(), k.size(), v.data(), v.size());
       if (db->commit_txn(txn))
         ntxn_commits++;
@@ -69,26 +70,27 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0; // key already exists
   }
 
-  static void
+  static ssize_t
   TxnWrite(bench_worker *w)
   {
-    static_cast<ycsb_worker *>(w)->txn_write();
+    return static_cast<ycsb_worker *>(w)->txn_write();
   }
 
-  void
+  ssize_t
   txn_rmw()
   {
     void *txn = db->new_txn(txn_flags);
     const bool idx_manages_get_mem = db->index_manages_get_memory();
-    string k = u64_varkey(r.next() % nkeys).str();
+    const string k = u64_varkey(r.next() % nkeys).str();
     try {
       char *v = 0;
       size_t vlen = 0;
       ALWAYS_ASSERT(tbl->get(txn, k.data(), k.size(), v, vlen));
       if (!idx_manages_get_mem) free(v);
-      string vnew(128, 'c');
+      const string vnew(128, 'c');
       tbl->put(txn, k.data(), k.size(), vnew.data(), vnew.size());
       if (db->commit_txn(txn))
         ntxn_commits++;
@@ -96,12 +98,13 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0; // key already exists
   }
 
-  static void
+  static ssize_t
   TxnRmw(bench_worker *w)
   {
-    static_cast<ycsb_worker *>(w)->txn_rmw();
+    return static_cast<ycsb_worker *>(w)->txn_rmw();
   }
 
   class worker_scan_callback : public abstract_ordered_index::scan_callback {
@@ -114,13 +117,13 @@ public:
     }
   };
 
-  void
+  ssize_t
   txn_scan()
   {
     void *txn = db->new_txn(txn_flags);
-    size_t kstart = r.next() % nkeys;
-    string kbegin = u64_varkey(kstart).str();
-    string kend = u64_varkey(kstart + 100).str();
+    const size_t kstart = r.next() % nkeys;
+    const string kbegin = u64_varkey(kstart).str();
+    const string kend = u64_varkey(kstart + 100).str();
     worker_scan_callback c;
     try {
       tbl->scan(txn, kbegin.data(), kbegin.size(),
@@ -131,12 +134,13 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0;
   }
 
-  static void
+  static ssize_t
   TxnScan(bench_worker *w)
   {
-    static_cast<ycsb_worker *>(w)->txn_scan();
+    return static_cast<ycsb_worker *>(w)->txn_scan();
   }
 
   virtual workload_desc_vec

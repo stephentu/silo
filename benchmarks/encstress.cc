@@ -42,7 +42,7 @@ public:
   {
   }
 
-  void
+  ssize_t
   txn_read()
   {
     void *txn = db->new_txn(txn_flags);
@@ -59,12 +59,13 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0;
   }
 
-  static void
+  static ssize_t
   TxnRead(bench_worker *w)
   {
-    static_cast<encstress_worker *>(w)->txn_read();
+    return static_cast<encstress_worker *>(w)->txn_read();
   }
 
   virtual workload_desc_vec

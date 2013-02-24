@@ -45,18 +45,17 @@ public:
   {
   }
 
-  void
+  ssize_t
   txn_produce()
   {
-    vector<char *> delete_me;
     void *txn = db->new_txn(txn_flags);
-    //const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string k = queue_key(id, ctr);
       tbl->insert(txn, k.data(), k.size(), queue_values.data(), queue_values.size());
       if (db->commit_txn(txn)) {
         ctr++;
         ntxn_commits++;
+        return queue_values.size();
       } else {
         ntxn_aborts++;
       }
@@ -64,54 +63,55 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
-    for (vector<char *>::iterator it = delete_me.begin();
-         it != delete_me.end(); ++it)
-      free(*it);
+    return 0;
   }
 
-  static void
+  static ssize_t
   TxnProduce(bench_worker *w)
   {
-    static_cast<queue_worker *>(w)->txn_produce();
+    return static_cast<queue_worker *>(w)->txn_produce();
   }
 
-  void
+  ssize_t
   txn_consume()
   {
     void *txn = db->new_txn(txn_flags);
-    //const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string lowk = queue_key(id, 0);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
       limit_callback c(1);
       tbl->scan(txn, lowk.data(), lowk.size(),
                 highk.data(), highk.size(), true, c);
+      ssize_t ret = 0;
       if (likely(!c.values.empty())) {
         ALWAYS_ASSERT(c.values.size() == 1);
         const string &k = c.values.front().first;
         tbl->remove(txn, k.data(), k.size());
+        ret = -queue_values.size();
       }
-      if (db->commit_txn(txn))
+      if (db->commit_txn(txn)) {
         ntxn_commits++;
-      else
+        return ret;
+      } else {
         ntxn_aborts++;
+      }
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0;
   }
 
-  static void
+  static ssize_t
   TxnConsume(bench_worker *w)
   {
-    static_cast<queue_worker *>(w)->txn_consume();
+    return static_cast<queue_worker *>(w)->txn_consume();
   }
 
-  void
+  ssize_t
   txn_consume_scanhint()
   {
     void *txn = db->new_txn(txn_flags);
-    //const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string lowk = queue_key(id, ctr);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
@@ -119,14 +119,17 @@ public:
       tbl->scan(txn, lowk.data(), lowk.size(),
                 highk.data(), highk.size(), true, c);
       const bool found = !c.values.empty();
+      ssize_t ret = 0;
       if (likely(found)) {
         ALWAYS_ASSERT(c.values.size() == 1);
         const string &k = c.values.front().first;
         tbl->remove(txn, k.data(), k.size());
+        ret = -queue_values.size();
       }
       if (db->commit_txn(txn)) {
         if (likely(found)) ctr++;
         ntxn_commits++;
+        return ret;
       } else {
         ntxn_aborts++;
       }
@@ -134,15 +137,16 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0;
   }
 
-  static void
+  static ssize_t
   TxnConsumeScanHint(bench_worker *w)
   {
-    static_cast<queue_worker *>(w)->txn_consume_scanhint();
+    return static_cast<queue_worker *>(w)->txn_consume_scanhint();
   }
 
-  void
+  ssize_t
   txn_consume_noscan()
   {
     void *txn = db->new_txn(txn_flags);
@@ -152,13 +156,16 @@ public:
       char *v = 0;
       size_t vlen = 0;
       bool found = false;
+      ssize_t ret = 0;
       if (likely((found = tbl->get(txn, k.data(), k.size(), v, vlen)))) {
         if (!idx_manages_get_mem) free(v);
         tbl->remove(txn, k.data(), k.size());
+        ret = -queue_values.size();
       }
       if (db->commit_txn(txn)) {
         if (likely(found)) ctr++;
         ntxn_commits++;
+        return ret;
       } else {
         ntxn_aborts++;
       }
@@ -166,12 +173,13 @@ public:
       db->abort_txn(txn);
       ntxn_aborts++;
     }
+    return 0;
   }
 
-  static void
+  static ssize_t
   TxnConsumeNoScan(bench_worker *w)
   {
-    static_cast<queue_worker *>(w)->txn_consume_noscan();
+    return static_cast<queue_worker *>(w)->txn_consume_noscan();
   }
 
   virtual workload_desc_vec

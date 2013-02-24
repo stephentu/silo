@@ -159,10 +159,16 @@ bench_runner::run()
     const double delta_mb = double(delta)/1048576.0;
 
     map<string, size_t> agg_txn_counts = workers[0]->get_txn_counts();
-    for (size_t i = 1; i < workers.size(); i++)
+    ssize_t size_delta = workers[0]->get_size_delta();
+    for (size_t i = 1; i < workers.size(); i++) {
       map_agg(agg_txn_counts, workers[i]->get_txn_counts());
+      size_delta += workers[i]->get_size_delta();
+    }
+    const double size_delta_mb = double(size_delta)/1048576.0;
     cerr << "memory delta: " << delta_mb  << " MB" << endl;
     cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
+    cerr << "logical memory delta: " << size_delta_mb << " MB" << endl;
+    cerr << "logical memory delta rate: " << (size_delta_mb / elapsed_sec) << " MB/sec" << endl;
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;

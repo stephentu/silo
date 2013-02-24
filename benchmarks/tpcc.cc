@@ -370,44 +370,44 @@ public:
     memset(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
   }
 
-  void txn_new_order();
+  ssize_t txn_new_order();
 
-  static void
+  static ssize_t
   TxnNewOrder(bench_worker *w)
   {
-    static_cast<tpcc_worker *>(w)->txn_new_order();
+    return static_cast<tpcc_worker *>(w)->txn_new_order();
   }
 
-  void txn_delivery();
+  ssize_t txn_delivery();
 
-  static void
+  static ssize_t
   TxnDelivery(bench_worker *w)
   {
-    static_cast<tpcc_worker *>(w)->txn_delivery();
+    return static_cast<tpcc_worker *>(w)->txn_delivery();
   }
 
-  void txn_payment();
+  ssize_t txn_payment();
 
-  static void
+  static ssize_t
   TxnPayment(bench_worker *w)
   {
-    static_cast<tpcc_worker *>(w)->txn_payment();
+    return static_cast<tpcc_worker *>(w)->txn_payment();
   }
 
-  void txn_order_status();
+  ssize_t txn_order_status();
 
-  static void
+  static ssize_t
   TxnOrderStatus(bench_worker *w)
   {
-    static_cast<tpcc_worker *>(w)->txn_order_status();
+    return static_cast<tpcc_worker *>(w)->txn_order_status();
   }
 
-  void txn_stock_level();
+  ssize_t txn_stock_level();
 
-  static void
+  static ssize_t
   TxnStockLevel(bench_worker *w)
   {
-    static_cast<tpcc_worker *>(w)->txn_stock_level();
+    return static_cast<tpcc_worker *>(w)->txn_stock_level();
   }
 
   virtual workload_desc_vec
@@ -993,7 +993,7 @@ protected:
   }
 };
 
-void
+ssize_t
 tpcc_worker::txn_new_order()
 {
   const uint districtID = RandomNumber(r, 1, 10);
@@ -1017,15 +1017,16 @@ tpcc_worker::txn_new_order()
   }
 
   // XXX(stephentu): implement rollback
-  vector<char *> delete_me;
+  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
   const bool idx_manages_get_mem = db->index_manages_get_memory();
   try {
+    ssize_t ret = 0;
     const string customerPK = CustomerPrimaryKey(warehouse_id, districtID, customerID);
     char *customer_v = 0;
     size_t customer_vlen = 0;
     ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-    if (!idx_manages_get_mem) delete_me.push_back(customer_v);
+    if (!idx_manages_get_mem) mm.manage(customer_v);
     customer customer_temp;
     const customer *customer UNUSED =
       customer_enc.read((const uint8_t *) customer_v, &customer_temp);
@@ -1034,7 +1035,7 @@ tpcc_worker::txn_new_order()
     char *warehouse_v = 0;
     size_t warehouse_vlen = 0;
     ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
-    if (!idx_manages_get_mem) delete_me.push_back(warehouse_v);
+    if (!idx_manages_get_mem) mm.manage(warehouse_v);
     warehouse warehouse_temp;
     const warehouse *warehouse UNUSED =
       warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
@@ -1043,7 +1044,7 @@ tpcc_worker::txn_new_order()
     char *district_v = 0;
     size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
-    if (!idx_manages_get_mem) delete_me.push_back(district_v);
+    if (!idx_manages_get_mem) mm.manage(district_v);
     district district_temp, district_new;
     const district *district =
       district_enc.read((const uint8_t *) district_v, &district_temp);
@@ -1059,6 +1060,7 @@ tpcc_worker::txn_new_order()
     tbl_new_order->insert(
         txn, newOrderPK.data(), newOrderPK.size(),
         (const char *) new_order_enc.write(new_order_buf, &new_order), new_order_sz);
+    ret += new_order_sz;
 
     district_new = *district;
     district_new.d_next_o_id++;
@@ -1084,6 +1086,7 @@ tpcc_worker::txn_new_order()
     tbl_oorder->insert(
         txn, oorderPK.data(), oorderPK.size(),
         (const char *) oorder_enc.write(oorder_buf, &oorder), oorder_sz);
+    ret += oorder_sz;
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
       const uint ol_supply_w_id = supplierWarehouseIDs[ol_number - 1];
@@ -1094,7 +1097,7 @@ tpcc_worker::txn_new_order()
       char *item_v = 0;
       size_t item_vlen = 0;
       ALWAYS_ASSERT(tbl_item->get(txn, itemPK.data(), itemPK.size(), item_v, item_vlen));
-      if (!idx_manages_get_mem) delete_me.push_back(item_v);
+      if (!idx_manages_get_mem) mm.manage(item_v);
       item item_temp;
       const item *item = item_enc.read((const uint8_t *) item_v, &item_temp);
 
@@ -1102,7 +1105,7 @@ tpcc_worker::txn_new_order()
       char *stock_v = 0;
       size_t stock_vlen = 0;
       ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
-      if (!idx_manages_get_mem) delete_me.push_back(stock_v);
+      if (!idx_manages_get_mem) mm.manage(stock_v);
       stock stock_temp, stock_new;
       const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
       stock_new = *stock;
@@ -1177,32 +1180,34 @@ tpcc_worker::txn_new_order()
       tbl_order_line->insert(
           txn, orderLinePK.data(), orderLinePK.size(),
           (const char *) order_line_enc.write(order_line_buf, &order_line), order_line_sz);
+      ret += order_line_sz;
     }
 
-    if (db->commit_txn(txn))
+    if (db->commit_txn(txn)) {
       ntxn_commits++;
-    else
+      return ret;
+    } else {
       ntxn_aborts++;
+    }
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
     ntxn_aborts++;
   }
-  for (vector<char *>::iterator it = delete_me.begin();
-       it != delete_me.end(); ++it)
-    free(*it);
+  return 0;
 }
 
-void
+ssize_t
 tpcc_worker::txn_delivery()
 {
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
 
-  vector<char *> delete_me;
+  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
   const bool idx_manages_get_mem = db->index_manages_get_memory();
   const bool idx_stable_put_mem = db->index_has_stable_put_memory();
   try {
+    ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       const string lowkey = NewOrderPrimaryKey(warehouse_id, d, last_no_o_ids[d]);
       const string highkey = NewOrderPrimaryKey(warehouse_id, d, numeric_limits<int32_t>::max());
@@ -1224,7 +1229,7 @@ tpcc_worker::txn_delivery()
       char *oorder_v;
       size_t oorder_len;
       ALWAYS_ASSERT(tbl_oorder->get(txn, oorderPK.data(), oorderPK.size(), oorder_v, oorder_len));
-      if (!idx_manages_get_mem) delete_me.push_back(oorder_v);
+      if (!idx_manages_get_mem) mm.manage(oorder_v);
       oorder oorder_temp, oorder_new;
       const oorder *oorder = oorder_enc.read((const uint8_t *) oorder_v, &oorder_temp);
 
@@ -1253,6 +1258,7 @@ tpcc_worker::txn_delivery()
       // delete new order
       const string new_orderPK = NewOrderPrimaryKey(warehouse_id, d, new_order->no_o_id);
       tbl_new_order->remove(txn, new_orderPK.data(), new_orderPK.size());
+      ret -= new_order_c.values.front().second.size();
 
       // update oorder
       oorder_new = *oorder;
@@ -1274,7 +1280,7 @@ tpcc_worker::txn_delivery()
       ALWAYS_ASSERT(tbl_customer->get(
             txn, customerPK.data(), customerPK.size(),
             customer_v, customer_len));
-      if (!idx_manages_get_mem) delete_me.push_back(customer_v);
+      if (!idx_manages_get_mem) mm.manage(customer_v);
       customer customer_temp, customer_new;
       const customer *customer = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer_new = *customer;
@@ -1296,25 +1302,25 @@ tpcc_worker::txn_delivery()
         rec.c_ptr = intptr_t(customer_p);
         const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
         uint8_t buf[sz];
-        tbl_customer_name_idx->insert(
+        tbl_customer_name_idx->put(
             txn, customerNameKey.data(), customerNameKey.size(),
             (const char *) customer_name_idx_mem_enc.write(buf, &rec), sz);
       }
     }
-    if (db->commit_txn(txn))
+    if (db->commit_txn(txn)) {
       ntxn_commits++;
-    else
+      return ret;
+    } else {
       ntxn_aborts++;
+    }
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
     ntxn_aborts++;
   }
-  for (vector<char *>::iterator it = delete_me.begin();
-       it != delete_me.end(); ++it)
-    free(*it);
+  return 0;
 }
 
-void
+ssize_t
 tpcc_worker::txn_payment()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
@@ -1332,14 +1338,15 @@ tpcc_worker::txn_payment()
   const uint32_t ts = GetCurrentTimeMillis();
   const bool idx_manages_get_mem = db->index_manages_get_memory();
   const bool idx_stable_put_mem = db->index_has_stable_put_memory();
-  vector<char *> delete_me;
+  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
   try {
+    ssize_t ret = 0;
     const string warehousePK = WarehousePrimaryKey(warehouse_id);
     char *warehouse_v = 0;
     size_t warehouse_vlen = 0;
     ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
-    if (!idx_manages_get_mem) delete_me.push_back(warehouse_v);
+    if (!idx_manages_get_mem) mm.manage(warehouse_v);
     warehouse warehouse_temp, warehouse_new;
     const warehouse *warehouse = warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
     warehouse_new = *warehouse;
@@ -1354,7 +1361,7 @@ tpcc_worker::txn_payment()
     char *district_v = 0;
     size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
-    if (!idx_manages_get_mem) delete_me.push_back(district_v);
+    if (!idx_manages_get_mem) mm.manage(district_v);
     district district_temp, district_new;
     const district *district = district_enc.read((const uint8_t *) district_v, &district_temp);
     district_new = *district;
@@ -1399,7 +1406,7 @@ tpcc_worker::txn_payment()
         char *customer_v = 0;
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-        if (!idx_manages_get_mem) delete_me.push_back(customer_v);
+        if (!idx_manages_get_mem) mm.manage(customer_v);
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
         customer = *c;
@@ -1411,7 +1418,7 @@ tpcc_worker::txn_payment()
       char *customer_v = 0;
       size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-      if (!idx_manages_get_mem) delete_me.push_back(customer_v);
+      if (!idx_manages_get_mem) mm.manage(customer_v);
       ::customer customer_temp;
       const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer = *c;
@@ -1448,7 +1455,7 @@ tpcc_worker::txn_payment()
       rec.c_ptr = intptr_t(customer_p);
       const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
       uint8_t buf[sz];
-      tbl_customer_name_idx->insert(
+      tbl_customer_name_idx->put(
           txn, customerNameKey.data(), customerNameKey.size(),
             (const char *) customer_name_idx_mem_enc.write(buf, &rec), sz);
     }
@@ -1477,27 +1484,28 @@ tpcc_worker::txn_payment()
     uint8_t history_buf[history_sz];
     tbl_history->insert(txn, historyPK.data(), historyPK.size(),
                         (const char *) history_enc.write(history_buf, &history), history_sz);
+    ret += history_sz;
 
-    if (db->commit_txn(txn))
+    if (db->commit_txn(txn)) {
       ntxn_commits++;
-    else
+      return ret;
+    } else {
       ntxn_aborts++;
+    }
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
     ntxn_aborts++;
   }
-  for (vector<char *>::iterator it = delete_me.begin();
-       it != delete_me.end(); ++it)
-    free(*it);
+  return 0;
 }
 
-void
+ssize_t
 tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const bool idx_manages_get_mem = db->index_manages_get_memory();
   const bool idx_stable_put_mem = db->index_has_stable_put_memory();
-  vector<char *> delete_me;
+  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
   try {
 
@@ -1535,7 +1543,7 @@ tpcc_worker::txn_order_status()
         char *customer_v = 0;
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-        if (!idx_manages_get_mem) delete_me.push_back(customer_v);
+        if (!idx_manages_get_mem) mm.manage(customer_v);
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
         customer = *c;
@@ -1547,7 +1555,7 @@ tpcc_worker::txn_order_status()
       char *customer_v = 0;
       size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-      if (!idx_manages_get_mem) delete_me.push_back(customer_v);
+      if (!idx_manages_get_mem) mm.manage(customer_v);
       ::customer customer_temp;
       const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer = *c;
@@ -1600,18 +1608,16 @@ tpcc_worker::txn_order_status()
     db->abort_txn(txn);
     ntxn_aborts++;
   }
-  for (vector<char *>::iterator it = delete_me.begin();
-       it != delete_me.end(); ++it)
-    free(*it);
+  return 0;
 }
 
-void
+ssize_t
 tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const bool idx_manages_get_mem = db->index_manages_get_memory();
-  vector<char *> delete_me;
+  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
   try {
 
@@ -1619,7 +1625,7 @@ tpcc_worker::txn_stock_level()
     char *district_v = 0;
     size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
-    if (!idx_manages_get_mem) delete_me.push_back(district_v);
+    if (!idx_manages_get_mem) mm.manage(district_v);
     district district_temp;
     const district *district =
       district_enc.read((const uint8_t *) district_v, &district_temp);
@@ -1646,7 +1652,7 @@ tpcc_worker::txn_stock_level()
       char *stock_v = 0;
       size_t stock_vlen = 0;
       ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
-      if (!idx_manages_get_mem) delete_me.push_back(stock_v);
+      if (!idx_manages_get_mem) mm.manage(stock_v);
       stock stock_temp;
       const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
       if (stock->s_quantity < int(threshold))
@@ -1661,9 +1667,7 @@ tpcc_worker::txn_stock_level()
     db->abort_txn(txn);
     ntxn_aborts++;
   }
-  for (vector<char *>::iterator it = delete_me.begin();
-       it != delete_me.end(); ++it)
-    free(*it);
+  return 0;
 }
 
 class tpcc_bench_runner : public bench_runner {
