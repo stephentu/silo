@@ -42,7 +42,9 @@ protected:
 public:
 
   typedef uint64_t tid_t;
-  typedef uint8_t* record_t;
+  typedef uint8_t * record_type;
+  typedef const uint8_t * const_record_type;
+  typedef size_t size_type;
 
   // TXN_EMBRYO - the transaction object has been allocated but has not
   // done any operations yet
@@ -126,67 +128,9 @@ public:
   }
 
   /**
-   * Just a singly linked list for now
-   */
-  struct logical_node_spillblock : private util::noncopyable {
-
-    tid_t version;
-    record_t value; // has ownership over the value pointed to:
-                    // gc_chain() is responsible for free-ing the
-                    // value (via the completion callbacks)
-
-    struct logical_node_spillblock *spillblock_next;
-
-    logical_node_spillblock(
-        tid_t version, record_t value,
-        struct logical_node_spillblock *spillblock_next);
-    ~logical_node_spillblock();
-
-    /**
-     * Read the record at tid t. Returns true if such a record exists,
-     * false otherwise (ie the record was GC-ed)
-     *
-     * The cool thing about record_at() for spillblocks is we don't ever have
-     * to check version numbers- the contents are never overwritten
-     */
-    inline bool
-    record_at(tid_t t, tid_t &start_t, record_t &r) const
-    {
-      const struct logical_node_spillblock *cur = this;
-      while (cur) {
-        if (likely(cur->version <= t)) {
-          start_t = cur->version;
-          r = cur->value;
-          return true;
-        }
-        cur = cur->spillblock_next;
-      }
-      return false;
-    }
-
-    inline bool
-    is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid, tid_t oldest_tid) const
-    {
-      const struct logical_node_spillblock *cur = this;
-      while (cur) {
-        if (version <= snapshot_tid)
-          return oldest_tid > commit_tid;
-        oldest_tid = version;
-        cur = cur->spillblock_next;
-      }
-      return false;
-    }
-
-    /**
-     * Put this spillblock and all the spillblocks later in the chain up for GC
-     */
-    void gc_chain(bool do_rcu);
-
-  } PACKED;
-
-  /**
    * A logical_node is the type of value which we stick
-   * into underlying (non-transactional) data structures
+   * into underlying (non-transactional) data structures- it
+   * also contains the memory of the value
    */
   struct logical_node : private util::noncopyable {
   public:
@@ -201,7 +145,10 @@ public:
     static const version_t HDR_ENQUEUED_SHIFT = 2;
     static const version_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
 
-    static const version_t HDR_VERSION_SHIFT = 3;
+    static const version_t HDR_LATEST_SHIFT = 3;
+    static const version_t HDR_LATEST_MASK = 0x1 << HDR_LATEST_SHIFT;
+
+    static const version_t HDR_VERSION_SHIFT = 4;
     static const version_t HDR_VERSION_MASK = ((version_t)-1) << HDR_VERSION_SHIFT;
 
   public:
@@ -209,32 +156,51 @@ public:
     // NB(stephentu): ABA problem happens after 2^61 concurrent modifications-
     // *very* low probability event, so we let it happen
     //
-    // [ locked | deleted | enqueued | version ]
-    // [  0..1  |  1..2   |   2..3   |  3..64  ]
+    // [ locked | deleted | enqueued | latest | version ]
+    // [  0..1  |  1..2   |   2..3   |  3..4  |  4..64  ]
     volatile version_t hdr;
 
     // constraints:
     //   * enqueued => !deleted
     //   * deleted  => !enqueued
 
+    struct logical_node *next;
+
     tid_t version;
-    record_t value;
+    uint32_t size; // actual size of record (0 implies absent record)
+    uint32_t alloc_size; // max size record allowed
+    uint8_t value_start[0]; // must be last field
 
-    // spill in units of NVersions
-    struct logical_node_spillblock *spillblock_head;
+  private:
+    // private ctor/dtor b/c we do some special memory stuff
+    // ctors start node off as latest node
+    // XXX: check for overflow from sizes
 
-    logical_node()
-      : hdr(0), version(MIN_TID), value(0), spillblock_head(0)
+    logical_node(size_type alloc_size)
+      : hdr(HDR_LATEST_MASK), next(0), version(MIN_TID),
+        size(0), alloc_size(alloc_size)
     {
       // each logical node starts with one "deleted" entry at MIN_TID
+      // (this is indicated by size = 0)
+      INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
     }
 
-    logical_node(tid_t version, record_t value)
-      : hdr(0), version(version), value(value), spillblock_head(0)
+    logical_node(tid_t version, const_record_type r,
+                 size_type size, size_type alloc_size,
+                 struct logical_node *next, bool set_latest)
+      : hdr(set_latest ? HDR_LATEST_MASK : 0), next(next), version(version),
+        size(size), alloc_size(alloc_size)
     {
+      INVARIANT(size <= alloc_size);
+      memcpy(&value_start[0], r, size);
     }
 
+    friend class rcu;
     ~logical_node();
+
+  public:
+
+    void gc_chain(bool do_rcu);
 
     inline bool
     is_locked() const
@@ -318,6 +284,28 @@ public:
         hdr &= ~HDR_ENQUEUED_MASK;
     }
 
+    inline bool
+    is_latest() const
+    {
+      return IsLatest(hdr);
+    }
+
+    static inline bool
+    IsLatest(version_t v)
+    {
+      return v & HDR_LATEST_MASK;
+    }
+
+    inline void
+    set_latest(bool latest)
+    {
+      INVARIANT(is_locked());
+      if (latest)
+        hdr |= HDR_LATEST_MASK;
+      else
+        hdr &= ~HDR_LATEST_MASK;
+    }
+
     static inline version_t
     Version(version_t v)
     {
@@ -365,56 +353,65 @@ public:
       return hdr == version;
     }
 
-    /**
-     * Read the record at tid t. Returns true if such a record exists,
-     * false otherwise (ie the record was GC-ed). Note that
-     * record_at()'s return values must be validated using versions.
-     *
-     * NB(stephentu): calling record_at() while holding the lock
-     * is an error- this will cause deadlock
-     */
+private:
+
     inline bool
-    record_at(tid_t t, tid_t &start_t, record_t &r) const
+    is_not_behind(tid_t t) const
+    {
+      return version <= t;
+    }
+
+    bool
+    record_at(tid_t t, tid_t &start_t, std::string &r, bool require_latest) const
     {
     retry:
       const version_t v = stable_version();
-      // because we expect t's to be relatively recent, instead of
-      // doing binary search, we simply do a linear scan from the
-      // end- most of the time we should find a match on the first try
-      const struct logical_node_spillblock *p = spillblock_head;
-      const bool found = is_latest_version(t);
+      const struct logical_node *p = next;
+      const bool found = is_not_behind(t);
       if (found) {
-        start_t = version;
-        r = value;
+        if (unlikely(require_latest && !IsLatest(v)))
+          return false;
+        r.reserve(size);
+        r.assign((const char *) &value_start[0], size);
       }
       if (unlikely(!check_version(v)))
         goto retry;
-      return found ? true : (p ? p->record_at(t, start_t, r) : false);
+      return found ? true : (p ? p->record_at(t, start_t, r, false) : false);
     }
 
+public:
+
+    /**
+     * Read the record at tid t. Returns true if such a record exists, false
+     * otherwise (ie the record was GC-ed, or other reasons). On a successful
+     * read, the value @ start_t will be stored in r
+     *
+     * NB(stephentu): calling stable_read() while holding the lock
+     * is an error- this will cause deadlock
+     */
     inline bool
-    stable_read(tid_t t, tid_t &start_t, record_t &r) const
+    stable_read(tid_t t, tid_t &start_t, std::string &r) const
     {
-      return record_at(t, start_t, r);
+      return record_at(t, start_t, r, true);
     }
 
     inline bool
     is_latest_version(tid_t t) const
     {
-      return version <= t;
+      return is_latest() && is_not_behind(t);
     }
 
-    inline bool
+    bool
     stable_is_latest_version(tid_t t) const
     {
       version_t v = 0;
       if (!try_stable_version(v, 16))
         return false;
       // now v is a stable version
-      const bool ret = is_latest_version(t);
+      const bool ret = is_not_behind(t);
       // only check_version() if the answer would be true- otherwise,
       // no point in doing a version check
-      if (ret && check_version(v))
+      if (ret && IsLatest(v) && check_version(v))
         return true;
       else
         // no point in retrying, since we know it will fail (since we had a
@@ -422,88 +419,77 @@ public:
         return false;
     }
 
-    inline tid_t
-    latest_version() const
-    {
-      return version;
-    }
-
-    inline record_t
-    latest_value() const
-    {
-      return value;
-    }
-
-    /**
-     * Is the valid read at snapshot_tid still consistent at commit_tid
-     */
-    template <bool check>
-    inline bool
-    is_snapshot_consistent_impl(tid_t snapshot_tid, tid_t commit_tid) const
-    {
-    retry:
-      const version_t v = check ? stable_version() : unstable_version();
-      const struct logical_node_spillblock *p = spillblock_head;
-      if (version <= snapshot_tid) {
-        if (unlikely(check && !check_version(v)))
-          goto retry;
-        return true;
-      }
-      if (unlikely(check && !check_version(v)))
-        goto retry;
-      return p ? p->is_snapshot_consistent(snapshot_tid, commit_tid, version) : false;
-    }
-
-    inline bool
-    is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid) const
-    {
-      return is_snapshot_consistent_impl<false>(snapshot_tid, commit_tid);
-    }
-
-    inline bool
-    stable_is_snapshot_consistent(tid_t snapshot_tid, tid_t commit_tid) const
-    {
-      return is_snapshot_consistent_impl<true>(snapshot_tid, commit_tid);
-    }
-
     /**
      * Always writes the record in the latest (newest) version slot,
      * not asserting whether or not inserting r @ t would violate the
      * sorted order invariant
      *
-     * Returns true if the write induces a spill
+     * Return value is:
+     *   first:  true if the # of logical versions increased, false otherwise
+     *   second: if not null, points to the logical_node meant to replace this
+     *           node as the latest. if not null, then this instance is set
+     *           to !latest (and the returned node is set to latest)
      */
-    inline bool
-    write_record_at(const transaction *txn, tid_t t, record_t r, record_t *removed)
+    std::pair<bool, logical_node *>
+    write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
     {
+      // XXX: one memcpy in common case, two memcpy in spill case
       INVARIANT(is_locked());
+      INVARIANT(is_latest());
 
-      if (removed)
-        *removed = 0;
-
-      // easy case
+      // try to overwrite this record
       if (txn->can_overwrite_record_tid(version, t)) {
-        version = t;
-        if (removed)
-          *removed = value;
-        value = r;
-        return false;
+        // see if we have enough space
+
+        if (sz <= alloc_size) {
+          // directly update in place
+          version = t;
+          size = sz;
+          memcpy(&value_start[0], r, sz);
+          return std::make_pair<bool, logical_node *>(false, NULL);
+        }
+
+        // need to replace this record
+        set_latest(false);
+        logical_node *rep = alloc(t, r, sz, next, true);
+        INVARIANT(rep->is_latest());
+        return std::make_pair(false, rep);
       }
 
       // need to spill
-      struct logical_node_spillblock *sb =
-        new logical_node_spillblock(version, value, spillblock_head);
-      spillblock_head = sb;
-      COMPILER_MEMORY_FENCE;
-      version = t;
-      value = r;
-      return true;
+      if (sz <= alloc_size) {
+        // XXX: why do we need this cast here?
+        logical_node *spill = alloc(version, &value_start[0], sz, next, false);
+        INVARIANT(!spill->is_latest());
+        next = spill;
+        version = t;
+        size = sz;
+        memcpy(&value_start[0], r, sz);
+        return std::make_pair<bool, logical_node *>(true, NULL);
+      }
+
+      set_latest(false);
+      logical_node *rep = alloc(t, r, sz, this, true);
+      INVARIANT(rep->is_latest());
+      return std::make_pair(true, rep);
     }
 
     static inline logical_node *
-    alloc(tid_t version, record_t value)
+    alloc_first(size_type alloc_sz)
     {
-      return new logical_node(version, value);
+      const size_t actual_alloc_sz = util::round_up<size_t, 16>(sizeof(logical_node) + alloc_sz);
+      char *p = (char *) malloc(actual_alloc_sz);
+      assert(p);
+      return new (p) logical_node(actual_alloc_sz - sizeof(logical_node));
+    }
+
+    static inline logical_node *
+    alloc(tid_t version, const_record_type value, size_type sz, struct logical_node *next, bool set_latest)
+    {
+      const size_t alloc_sz = util::round_up<size_t, 16>(sizeof(logical_node) + sz);
+      char *p = (char *) malloc(alloc_sz);
+      assert(p);
+      return new (p) logical_node(version, value, sz, alloc_sz - sizeof(logical_node), next, set_latest);
     }
 
     static void
@@ -512,7 +498,7 @@ public:
       logical_node *n = (logical_node *) p;
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
-      delete n;
+      free(n);
     }
 
     static inline void
@@ -534,7 +520,7 @@ public:
       n->mark_deleting();
       n->unlock();
 #endif
-      delete n;
+      free(n);
     }
 
     static std::string
@@ -567,15 +553,6 @@ public:
   }
 
   virtual void dump_debug_info() const;
-
-  /**
-   * If outstanding_refs, then there *could* still be outstanding
-   * refs (but then we would be in a RCU region)
-   */
-  typedef void (*callback_t)(record_t, bool outstanding_refs);
-
-  /** not thread-safe */
-  static bool register_cleanup_callback(callback_t callback);
 
   static void Test();
 
@@ -646,25 +623,18 @@ protected:
       throw transaction_unusable_exception();
   }
 
-  static std::vector<callback_t> &completion_callbacks();
-
   struct read_record_t {
-    tid_t t;
-    record_t r;
-    logical_node *ln;
+    tid_t t; // value was read at t
+    std::string r; // contents read @ t
+    const logical_node *ln; // node read from
   };
 
   friend std::ostream &
   operator<<(std::ostream &o, const transaction::read_record_t &rr);
 
-  //typedef std::map<std::string, read_record_t> read_set_map;
-  //typedef std::map<std::string, record_t> write_set_map;
-  //typedef std::vector<key_range_t> absent_range_vec;
-  //typedef std::map<const btree::node_opaque_t *, uint64_t> node_scan_map;
-
   typedef std::tr1::unordered_map<std::string, read_record_t> read_set_map;
-  typedef std::tr1::unordered_map<std::string, record_t> write_set_map;
-  typedef std::vector<key_range_t> absent_range_vec;
+  typedef std::tr1::unordered_map<std::string, std::string> write_set_map;
+  typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 
   struct txn_context {
@@ -673,14 +643,14 @@ protected:
     absent_range_vec absent_range_set; // ranges do not overlap
     node_scan_map node_scan; // we scanned these nodes at verison v
 
-    bool local_search_str(const std::string &k, record_t &v) const;
+    bool local_search_str(const std::string &k, const_record_type &v, size_type &sz) const;
 
     inline bool
-    local_search(const key_type &k, record_t &v) const
+    local_search(const key_type &k, const_record_type &v, size_type &sz) const
     {
       // XXX: we have to make an un-necessary copy of the key each time we search
       // the write/read set- we need to find a way to avoid this
-      return local_search_str(k.str(), v);
+      return local_search_str(k.str(), v, sz);
     }
 
     bool key_in_absent_set(const key_type &k) const;
@@ -797,10 +767,6 @@ public:
 private:
   transaction::abort_reason r;
 };
-
-#define NDB_TXN_REGISTER_CLEANUP_CALLBACK(fn) \
-  static bool _txn_cleanup_callback_register_ ## __LINE__ UNUSED = \
-    ::transaction::register_cleanup_callback(fn);
 
 // protocol 1 - global consistent TIDs
 class transaction_proto1 : public transaction {

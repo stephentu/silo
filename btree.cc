@@ -538,15 +538,6 @@ btree::search_range_at_layer(
   return true;
 }
 
-template <typename T>
-static inline T
-round_up(T n, T div)
-{
-  if ((n % div) == 0)
-    return n / div;
-  return n / div + 1;
-}
-
 void
 btree::search_range_call(const key_type &lower, const key_type *upper,
                          low_level_search_range_callback &callback) const

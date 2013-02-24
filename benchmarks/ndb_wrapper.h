@@ -14,7 +14,7 @@ public:
 
   ndb_wrapper(Proto proto) : proto(proto) {}
 
-	virtual bool index_supports_direct_mem_access() const { return true; }
+	virtual bool index_manages_get_memory() const { return true; }
 
   virtual void
   do_txn_epoch_sync() const

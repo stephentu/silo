@@ -116,13 +116,13 @@ ndb_ordered_index::get(
 {
   try {
     txn_btree::value_type v = 0;
-    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen), v))
+    txn_btree::size_type sz = 0;
+    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen), v, sz))
       return false;
     INVARIANT(v != NULL);
-    uint32_t valuelen0;
-    v = (txn_btree::value_type) read_encode_uint32(v, &valuelen0);
+    INVARIANT(sz > 0);
     value = (char *) v;
-    valuelen = valuelen0;
+    valuelen = sz;
     return true;
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
@@ -138,19 +138,20 @@ ndb_ordered_index::put(
     const char *key, size_t keylen,
     const char *value, size_t valuelen)
 {
-  ALWAYS_ASSERT(valuelen <= numeric_limits<uint32_t>::max());
-  const size_t s = size_encode_uint32(valuelen);
-  uint8_t *record = new uint8_t[s + valuelen];
-  memcpy(write_encode_uint32(record, valuelen), value, valuelen);
   try {
-    btr.insert(*((transaction *) txn), varkey((const uint8_t *) key, keylen), record);
+    btr.insert(
+        *((transaction *) txn),
+        varkey((const uint8_t *) key, keylen),
+        (const txn_btree::value_type) value, valuelen);
   } catch (transaction_abort_exception &ex) {
-    delete [] record;
     throw abstract_db::abstract_abort_exception();
   }
   ++evt_rec_creates;
-  evt_rec_bytes_alloc += valuelen;
-  return (const char *) record + s;
+  // XXX(stephentu): we currently can't return a stable pointer because we
+  // don't even know if the txn will commit (and even if it does, the value
+  // could get overwritten).  So that means our secondary index performance
+  // will suffer for now
+  return 0;
 }
 
 class ndb_wrapper_search_range_callback : public txn_btree::search_range_callback {
@@ -159,13 +160,13 @@ public:
     : upcall(&upcall) {}
 
   virtual bool
-  invoke(const txn_btree::key_type &k, txn_btree::value_type v)
+  invoke(const txn_btree::key_type &k, const txn_btree::value_type v, txn_btree::size_type sz)
   {
     const char *key = (const char *) k.data();
     const size_t keylen = k.size();
 
-    uint32_t valuelen = 0;
-    const char *value = (const char *) read_encode_uint32(v, &valuelen);
+    const char *value = (const char *) v;
+    const size_t valuelen = sz;
 
     return upcall->invoke(key, keylen, value, valuelen);
   }
@@ -217,26 +218,3 @@ ndb_ordered_index::size() const
 {
   return btr.size_estimate();
 }
-
-static event_counter evt_rec_deletes("record_deletes");
-static event_counter evt_rec_bytes_free("record_bytes_free");
-
-static void
-record_cleanup_callback(uint8_t *record, bool outstanding_refs)
-{
-  INVARIANT(!outstanding_refs || rcu::in_rcu_region());
-  if (unlikely(!record))
-    return;
-  VERBOSE(cerr << "record_cleanup_callback(refs="
-               << outstanding_refs << "): 0x"
-               << hexify(intptr_t(record)) << endl);
-  ++evt_rec_deletes;
-  uint32_t valuelen = 0;
-  read_encode_uint32(record, &valuelen);
-  evt_rec_bytes_free += valuelen;
-  if (outstanding_refs)
-    rcu::free_array(record);
-  else
-    delete [] record;
-}
-NDB_TXN_REGISTER_CLEANUP_CALLBACK(record_cleanup_callback);

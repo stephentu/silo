@@ -14,6 +14,10 @@
  *
  * A txn_btree does not allow keys to map to NULL records, even though the
  * underlying concurrent btree does- this simplifies some of the book-keeping
+ * Additionally, keys cannot map to zero length records.
+ *
+ * Note that the txn_btree *manages* the memory of both keys and values internally.
+ * See the specific notes on search()/insert() about memory ownership
  */
 class txn_btree {
   friend class transaction;
@@ -21,10 +25,40 @@ class txn_btree {
   friend class transaction_proto2;
 public:
   typedef btree::key_type key_type;
-  typedef btree::value_type value_type;
-  typedef btree::search_range_callback search_range_callback;
+  typedef const uint8_t * value_type;
+  typedef size_t size_type;
 
-  bool search(transaction &t, const key_type &k, value_type &v);
+  struct search_range_callback {
+  public:
+    virtual ~search_range_callback() {}
+    virtual bool invoke(const key_type &k, value_type v, size_type sz) = 0;
+  };
+
+private:
+  template <typename T>
+  class type_callback_wrapper : public search_range_callback {
+  public:
+    type_callback_wrapper(T *callback) : callback(callback) {}
+    virtual bool
+    invoke(const key_type &k, value_type v, size_type sz)
+    {
+      return callback->operator()(k, v, sz);
+    }
+  private:
+    T *const callback;
+  };
+
+public:
+
+  txn_btree(size_type value_size_hint = 128)
+    : value_size_hint(value_size_hint)
+  {}
+
+  // memory:
+  // k - assumed to point to valid memory, *not* managed by btree
+  // v - if k is found, points to a region of (immutable) memory of size sz which
+  //     is guaranteed to be valid memory as long as transaction t is in scope
+  bool search(transaction &t, const key_type &k, value_type &v, size_type &sz);
 
   void
   search_range_call(transaction &t,
@@ -32,34 +66,59 @@ public:
                     const key_type *upper,
                     search_range_callback &callback);
 
+  // T must be copy-constructable
   template <typename T>
   inline void
   search_range(transaction &t, const key_type &lower, const key_type *upper, T callback)
   {
-    btree::type_callback_wrapper<T> w(&callback);
+    type_callback_wrapper<T> w(&callback);
     search_range_call(t, lower, upper, w);
   }
 
+  // memory:
+  // v - assumed to point to valid memory of length sz. the txn_btree does
+  //     *not* take ownership of v- as soon as insert() returns it is ok for
+  //     v to be invalidated
   inline void
-  insert(transaction &t, const key_type &k, value_type v)
+  insert(transaction &t, const key_type &k, value_type v, size_type sz)
   {
     INVARIANT(v);
-    insert_impl(t, k, v);
+    INVARIANT(sz);
+    insert_impl(t, k, v, sz);
+  }
+
+  template <typename T>
+  inline void
+  insert_object(transaction &t, const key_type &k, const T &obj)
+  {
+    insert(t, k, (value_type) &obj, sizeof(obj));
   }
 
   inline void
   remove(transaction &t, const key_type &k)
   {
-    insert_impl(t, k, NULL);
+    insert_impl(t, k, NULL, 0);
   }
-
-  static void Test();
 
   inline size_t
   size_estimate() const
   {
     return underlying_btree.size();
   }
+
+  inline size_type
+  get_value_size_hint() const
+  {
+    return value_size_hint;
+  }
+
+  inline void
+  set_value_size_hint(size_type value_size_hint)
+  {
+    this->value_size_hint = value_size_hint;
+  }
+
+  static void Test();
 
 private:
 
@@ -73,7 +132,7 @@ private:
         invoked(false), caller_callback(caller_callback),
         caller_stopped(false) {}
     virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
-    virtual bool invoke(const key_type &k, value_type v,
+    virtual bool invoke(const key_type &k, btree::value_type v,
                         const btree::node_opaque_t *n, uint64_t version);
     transaction *const t;
     transaction::txn_context *const ctx;
@@ -85,21 +144,22 @@ private:
     bool caller_stopped;
   };
 
-  struct absent_range_validation_callback : public search_range_callback {
+  struct absent_range_validation_callback : public btree::search_range_callback {
     absent_range_validation_callback(transaction::txn_context *ctx,
                                      transaction::tid_t commit_tid)
       : ctx(ctx), commit_tid(commit_tid), failed_flag(false) {}
     inline bool failed() const { return failed_flag; }
-    virtual bool invoke(const key_type &k, value_type v);
+    virtual bool invoke(const key_type &k, btree::value_type v);
     transaction::txn_context *const ctx;
     const transaction::tid_t commit_tid;
     bool failed_flag;
   };
 
   // remove() is just insert_impl() with NULL value
-  void insert_impl(transaction &t, const key_type &k, value_type v);
+  void insert_impl(transaction &t, const key_type &k, value_type v, size_type sz);
 
   btree underlying_btree;
+  size_type value_size_hint;
 };
 
 #endif /* _NDB_TXN_BTREE_H_ */

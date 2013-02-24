@@ -21,48 +21,24 @@ transaction::logical_node::~logical_node()
   VERBOSE(cerr << "logical_node: " << hexify(intptr_t(this)) << " is being deleted" << endl);
 
   // gc the chain
-  if (spillblock_head)
-    spillblock_head->gc_chain(false);
-
-  // invoke callbacks on the values
-  const vector<callback_t> &callbacks = completion_callbacks();
-  for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
-      inner_it != callbacks.end(); ++inner_it)
-    (*inner_it)(value, false);
+  if (next)
+    next->gc_chain(false);
 }
 
 static event_counter evt_spillblock_creates("spillblock_creates");
 static event_counter evt_spillblock_deletes("spillblock_deletes");
 
-transaction::logical_node_spillblock::logical_node_spillblock(
-    tid_t version, record_t value,
-    struct logical_node_spillblock *spillblock_next)
-  : version(version), value(value), spillblock_next(spillblock_next)
-{
-  ++evt_spillblock_creates;
-}
-
-transaction::logical_node_spillblock::~logical_node_spillblock()
-{
-  ++evt_spillblock_deletes;
-}
-
 void
-transaction::logical_node_spillblock::gc_chain(bool do_rcu)
+transaction::logical_node::gc_chain(bool do_rcu)
 {
   INVARIANT(!do_rcu || rcu::in_rcu_region());
-  struct logical_node_spillblock *cur = this;
-  const vector<callback_t> &callbacks = completion_callbacks();
+  struct logical_node *cur = this;
   while (cur) {
-    // free the records
-    for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
-        inner_it != callbacks.end(); ++inner_it)
-      (*inner_it)(cur->value, do_rcu);
-    struct logical_node_spillblock *next = cur->spillblock_next;
+    struct logical_node *next = cur->next;
     if (do_rcu)
       rcu::free(cur);
     else
-      delete cur;
+      release_no_rcu(cur);
     cur = next;
   }
 }
@@ -75,6 +51,7 @@ transaction::logical_node::VersionInfoStr(uint64_t v)
   buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
   buf << (IsDeleting(v) ? "DEL" : "-") << " | ";
   buf << (IsEnqueued(v) ? "ENQ" : "-") << " | ";
+  buf << (IsLatest(v) ? "LATEST" : "-") << " | ";
   buf << Version(v);
   buf << "]";
   return buf.str();
@@ -114,41 +91,29 @@ format_tid_list(const vector<transaction::tid_t> &tids)
   return s;
 }
 
-static vector<string>
-format_rec_list(const vector<transaction::record_t> &recs)
-{
-  vector<string> s;
-  for (vector<transaction::record_t>::const_iterator it = recs.begin();
-       it != recs.end(); ++it)
-    s.push_back(hexify(intptr_t(*it)));
-  return s;
-}
-
 inline ostream &
 operator<<(ostream &o, const transaction::logical_node &ln)
 {
   vector<transaction::tid_t> tids;
-  vector<transaction::record_t> recs;
+  vector<transaction::size_type> recs;
   tids.push_back(ln.version);
-  recs.push_back(ln.value);
+  recs.push_back(ln.size);
   vector<string> tids_s = format_tid_list(tids);
-  vector<string> recs_s = format_rec_list(recs);
-  const bool has_spill = ln.spillblock_head;
+  const bool has_spill = ln.next;
   o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) <<
     ", tids=" << format_list(tids_s.rbegin(), tids_s.rend()) <<
-    ", recs=" << format_list(recs_s.rbegin(), recs_s.rend()) <<
+    ", sizes=" << format_list(recs.rbegin(), recs.rend()) <<
     ", has_spill=" <<  has_spill << "]";
   o << endl;
-  const struct transaction::logical_node_spillblock *p = ln.spillblock_head;
-  for (; p; p = p->spillblock_next) {
+  const struct transaction::logical_node *p = ln.next;
+  for (; p; p = p->next) {
     vector<transaction::tid_t> itids;
-    vector<transaction::record_t> irecs;
+    vector<transaction::size_type> irecs;
     itids.push_back(p->version);
-    irecs.push_back(p->value);
+    irecs.push_back(p->size);
     vector<string> itids_s = format_tid_list(itids);
-    vector<string> irecs_s = format_rec_list(irecs);
     o << "[tids=" << format_list(itids_s.rbegin(), itids_s.rend())
-      << ", recs=" << format_list(irecs_s.rbegin(), irecs_s.rend())
+      << ", sizes=" << format_list(irecs.rbegin(), irecs.rend())
       << "]" << endl;
   }
   return o;
@@ -172,18 +137,18 @@ transaction::~transaction()
 struct lnode_info {
   lnode_info() {}
   lnode_info(txn_btree *btr,
-             const string &key,
+             const string *key,
              bool locked,
-             transaction::record_t r)
+             const string *r)
     : btr(btr),
       key(key),
       locked(locked),
       r(r)
   {}
   txn_btree *btr;
-  string key;
+  const string *key;
   bool locked;
-  transaction::record_t r;
+  const string *r;
 };
 
 bool
@@ -214,14 +179,14 @@ transaction::commit(bool doThrow)
        outer_it != ctx_map.end(); ++outer_it) {
     INVARIANT(!(get_flags() & TXN_FLAG_READ_ONLY) || outer_it->second.write_set.empty());
     for (write_set_map::iterator it = outer_it->second.write_set.begin();
-        it != outer_it->second.write_set.end(); ++it) {
+         it != outer_it->second.write_set.end(); ++it) {
     retry:
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
-        logical_nodes[(logical_node *) v] = lnode_info(outer_it->first, it->first, false, it->second);
+        logical_nodes[(logical_node *) v] = lnode_info(outer_it->first, &it->first, false, &it->second);
       } else {
-        logical_node *ln = logical_node::alloc(null_entry_tid(), 0);
+        logical_node *ln = logical_node::alloc_first(outer_it->first->get_value_size_hint());
         // XXX: underlying btree api should return the existing value if
         // insert fails- this would allow us to avoid having to do another search
         pair<const btree::node_opaque_t *, uint64_t> insert_info;
@@ -248,7 +213,7 @@ transaction::commit(bool doThrow)
             SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
           }
         }
-        logical_nodes[ln] = lnode_info(outer_it->first, it->first, false, it->second);
+        logical_nodes[ln] = lnode_info(outer_it->first, &it->first, false, &it->second);
       }
     }
   }
@@ -264,7 +229,9 @@ transaction::commit(bool doThrow)
       VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
       it->first->lock();
       it->second.locked = true; // we locked the node
-      if (unlikely(it->first->is_deleting() || !can_read_tid(it->first->latest_version()))) {
+      if (unlikely(it->first->is_deleting() ||
+                   !it->first->is_latest() ||
+                   !can_read_tid(it->first->version))) {
         // XXX(stephentu): overly conservative (with the can_read_tid() check)
         abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
         goto do_abort;
@@ -288,28 +255,24 @@ transaction::commit(bool doThrow)
          outer_it != ctx_map.end(); ++outer_it) {
       for (read_set_map::iterator it = outer_it->second.read_set.begin();
            it != outer_it->second.read_set.end(); ++it) {
-        bool did_write = outer_it->second.write_set.find(it->first) != outer_it->second.write_set.end();
-        transaction::logical_node *ln = NULL;
+        const bool did_write = outer_it->second.write_set.find(it->first) != outer_it->second.write_set.end();
+        const transaction::logical_node *ln = NULL;
         if (likely(it->second.ln)) {
           ln = it->second.ln;
         } else {
           btree::value_type v = 0;
           if (outer_it->first->underlying_btree.search(varkey(it->first), v))
-            ln = (transaction::logical_node *) v;
+            ln = (const transaction::logical_node *) v;
         }
 
         if (unlikely(!ln)) {
           INVARIANT(!it->second.ln); // otherwise ln == it->second.ln
           INVARIANT(!did_write); // otherwise it would be there in the tree
-          INVARIANT(!it->second.r); // b/c ln did not exist when we read it
+          INVARIANT(it->second.r.empty()); // b/c ln did not exist when we read it
           // trivially validated
           continue;
         } else if (unlikely(!it->second.ln)) {
           // have in tree now but we didnt read it initially
-          if (!ln->latest_value())
-            // NB(stephentu): optimization: the logical value is the same
-            // as when we read it (not existing)
-            continue;
           abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
           goto do_abort;
         }
@@ -317,26 +280,10 @@ transaction::commit(bool doThrow)
         VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
                      << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
-        // XXX(stephentu): this optimization seems broken for now, and don't quite know why,
-        // so we disable it for the time being (it doesn't help proto2)
-        //if (snapshot_tid_t.first) {
-        //  // An optimization:
-        //  // if the latest version is > commit_tid, and the next latest version is <
-        //  // snapshot_tid, then it is also ok because the latest version will be ordered
-        //  // after this txn, and we know its read set does not depend on our write set
-        //  // (since it has a txn id higher than we do)
-        //  if (likely(did_write ?
-        //        ln->is_snapshot_consistent(snapshot_tid_t.second, commit_tid.second) :
-        //        ln->stable_is_snapshot_consistent(snapshot_tid_t.second, commit_tid.second)))
-        //    continue;
-        //} else {
-
-          if (likely(did_write ?
-                ln->is_latest_version(it->second.t) :
-                ln->stable_is_latest_version(it->second.t)))
-            continue;
-
-        //}
+        if (likely(did_write ?
+              ln->is_latest_version(it->second.t) :
+              ln->stable_is_latest_version(it->second.t)))
+          continue;
 
         //cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
         //             << hexify(intptr_t(ln)) << " FAILED at snapshot_tid " << snapshot_tid_t.second << endl;
@@ -376,30 +323,34 @@ transaction::commit(bool doThrow)
     }
 
     // commit actual records
-    vector<record_t> removed_vec;
     for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
       INVARIANT(it->second.locked);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid.second << endl);
-      record_t removed = 0;
-      if (it->first->write_record_at(this, commit_tid.second, it->second.r, &removed))
-        // signal for GC
-        on_logical_node_spill(it->first);
-      if (!it->second.r)
-        // schedule deletion
-        on_logical_delete(it->second.btr, it->second.key, it->first);
+      pair<bool, logical_node *> ret = it->first->write_record_at(
+          this, commit_tid.second,
+          (const record_type) it->second.r->data(), it->second.r->size());
+      logical_node *head = ret.second ? ret.second : it->first;
+      if (unlikely(ret.second)) {
+        // need to update pointer in underlying b-tree
+        btree::value_type old_v = 0;
+        head->lock();
+        bool no_key = it->second.btr->underlying_btree.insert(
+            varkey(*it->second.key), (btree::value_type) head, &old_v, NULL);
+        if (no_key) INVARIANT(false);
+        INVARIANT(old_v == (btree::value_type) it->first);
+      }
+      if (unlikely(ret.first))
+        // spill happened: signal for GC
+        on_logical_node_spill(head);
+      if (it->second.r->empty())
+        // logical delete happened: schedule physical deletion
+        on_logical_delete(it->second.btr, *it->second.key, head);
       it->first->unlock();
-      if (removed)
-        removed_vec.push_back(removed);
+      if (unlikely(ret.second))
+        head->unlock();
     }
-
-    const vector<callback_t> &callbacks = completion_callbacks();
-    for (vector<record_t>::iterator it = removed_vec.begin();
-         it != removed_vec.end(); ++it)
-      for (vector<callback_t>::const_iterator inner_it = callbacks.begin();
-           inner_it != callbacks.end(); ++inner_it)
-        (*inner_it)(*it, true);
   }
 
   state = TXN_COMMITED;
@@ -488,7 +439,7 @@ inline ostream &
 operator<<(ostream &o, const transaction::read_record_t &rr)
 {
   o << "[tid_read=" << g_proto_version_str(rr.t)
-    << ", record=0x" << hexify(intptr_t(rr.r))
+    << ", size=" << rr.r.size()
     << ", ln_ptr=0x" << hexify(intptr_t(rr.ln))
     << ", ln=" << *rr.ln << "]";
   return o;
@@ -516,7 +467,7 @@ transaction::dump_debug_info() const
     // write-set
     for (write_set_map::const_iterator ws_it = it->second.write_set.begin();
          ws_it != it->second.write_set.end(); ++ws_it)
-      if (ws_it->second)
+      if (!ws_it->second.empty())
         cerr << "      Key 0x" << hexify(ws_it->first) << " @ " << hexify(ws_it->second) << endl;
       else
         cerr << "      Key 0x" << hexify(ws_it->first) << " : remove" << endl;
@@ -612,12 +563,14 @@ transaction::Test()
 }
 
 bool
-transaction::txn_context::local_search_str(const string &k, record_t &v) const
+transaction::txn_context::local_search_str(const string &k, const_record_type &v, size_type &sz) const
 {
+  // XXX: we require stable references
   {
     transaction::write_set_map::const_iterator it = write_set.find(k);
     if (it != write_set.end()) {
-      v = it->second;
+      v = (const_record_type) it->second.data();
+      sz = it->second.size();
       return true;
     }
   }
@@ -625,13 +578,16 @@ transaction::txn_context::local_search_str(const string &k, record_t &v) const
   {
     transaction::read_set_map::const_iterator it = read_set.find(k);
     if (it != read_set.end()) {
-      v = it->second.r;
+      v = (const_record_type) it->second.r.data();
+      sz = it->second.r.size();
       return true;
     }
   }
 
+  // XXX: low-level scan protocol can avoid this check
   if (key_in_absent_set(varkey(k))) {
     v = NULL;
+    sz = 0;
     return true;
   }
 
@@ -732,22 +688,6 @@ transaction::txn_context::add_absent_range(const key_range_t &range)
   swap(absent_range_set, new_absent_range_set);
 }
 
-bool
-transaction::register_cleanup_callback(callback_t callback)
-{
-  completion_callbacks().push_back(callback);
-  return true;
-}
-
-vector<transaction::callback_t> &
-transaction::completion_callbacks()
-{
-  static vector<callback_t> *callbacks = NULL;
-  if (!callbacks)
-    callbacks = new vector<callback_t>;
-  return *callbacks;
-}
-
 transaction_proto1::transaction_proto1(uint64_t flags)
   : transaction(flags), snapshot_tid(last_consistent_global_tid)
 {
@@ -784,10 +724,10 @@ transaction_proto1::on_logical_node_spill(logical_node *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(rcu::in_rcu_region());
-  struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
+  struct logical_node *p = ln->next, **pp = &ln->next;
   for (size_t i = 0; p && i < NMaxChainLength; i++) {
-    pp = &p->spillblock_next;
-    p = p->spillblock_next;
+    pp = &p->next;
+    p = p->next;
   }
   if (p) {
     *pp = 0;
@@ -835,7 +775,7 @@ volatile transaction::tid_t transaction_proto1::last_consistent_global_tid = 0;
 transaction_proto2::transaction_proto2(uint64_t flags)
   : transaction(flags), current_epoch(0), last_consistent_tid(0)
 {
-  size_t my_core_id = coreid::core_id();
+  const size_t my_core_id = coreid::core_id();
   VERBOSE(cerr << "new transaction_proto2 (core=" << my_core_id
                << ", nest=" << tl_nest_level << ")" << endl);
   if (tl_nest_level++ == 0)
@@ -847,7 +787,7 @@ transaction_proto2::transaction_proto2(uint64_t flags)
 
 transaction_proto2::~transaction_proto2()
 {
-  size_t my_core_id = coreid::core_id();
+  const size_t my_core_id = coreid::core_id();
   VERBOSE(cerr << "destroy transaction_proto2 (core=" << my_core_id
                << ", nest=" << tl_nest_level << ")" << endl);
   ALWAYS_ASSERT(tl_nest_level > 0);
@@ -881,8 +821,8 @@ transaction_proto2::dump_debug_info() const
 transaction::tid_t
 transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
 {
-  size_t my_core_id = coreid::core_id();
-  tid_t l_last_commit_tid = tl_last_commit_tid;
+  const size_t my_core_id = coreid::core_id();
+  const tid_t l_last_commit_tid = tl_last_commit_tid;
   INVARIANT(l_last_commit_tid == MIN_TID || CoreId(l_last_commit_tid) == my_core_id);
 
   // XXX(stephentu): wrap-around messes this up
@@ -901,7 +841,8 @@ transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
   for (vector<logical_node *>::const_iterator it = write_nodes.begin();
        it != write_nodes.end(); ++it) {
     INVARIANT((*it)->is_locked());
-    tid_t t = (*it)->latest_version();
+    INVARIANT((*it)->is_latest());
+    const tid_t t = (*it)->version;
     // XXX(stephentu): we are overly conservative for now- technically this
     // abort isn't necessary (we really should just write the value in the correct
     // position)
@@ -924,13 +865,13 @@ void
 transaction_proto2::on_logical_node_spill(logical_node *ln)
 {
   INVARIANT(ln->is_locked());
+  INVARIANT(ln->is_latest());
   INVARIANT(rcu::in_rcu_region());
-  const uint64_t epoch = g_last_consistent_epoch;
-  struct logical_node_spillblock *p = ln->spillblock_head, **pp = &ln->spillblock_head;
+  struct logical_node *p = ln->next, **pp = &ln->next;
   const size_t NMaxChainLength = 1;
   for (size_t i = 0; i < NMaxChainLength && p; i++) {
-    pp = &p->spillblock_next;
-    p = p->spillblock_next;
+    pp = &p->next;
+    p = p->next;
   }
   if (p) {
     *pp = 0;
@@ -951,6 +892,7 @@ transaction_proto2::on_logical_delete(
     txn_btree *btr, const string &key, logical_node *ln)
 {
   INVARIANT(ln->is_locked());
+  INVARIANT(ln->is_latest());
   INVARIANT(!ln->latest_value());
   INVARIANT(!ln->is_deleting());
   if (ln->is_enqueued())
@@ -962,7 +904,7 @@ transaction_proto2::on_logical_delete(
                << ", latest_version_epoch=" << EpochId(ln->latest_version()) << endl
                << "  ln=" << *info->ln << endl);
   enqueue_work_after_current_epoch(
-      EpochId(ln->latest_version()),
+      EpochId(ln->version),
       try_delete_logical_node,
       (void *) info);
 }
@@ -990,7 +932,7 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
   INVARIANT(info->ln->is_enqueued());
   INVARIANT(!info->ln->is_deleting());
   info->ln->set_enqueued(false); // we are processing this record
-  if (info->ln->latest_value()) {
+  if (!info->ln->is_latest() || info->ln->size) {
     // somebody added a record again, so we don't want to delete it
     ++evt_try_delete_revivals;
     goto unlock_and_free;
@@ -998,7 +940,7 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
   VERBOSE(cerr << "logical_node: 0x" << hexify(intptr_t(info->ln)) << " is being unlinked" << endl
                << "  g_last_consistent_epoch=" << g_last_consistent_epoch << endl
                << "  ln=" << *info->ln << endl);
-  v = EpochId(info->ln->latest_version());
+  v = EpochId(info->ln->version);
   if (g_last_consistent_epoch <= v) {
     // need to reschedule to run when epoch=v ends
     VERBOSE(cerr << "  rerunning at end of epoch=" << v << endl);
