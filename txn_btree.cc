@@ -290,7 +290,12 @@ inline void
 AssertByteEquality(const T &t, txn_btree::value_type v, txn_btree::size_type sz)
 {
   ALWAYS_ASSERT(sizeof(T) == sz);
-  ALWAYS_ASSERT(memcmp(&t, v, sz) == 0);
+  bool success = memcmp(&t, v, sz) == 0;
+  if (!success) {
+    cerr << "expecting: " << hexify(string((const char *) &t, sizeof(T))) << endl;
+    cerr << "got      : " << hexify(string((const char *) v, sz)) << endl;
+    ALWAYS_ASSERT(false);
+  }
 }
 
 struct rec {
@@ -338,7 +343,7 @@ test1()
       btr.insert_object(t0, u64_varkey(0), rec(1));
       ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1, sz1));
       VERBOSE(cerr << "sz1: " << sz1 << endl);
-      AssertByteEquality(rec(1), v1, sz1);
+      AssertByteEquality(rec(0), v1, sz1); // we don't read-uncommitted
 
       AssertSuccessfulCommit(t0);
       try {

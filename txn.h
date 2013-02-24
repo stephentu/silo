@@ -371,6 +371,7 @@ private:
       if (found) {
         if (unlikely(require_latest && !IsLatest(v)))
           return false;
+        start_t = version;
         r.reserve(size);
         r.assign((const char *) &value_start[0], size);
       }
