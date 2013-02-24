@@ -597,11 +597,13 @@ transaction::txn_context::local_search_str(const string &k, const_record_type &v
 
   // XXX: low-level scan protocol can avoid this check
   if (key_in_absent_set(varkey(k))) {
+    VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in absent set" << endl);
     v = NULL;
     sz = 0;
     return true;
   }
 
+  VERBOSE(cerr << "local_search_str: key " << hexify(k) << " not found locally" << endl);
   return false;
 }
 

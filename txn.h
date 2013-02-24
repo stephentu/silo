@@ -479,7 +479,7 @@ public:
       // need to spill
       if (sz <= alloc_size) {
         // XXX: why do we need this cast here?
-        logical_node *spill = alloc(version, &value_start[0], sz, next, false);
+        logical_node *spill = alloc(version, &value_start[0], size, next, false);
         INVARIANT(!spill->is_latest());
         next = spill;
         version = t;

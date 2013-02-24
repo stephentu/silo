@@ -97,7 +97,8 @@ txn_btree::txn_search_range_callback::invoke(
 {
   t->ensure_active();
   VERBOSE(cerr << "search range k: " << k << " from <node=0x" << hexify(intptr_t(n))
-               << ", version=" << version << ">" << endl);
+               << ", version=" << version << ">" << endl
+               << "  " << *((transaction::logical_node *) v) << endl);
   const string sk(k.str());
   if (!(t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
     transaction::key_range_t r =
@@ -113,19 +114,22 @@ txn_btree::txn_search_range_callback::invoke(
   size_type local_sz = 0;
   bool local_read = ctx->local_search_str(sk, local_v, local_sz);
   bool ret = true; // true means keep going, false means stop
-  if (local_read && local_v)
+  if (local_read && local_v) {
     // found locally and record is not deleted
+    INVARIANT(local_sz > 0);
     ret = caller_callback->invoke(k, local_v, local_sz);
-  transaction::read_set_map::const_iterator it =
-    ctx->read_set.find(sk);
-  if (it == ctx->read_set.end()) {
+  }
+  transaction::read_set_map::const_iterator it;
+  if (!local_read || ((it = ctx->read_set.find(sk)) == ctx->read_set.end())) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
     INVARIANT(ln);
     prefetch_node(ln);
     transaction::tid_t start_t = 0;
     string r;
-    const pair<bool, transaction::tid_t> snapshot_tid_t = t->consistent_snapshot_tid();
-    const transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
+    const pair<bool, transaction::tid_t> snapshot_tid_t =
+      t->consistent_snapshot_tid();
+    const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
+      snapshot_tid_t.second : transaction::MAX_TID;
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
       transaction::abort_reason r = transaction::ABORT_REASON_UNSTABLE_READ;
       t->abort_impl(r);
@@ -142,11 +146,14 @@ txn_btree::txn_search_range_callback::invoke(
     read_rec->t = start_t;
     swap(read_rec->r, r);
     read_rec->ln = ln;
-    VERBOSE(cerr << "read <t=" << start_t << ", r=" << hexify(r)
-                 << "> (local_read=" << local_read << ")" << endl);
-    if (!local_read && !r.empty())
+    VERBOSE(cerr << "read <t=" << start_t << ", sz=" << read_rec->r.size()
+                 << ", r=" << hexify(read_rec->r) << "> (local_read="
+                 << (local_read ? "Y" : "N") << ")" << endl);
+    if (!local_read && !read_rec->r.empty())
       ret = caller_callback->invoke(k,
           (const value_type) read_rec->r.data(), read_rec->r.size());
+  } else {
+    INVARIANT(((it = ctx->read_set.find(sk)) != ctx->read_set.end()));
   }
   if (!ret)
     caller_stopped = true;
@@ -293,6 +300,13 @@ struct rec {
   rec(uint64_t v) : v(v) {}
   uint64_t v;
 };
+
+static inline ostream &
+operator<<(ostream &o, const rec &r)
+{
+  o << "[rec=" << r.v << "]";
+  return o;
+}
 
 template <typename TxnType>
 static void
@@ -523,15 +537,17 @@ make_long_key(int32_t a, int32_t b, int32_t c, int32_t d) {
 
 class counting_scan_callback : public txn_btree::search_range_callback {
 public:
-  counting_scan_callback() : ctr(0) {}
+  counting_scan_callback(uint64_t expect) : ctr(0), expect(expect) {}
 
   virtual bool
   invoke(const txn_btree::key_type &k, txn_btree::value_type v, txn_btree::size_type sz)
   {
+    AssertByteEquality(rec(expect), v, sz);
     ctr++;
     return true;
   }
   size_t ctr;
+  uint64_t expect;
 };
 
 }
@@ -565,9 +581,11 @@ test_long_keys()
       const string lowkey_s = make_long_key(1, 2, 3, 0);
       const string highkey_s = make_long_key(1, 2, 3, N);
       const varkey highkey(highkey_s);
-      counting_scan_callback c;
+      counting_scan_callback c(1);
       btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       AssertSuccessfulCommit(t);
+      if (c.ctr != N)
+        cerr << "c.ctr: " << c.ctr << ", N: " << N << endl;
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == N);
     }
 
@@ -619,7 +637,7 @@ test_long_keys2()
 
     {
       TxnType t(txn_flags);
-      counting_scan_callback c;
+      counting_scan_callback c(12345);
       const varkey highkey(highkey_s);
       btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       AssertSuccessfulCommit(t);
@@ -716,6 +734,31 @@ namespace mp_test2_ns {
 
   static volatile bool running = true;
 
+  // expects the values to be monotonically increasing (as records)
+  class counting_scan_callback : public txn_btree::search_range_callback {
+  public:
+    counting_scan_callback() : ctr(0), has_last(false), last(0) {}
+    virtual bool
+    invoke(const txn_btree::key_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+    {
+      ALWAYS_ASSERT(sz == sizeof(rec));
+      rec *r = (rec *) v;
+      VERBOSE(cerr << "counting_scan_callback: " << hexify(k) << " => " << r->v << endl);
+      if (!has_last) {
+        last = r->v;
+        has_last = true;
+      } else {
+        ALWAYS_ASSERT(r->v > last);
+        last = r->v;
+      }
+      ctr++;
+      return true;
+    }
+    size_t ctr;
+    bool has_last;
+    uint64_t last;
+  };
+
   template <typename TxnType>
   class mutate_worker : public txn_btree_worker {
   public:
@@ -732,15 +775,14 @@ namespace mp_test2_ns {
             txn_btree::value_type v = 0, v_ctr = 0;
             txn_btree::size_type sz = 0, sz_ctr = 0;
             ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr, sz_ctr));
+            ALWAYS_ASSERT_COND_IN_TXN(t, sz_ctr == sizeof(rec));
             ALWAYS_ASSERT_COND_IN_TXN(t, ((rec *) v_ctr)->v > 1);
             if (btr->search(t, u64_varkey(i), v, sz)) {
-              ALWAYS_ASSERT_COND_IN_TXN(t, sz == sizeof(rec));
-              ALWAYS_ASSERT_COND_IN_TXN(t, ((rec *) v_ctr)->v == ((rec *) v)->v);
+              AssertByteEquality(rec(i), v, sz);
               btr->remove(t, u64_varkey(i));
               ctr_rec.v = ((rec *) v_ctr)->v - 1;
             } else {
-              const rec v_rec(i);
-              btr->insert_object(t, u64_varkey(i), v_rec);
+              btr->insert_object(t, u64_varkey(i), rec(i));
               ctr_rec.v = ((rec *) v_ctr)->v + 1;
             }
             btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
@@ -756,17 +798,10 @@ namespace mp_test2_ns {
   };
 
   template <typename TxnType>
-  class reader_worker : public txn_btree_worker,
-                        public txn_btree::search_range_callback {
+  class reader_worker : public txn_btree_worker {
   public:
     reader_worker(txn_btree &btr, uint64_t flags)
-      : txn_btree_worker(btr, flags), validations(0), naborts(0), ctr(0) {}
-    virtual bool
-    invoke(const txn_btree::key_type &k, txn_btree::value_type v, txn_btree::size_type sz)
-    {
-      ctr++;
-      return true;
-    }
+      : txn_btree_worker(btr, flags), validations(0), naborts(0) {}
     virtual void run()
     {
       while (running) {
@@ -775,14 +810,17 @@ namespace mp_test2_ns {
           txn_btree::value_type v_ctr = 0;
           txn_btree::size_type sz_ctr = 0;
           ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr, sz_ctr));
-          ctr = 0;
+          counting_scan_callback c;
           const u64_varkey kend(range_end);
-          btr->search_range_call(t, u64_varkey(range_begin), &kend, *this);
+          btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
           t.commit(true);
-          if (ctr != ((rec *) v_ctr)->v)
-            cerr << "ctr: " << ctr << ", v_ctr: " << ((rec *) v_ctr)->v << endl;
-          ALWAYS_ASSERT_COND_IN_TXN(t, ctr == ((rec *) v_ctr)->v);
+          if (c.ctr != ((rec *) v_ctr)->v) {
+            cerr << "ctr: " << c.ctr << ", v_ctr: " << ((rec *) v_ctr)->v << endl;
+            cerr << "validations: " << validations << endl;
+          }
+          ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((rec *) v_ctr)->v);
           validations++;
+          VERBOSE(cerr << "successful validation" << endl);
         } catch (transaction_abort_exception &e) {
           naborts++;
         }
@@ -790,8 +828,6 @@ namespace mp_test2_ns {
     }
     size_t validations;
     size_t naborts;
-  private:
-    size_t ctr;
   };
 }
 
@@ -821,6 +857,24 @@ mp_test2()
     // compute a new consistent snapshot version that includes this
     // latest update
     txn_epoch_sync<TxnType>::sync();
+
+    {
+      // make sure the first validation passes
+      TxnType t(txn_flags | transaction::TXN_FLAG_READ_ONLY);
+      txn_btree::value_type v_ctr = 0;
+      txn_btree::size_type sz_ctr = 0;
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(ctr_key), v_ctr, sz_ctr));
+      ALWAYS_ASSERT_COND_IN_TXN(t, sz_ctr == sizeof(rec));
+      counting_scan_callback c;
+      const u64_varkey kend(range_end);
+      btr.search_range_call(t, u64_varkey(range_begin), &kend, c);
+      AssertSuccessfulCommit(t);
+      if (c.ctr != ((rec *) v_ctr)->v) {
+        cerr << "ctr: " << c.ctr << ", v_ctr: " << ((rec *) v_ctr)->v << endl;
+      }
+      ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((rec *) v_ctr)->v);
+      VERBOSE(cerr << "initial read only scan passed" << endl);
+    }
 
     mutate_worker<TxnType> w0(btr, txn_flags);
     reader_worker<TxnType> w1(btr, txn_flags);
