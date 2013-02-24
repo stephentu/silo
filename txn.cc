@@ -248,7 +248,7 @@ transaction::commit(bool doThrow)
     if (logical_nodes.empty())
       VERBOSE(cerr << "commit tid: <read-only>" << endl);
     else
-      VERBOSE(cerr << "commit tid: " << commit_tid.second << endl);
+      VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
 
     // do read validation
     for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
@@ -291,10 +291,10 @@ transaction::commit(bool doThrow)
               ln->stable_is_latest_version(it->second.t)))
           continue;
 
-        //cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
-        //             << hexify(intptr_t(ln)) << " FAILED at snapshot_tid " << snapshot_tid_t.second << endl;
-        //cerr << "  txn read version: " << g_proto_version_str(it->second.t) << endl;
-        //cerr << "  ln=" << *ln << endl;
+        VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
+                     << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << " FAILED" << endl
+                     << "  txn read version: " << g_proto_version_str(it->second.t) << endl
+                     << "  ln=" << *ln << endl);
 
         abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
         goto do_abort;
@@ -575,6 +575,8 @@ transaction::txn_context::local_search_str(const string &k, const_record_type &v
   {
     transaction::write_set_map::const_iterator it = write_set.find(k);
     if (it != write_set.end()) {
+      VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in write set"  << endl);
+      VERBOSE(cerr << "  value: " << hexify(it->second) << endl);
       v = (const_record_type) it->second.data();
       sz = it->second.size();
       return true;
@@ -584,6 +586,8 @@ transaction::txn_context::local_search_str(const string &k, const_record_type &v
   {
     transaction::read_set_map::const_iterator it = read_set.find(k);
     if (it != read_set.end()) {
+      VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in read set"  << endl);
+      VERBOSE(cerr << "  value: " << hexify(it->second.r) << endl);
       v = (const_record_type) it->second.r.data();
       sz = it->second.r.size();
       return true;

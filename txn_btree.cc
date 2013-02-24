@@ -156,25 +156,15 @@ txn_btree::txn_search_range_callback::invoke(
 bool
 txn_btree::absent_range_validation_callback::invoke(const key_type &k, btree::value_type v)
 {
-  //transaction::logical_node *ln = (transaction::logical_node *) v;
-  //INVARIANT(ln);
-  //VERBOSE(cerr << "absent_range_validation_callback: key " << k
-  //             << " found logical_node 0x" << hexify(ln) << endl);
-
-  //bool did_write = ctx->write_set.find(k.str()) != ctx->write_set.end();
-  //// NB(stephentu): I don't think it matters here whether or not we use
-  //// snapshot_tid or MIN_TID, since this record did not exist @ snapshot_tid,
-  //// so any new entries must be > snapshot_tid, and therefore using MIN_TID or
-  //// snapshot_tid gives equivalent results.
-  //failed_flag = did_write ?
-  //  !ln->is_snapshot_consistent(transaction::MIN_TID, commit_tid) :
-  //  !ln->stable_is_snapshot_consistent(transaction::MIN_TID, commit_tid);
-  //if (failed_flag)
-  //  VERBOSE(cerr << "absent_range_validation_callback: key " << k
-  //               << " found logical_node 0x" << hexify(ln) << endl);
-
-  // just fail for now
-  failed_flag = true;
+  transaction::logical_node *ln = (transaction::logical_node *) v;
+  INVARIANT(ln);
+  VERBOSE(cerr << "absent_range_validation_callback: key " << k
+               << " found logical_node 0x" << hexify(ln) << endl);
+  const bool did_write = ctx->write_set.find(k.str()) != ctx->write_set.end();
+  failed_flag = did_write ? !ln->latest_value_is_nil() : !ln->stable_latest_value_is_nil();
+  if (failed_flag)
+    VERBOSE(cerr << "absent_range_validation_callback: key " << k
+                 << " found logical_node 0x" << hexify(ln) << endl);
   return !failed_flag;
 }
 
@@ -368,7 +358,7 @@ test1()
 
       btr.insert_object(t0, u64_varkey(0), rec(2));
       ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1, sz1));
-      AssertByteEquality(rec(2), v1, sz1);
+      AssertByteEquality(rec(1), v1, sz1);
 
       btr.insert_object(t1, u64_varkey(0), rec(3));
 
@@ -435,6 +425,7 @@ test2()
       txn_btree::size_type sz = 0;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(i), v, sz));
       AssertByteEquality(r, v, sz);
+      AssertSuccessfulCommit(t);
     }
     txn_epoch_sync<TxnType>::sync();
     txn_epoch_sync<TxnType>::finish();
