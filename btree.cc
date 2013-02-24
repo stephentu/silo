@@ -628,7 +628,7 @@ btree::remove_impl(node **root_location, const key_type &k, value_type *old_v)
 {
 retry:
   key_slice new_key;
-  node *replace_node;
+  node *replace_node = NULL;
   vector<remove_parent_entry> parents;
   vector<node *> locked_nodes;
   scoped_rcu_region rcu_region;
