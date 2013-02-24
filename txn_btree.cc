@@ -22,7 +22,7 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v, size_type &s
   //
   // note (1)-(3) are served by transaction::local_search()
 
-  string sk(k.str());
+  const string sk(k.str());
   if (ctx.local_search_str(sk, v, sz))
     return (bool) v;
 
@@ -64,6 +64,7 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v, size_type &s
     swap(read_rec->r, r);
     read_rec->ln = ln;
     v = (value_type) read_rec->r.data();
+    sz = read_rec->r.size();
     return !read_rec->r.empty();
   }
 }
@@ -309,11 +310,6 @@ test1()
 
     VERBOSE(cerr << "Testing with flags=0x" << hexify(txn_flags) << endl);
 
-
-    rec recs[10];
-    for (size_t i = 0; i < ARRAY_NELEMS(recs); i++)
-      recs[i].v = i;
-
     txn_btree btr;
     btr.set_value_size_hint(sizeof(rec));
 
@@ -324,6 +320,7 @@ test1()
       ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, u64_varkey(0), v, sz));
       btr.insert_object(t, u64_varkey(0), rec(0));
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v, sz));
+      VERBOSE(cerr << "sz: " << sz << endl);
       AssertByteEquality(rec(0), v, sz);
       AssertSuccessfulCommit(t);
       VERBOSE(cerr << "------" << endl);
@@ -335,10 +332,12 @@ test1()
       txn_btree::size_type sz0, sz1;
 
       ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0, sz0));
+      VERBOSE(cerr << "sz0: " << sz0 << endl);
       AssertByteEquality(rec(0), v0, sz0);
 
       btr.insert_object(t0, u64_varkey(0), rec(1));
       ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1, sz1));
+      VERBOSE(cerr << "sz1: " << sz1 << endl);
       AssertByteEquality(rec(1), v1, sz1);
 
       AssertSuccessfulCommit(t0);
