@@ -141,7 +141,7 @@ txn_btree::txn_search_range_callback::invoke(
     read_rec->t = start_t;
     swap(read_rec->r, r);
     read_rec->ln = ln;
-    VERBOSE(cerr << "read <t=" << start_t << ", r=" << size_t(r)
+    VERBOSE(cerr << "read <t=" << start_t << ", r=" << hexify(r)
                  << "> (local_read=" << local_read << ")" << endl);
     if (!local_read && !r.empty())
       ret = caller_callback->invoke(k,

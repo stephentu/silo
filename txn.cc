@@ -740,7 +740,9 @@ transaction_proto1::on_logical_delete(
     txn_btree *btr, const string &key, logical_node *ln)
 {
   INVARIANT(ln->is_locked());
-  INVARIANT(!ln->latest_value());
+  INVARIANT(ln->is_latest());
+  INVARIANT(!ln->size);
+  INVARIANT(!ln->is_deleting());
   //btree::value_type removed = 0;
   //ALWAYS_ASSERT(btr->underlying_btree.remove(varkey(key), &removed));
   //ALWAYS_ASSERT(removed == (btree::value_type) ln);
@@ -893,7 +895,7 @@ transaction_proto2::on_logical_delete(
 {
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
-  INVARIANT(!ln->latest_value());
+  INVARIANT(!ln->size);
   INVARIANT(!ln->is_deleting());
   if (ln->is_enqueued())
     return;
@@ -901,7 +903,7 @@ transaction_proto2::on_logical_delete(
   struct try_delete_info *info = new try_delete_info(btr, key, ln);
   VERBOSE(cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(info->ln))
                << " at current_epoch=" << current_epoch
-               << ", latest_version_epoch=" << EpochId(ln->latest_version()) << endl
+               << ", latest_version_epoch=" << EpochId(ln->version) << endl
                << "  ln=" << *info->ln << endl);
   enqueue_work_after_current_epoch(
       EpochId(ln->version),

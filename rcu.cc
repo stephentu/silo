@@ -198,7 +198,6 @@ public:
       }
       evt_rcu_deletes += stack_queue.size();
       stack_queue.clear();
-      VERBOSE(cerr << "deleted " << elems.size() << " elements" << endl);
     }
   }
   pthread_spinlock_t lock;
