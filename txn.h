@@ -511,7 +511,8 @@ public:
     static inline logical_node *
     alloc_first(size_type alloc_sz)
     {
-      const size_t actual_alloc_sz = util::round_up<size_t, 16>(sizeof(logical_node) + alloc_sz);
+      const size_t actual_alloc_sz = util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + alloc_sz);
+      //std::cerr << "sizeof(logical_node): " << sizeof(logical_node) << ", alloc_sz: " << alloc_sz << ", actual_alloc_sz: " << actual_alloc_sz << std::endl;
       char *p = (char *) malloc(actual_alloc_sz);
       assert(p);
       return new (p) logical_node(actual_alloc_sz - sizeof(logical_node));
@@ -520,7 +521,7 @@ public:
     static inline logical_node *
     alloc(tid_t version, const_record_type value, size_type sz, struct logical_node *next, bool set_latest)
     {
-      const size_t alloc_sz = util::round_up<size_t, 16>(sizeof(logical_node) + sz);
+      const size_t alloc_sz = util::round_up<size_t, /* lgbase */ 4>(sizeof(logical_node) + sz);
       char *p = (char *) malloc(alloc_sz);
       assert(p);
       return new (p) logical_node(version, value, sz, alloc_sz - sizeof(logical_node), next, set_latest);
