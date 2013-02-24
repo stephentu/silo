@@ -183,6 +183,7 @@ public:
       // each logical node starts with one "deleted" entry at MIN_TID
       // (this is indicated by size = 0)
       INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
+      ++g_evt_logical_node_creates;
     }
 
     logical_node(tid_t version, const_record_type r,
@@ -193,6 +194,7 @@ public:
     {
       INVARIANT(size <= alloc_size);
       memcpy(&value_start[0], r, size);
+      ++g_evt_logical_node_creates;
     }
 
     friend class rcu;
@@ -380,6 +382,11 @@ private:
       return found ? true : (p ? p->record_at(t, start_t, r, false) : false);
     }
 
+    static event_counter g_evt_logical_node_creates;
+    static event_counter g_evt_logical_node_deletes;
+    static event_counter g_evt_logical_node_spills;
+    static event_counter g_evt_replace_logical_node_head;
+
 public:
 
     /**
@@ -477,10 +484,12 @@ public:
         set_latest(false);
         logical_node *rep = alloc(t, r, sz, next, true);
         INVARIANT(rep->is_latest());
+        ++g_evt_replace_logical_node_head;
         return std::make_pair(false, rep);
       }
 
       // need to spill
+      ++g_evt_logical_node_spills;
       if (sz <= alloc_size) {
         // XXX: why do we need this cast here?
         logical_node *spill = alloc(version, &value_start[0], size, next, false);
@@ -495,6 +504,7 @@ public:
       set_latest(false);
       logical_node *rep = alloc(t, r, sz, this, true);
       INVARIANT(rep->is_latest());
+      ++g_evt_replace_logical_node_head;
       return std::make_pair(true, rep);
     }
 

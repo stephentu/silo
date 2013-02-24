@@ -135,8 +135,7 @@ ndb_ordered_index::get(
   }
 }
 
-static event_counter evt_rec_creates("record_creates");
-static event_counter evt_rec_bytes_alloc("record_bytes_alloc");
+static event_counter evt_rec_inserts("record_inserts");
 
 const char *
 ndb_ordered_index::put(
@@ -152,7 +151,7 @@ ndb_ordered_index::put(
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
-  ++evt_rec_creates;
+  ++evt_rec_inserts;
   // XXX(stephentu): we currently can't return a stable pointer because we
   // don't even know if the txn will commit (and even if it does, the value
   // could get overwritten).  So that means our secondary index performance

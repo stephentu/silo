@@ -12,6 +12,11 @@
 using namespace std;
 using namespace util;
 
+event_counter transaction::logical_node::g_evt_logical_node_creates("logical_node_creates");
+event_counter transaction::logical_node::g_evt_logical_node_deletes("logical_node_deletes");
+event_counter transaction::logical_node::g_evt_logical_node_spills("logical_node_spills");
+event_counter transaction::logical_node::g_evt_replace_logical_node_head("replace_logical_node_head");
+
 transaction::logical_node::~logical_node()
 {
   INVARIANT(is_deleting());
@@ -23,10 +28,9 @@ transaction::logical_node::~logical_node()
   // gc the chain
   if (next)
     next->gc_chain(false);
-}
 
-static event_counter evt_spillblock_creates("spillblock_creates");
-static event_counter evt_spillblock_deletes("spillblock_deletes");
+  ++g_evt_logical_node_deletes;
+}
 
 void
 transaction::logical_node::gc_chain(bool do_rcu)
