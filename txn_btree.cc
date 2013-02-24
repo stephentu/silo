@@ -497,7 +497,7 @@ test_read_only_snapshot()
       btr.insert_object(t0, u64_varkey(0), rec(1));
 
       ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1, sz1));
-      AssertByteEquality(rec(1), v1, sz1);
+      AssertByteEquality(rec(0), v1, sz1);
 
       AssertSuccessfulCommit(t0);
       AssertSuccessfulCommit(t1);

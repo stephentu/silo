@@ -255,7 +255,7 @@ public:
     inline void
     mark_deleting()
     {
-      INVARIANT(is_locked());
+      INVARIANT(!is_latest() || is_locked());
       INVARIANT(!is_enqueued());
       INVARIANT(!is_deleting());
       hdr |= HDR_DELETING_MASK;
@@ -518,6 +518,7 @@ public:
       logical_node *n = (logical_node *) p;
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
+      n->~logical_node();
       free(n);
     }
 
@@ -540,6 +541,7 @@ public:
       n->mark_deleting();
       n->unlock();
 #endif
+      n->~logical_node();
       free(n);
     }
 

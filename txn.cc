@@ -32,11 +32,12 @@ void
 transaction::logical_node::gc_chain(bool do_rcu)
 {
   INVARIANT(!do_rcu || rcu::in_rcu_region());
+  INVARIANT(!is_latest());
   struct logical_node *cur = this;
   while (cur) {
     struct logical_node *next = cur->next;
     if (do_rcu)
-      rcu::free(cur);
+      release(cur);
     else
       release_no_rcu(cur);
     cur = next;
