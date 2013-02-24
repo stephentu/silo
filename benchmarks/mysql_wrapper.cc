@@ -131,8 +131,9 @@ mysql_wrapper::abort_txn(void *p)
 }
 
 abstract_ordered_index *
-mysql_wrapper::open_index(const string &name)
+mysql_wrapper::open_index(const string &name, size_t value_size_hint)
 {
+  ASSERT(value_size_hint <= 256); // limitation
   MYSQL *conn = new_connection(db);
   ostringstream b_create, b_truncate;
   b_create <<

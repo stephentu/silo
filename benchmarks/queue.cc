@@ -50,7 +50,7 @@ public:
   {
     vector<char *> delete_me;
     void *txn = db->new_txn(txn_flags);
-    //const bool direct_mem = db->index_supports_direct_mem_access();
+    //const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string k = queue_key(id, ctr);
       tbl->insert(txn, k.data(), k.size(), queue_values.data(), queue_values.size());
@@ -79,7 +79,7 @@ public:
   txn_consume()
   {
     void *txn = db->new_txn(txn_flags);
-    //const bool direct_mem = db->index_supports_direct_mem_access();
+    //const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string lowk = queue_key(id, 0);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
@@ -111,7 +111,7 @@ public:
   txn_consume_scanhint()
   {
     void *txn = db->new_txn(txn_flags);
-    //const bool direct_mem = db->index_supports_direct_mem_access();
+    //const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string lowk = queue_key(id, ctr);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
@@ -146,14 +146,14 @@ public:
   txn_consume_noscan()
   {
     void *txn = db->new_txn(txn_flags);
-    const bool direct_mem = db->index_supports_direct_mem_access();
+    const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string k = queue_key(id, ctr);
       char *v = 0;
       size_t vlen = 0;
       bool found = false;
       if (likely((found = tbl->get(txn, k.data(), k.size(), v, vlen)))) {
-        if (!direct_mem) free(v);
+        if (!idx_manages_get_mem) free(v);
         tbl->remove(txn, k.data(), k.size());
       }
       if (db->commit_txn(txn)) {

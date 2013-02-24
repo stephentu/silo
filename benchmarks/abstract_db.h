@@ -45,6 +45,8 @@ public:
    */
   virtual bool index_manages_get_memory() const { return false; }
 
+  virtual bool index_has_stable_put_memory() const { return false; }
+
   /**
    * XXX(stephentu): hack
    */
@@ -88,7 +90,7 @@ public:
   virtual void print_txn_debug(void *txn) const {}
 
   virtual abstract_ordered_index *
-  open_index(const std::string &name) = 0;
+  open_index(const std::string &name, size_t value_size_hint) = 0;
 
   virtual void
   close_index(abstract_ordered_index *idx) = 0;

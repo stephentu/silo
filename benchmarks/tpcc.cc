@@ -441,7 +441,7 @@ protected:
   load()
   {
     void *txn = db->new_txn(txn_flags);
-    const bool direct_mem = db->index_supports_direct_mem_access();
+    const bool idx_manages_get_mem = db->index_manages_get_memory();
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
       vector<warehouse> warehouses;
@@ -488,7 +488,7 @@ protected:
         const warehouse *warehouse =
           warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
         ALWAYS_ASSERT(warehouses[i - 1] == *warehouse);
-        if (!direct_mem) free(warehouse_v);
+        if (!idx_manages_get_mem) free(warehouse_v);
         //if (verbose)
         //  cerr << "warehouse_vlen = " << warehouse_vlen << ", sizeof(warehouse) = " << sizeof(*warehouse) << endl;
       }
@@ -715,7 +715,8 @@ protected:
   load()
   {
     const ssize_t bsize = db->txn_max_batch_size();
-    const bool direct_mem = db->index_supports_direct_mem_access();
+    //const bool idx_manages_get_mem = db->index_manages_get_memory();
+    const bool idx_stable_put_mem = db->index_has_stable_put_memory();
     void *txn = db->new_txn(txn_flags);
     uint64_t total_sz = 0;
     try {
@@ -765,7 +766,7 @@ protected:
             const char *customer_p =
               tbl_customer->insert(txn, pk.data(), pk.size(),
                                    (const char *) customer_enc.write(buf, &customer), sz);
-            ALWAYS_ASSERT(!direct_mem || customer_p);
+            ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
 
             if (bsize != -1 && !((++ctr) % bsize)) {
               ALWAYS_ASSERT(db->commit_txn(txn));
@@ -1018,13 +1019,13 @@ tpcc_worker::txn_new_order()
   // XXX(stephentu): implement rollback
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags);
-  const bool direct_mem = db->index_supports_direct_mem_access();
+  const bool idx_manages_get_mem = db->index_manages_get_memory();
   try {
     const string customerPK = CustomerPrimaryKey(warehouse_id, districtID, customerID);
     char *customer_v = 0;
     size_t customer_vlen = 0;
     ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-    if (!direct_mem) delete_me.push_back(customer_v);
+    if (!idx_manages_get_mem) delete_me.push_back(customer_v);
     customer customer_temp;
     const customer *customer UNUSED =
       customer_enc.read((const uint8_t *) customer_v, &customer_temp);
@@ -1033,7 +1034,7 @@ tpcc_worker::txn_new_order()
     char *warehouse_v = 0;
     size_t warehouse_vlen = 0;
     ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
-    if (!direct_mem) delete_me.push_back(warehouse_v);
+    if (!idx_manages_get_mem) delete_me.push_back(warehouse_v);
     warehouse warehouse_temp;
     const warehouse *warehouse UNUSED =
       warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
@@ -1042,7 +1043,7 @@ tpcc_worker::txn_new_order()
     char *district_v = 0;
     size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
-    if (!direct_mem) delete_me.push_back(district_v);
+    if (!idx_manages_get_mem) delete_me.push_back(district_v);
     district district_temp, district_new;
     const district *district =
       district_enc.read((const uint8_t *) district_v, &district_temp);
@@ -1093,7 +1094,7 @@ tpcc_worker::txn_new_order()
       char *item_v = 0;
       size_t item_vlen = 0;
       ALWAYS_ASSERT(tbl_item->get(txn, itemPK.data(), itemPK.size(), item_v, item_vlen));
-      if (!direct_mem) delete_me.push_back(item_v);
+      if (!idx_manages_get_mem) delete_me.push_back(item_v);
       item item_temp;
       const item *item = item_enc.read((const uint8_t *) item_v, &item_temp);
 
@@ -1101,7 +1102,7 @@ tpcc_worker::txn_new_order()
       char *stock_v = 0;
       size_t stock_vlen = 0;
       ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
-      if (!direct_mem) delete_me.push_back(stock_v);
+      if (!idx_manages_get_mem) delete_me.push_back(stock_v);
       stock stock_temp, stock_new;
       const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
       stock_new = *stock;
@@ -1199,7 +1200,8 @@ tpcc_worker::txn_delivery()
 
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags);
-  const bool direct_mem = db->index_supports_direct_mem_access();
+  const bool idx_manages_get_mem = db->index_manages_get_memory();
+  const bool idx_stable_put_mem = db->index_has_stable_put_memory();
   try {
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       const string lowkey = NewOrderPrimaryKey(warehouse_id, d, last_no_o_ids[d]);
@@ -1222,7 +1224,7 @@ tpcc_worker::txn_delivery()
       char *oorder_v;
       size_t oorder_len;
       ALWAYS_ASSERT(tbl_oorder->get(txn, oorderPK.data(), oorderPK.size(), oorder_v, oorder_len));
-      if (!direct_mem) delete_me.push_back(oorder_v);
+      if (!idx_manages_get_mem) delete_me.push_back(oorder_v);
       oorder oorder_temp, oorder_new;
       const oorder *oorder = oorder_enc.read((const uint8_t *) oorder_v, &oorder_temp);
 
@@ -1272,7 +1274,7 @@ tpcc_worker::txn_delivery()
       ALWAYS_ASSERT(tbl_customer->get(
             txn, customerPK.data(), customerPK.size(),
             customer_v, customer_len));
-      if (!direct_mem) delete_me.push_back(customer_v);
+      if (!idx_manages_get_mem) delete_me.push_back(customer_v);
       customer customer_temp, customer_new;
       const customer *customer = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer_new = *customer;
@@ -1283,7 +1285,7 @@ tpcc_worker::txn_delivery()
         tbl_customer->put(
             txn, customerPK.data(), customerPK.size(),
             (const char *) customer_enc.write(customer_buf, &customer_new), customer_sz);
-      ALWAYS_ASSERT(!direct_mem || customer_p);
+      ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
       if (customer_p) {
         // need to update secondary index
         const string customerNameKey = CustomerNameIdxKey(
@@ -1328,7 +1330,8 @@ tpcc_worker::txn_payment()
   }
   const float paymentAmount = (float) (RandomNumber(r, 100, 500000) / 100.0);
   const uint32_t ts = GetCurrentTimeMillis();
-  const bool direct_mem = db->index_supports_direct_mem_access();
+  const bool idx_manages_get_mem = db->index_manages_get_memory();
+  const bool idx_stable_put_mem = db->index_has_stable_put_memory();
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags);
   try {
@@ -1336,7 +1339,7 @@ tpcc_worker::txn_payment()
     char *warehouse_v = 0;
     size_t warehouse_vlen = 0;
     ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
-    if (!direct_mem) delete_me.push_back(warehouse_v);
+    if (!idx_manages_get_mem) delete_me.push_back(warehouse_v);
     warehouse warehouse_temp, warehouse_new;
     const warehouse *warehouse = warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
     warehouse_new = *warehouse;
@@ -1351,7 +1354,7 @@ tpcc_worker::txn_payment()
     char *district_v = 0;
     size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
-    if (!direct_mem) delete_me.push_back(district_v);
+    if (!idx_manages_get_mem) delete_me.push_back(district_v);
     district district_temp, district_new;
     const district *district = district_enc.read((const uint8_t *) district_v, &district_temp);
     district_new = *district;
@@ -1378,7 +1381,7 @@ tpcc_worker::txn_payment()
       int index = c.values.size() / 2;
       if (c.values.size() % 2 == 0)
         index--;
-      if (direct_mem) {
+      if (idx_stable_put_mem) {
         customer_name_idx_mem customer_name_idx_mem_temp;
         const customer_name_idx_mem *customer_name_idx_mem =
           customer_name_idx_mem_enc.read(
@@ -1396,7 +1399,7 @@ tpcc_worker::txn_payment()
         char *customer_v = 0;
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-        if (!direct_mem) delete_me.push_back(customer_v);
+        if (!idx_manages_get_mem) delete_me.push_back(customer_v);
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
         customer = *c;
@@ -1408,7 +1411,7 @@ tpcc_worker::txn_payment()
       char *customer_v = 0;
       size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-      if (!direct_mem) delete_me.push_back(customer_v);
+      if (!idx_manages_get_mem) delete_me.push_back(customer_v);
       ::customer customer_temp;
       const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer = *c;
@@ -1434,7 +1437,7 @@ tpcc_worker::txn_payment()
       tbl_customer->put(
           txn, customerPK.data(), customerPK.size(),
           (const char *) customer_enc.write(customer_buf, &customer), customer_sz);
-    ALWAYS_ASSERT(!direct_mem || customer_p);
+    ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
     if (customer_p) {
       // need to update secondary index
       const string customerNameKey = CustomerNameIdxKey(
@@ -1492,7 +1495,8 @@ void
 tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  const bool direct_mem = db->index_supports_direct_mem_access();
+  const bool idx_manages_get_mem = db->index_manages_get_memory();
+  const bool idx_stable_put_mem = db->index_has_stable_put_memory();
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
   try {
@@ -1513,7 +1517,7 @@ tpcc_worker::txn_order_status()
       int index = c.values.size() / 2;
       if (c.values.size() % 2 == 0)
         index--;
-      if (direct_mem) {
+      if (idx_stable_put_mem) {
         customer_name_idx_mem customer_name_idx_mem_temp;
         const customer_name_idx_mem *customer_name_idx_mem =
           customer_name_idx_mem_enc.read(
@@ -1531,7 +1535,7 @@ tpcc_worker::txn_order_status()
         char *customer_v = 0;
         size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-        if (!direct_mem) delete_me.push_back(customer_v);
+        if (!idx_manages_get_mem) delete_me.push_back(customer_v);
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
         customer = *c;
@@ -1543,7 +1547,7 @@ tpcc_worker::txn_order_status()
       char *customer_v = 0;
       size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
-      if (!direct_mem) delete_me.push_back(customer_v);
+      if (!idx_manages_get_mem) delete_me.push_back(customer_v);
       ::customer customer_temp;
       const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
       customer = *c;
@@ -1562,7 +1566,7 @@ tpcc_worker::txn_order_status()
     ALWAYS_ASSERT(!c_oorder.values.empty());
 
     uint o_id;
-    if (direct_mem) {
+    if (idx_stable_put_mem) {
       oorder_c_id_idx_mem oorder_c_id_idx_mem_temp;
       const oorder_c_id_idx_mem *oorder_c_id_idx_mem =
         oorder_c_id_idx_mem_enc.read(
@@ -1606,7 +1610,7 @@ tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  const bool direct_mem = db->index_supports_direct_mem_access();
+  const bool idx_manages_get_mem = db->index_manages_get_memory();
   vector<char *> delete_me;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
   try {
@@ -1615,7 +1619,7 @@ tpcc_worker::txn_stock_level()
     char *district_v = 0;
     size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
-    if (!direct_mem) delete_me.push_back(district_v);
+    if (!idx_manages_get_mem) delete_me.push_back(district_v);
     district district_temp;
     const district *district =
       district_enc.read((const uint8_t *) district_v, &district_temp);
@@ -1642,7 +1646,7 @@ tpcc_worker::txn_stock_level()
       char *stock_v = 0;
       size_t stock_vlen = 0;
       ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
-      if (!direct_mem) delete_me.push_back(stock_v);
+      if (!idx_manages_get_mem) delete_me.push_back(stock_v);
       stock stock_temp;
       const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
       if (stock->s_quantity < int(threshold))

@@ -23,7 +23,7 @@ public:
   virtual void abort_txn(void *txn);
 
   virtual abstract_ordered_index *
-  open_index(const std::string &name);
+  open_index(const std::string &name, size_t value_size_hint);
 
   virtual void
   close_index(abstract_ordered_index *idx);
