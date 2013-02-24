@@ -273,6 +273,12 @@ transaction::commit(bool doThrow)
           continue;
         } else if (unlikely(!it->second.ln)) {
           // have in tree now but we didnt read it initially
+          if (did_write ? ln->latest_value_is_nil() :
+                          ln->stable_latest_value_is_nil())
+            // NB(stephentu): this seems like an optimization,
+            // but its actually necessary- otherwise a newly inserted
+            // key would always get aborted
+            continue;
           abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
           goto do_abort;
         }

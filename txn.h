@@ -408,14 +408,33 @@ public:
       if (!try_stable_version(v, 16))
         return false;
       // now v is a stable version
-      const bool ret = is_not_behind(t);
+      const bool ret = IsLatest(v) && is_not_behind(t);
       // only check_version() if the answer would be true- otherwise,
       // no point in doing a version check
-      if (ret && IsLatest(v) && check_version(v))
+      if (ret && check_version(v))
         return true;
       else
         // no point in retrying, since we know it will fail (since we had a
         // version change)
+        return false;
+    }
+
+    inline bool
+    latest_value_is_nil() const
+    {
+      return is_latest() && size == 0;
+    }
+
+    inline bool
+    stable_latest_value_is_nil() const
+    {
+      version_t v = 0;
+      if (!try_stable_version(v, 16))
+        return false;
+      const bool ret = IsLatest(v) && size == 0;
+      if (ret && check_version(v))
+        return true;
+      else
         return false;
     }
 
