@@ -149,7 +149,7 @@ public:
   encstress_bench_runner(abstract_db *db)
     : bench_runner(db)
   {
-    open_tables["table"] = db->open_index("table");
+    open_tables["table"] = db->open_index("table", sizeof(encstress_rec));
   }
 
 protected:

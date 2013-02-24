@@ -51,9 +51,9 @@ ndb_wrapper::print_txn_debug(void *txn) const
 }
 
 abstract_ordered_index *
-ndb_wrapper::open_index(const string &name)
+ndb_wrapper::open_index(const string &name, size_t value_size_hint)
 {
-  return new ndb_ordered_index;
+  return new ndb_ordered_index(value_size_hint);
 }
 
 void
@@ -106,6 +106,12 @@ read_encode_uint32(const uint8_t *buf, uint32_t *value)
 #else
   return read_uint32(buf, value);
 #endif
+}
+
+ndb_ordered_index::ndb_ordered_index(size_t value_size_hint)
+  : btr()
+{
+  btr.set_value_size_hint(value_size_hint);
 }
 
 bool

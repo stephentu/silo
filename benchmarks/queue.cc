@@ -253,7 +253,7 @@ public:
   queue_bench_runner(abstract_db *db, bool write_only)
     : bench_runner(db), write_only(write_only)
   {
-    open_tables["table"] = db->open_index("table");
+    open_tables["table"] = db->open_index("table", queue_values.size());
   }
 
 protected:

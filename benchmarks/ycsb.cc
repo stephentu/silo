@@ -210,7 +210,7 @@ public:
   ycsb_bench_runner(abstract_db *db)
     : bench_runner(db)
   {
-    open_tables["USERTABLE"] = db->open_index("USERTABLE");
+    open_tables["USERTABLE"] = db->open_index("USERTABLE", 128);
   }
 
 protected:
