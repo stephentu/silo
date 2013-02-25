@@ -1004,9 +1004,11 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
   ++evt_try_delete_unlinks;
 unlock_and_free:
   info->ln->unlock();
-  //delete info;
+  delete info;
   return false;
 }
+
+static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 
 void
 transaction_proto2::process_local_cleanup_nodes()
@@ -1024,6 +1026,7 @@ transaction_proto2::process_local_cleanup_nodes()
     // find the first value n w/ EpochId < last_consistent_epoch.
     // call gc_chain(true) on n->next
     struct logical_node *p = it->ln, **pp = 0;
+    const bool has_chain = it->ln->next;
     bool do_break = false;
     while (p) {
       if (do_break)
@@ -1038,6 +1041,9 @@ transaction_proto2::process_local_cleanup_nodes()
       INVARIANT(pp);
       *pp = 0;
       p->gc_chain(true);
+    }
+    if (has_chain && !it->ln->next) {
+      ++evt_local_chain_cleanups;
     }
     //cerr << "process_local_cleanup_nodes: setting ln=0x" << hexify(intptr_t(it->ln)) << " to NOT enqueued" << endl;
     it->ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC); // must come before scheduling below
