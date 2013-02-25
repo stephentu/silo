@@ -26,6 +26,10 @@
 #include "rcu.h"
 #include "thread.h"
 
+// just a debug option to help track down a particular
+// race condition
+//#define LOGICAL_NODE_QUEUE_TRACKING
+
 // forward decl
 class txn_btree;
 
@@ -169,6 +173,25 @@ public:
     tid_t version;
     uint32_t size; // actual size of record (0 implies absent record)
     uint32_t alloc_size; // max size record allowed
+
+    enum QueueType {
+      QUEUE_TYPE_NONE,
+      QUEUE_TYPE_DELETE,
+      QUEUE_TYPE_GC,
+    };
+
+#ifdef LOGICAL_NODE_QUEUE_TRACKING
+    QueueType last_queue_type;
+    struct op_hist_rec {
+      op_hist_rec(bool enqueued, QueueType type, uint64_t tid)
+        : enqueued(enqueued), type(type), tid(tid) {}
+      bool enqueued;
+      QueueType type;
+      uint64_t tid;
+    };
+    std::vector<op_hist_rec> op_hist;
+#endif
+
     uint8_t value_start[0]; // must be last field
 
   private:
@@ -179,6 +202,9 @@ public:
     logical_node(size_type alloc_size)
       : hdr(HDR_LATEST_MASK), next(0), version(MIN_TID),
         size(0), alloc_size(alloc_size)
+#ifdef LOGICAL_NODE_QUEUE_TRACKING
+      , last_queue_type(QUEUE_TYPE_NONE)
+#endif
     {
       // each logical node starts with one "deleted" entry at MIN_TID
       // (this is indicated by size = 0)
@@ -191,6 +217,9 @@ public:
                  struct logical_node *next, bool set_latest)
       : hdr(set_latest ? HDR_LATEST_MASK : 0), next(next), version(version),
         size(size), alloc_size(alloc_size)
+#ifdef LOGICAL_NODE_QUEUE_TRACKING
+      , last_queue_type(QUEUE_TYPE_NONE)
+#endif
     {
       INVARIANT(size <= alloc_size);
       memcpy(&value_start[0], r, size);
@@ -257,6 +286,7 @@ public:
     inline void
     mark_deleting()
     {
+      // the lock on the latest version guards non-latest versions
       INVARIANT(!is_latest() || is_locked());
       INVARIANT(!is_enqueued());
       INVARIANT(!is_deleting());
@@ -275,16 +305,40 @@ public:
       return v & HDR_ENQUEUED_MASK;
     }
 
+#ifdef LOGICAL_NODE_QUEUE_TRACKING
     inline void
-    set_enqueued(bool enqueued)
+    set_enqueued(bool enqueued, QueueType type)
+    {
+      INVARIANT(type != QUEUE_TYPE_NONE);
+      INVARIANT(is_locked());
+      INVARIANT(!is_deleting());
+      if (enqueued) {
+        INVARIANT(!is_enqueued());
+        hdr |= HDR_ENQUEUED_MASK;
+      } else {
+        // can only dequeue off of same queue type
+        INVARIANT(type == last_queue_type);
+        INVARIANT(is_enqueued());
+        hdr &= ~HDR_ENQUEUED_MASK;
+      }
+      last_queue_type = type;
+      op_hist.push_back(op_hist_rec(enqueued, type, coreid::core_id()));
+    }
+#else
+    inline void
+    set_enqueued(bool enqueued, QueueType type)
     {
       INVARIANT(is_locked());
       INVARIANT(!is_deleting());
-      if (enqueued)
+      if (enqueued) {
+        INVARIANT(!is_enqueued());
         hdr |= HDR_ENQUEUED_MASK;
-      else
+      } else {
+        INVARIANT(is_enqueued());
         hdr &= ~HDR_ENQUEUED_MASK;
+      }
     }
+#endif
 
     inline bool
     is_latest() const
@@ -451,17 +505,9 @@ public:
      * not asserting whether or not inserting r @ t would violate the
      * sorted order invariant
      *
-     * Return value is:
-     *   first:  true if the # of logical versions increased, false otherwise
-     *   second: if not null, points to the logical_node meant to replace this
-     *           node as the latest. if not null, then this instance is set
-     *           to !latest (and the returned node is set to latest)
-     *
-     * Note that if ret.second is not null, and ret.first is false, then
-     * this instance is no longer reachable (it has been unlinked).
-     * It is thus the caller's responsibility to free this instance.
+     * Returns true if a spill was induced
      */
-    std::pair<bool, logical_node *>
+    bool
     write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
     {
       // XXX: one memcpy in common case, two memcpy in spill case
@@ -469,50 +515,42 @@ public:
       INVARIANT(is_latest());
 
       // try to overwrite this record
-      if (txn->can_overwrite_record_tid(version, t)) {
+      if (likely(txn->can_overwrite_record_tid(version, t))) {
         // see if we have enough space
 
-        if (sz <= alloc_size) {
+        if (likely(sz <= alloc_size)) {
           // directly update in place
           version = t;
           size = sz;
           memcpy(&value_start[0], r, sz);
-          return std::make_pair<bool, logical_node *>(false, NULL);
+          return false;
         }
 
-        // need to replace this record
-        set_latest(false);
-        logical_node *rep = alloc(t, r, sz, next, true);
-        INVARIANT(rep->is_latest());
-        ++g_evt_replace_logical_node_head;
-        return std::make_pair(false, rep);
+        // XXX(stephentu): handle this case later
+        ALWAYS_ASSERT(false);
       }
 
       // need to spill
       ++g_evt_logical_node_spills;
-      if (sz <= alloc_size) {
-        // XXX: why do we need this cast here?
+      if (likely(sz <= alloc_size)) {
         logical_node *spill = alloc(version, &value_start[0], size, next, false);
         INVARIANT(!spill->is_latest());
         next = spill;
         version = t;
         size = sz;
         memcpy(&value_start[0], r, sz);
-        return std::make_pair<bool, logical_node *>(true, NULL);
+        return true;
       }
 
-      set_latest(false);
-      logical_node *rep = alloc(t, r, sz, this, true);
-      INVARIANT(rep->is_latest());
-      ++g_evt_replace_logical_node_head;
-      return std::make_pair(true, rep);
+      // XXX(stephentu): handle this case later
+      ALWAYS_ASSERT(false);
+      return false;
     }
 
     static inline logical_node *
     alloc_first(size_type alloc_sz)
     {
       const size_t actual_alloc_sz = util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + alloc_sz);
-      //std::cerr << "sizeof(logical_node): " << sizeof(logical_node) << ", alloc_sz: " << alloc_sz << ", actual_alloc_sz: " << actual_alloc_sz << std::endl;
       char *p = (char *) malloc(actual_alloc_sz);
       assert(p);
       return new (p) logical_node(actual_alloc_sz - sizeof(logical_node));
@@ -563,7 +601,11 @@ public:
     static std::string
     VersionInfoStr(version_t v);
 
-  } PACKED;
+  }
+#ifndef LOGICAL_NODE_QUEUE_TRACKING
+  PACKED
+#endif
+  ;
 
   friend std::ostream &
   operator<<(std::ostream &o, const logical_node &ln);
@@ -635,7 +677,8 @@ protected:
   // with the lock on ln held, to simplify GC code
   //
   // Is also called within an RCU read region
-  virtual void on_logical_node_spill(logical_node *ln) = 0;
+  virtual void on_logical_node_spill(
+      txn_btree *btr, const std::string &key, logical_node *ln) = 0;
 
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
@@ -818,7 +861,8 @@ protected:
 
   virtual tid_t gen_commit_tid(
       const std::vector<logical_node *> &write_nodes);
-  virtual void on_logical_node_spill(logical_node *ln);
+  virtual void on_logical_node_spill(
+      txn_btree *btr, const std::string &key, logical_node *ln);
   virtual void on_logical_delete(
       txn_btree *btr, const std::string &key, logical_node *ln);
   virtual void on_tid_finish(tid_t commit_tid);
@@ -901,12 +945,16 @@ protected:
     return EpochId(t) <= current_epoch;
   }
 
-  virtual void on_logical_node_spill(logical_node *ln);
+  virtual void on_logical_node_spill(
+      txn_btree *btr, const std::string &key, logical_node *ln);
   virtual void on_logical_delete(
       txn_btree *btr, const std::string &key, logical_node *ln);
   virtual void on_tid_finish(tid_t commit_tid) {}
 
 private:
+  static void on_logical_delete_impl(
+      txn_btree *btr, const std::string &key, logical_node *ln);
+
   // the global epoch this txn is running in (this # is read when it starts)
   uint64_t current_epoch;
   uint64_t last_consistent_tid;
@@ -920,7 +968,7 @@ private:
   typedef bool (*work_callback_t)(void *, uint64_t &epoch);
 
   // work will get called after epoch finishes
-  void enqueue_work_after_current_epoch(uint64_t epoch, work_callback_t work, void *p);
+  static void enqueue_work_after_epoch(uint64_t epoch, work_callback_t work, void *p);
 
   static bool
   try_delete_logical_node(void *p, uint64_t &epoch);
@@ -977,6 +1025,42 @@ private:
   static __thread unsigned int tl_nest_level;
 
   static __thread uint64_t tl_last_commit_tid;
+
+  static __thread uint64_t tl_last_cleanup_epoch;
+
+  // is cleaned-up by an NDB_THREAD_REGISTER_COMPLETION_CALLBACK
+  struct logical_node_context {
+    logical_node_context() : btr(), key(), ln() {}
+    logical_node_context(txn_btree *btr,
+                         const std::string &key,
+                         logical_node *ln)
+      : btr(btr), key(key), ln(ln)
+    {
+      INVARIANT(btr);
+      INVARIANT(!key.empty());
+      INVARIANT(ln);
+    }
+    txn_btree *btr;
+    std::string key;
+    logical_node *ln;
+  };
+  static __thread std::vector<logical_node_context> *tl_cleanup_nodes;
+  static inline std::vector<logical_node_context> &
+  local_cleanup_nodes()
+  {
+    if (unlikely(!tl_cleanup_nodes))
+      tl_cleanup_nodes = new std::vector<logical_node_context>;
+    return *tl_cleanup_nodes;
+  }
+
+  static void
+  process_local_cleanup_nodes();
+
+public:
+  // public so we can register w/ NDB_THREAD_REGISTER_COMPLETION_CALLBACK
+  static void completion_callback(ndb_thread *);
+
+private:
 
   // XXX(stephentu): think about if the vars below really need to be volatile
 

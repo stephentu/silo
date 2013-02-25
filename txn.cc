@@ -37,6 +37,7 @@ transaction::logical_node::gc_chain(bool do_rcu)
 {
   INVARIANT(!do_rcu || rcu::in_rcu_region());
   INVARIANT(!is_latest());
+  INVARIANT(!is_enqueued());
   struct logical_node *cur = this;
   while (cur) {
     struct logical_node *next = cur->next;
@@ -339,33 +340,16 @@ transaction::commit(bool doThrow)
       INVARIANT(it->second.locked);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid.second << endl);
-      pair<bool, logical_node *> ret = it->first->write_record_at(
+      bool ret = it->first->write_record_at(
           this, commit_tid.second,
           (const record_type) it->second.r->data(), it->second.r->size());
-      logical_node *head = ret.second ? ret.second : it->first;
-      if (unlikely(ret.second)) {
-        INVARIANT(ret.second != it->first);
-        // need to update pointer in underlying b-tree, so that ret.second
-        // becomes the canonical representation for key k
-        btree::value_type old_v = 0;
-        head->lock();
-        bool no_key = it->second.btr->underlying_btree.insert(
-            varkey(*it->second.key), (btree::value_type) head, &old_v, NULL);
-        if (no_key) INVARIANT(false);
-        INVARIANT(old_v == (btree::value_type) it->first);
-        if (!ret.first)
-          // it->first was unlinked, so we need to free it up for GC
-          logical_node::release(it->first);
-      }
-      if (unlikely(ret.first))
+      if (unlikely(ret))
         // spill happened: signal for GC
-        on_logical_node_spill(head);
+        on_logical_node_spill(it->second.btr, *it->second.key, it->first);
       if (it->second.r->empty())
         // logical delete happened: schedule physical deletion
-        on_logical_delete(it->second.btr, *it->second.key, head);
+        on_logical_delete(it->second.btr, *it->second.key, it->first);
       it->first->unlock();
-      if (unlikely(ret.second))
-        head->unlock();
     }
   }
 
@@ -742,7 +726,8 @@ transaction_proto1::gen_commit_tid(const vector<logical_node *> &write_nodes)
 }
 
 void
-transaction_proto1::on_logical_node_spill(logical_node *ln)
+transaction_proto1::on_logical_node_spill(
+    txn_btree *btr, const string &key, logical_node *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(rcu::in_rcu_region());
@@ -815,8 +800,14 @@ transaction_proto2::~transaction_proto2()
   VERBOSE(cerr << "destroy transaction_proto2 (core=" << my_core_id
                << ", nest=" << tl_nest_level << ")" << endl);
   ALWAYS_ASSERT(tl_nest_level > 0);
-  if (!--tl_nest_level)
+  if (!--tl_nest_level) {
     ALWAYS_ASSERT(pthread_spin_unlock(&g_epoch_spinlocks[my_core_id].elem) == 0);
+    // XXX(stephentu): tune this
+    if (tl_last_cleanup_epoch + 2 < current_epoch) {
+      process_local_cleanup_nodes();
+      tl_last_cleanup_epoch = current_epoch;
+    }
+  }
 }
 
 pair<bool, transaction::tid_t>
@@ -886,7 +877,8 @@ transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
 }
 
 void
-transaction_proto2::on_logical_node_spill(logical_node *ln)
+transaction_proto2::on_logical_node_spill(
+    txn_btree *btr, const string &key, logical_node *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
@@ -898,21 +890,30 @@ transaction_proto2::on_logical_node_spill(logical_node *ln)
     p = p->next;
   }
   if (p) {
+    INVARIANT(p != ln);
+    INVARIANT(pp);
     *pp = 0;
     p->gc_chain(true);
   }
+  if (!ln->size)
+    // let the on_delete handler take care of this
+    return;
+  if (ln->is_enqueued())
+    // already being taken care of by another queue
+    return;
+  ln->set_enqueued(true, logical_node::QUEUE_TYPE_GC);
+  local_cleanup_nodes().push_back(logical_node_context(btr, key, ln)); // take care of it locally
 }
-
-struct try_delete_info {
-  try_delete_info(txn_btree *btr, const string &key, transaction::logical_node *ln)
-    : btr(btr), key(key), ln(ln) {}
-  txn_btree *btr;
-  string key;
-  transaction::logical_node *ln;
-};
 
 void
 transaction_proto2::on_logical_delete(
+    txn_btree *btr, const string &key, logical_node *ln)
+{
+  on_logical_delete_impl(btr, key, ln);
+}
+
+void
+transaction_proto2::on_logical_delete_impl(
     txn_btree *btr, const string &key, logical_node *ln)
 {
   INVARIANT(ln->is_locked());
@@ -921,23 +922,25 @@ transaction_proto2::on_logical_delete(
   INVARIANT(!ln->is_deleting());
   if (ln->is_enqueued())
     return;
-  ln->set_enqueued(true);
-  struct try_delete_info *info = new try_delete_info(btr, key, ln);
+  ln->set_enqueued(true, logical_node::QUEUE_TYPE_DELETE);
+  INVARIANT(ln->is_enqueued());
+  struct logical_node_context *info = new logical_node_context(btr, key, ln);
   VERBOSE(cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(info->ln))
                << " at current_epoch=" << current_epoch
                << ", latest_version_epoch=" << EpochId(ln->version) << endl
                << "  ln=" << *info->ln << endl);
-  enqueue_work_after_current_epoch(
+  enqueue_work_after_epoch(
       EpochId(ln->version),
       try_delete_logical_node,
       (void *) info);
 }
 
 void
-transaction_proto2::enqueue_work_after_current_epoch(
+transaction_proto2::enqueue_work_after_epoch(
     uint64_t epoch, work_callback_t work, void *p)
 {
   const size_t id = coreid::core_id();
+  // XXX(stephentu): optimize by running work when we know epoch is over
   g_work_queues[id].elem->push_back(work_record_t(epoch, work, p));
 }
 
@@ -945,17 +948,37 @@ static event_counter evt_try_delete_revivals("try_delete_revivals");
 static event_counter evt_try_delete_reschedules("try_delete_reschedules");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
+#ifdef LOGICAL_NODE_QUEUE_TRACKING
+static ostream &
+operator<<(ostream &o, const transaction::logical_node::op_hist_rec &h)
+{
+  o << "[enq=" << h.enqueued << ", type=" << h.type << ", tid=" << h.tid << "]";
+  return o;
+}
+#endif
+
 bool
 transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
 {
-  try_delete_info *info = (try_delete_info *) p;
+  logical_node_context *info = (logical_node_context *) p;
+  INVARIANT(info->btr);
+  INVARIANT(info->ln);
+  INVARIANT(!info->key.empty());
   btree::value_type removed = 0;
   uint64_t v = 0;
   scoped_rcu_region rcu_region;
   info->ln->lock();
+#ifdef LOGICAL_NODE_QUEUE_TRACKING
+  if (!info->ln->is_enqueued()) {
+    cerr << "try_delete_logical_node: ln=0x" << hexify(intptr_t(info->ln)) << " is NOT enqueued" << endl;
+    cerr << "  last_queue_type: " << info->ln->last_queue_type << endl;
+    cerr << "  op_hist: " << format_list(info->ln->op_hist.begin(), info->ln->op_hist.end()) << endl;
+  }
+#endif
   INVARIANT(info->ln->is_enqueued());
   INVARIANT(!info->ln->is_deleting());
-  info->ln->set_enqueued(false); // we are processing this record
+  //cerr << "try_delete_logical_node: setting ln=0x" << hexify(intptr_t(info->ln)) << " to NOT enqueued" << endl;
+  info->ln->set_enqueued(false, logical_node::QUEUE_TYPE_DELETE); // we are processing this record
   if (!info->ln->is_latest() || info->ln->size) {
     // somebody added a record again, so we don't want to delete it
     ++evt_try_delete_revivals;
@@ -968,7 +991,7 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
   if (g_last_consistent_epoch <= v) {
     // need to reschedule to run when epoch=v ends
     VERBOSE(cerr << "  rerunning at end of epoch=" << v << endl);
-    info->ln->set_enqueued(true); // re-queue it up
+    info->ln->set_enqueued(true, logical_node::QUEUE_TYPE_DELETE); // re-queue it up
     info->ln->unlock();
     // don't free, b/c we need to run again
     epoch = v;
@@ -981,8 +1004,52 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
   ++evt_try_delete_unlinks;
 unlock_and_free:
   info->ln->unlock();
-  delete info;
+  //delete info;
   return false;
+}
+
+void
+transaction_proto2::process_local_cleanup_nodes()
+{
+  if (!tl_cleanup_nodes)
+    return;
+  const uint64_t last_consistent_epoch = g_last_consistent_epoch;
+  for (vector<logical_node_context>::iterator it = tl_cleanup_nodes->begin();
+       it != tl_cleanup_nodes->end(); ++it) {
+    scoped_rcu_region rcu_region;
+    it->ln->lock();
+    INVARIANT(it->ln->is_enqueued());
+    INVARIANT(it->ln->is_latest());
+    INVARIANT(!it->ln->is_deleting());
+    // find the first value n w/ EpochId < last_consistent_epoch.
+    // call gc_chain(true) on n->next
+    struct logical_node *p = it->ln, **pp = 0;
+    bool do_break = false;
+    while (p) {
+      if (do_break)
+        break;
+      if (EpochId(p->version) < last_consistent_epoch)
+        do_break = true;
+      pp = &p->next;
+      p = p->next;
+    }
+    if (p) {
+      INVARIANT(p != it->ln);
+      INVARIANT(pp);
+      *pp = 0;
+      p->gc_chain(true);
+    }
+    //cerr << "process_local_cleanup_nodes: setting ln=0x" << hexify(intptr_t(it->ln)) << " to NOT enqueued" << endl;
+    it->ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC); // must come before scheduling below
+    // XXX(stephentu): I can't figure out why doing the following causes all
+    // sorts of race conditions (seems like the same node gets on the delete
+    // list twice)
+    //if (!it->ln->size)
+    //  // schedule for deletion
+    //  on_logical_delete_impl(it->btr, it->key, it->ln);
+    it->ln->unlock();
+  }
+  tl_cleanup_nodes->clear();
 }
 
 void
@@ -1101,10 +1168,32 @@ transaction_proto2::epoch_loop::run()
   }
 }
 
+void
+transaction_proto2::completion_callback(ndb_thread *p)
+{
+  if (!tl_cleanup_nodes)
+    return;
+  // lock and dequeue all the nodes
+  for (vector<logical_node_context>::iterator it = tl_cleanup_nodes->begin();
+       it != tl_cleanup_nodes->end(); ++it) {
+    it->ln->lock();
+    ALWAYS_ASSERT(it->ln->is_enqueued());
+    //cerr << "completion callback: setting ln=0x" << hexify(intptr_t(it->ln)) << " to NOT enqueued" << endl;
+    it->ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC);
+    it->ln->unlock();
+  }
+  tl_cleanup_nodes->clear();
+  delete tl_cleanup_nodes;
+  tl_cleanup_nodes = NULL;
+}
+NDB_THREAD_REGISTER_COMPLETION_CALLBACK(transaction_proto2::completion_callback)
+
 transaction_proto2::epoch_loop transaction_proto2::g_epoch_loop;
 
 __thread unsigned int transaction_proto2::tl_nest_level = 0;
 __thread uint64_t transaction_proto2::tl_last_commit_tid = MIN_TID;
+__thread uint64_t transaction_proto2::tl_last_cleanup_epoch = MIN_TID;
+__thread vector<transaction_proto2::logical_node_context> *transaction_proto2::tl_cleanup_nodes = NULL;
 
 volatile uint64_t transaction_proto2::g_current_epoch = 0;
 volatile uint64_t transaction_proto2::g_last_consistent_epoch = 0;

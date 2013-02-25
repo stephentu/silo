@@ -211,7 +211,7 @@ rcu::gc_thread_loop(void *p)
   struct timespec t;
   memset(&t, 0, sizeof(t));
   timer loop_timer;
-  const unsigned int NReapers = 8;
+  const unsigned int NReapers = 1;
   static gc_reaper_thread reaper_loops[NReapers];
   for (unsigned int i = 0; i < NReapers; i++)
     reaper_loops[i].start();

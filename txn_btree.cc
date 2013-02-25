@@ -425,7 +425,7 @@ test2()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree btr;
-    btr.set_value_size_hint(1);
+    btr.set_value_size_hint(256);
     bufrec r;
     memset(r.buf, 'a', ARRAY_NELEMS(r.buf));
     for (size_t i = 0; i < 100; i++) {
