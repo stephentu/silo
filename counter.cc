@@ -44,6 +44,18 @@ event_counter::get_all_counters()
   return ret;
 }
 
+void
+event_counter::reset_all_counters()
+{
+  const vector<event_ctx *> &evts = event_counters();
+  pthread_spinlock_t &l = event_counters_lock();
+  scoped_spinlock sl(&l);
+  for (vector<event_ctx *>::const_iterator it = evts.begin();
+       it != evts.end(); ++it)
+    for (size_t i = 0; i < coreid::NMaxCores; i++)
+      (*it)->tl_counts[i].elem = 0;
+}
+
 event_counter::event_counter(const string &name)
   : ctx(new event_ctx(name))
 {

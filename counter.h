@@ -66,6 +66,9 @@ public:
   // WARNING: an expensive operation!
   static std::map<std::string, uint64_t> get_all_counters();
 
+  // WARNING: an expensive operation!
+  static void reset_all_counters();
+
 private:
   event_ctx *const ctx;
 };

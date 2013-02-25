@@ -210,6 +210,7 @@ public:
       // (this is indicated by size = 0)
       INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
       ++g_evt_logical_node_creates;
+      g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node));
     }
 
     logical_node(tid_t version, const_record_type r,
@@ -224,6 +225,7 @@ public:
       INVARIANT(size <= alloc_size);
       memcpy(&value_start[0], r, size);
       ++g_evt_logical_node_creates;
+      g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node));
     }
 
     friend class rcu;
@@ -438,6 +440,8 @@ private:
 
     static event_counter g_evt_logical_node_creates;
     static event_counter g_evt_logical_node_deletes;
+    static event_counter g_evt_logical_node_bytes_allocated;
+    static event_counter g_evt_logical_node_bytes_freed;
     static event_counter g_evt_logical_node_spills;
     static event_counter g_evt_replace_logical_node_head;
 
@@ -552,7 +556,7 @@ public:
     {
       const size_t actual_alloc_sz = util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + alloc_sz);
       char *p = (char *) malloc(actual_alloc_sz);
-      assert(p);
+      INVARIANT(p);
       return new (p) logical_node(actual_alloc_sz - sizeof(logical_node));
     }
 
@@ -561,7 +565,7 @@ public:
     {
       const size_t alloc_sz = util::round_up<size_t, /* lgbase */ 4>(sizeof(logical_node) + sz);
       char *p = (char *) malloc(alloc_sz);
-      assert(p);
+      INVARIANT(p);
       return new (p) logical_node(version, value, sz, alloc_sz - sizeof(logical_node), next, set_latest);
     }
 

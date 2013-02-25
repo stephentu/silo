@@ -116,6 +116,8 @@ bench_runner::run()
 
   db->do_txn_epoch_sync();
 
+  event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
+
   if (verbose) {
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
          it != open_tables.end(); ++it)
@@ -323,6 +325,14 @@ main(int argc, char **argv)
     cerr << "  var-encode  : 1"                     << endl;
 #else
     cerr << "  var-encode  : 0"                     << endl;
+#endif
+
+#ifdef USE_JEMALLOC
+    cerr << "  allocator   : jemalloc"              << endl;
+#elif defined USE_TCMALLOC
+    cerr << "  allocator   : tcmalloc"              << endl;
+#else
+    cerr << "  allocator   : libc"                  << endl;
 #endif
   }
 

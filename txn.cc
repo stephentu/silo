@@ -14,6 +14,8 @@ using namespace util;
 
 event_counter transaction::logical_node::g_evt_logical_node_creates("logical_node_creates");
 event_counter transaction::logical_node::g_evt_logical_node_deletes("logical_node_deletes");
+event_counter transaction::logical_node::g_evt_logical_node_bytes_allocated("logical_node_bytes_allocated");
+event_counter transaction::logical_node::g_evt_logical_node_bytes_freed("logical_node_bytes_freed");
 event_counter transaction::logical_node::g_evt_logical_node_spills("logical_node_spills");
 event_counter transaction::logical_node::g_evt_replace_logical_node_head("replace_logical_node_head");
 
@@ -30,6 +32,7 @@ transaction::logical_node::~logical_node()
     next->gc_chain(false);
 
   ++g_evt_logical_node_deletes;
+  g_evt_logical_node_bytes_freed += (alloc_size + sizeof(logical_node));
 }
 
 void
@@ -803,7 +806,7 @@ transaction_proto2::~transaction_proto2()
   if (!--tl_nest_level) {
     ALWAYS_ASSERT(pthread_spin_unlock(&g_epoch_spinlocks[my_core_id].elem) == 0);
     // XXX(stephentu): tune this
-    if (tl_last_cleanup_epoch + 2 < current_epoch) {
+    if (tl_last_cleanup_epoch != current_epoch) {
       process_local_cleanup_nodes();
       tl_last_cleanup_epoch = current_epoch;
     }
@@ -1015,6 +1018,7 @@ transaction_proto2::process_local_cleanup_nodes()
 {
   if (!tl_cleanup_nodes)
     return;
+  vector<logical_node_context> new_list;
   const uint64_t last_consistent_epoch = g_last_consistent_epoch;
   for (vector<logical_node_context>::iterator it = tl_cleanup_nodes->begin();
        it != tl_cleanup_nodes->end(); ++it) {
@@ -1045,8 +1049,12 @@ transaction_proto2::process_local_cleanup_nodes()
     if (has_chain && !it->ln->next) {
       ++evt_local_chain_cleanups;
     }
-    //cerr << "process_local_cleanup_nodes: setting ln=0x" << hexify(intptr_t(it->ln)) << " to NOT enqueued" << endl;
-    it->ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC); // must come before scheduling below
+    if (it->ln->next) {
+      // keep enqueued so we can clean up at a later time
+      new_list.push_back(*it);
+    } else {
+      it->ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC); // we're done
+    }
     // XXX(stephentu): I can't figure out why doing the following causes all
     // sorts of race conditions (seems like the same node gets on the delete
     // list twice)
@@ -1056,6 +1064,7 @@ transaction_proto2::process_local_cleanup_nodes()
     it->ln->unlock();
   }
   tl_cleanup_nodes->clear();
+  swap(*tl_cleanup_nodes, new_list);
 }
 
 void
