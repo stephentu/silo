@@ -732,6 +732,23 @@ public:
     root = NULL;
   }
 
+  /**
+   * NOT THREAD SAFE
+   */
+  inline void
+  clear()
+  {
+    recursive_delete(root);
+    root = leaf_node::alloc();
+#ifdef CHECK_INVARIANTS
+    root->lock();
+    root->set_root();
+    root->unlock();
+#else
+    root->set_root();
+#endif /* CHECK_INVARIANTS */
+  }
+
   /** Note: invariant checking is not thread safe */
   inline void
   invariant_checker() const
@@ -911,10 +928,55 @@ public:
     return remove_impl((node **) &root, k, old_v);
   }
 
-  /** Is thread-safe, but not really designed to perform well
-   * with concurrent modifications. also the value returned is not
-   * consistent given concurrent modifications */
-  size_t size() const;
+  /**
+   * The tree walk API is a bit strange, due to the optimistic nature of the
+   * btree.
+   *
+   * The way it works is that, on_node_begin() is first called. In
+   * on_node_begin(), a callback function should read (but not modify) the
+   * values it is interested in, and save them.
+   *
+   * Then, either one of on_node_success() or on_node_failure() is called. If
+   * on_node_success() is called, then the previous values read in
+   * on_node_begin() are indeed valid.  If on_node_failure() is called, then
+   * the previous values are not valid and should be discarded.
+   */
+  class tree_walk_callback {
+  public:
+    virtual ~tree_walk_callback() {}
+    virtual void on_node_begin(const node_opaque_t *n) = 0;
+    virtual void on_node_success() = 0;
+    virtual void on_node_failure() = 0;
+  };
+
+  void tree_walk(tree_walk_callback &callback) const;
+
+private:
+  class size_walk_callback : public tree_walk_callback {
+  public:
+    size_walk_callback() : spec_size(0), size(0) {}
+    virtual void on_node_begin(const node_opaque_t *n);
+    virtual void on_node_success();
+    virtual void on_node_failure();
+    inline size_t get_size() const { return size; }
+  private:
+    size_t spec_size;
+    size_t size;
+  };
+
+public:
+  /**
+   * Is thread-safe, but not really designed to perform well with concurrent
+   * modifications. also the value returned is not consistent given concurrent
+   * modifications
+   */
+  inline size_t
+  size() const
+  {
+    size_walk_callback c;
+    tree_walk(c);
+    return c.get_size();
+  }
 
   static inline uint64_t
   ExtractVersionNumber(const node_opaque_t *n)
@@ -924,6 +986,9 @@ public:
     // but maybe we can get away with unstable_version()?
     return node::Version(n->stable_version());
   }
+
+  static std::vector<value_type>
+  ExtractValues(const node_opaque_t *n);
 
   /**
    * Not well defined if n is being concurrently modified, just for debugging

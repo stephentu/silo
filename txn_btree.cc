@@ -234,6 +234,40 @@ txn_btree::insert_impl(transaction &t, const key_type &k, const value_type v, si
   ctx.write_set[k.str()].assign((const char *) v, sz);
 }
 
+void
+txn_btree::unsafe_purge()
+{
+  purge_tree_walker w;
+  underlying_btree.tree_walk(w);
+  underlying_btree.clear();
+}
+
+void
+txn_btree::purge_tree_walker::on_node_begin(const btree::node_opaque_t *n)
+{
+  INVARIANT(spec_values.empty());
+  spec_values = btree::ExtractValues(n);
+}
+
+void
+txn_btree::purge_tree_walker::on_node_success()
+{
+  for (size_t i = 0; i < spec_values.size(); i++) {
+    transaction::logical_node *ln =
+      (transaction::logical_node *) spec_values[i];
+    INVARIANT(ln);
+    transaction::logical_node::release_no_rcu(ln);
+  }
+  spec_values.clear();
+}
+
+void
+txn_btree::purge_tree_walker::on_node_failure()
+{
+  spec_values.clear();
+}
+
+
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
   inline bool

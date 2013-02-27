@@ -118,9 +118,23 @@ public:
     this->value_size_hint = value_size_hint;
   }
 
+  /**
+   * only call when you are sure there are no concurrent modifications on the
+   * tree. is neither threadsafe nor transactional
+   */
+  void unsafe_purge();
+
   static void Test();
 
 private:
+
+  struct purge_tree_walker : public btree::tree_walk_callback {
+    virtual void on_node_begin(const btree::node_opaque_t *n);
+    virtual void on_node_success();
+    virtual void on_node_failure();
+  private:
+    std::vector<btree::value_type> spec_values;
+  };
 
   struct txn_search_range_callback : public btree::low_level_search_range_callback {
     txn_search_range_callback(transaction *t,

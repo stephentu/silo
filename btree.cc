@@ -687,11 +687,11 @@ btree::leftmost_descend_layer(node *n) const
   }
 }
 
-size_t
-btree::size() const
+void
+btree::tree_walk(tree_walk_callback &callback) const
 {
+  // XXX(stephentu): try to release RCU region every once in a while
   scoped_rcu_region rcu_region;
-  size_t count = 0;
   vector<node *> q;
   // XXX: not sure if cast is safe
   q.push_back((node *) root);
@@ -704,24 +704,48 @@ btree::size() const
     while (leaf) {
       prefetch_node(leaf);
     process:
-      uint64_t version = leaf->stable_version();
-      size_t n = leaf->key_slots_used();
-      size_t values = 0;
+      const uint64_t version = leaf->stable_version();
+      const size_t n = leaf->key_slots_used();
       vector<node *> layers;
       for (size_t i = 0; i < n; i++)
         if (leaf->value_is_layer(i))
           layers.push_back(leaf->values[i].n);
-        else
-          values++;
       leaf_node *next = leaf->next;
-      if (unlikely(!leaf->check_version(version)))
+      callback.on_node_begin(leaf);
+      if (unlikely(!leaf->check_version(version))) {
+        callback.on_node_failure();
         goto process;
-      count += values;
+      }
+      callback.on_node_success();
       leaf = next;
       q.insert(q.end(), layers.begin(), layers.end());
     }
   }
-  return count;
+}
+
+void
+btree::size_walk_callback::on_node_begin(const node_opaque_t *n)
+{
+  INVARIANT(n->is_leaf_node());
+  INVARIANT(spec_size == 0);
+  const leaf_node *leaf = (const leaf_node *) n;
+  const size_t sz = leaf->key_slots_used();
+  for (size_t i = 0; i < sz; i++)
+    if (!leaf->value_is_layer(i))
+      spec_size++;
+}
+
+void
+btree::size_walk_callback::on_node_success()
+{
+  size += spec_size;
+  spec_size = 0;
+}
+
+void
+btree::size_walk_callback::on_node_failure()
+{
+  spec_size = 0;
 }
 
 btree::insert_status
@@ -3479,4 +3503,18 @@ btree::NodeStringify(const node_opaque_t *n)
 
   b << "]";
   return b.str();
+}
+
+vector<btree::value_type>
+btree::ExtractValues(const node_opaque_t *n)
+{
+  vector<value_type> ret;
+  if (!n->is_leaf_node())
+    return ret;
+  const leaf_node *leaf = (const leaf_node *) n;
+  const size_t sz = leaf->key_slots_used();
+  for (size_t i = 0; i < sz; i++)
+    if (!leaf->value_is_layer(i))
+      ret.push_back(leaf->values[i].v);
+  return ret;
 }
