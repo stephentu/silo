@@ -354,23 +354,6 @@ namespace noncopyable_  // protection from unintended ADL
 
 typedef noncopyable_::noncopyable noncopyable;
 
-/**
- * unsafe_share_with has the semantics of dst = src, except
- * done cheaply (but safely) if possible.
- *
- * For instance, suppose T manages some underlying memory pointer, and T's dtor
- * frees this memory pointer.  If we guarantee that dst will outlive src, then
- * instead of allocating new memory for dst and copying the contents of memory
- * into dst, we can simply have dst and src share the memory pointer, and have
- * src not delete the underlying pointer.
- */
-template <typename T>
-inline void
-unsafe_share_with(T &dst, T &src)
-{
-  dst.unsafe_share_with(src);
-}
-
 inline std::string
 next_key(const std::string &s)
 {

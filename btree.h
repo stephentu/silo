@@ -1006,14 +1006,6 @@ private:
       (dest++)->swap(source[i]);
   }
 
-  template <typename T>
-  static inline ALWAYS_INLINE void
-  unsafe_share_with(T *dest, T *source, size_t p, size_t n)
-  {
-    for (size_t i = p; i < n; i++)
-      util::unsafe_share_with(*dest++, source[i]);
-  }
-
   leaf_node *leftmost_descend_layer(node *n) const;
 
   /**

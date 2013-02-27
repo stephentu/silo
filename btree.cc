@@ -1401,12 +1401,6 @@ btree::remove0(node *np,
 
         sift_swap_left(leaf->suffixes, ret, n);
 
-        //for (size_t i = 0; i < right_n; i++) {
-        //  rcu_imstring im;
-        //  leaf->suffixes[n - 1 + i].swap(im);
-        //}
-        //unsafe_share_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
-
         swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
 
         leaf->set_key_slots_used(right_n + (n - 1));
@@ -1495,13 +1489,6 @@ btree::remove0(node *np,
 
         copy_into(&left_sibling->lengths[left_n], leaf->lengths, 0, ret);
         copy_into(&left_sibling->lengths[left_n + ret], leaf->lengths, ret + 1, n);
-
-        //for (size_t i = left_n; i < n - 1; i++) {
-        //  rcu_imstring im;
-        //  left_sibling->suffixes[i].swap(im);
-        //}
-        //unsafe_share_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
-        //unsafe_share_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);
 
         swap_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
         swap_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);

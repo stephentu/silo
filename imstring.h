@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <string>
 
+#include "macros.h"
 #include "rcu.h"
 #include "util.h"
 
@@ -21,16 +22,16 @@ class base_imstring : private util::noncopyable {
   friend class base_imstring;
 
 public:
-  inline base_imstring() : p(NULL), l(0), xfer(false) {}
+  inline base_imstring() : p(NULL), l(0) {}
 
   base_imstring(const uint8_t *src, size_t l)
-    : p(new uint8_t[l]), l(l), xfer(false)
+    : p(new uint8_t[l]), l(l)
   {
     memcpy(p, src, l);
   }
 
   base_imstring(const std::string &s)
-    : p(new uint8_t[s.size()]), l(s.size()), xfer(false)
+    : p(new uint8_t[s.size()]), l(s.size())
   {
     memcpy(p, s.data(), l);
   }
@@ -41,7 +42,6 @@ public:
   {
     std::swap(p, that.p);
     std::swap(l, that.l);
-    std::swap(xfer, that.xfer);
   }
 
   inline
@@ -62,22 +62,12 @@ public:
     return l;
   }
 
-  inline void
-  unsafe_share_with(base_imstring &that)
-  {
-    release();
-    p = that.p;
-    l = that.l;
-    xfer = that.xfer;
-    that.xfer = true;
-  }
-
 protected:
 
   inline void
   release()
   {
-    if (p && xfer) {
+    if (likely(p)) {
       if (RCU)
         rcu::free_array(p);
       else
@@ -87,33 +77,9 @@ protected:
 
   uint8_t *p;
   size_t l;
-  bool xfer; // if xfer is true, no longer has ownership of p
 };
 
-class imstring : public base_imstring<false> {
-public:
-  imstring() : base_imstring<false>() {}
-
-  imstring(const uint8_t *src, size_t l)
-    : base_imstring<false>(src, l)
-  {}
-
-  imstring(const std::string &s)
-    : base_imstring<false>(s)
-  {}
-};
-
-class rcu_imstring : public base_imstring<true> {
-public:
-  rcu_imstring() : base_imstring<true>() {}
-
-  rcu_imstring(const uint8_t *src, size_t l)
-    : base_imstring<true>(src, l)
-  {}
-
-  rcu_imstring(const std::string &s)
-    : base_imstring<true>(s)
-  {}
-};
+typedef base_imstring<false> imstring;
+typedef base_imstring<true>  rcu_imstring;
 
 #endif /* _NDB_IMSTRING_H_ */
