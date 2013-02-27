@@ -118,10 +118,14 @@ bench_runner::run()
 
   event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
 
+  map<string, size_t> table_sizes_before;
   if (verbose) {
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
-         it != open_tables.end(); ++it)
-      cerr << "table " << it->first << " size " << it->second->size() << endl;
+         it != open_tables.end(); ++it) {
+      const size_t s = it->second->size();
+      cerr << "table " << it->first << " size " << s << endl;
+      table_sizes_before[it->first] = s;
+    }
     cerr << "starting benchmark..." << endl;
   }
 
@@ -156,10 +160,10 @@ bench_runner::run()
   const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
 
   if (verbose) {
+
     const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
     const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first); // free mem
     const double delta_mb = double(delta)/1048576.0;
-
     map<string, size_t> agg_txn_counts = workers[0]->get_txn_counts();
     ssize_t size_delta = workers[0]->get_size_delta();
     for (size_t i = 1; i < workers.size(); i++) {
@@ -167,6 +171,20 @@ bench_runner::run()
       size_delta += workers[i]->get_size_delta();
     }
     const double size_delta_mb = double(size_delta)/1048576.0;
+    map<string, uint64_t> ctrs = event_counter::get_all_counters();
+
+    cerr << "--- table statistics ---" << endl;
+    for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
+         it != open_tables.end(); ++it) {
+      const size_t s = it->second->size();
+      const ssize_t delta = ssize_t(s) - ssize_t(table_sizes_before[it->first]);
+      cerr << "table " << it->first << " size " << it->second->size();
+      if (delta < 0)
+        cerr << " (" << delta << " records)" << endl;
+      else
+        cerr << " (+" << delta << " records)" << endl;
+    }
+    cerr << "--- benchmark statistics ---" << endl;
     cerr << "memory delta: " << delta_mb  << " MB" << endl;
     cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
     cerr << "logical memory delta: " << size_delta_mb << " MB" << endl;
@@ -176,12 +194,13 @@ bench_runner::run()
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
-    cerr << "--- system statistics ---" << endl;
-    map<string, uint64_t> ctrs = event_counter::get_all_counters();
+    cerr << "--- system counters ---" << endl;
     for (map<string, uint64_t>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
     cerr << "-------------------------" << endl;
+
+
 #ifdef USE_JEMALLOC
     cerr << "printing jemalloc stats..." << endl;
     malloc_stats_print(write_cb, NULL, "");
