@@ -84,6 +84,7 @@ public:
       void *txn,
       const char *key, size_t keylen);
   virtual size_t size() const;
+  virtual void clear();
 private:
   txn_btree btr;
 };

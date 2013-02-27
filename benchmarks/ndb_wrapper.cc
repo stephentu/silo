@@ -223,3 +223,9 @@ ndb_ordered_index::size() const
 {
   return btr.size_estimate();
 }
+
+void
+ndb_ordered_index::clear()
+{
+  return btr.unsafe_purge();
+}

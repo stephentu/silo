@@ -65,6 +65,12 @@ public:
     NDB_UNIMPLEMENTED("size");
   }
 
+  virtual void
+  clear()
+  {
+    NDB_UNIMPLEMENTED("clear");
+  }
+
 private:
   Db *db;
 };
