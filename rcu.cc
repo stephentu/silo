@@ -159,6 +159,8 @@ static event_counter evt_rcu_deletes("rcu_deletes");
 static const uint64_t rcu_epoch_us = 50 * 1000; /* 50 ms */
 static const uint64_t rcu_epoch_ns = rcu_epoch_us * 1000;
 
+static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
+
 class gc_reaper_thread : public ndb_thread {
 public:
   gc_reaper_thread()
@@ -172,7 +174,6 @@ public:
     struct timespec t;
     memset(&t, 0, sizeof(t));
     t.tv_nsec = rcu_epoch_ns;
-    //timer loop_timer;
     rcu::delete_queue stack_queue;
     for (;;) {
       // see if any elems to process
@@ -180,14 +181,9 @@ public:
         scoped_spinlock l(&lock);
         stack_queue.swap(queue);
       }
+      evt_avg_gc_reaper_queue_len.offer(stack_queue.size());
       if (stack_queue.empty())
         nanosleep(&t, NULL);
-      //const uint64_t last_loop_usec = loop_timer.lap();
-      //static int _x = 0;
-      //if (((++_x) % 10) == 0) {
-      //  cerr << "stack_queue.size(): " << stack_queue.size() << endl;
-      //  cerr << "last_loop_ms: " << double(last_loop_usec)/1000.0 << endl;
-      //}
       for (rcu::delete_queue::iterator it = stack_queue.begin();
            it != stack_queue.end(); ++it) {
         try {
@@ -203,6 +199,8 @@ public:
   pthread_spinlock_t lock;
   rcu::delete_queue queue;
 };
+
+static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
 
 void *
 rcu::gc_thread_loop(void *p)
@@ -248,6 +246,7 @@ rcu::gc_thread_loop(void *p)
         // *must* get the new global_epoch, so we can now claim its
         // deleted pointers from global_epoch - 1
         delete_queue &local_queue = s->local_queues[cleaning_epoch % 2];
+        evt_avg_rcu_delete_queue_len.offer(local_queue.size());
 
         gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NReapers];
         scoped_spinlock l0(&reaper_loop.lock);
@@ -255,7 +254,7 @@ rcu::gc_thread_loop(void *p)
           reaper_loop.queue.swap(local_queue);
           INVARIANT(local_queue.empty());
         } else {
-          reaper_loop.queue.reserve(reaper_loop.queue.size() + local_queue.size());
+          //reaper_loop.queue.reserve(reaper_loop.queue.size() + local_queue.size());
           reaper_loop.queue.insert(
               reaper_loop.queue.end(),
               local_queue.begin(),
@@ -273,7 +272,7 @@ rcu::gc_thread_loop(void *p)
           reaper_loop.queue.swap(global_queue);
           INVARIANT(global_queue.empty());
         } else {
-          reaper_loop.queue.reserve(reaper_loop.queue.size() + global_queue.size());
+          //reaper_loop.queue.reserve(reaper_loop.queue.size() + global_queue.size());
           reaper_loop.queue.insert(
               reaper_loop.queue.end(),
               global_queue.begin(),

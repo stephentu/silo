@@ -6,6 +6,7 @@
 
 #include <map>
 #include <vector>
+#include <list>
 #include <utility>
 
 class rcu {
@@ -14,7 +15,8 @@ public:
 
   typedef void (*deleter_t)(void *);
   typedef std::pair<void *, deleter_t> delete_entry;
-  typedef std::vector<delete_entry> delete_queue;
+  //typedef std::vector<delete_entry> delete_queue;
+  typedef std::list<delete_entry> delete_queue;
 
   template <typename T>
   static inline void

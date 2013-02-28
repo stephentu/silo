@@ -1048,12 +1048,15 @@ private:
     std::string key;
     logical_node *ln;
   };
-  static __thread std::vector<logical_node_context> *tl_cleanup_nodes;
-  static inline std::vector<logical_node_context> &
+
+  typedef std::list<logical_node_context> node_cleanup_queue;
+
+  static __thread node_cleanup_queue *tl_cleanup_nodes;
+  static inline node_cleanup_queue &
   local_cleanup_nodes()
   {
     if (unlikely(!tl_cleanup_nodes))
-      tl_cleanup_nodes = new std::vector<logical_node_context>;
+      tl_cleanup_nodes = new node_cleanup_queue;
     return *tl_cleanup_nodes;
   }
 
@@ -1097,7 +1100,7 @@ private:
     void *p;
   };
 
-  typedef std::vector<work_record_t> work_q;
+  typedef std::list<work_record_t> work_q;
   typedef util::std_reverse_pq<work_record_t>::type work_pq;
 
   // for passing work to the epoch loop

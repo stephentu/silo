@@ -1018,9 +1018,9 @@ transaction_proto2::process_local_cleanup_nodes()
 {
   if (!tl_cleanup_nodes)
     return;
-  vector<logical_node_context> new_list;
+  node_cleanup_queue new_list;
   const uint64_t last_consistent_epoch = g_last_consistent_epoch;
-  for (vector<logical_node_context>::iterator it = tl_cleanup_nodes->begin();
+  for (node_cleanup_queue::iterator it = tl_cleanup_nodes->begin();
        it != tl_cleanup_nodes->end(); ++it) {
     scoped_rcu_region rcu_region;
     it->ln->lock();
@@ -1086,10 +1086,14 @@ transaction_proto2::InitEpochScheme()
   return true;
 }
 
+transaction_proto2::epoch_loop transaction_proto2::g_epoch_loop;
 bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
 
 static const uint64_t txn_epoch_us = 50 * 1000; /* 50 ms */
 //static const uint64_t txn_epoch_ns = txn_epoch_us * 1000;
+
+static event_avg_counter evt_avg_epoch_thread_queue_len("avg_epoch_thread_queue_len");
+static event_avg_counter evt_avg_epoch_work_queue_len("avg_epoch_work_queue_len");
 
 void
 transaction_proto2::epoch_loop::run()
@@ -1139,6 +1143,7 @@ transaction_proto2::epoch_loop::run()
           is_wq_empty = false;
         pq.push(*it);
       }
+      evt_avg_epoch_thread_queue_len.offer(core_q.size());
       core_q.clear();
     }
 
@@ -1161,6 +1166,7 @@ transaction_proto2::epoch_loop::run()
     // g_last_consistent_epoch = g_current_epoch, which means they will be
     // reading changes up to and including (g_current_epoch - 1)
     VERBOSE(cerr << "epoch_loop: running work <= (l_current_epoch=" << l_current_epoch << ")" << endl);
+    evt_avg_epoch_work_queue_len.offer(pq.size());
     while (!pq.empty()) {
       const work_record_t &work = pq.top();
       if (work.epoch > l_current_epoch)
@@ -1189,7 +1195,7 @@ transaction_proto2::completion_callback(ndb_thread *p)
   if (!tl_cleanup_nodes)
     return;
   // lock and dequeue all the nodes
-  for (vector<logical_node_context>::iterator it = tl_cleanup_nodes->begin();
+  for (node_cleanup_queue::iterator it = tl_cleanup_nodes->begin();
        it != tl_cleanup_nodes->end(); ++it) {
     it->ln->lock();
     ALWAYS_ASSERT(it->ln->is_enqueued());
@@ -1203,12 +1209,10 @@ transaction_proto2::completion_callback(ndb_thread *p)
 }
 NDB_THREAD_REGISTER_COMPLETION_CALLBACK(transaction_proto2::completion_callback)
 
-transaction_proto2::epoch_loop transaction_proto2::g_epoch_loop;
-
 __thread unsigned int transaction_proto2::tl_nest_level = 0;
 __thread uint64_t transaction_proto2::tl_last_commit_tid = MIN_TID;
 __thread uint64_t transaction_proto2::tl_last_cleanup_epoch = MIN_TID;
-__thread vector<transaction_proto2::logical_node_context> *transaction_proto2::tl_cleanup_nodes = NULL;
+__thread transaction_proto2::node_cleanup_queue *transaction_proto2::tl_cleanup_nodes = NULL;
 
 volatile uint64_t transaction_proto2::g_current_epoch = 0;
 volatile uint64_t transaction_proto2::g_last_consistent_epoch = 0;
