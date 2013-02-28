@@ -178,6 +178,7 @@ public:
       QUEUE_TYPE_NONE,
       QUEUE_TYPE_DELETE,
       QUEUE_TYPE_GC,
+      QUEUE_TYPE_LOCAL,
     };
 
 #ifdef LOGICAL_NODE_QUEUE_TRACKING
@@ -1060,6 +1061,9 @@ private:
       tl_cleanup_nodes = new node_cleanup_queue;
     return *tl_cleanup_nodes;
   }
+
+  static bool
+  try_logical_node_cleanup(const logical_node_context &ctx);
 
   static bool
   try_chain_cleanup(const logical_node_context &ctx);

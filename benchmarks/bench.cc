@@ -21,6 +21,7 @@
 //cannot include this header b/c conflicts with malloc.h
 //#include <jemalloc/jemalloc.h>
 extern "C" void malloc_stats_print(void (*write_cb)(void *, const char *), void *cbopaque, const char *opts);
+extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 #endif
 #ifdef USE_TCMALLOC
 #include <google/heap-profiler.h>
@@ -203,6 +204,8 @@ bench_runner::run()
     cerr << "-------------------------" << endl;
 
 #ifdef USE_JEMALLOC
+    cerr << "dumping heap profile..." << endl;
+    mallctl("prof.dump", NULL, NULL, NULL, 0);
     cerr << "printing jemalloc stats..." << endl;
     malloc_stats_print(write_cb, NULL, "");
 #endif
