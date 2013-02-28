@@ -138,7 +138,8 @@ public:
    */
   struct logical_node : private util::noncopyable {
   public:
-    typedef uint64_t version_t;
+    //typedef uint64_t version_t;
+    typedef uint32_t version_t; // try to save some space
 
   private:
     static const version_t HDR_LOCKED_MASK = 0x1;
@@ -157,11 +158,12 @@ public:
 
   public:
 
-    // NB(stephentu): ABA problem happens after 2^61 concurrent modifications-
-    // *very* low probability event, so we let it happen
+    // NB(stephentu): ABA problem happens after some multiple of
+    // 2^(NBits(version_t)-4) concurrent modifications- somewhat low probability
+    // event, so we let it happen
     //
     // [ locked | deleted | enqueued | latest | version ]
-    // [  0..1  |  1..2   |   2..3   |  3..4  |  4..64  ]
+    // [  0..1  |  1..2   |   2..3   |  3..4  |  4..32  ]
     volatile version_t hdr;
 
     // constraints:

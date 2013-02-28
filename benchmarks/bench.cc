@@ -197,11 +197,11 @@ bench_runner::run()
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
-    cerr << "--- system counters ---" << endl;
+    cerr << "--- system counters (for benchmark) ---" << endl;
     for (map<string, double>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
-    cerr << "-------------------------" << endl;
+    cerr << "---------------------------------------" << endl;
 
 #ifdef USE_JEMALLOC
     cerr << "dumping heap profile..." << endl;

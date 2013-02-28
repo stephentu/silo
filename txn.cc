@@ -57,7 +57,7 @@ transaction::logical_node::gc_chain()
 }
 
 string
-transaction::logical_node::VersionInfoStr(uint64_t v)
+transaction::logical_node::VersionInfoStr(version_t v)
 {
   ostringstream buf;
   buf << "[";
