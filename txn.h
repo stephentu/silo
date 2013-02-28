@@ -974,9 +974,6 @@ private:
   // work will get called after epoch finishes
   static void enqueue_work_after_epoch(uint64_t epoch, work_callback_t work, void *p);
 
-  static bool
-  try_delete_logical_node(void *p, uint64_t &epoch);
-
   // XXX(stephentu): need to implement core ID recycling
   static const size_t CoreBits = NMAXCOREBITS; // allow 2^CoreShift distinct threads
   static const size_t NMaxCores = NMAXCORES;
@@ -1049,7 +1046,11 @@ private:
     logical_node *ln;
   };
 
-  typedef std::list<logical_node_context> node_cleanup_queue;
+  // returns true if should run again
+  // note that work will run under a RCU region
+  typedef bool (*local_work_callback_t)(const logical_node_context &);
+  typedef std::pair<logical_node_context, local_work_callback_t> local_work_t;
+  typedef std::list<local_work_t> node_cleanup_queue;
 
   static __thread node_cleanup_queue *tl_cleanup_nodes;
   static inline node_cleanup_queue &
@@ -1059,6 +1060,12 @@ private:
       tl_cleanup_nodes = new node_cleanup_queue;
     return *tl_cleanup_nodes;
   }
+
+  static bool
+  try_chain_cleanup(const logical_node_context &ctx);
+
+  static bool
+  try_delete_logical_node(const logical_node_context &info);
 
   static void
   process_local_cleanup_nodes();
