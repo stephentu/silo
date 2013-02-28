@@ -794,7 +794,7 @@ transaction_proto2::transaction_proto2(uint64_t flags)
     ALWAYS_ASSERT(pthread_spin_lock(&g_epoch_spinlocks[my_core_id].elem) == 0);
   current_epoch = g_current_epoch;
   if (get_flags() & TXN_FLAG_READ_ONLY)
-    last_consistent_tid = MakeTid(0, 0, g_last_consistent_epoch);
+    last_consistent_tid = MakeTid(0, 0, g_consistent_epoch);
 }
 
 transaction_proto2::~transaction_proto2()
@@ -988,10 +988,10 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
     goto unlock_and_free;
   }
   VERBOSE(cerr << "logical_node: 0x" << hexify(intptr_t(info->ln)) << " is being unlinked" << endl
-               << "  g_last_consistent_epoch=" << g_last_consistent_epoch << endl
+               << "  g_consistent_epoch=" << g_consistent_epoch << endl
                << "  ln=" << *info->ln << endl);
   v = EpochId(info->ln->version);
-  if (g_last_consistent_epoch <= v) {
+  if (g_consistent_epoch <= v) {
     // need to reschedule to run when epoch=v ends
     VERBOSE(cerr << "  rerunning at end of epoch=" << v << endl);
     info->ln->set_enqueued(true, logical_node::QUEUE_TYPE_DELETE); // re-queue it up
@@ -1019,7 +1019,7 @@ transaction_proto2::process_local_cleanup_nodes()
   if (!tl_cleanup_nodes)
     return;
   node_cleanup_queue new_list;
-  const uint64_t last_consistent_epoch = g_last_consistent_epoch;
+  const uint64_t last_consistent_epoch = g_consistent_epoch;
   for (node_cleanup_queue::iterator it = tl_cleanup_nodes->begin();
        it != tl_cleanup_nodes->end(); ++it) {
     scoped_rcu_region rcu_region;
@@ -1150,21 +1150,24 @@ transaction_proto2::epoch_loop::run()
     COMPILER_MEMORY_FENCE;
 
     // sync point 1: l_current_epoch = (g_current_epoch - 1) is now finished.
-    // at this point, all threads will be operating at epoch=g_current_epoch
-    g_last_consistent_epoch = g_current_epoch;
+    // at this point, all threads will be operating at epoch=g_current_epoch,
+    // which means all values < g_current_epoch are consistent with each other
+    g_consistent_epoch++;
     __sync_synchronize(); // XXX(stephentu): same reason as above
 
     // XXX(stephentu): I would really like to avoid having to loop over
     // all the threads again, but I don't know how else to ensure all the
     // threads will finish any oustanding consistent reads at
-    // g_last_consistent_epoch - 1
+    // g_consistent_epoch - 1
     for (size_t i = 0; i < l_core_count; i++) {
       scoped_spinlock l(&g_epoch_spinlocks[i].elem);
     }
 
     // sync point 2: all consistent reads will be operating at
-    // g_last_consistent_epoch = g_current_epoch, which means they will be
+    // g_consistent_epoch = g_current_epoch, which means they will be
     // reading changes up to and including (g_current_epoch - 1)
+    g_reads_finished_epoch++;
+
     VERBOSE(cerr << "epoch_loop: running work <= (l_current_epoch=" << l_current_epoch << ")" << endl);
     evt_avg_epoch_work_queue_len.offer(pq.size());
     while (!pq.empty()) {
@@ -1214,8 +1217,10 @@ __thread uint64_t transaction_proto2::tl_last_commit_tid = MIN_TID;
 __thread uint64_t transaction_proto2::tl_last_cleanup_epoch = MIN_TID;
 __thread transaction_proto2::node_cleanup_queue *transaction_proto2::tl_cleanup_nodes = NULL;
 
-volatile uint64_t transaction_proto2::g_current_epoch = 0;
-volatile uint64_t transaction_proto2::g_last_consistent_epoch = 0;
+// start epoch at 1, to avoid some boundary conditions
+volatile uint64_t transaction_proto2::g_current_epoch = 1;
+volatile uint64_t transaction_proto2::g_consistent_epoch = 1;
+volatile uint64_t transaction_proto2::g_reads_finished_epoch = 0;
 
 volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];
 volatile aligned_padded_elem<transaction_proto2::work_q*> transaction_proto2::g_work_queues[NMaxCores];

@@ -921,8 +921,8 @@ public:
   wait_an_epoch()
   {
     ALWAYS_ASSERT(!tl_nest_level);
-    const uint64_t e = g_last_consistent_epoch;
-    while (g_last_consistent_epoch == e)
+    const uint64_t e = g_consistent_epoch;
+    while (g_consistent_epoch == e)
       nop_pause();
     COMPILER_MEMORY_FENCE;
   }
@@ -934,7 +934,7 @@ public:
   can_overwrite_record_tid(tid_t prev, tid_t cur) const
   {
     INVARIANT(prev < cur);
-    INVARIANT(EpochId(cur) >= g_last_consistent_epoch);
+    INVARIANT(EpochId(cur) >= g_consistent_epoch);
     return EpochId(prev) == EpochId(cur);
   }
 
@@ -1071,14 +1071,17 @@ private:
 
   // XXX(stephentu): think about if the vars below really need to be volatile
 
-  // contains the current epoch number, is either == g_last_consistent_epoch or
-  // == g_last_consistent_epoch + 1
+  // contains the current epoch number, is either == g_consistent_epoch or
+  // == g_consistent_epoch + 1
   static volatile uint64_t g_current_epoch CACHE_ALIGNED;
 
   // contains the epoch # to take a consistent snapshot at the beginning of
-  // (this means g_last_consistent_epoch - 1 is the last epoch fully completed)
-  static volatile uint64_t g_last_consistent_epoch CACHE_ALIGNED;
+  // (this means g_consistent_epoch - 1 is the last epoch fully completed)
+  static volatile uint64_t g_consistent_epoch CACHE_ALIGNED;
 
+  // contains the latest epoch # through which it is known NO readers are in
+  // (inclusive). Is either g_consistent_epoch - 1 or g_consistent_epoch - 2
+  static volatile uint64_t g_reads_finished_epoch CACHE_ALIGNED;
 
   // for synchronizing with the epoch incrementor loop
   static volatile util::aligned_padded_elem<pthread_spinlock_t>
