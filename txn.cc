@@ -23,8 +23,6 @@ event_counter transaction::logical_node::g_evt_replace_logical_node_head("replac
 event_avg_counter transaction::logical_node::g_evt_avg_record_shared_prefix("avg_record_shared_prefix");
 event_avg_counter transaction::logical_node::g_evt_avg_record_spill_len("avg_record_spill_len");
 
-static event_counter evt_logical_node_spill_deletes("logical_node_spill_deletes");
-
 transaction::logical_node::~logical_node()
 {
   INVARIANT(is_deleting());
@@ -45,8 +43,6 @@ transaction::logical_node::~logical_node()
   }
 
   // stats-keeping
-  if (!is_latest())
-    ++evt_logical_node_spill_deletes;
   ++g_evt_logical_node_physical_deletes;
   g_evt_logical_node_bytes_freed += (alloc_size + sizeof(logical_node));
 }
