@@ -450,7 +450,6 @@ private:
     static event_counter g_evt_logical_node_bytes_freed;
     static event_counter g_evt_logical_node_spills;
     static event_counter g_evt_replace_logical_node_head;
-    static event_avg_counter g_evt_avg_record_shared_prefix;
     static event_avg_counter g_evt_avg_record_spill_len;
 
 public:
@@ -546,11 +545,6 @@ public:
         return false;
       }
 
-      const size_t shared = util::first_pos_diff(
-          (const char *) &value_start[0], size,
-          (const char *) r, sz);
-      g_evt_avg_record_shared_prefix.offer(shared);
-
       // need to spill
       ++g_evt_logical_node_spills;
       g_evt_avg_record_spill_len.offer(size);
@@ -568,6 +562,10 @@ public:
       ALWAYS_ASSERT(false);
       return true;
     }
+
+    // why do we round allocation sizes up?  jemalloc will do this internally
+    // anyways, so we might as well grab more usable space (really just
+    // internal vs external fragmentation)
 
     static inline logical_node *
     alloc_first(size_type alloc_sz)

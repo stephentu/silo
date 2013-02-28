@@ -20,7 +20,6 @@ event_counter transaction::logical_node::g_evt_logical_node_bytes_freed("logical
 event_counter transaction::logical_node::g_evt_logical_node_spills("logical_node_spills");
 event_counter transaction::logical_node::g_evt_replace_logical_node_head("replace_logical_node_head");
 
-event_avg_counter transaction::logical_node::g_evt_avg_record_shared_prefix("avg_record_shared_prefix");
 event_avg_counter transaction::logical_node::g_evt_avg_record_spill_len("avg_record_spill_len");
 
 transaction::logical_node::~logical_node()
