@@ -23,6 +23,7 @@
 /** options */
 
 //#define LOCK_OWNERSHIP_CHECKING
+#define BTREE_NODE_ALLOC_CACHE_ALIGNED
 
 /**
  * A concurrent, variable key length b+-tree, optimized for read heavy
@@ -53,8 +54,6 @@ public:
   static const unsigned int NMinKeysPerNode = NKeysPerNode / 2;
 
 private:
-
-  static const unsigned int NodeSize = 256; /* 4 x86 cache lines */
 
   static const uint64_t HDR_TYPE_MASK = 0x1;
 
@@ -489,9 +488,12 @@ private:
     static inline leaf_node*
     alloc()
     {
+#ifdef BTREE_NODE_ALLOC_CACHE_ALIGNED
       void *p = memalign(CACHELINE_SIZE, sizeof(leaf_node));
-      if (!p)
-        return NULL;
+#else
+      void *p = malloc(sizeof(leaf_node));
+#endif
+      INVARIANT(p);
       return new (p) leaf_node;
     }
 
@@ -514,7 +516,7 @@ private:
       rcu::free_with_fn(n, deleter);
     }
 
-  } PACKED_CACHE_ALIGNED;
+  } PACKED;
 
   struct internal_node : public node {
     /**
@@ -593,9 +595,12 @@ private:
     static inline internal_node*
     alloc()
     {
+#ifdef BTREE_NODE_ALLOC_CACHE_ALIGNED
       void *p = memalign(CACHELINE_SIZE, sizeof(internal_node));
-      if (unlikely(!p))
-        return NULL;
+#else
+      void *p = malloc(sizeof(internal_node));
+#endif
+      INVARIANT(p);
       return new (p) internal_node;
     }
 
@@ -618,7 +623,7 @@ private:
       rcu::free_with_fn(n, deleter);
     }
 
-  } PACKED_CACHE_ALIGNED;
+  } PACKED;
 
   static inline leaf_node*
   AsLeaf(node *n)
@@ -703,16 +708,7 @@ public:
 
   btree() : root(leaf_node::alloc())
   {
-
-    // leaf nodes cannot fit into 4-cachelines exactly,
-    // even w/o suffixes
-
-#ifndef LOCK_OWNERSHIP_CHECKING
-    _static_assert(sizeof(internal_node) <= NodeSize);
-#endif /* LOCK_OWNERSHIP_CHECKING */
-
     _static_assert(NKeysPerNode > (sizeof(key_slice) + 2)); // so we can always do a split
-    _static_assert(sizeof(internal_node) % CACHELINE_SIZE == 0);
 
 #ifdef CHECK_INVARIANTS
     root->lock();

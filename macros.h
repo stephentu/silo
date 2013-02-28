@@ -8,7 +8,7 @@
 //#define NODE_PREFETCH
 //#define DIE_ON_ABORT
 //#define TRAP_LARGE_ALLOOCATIONS
-//#define CHECK_INVARIANTS
+#define CHECK_INVARIANTS
 #define USE_VARINT_ENCODING
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
@@ -20,7 +20,6 @@
 
 // some helpers for cacheline alignment
 #define CACHE_ALIGNED __attribute__((aligned(CACHELINE_SIZE)))
-#define PACKED_CACHE_ALIGNED __attribute__((packed, aligned(CACHELINE_SIZE)))
 #define CACHE_PADOUT  char __padout[0] __attribute__((aligned(CACHELINE_SIZE)))
 #define PACKED __attribute__((packed))
 
