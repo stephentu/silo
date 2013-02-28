@@ -240,6 +240,16 @@ txn_btree::unsafe_purge()
   purge_tree_walker w;
   underlying_btree.tree_walk(w);
   underlying_btree.clear();
+#ifdef TXN_BTREE_DUMP_PURGE_STATS
+  cerr << "record size stats (nbytes => count)" << endl;
+  for (map<size_t, size_t>::iterator it = w.purge_stats_ln_record_size_counts.begin();
+       it != w.purge_stats_ln_record_size_counts.end(); ++it)
+    cerr << "    " << it->first << " => " << it->second << endl;
+  cerr << "alloc size stats  (nbytes => count)" << endl;
+  for (map<size_t, size_t>::iterator it = w.purge_stats_ln_alloc_size_counts.begin();
+       it != w.purge_stats_ln_alloc_size_counts.end(); ++it)
+    cerr << "    " << (it->first + sizeof(transaction::logical_node)) << " => " << it->second << endl;
+#endif
 }
 
 void
@@ -256,6 +266,11 @@ txn_btree::purge_tree_walker::on_node_success()
     transaction::logical_node *ln =
       (transaction::logical_node *) spec_values[i];
     INVARIANT(ln);
+#ifdef TXN_BTREE_DUMP_PURGE_STATS
+    // XXX(stephentu): should we also walk the chain?
+    purge_stats_ln_record_size_counts[ln->size]++;
+    purge_stats_ln_alloc_size_counts[ln->alloc_size]++;
+#endif
     transaction::logical_node::release_no_rcu(ln);
   }
   spec_values.clear();

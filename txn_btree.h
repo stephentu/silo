@@ -132,6 +132,10 @@ private:
     virtual void on_node_begin(const btree::node_opaque_t *n);
     virtual void on_node_success();
     virtual void on_node_failure();
+#ifdef TXN_BTREE_DUMP_PURGE_STATS
+    std::map<size_t, size_t> purge_stats_ln_record_size_counts; // just the record
+    std::map<size_t, size_t> purge_stats_ln_alloc_size_counts; // includes overhead
+#endif
   private:
     std::vector<btree::value_type> spec_values;
   };

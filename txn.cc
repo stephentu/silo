@@ -199,7 +199,7 @@ transaction::commit(bool doThrow)
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
         logical_nodes[(logical_node *) v] = lnode_info(outer_it->first, &it->first, false, &it->second);
       } else {
-        logical_node *ln = logical_node::alloc_first(outer_it->first->get_value_size_hint());
+        logical_node *ln = logical_node::alloc_first(it->second.size());
         // XXX: underlying btree api should return the existing value if
         // insert fails- this would allow us to avoid having to do another search
         pair<const btree::node_opaque_t *, uint64_t> insert_info;

@@ -65,7 +65,7 @@ private:
 
 class ndb_ordered_index : public abstract_ordered_index {
 public:
-  ndb_ordered_index(size_t value_size_hint);
+  ndb_ordered_index(const std::string &name, size_t value_size_hint);
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
@@ -86,6 +86,7 @@ public:
   virtual size_t size() const;
   virtual void clear();
 private:
+  std::string name;
   txn_btree btr;
 };
 
