@@ -991,7 +991,7 @@ transaction_proto2::try_delete_logical_node(void *p, uint64_t &epoch)
                << "  g_consistent_epoch=" << g_consistent_epoch << endl
                << "  ln=" << *info->ln << endl);
   v = EpochId(info->ln->version);
-  if (g_consistent_epoch <= v) {
+  if (g_reads_finished_epoch < v) {
     // need to reschedule to run when epoch=v ends
     VERBOSE(cerr << "  rerunning at end of epoch=" << v << endl);
     info->ln->set_enqueued(true, logical_node::QUEUE_TYPE_DELETE); // re-queue it up
