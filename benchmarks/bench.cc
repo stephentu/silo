@@ -22,6 +22,9 @@
 //#include <jemalloc/jemalloc.h>
 extern "C" void malloc_stats_print(void (*write_cb)(void *, const char *), void *cbopaque, const char *opts);
 #endif
+#ifdef USE_TCMALLOC
+#include <google/heap-profiler.h>
+#endif
 
 using namespace std;
 using namespace util;
@@ -152,7 +155,7 @@ bench_runner::run()
     n_aborts += workers[i]->get_ntxn_aborts();
   }
 
-  const double elapsed_sec = (double(elapsed) / 1000000.0);
+  const double elapsed_sec = double(elapsed) / 1000000.0;
   const double agg_throughput = double(n_commits) / elapsed_sec;
   const double avg_per_core_throughput = agg_throughput / double(workers.size());
 
@@ -160,7 +163,6 @@ bench_runner::run()
   const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
 
   if (verbose) {
-
     const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
     const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first); // free mem
     const double delta_mb = double(delta)/1048576.0;
@@ -171,7 +173,7 @@ bench_runner::run()
       size_delta += workers[i]->get_size_delta();
     }
     const double size_delta_mb = double(size_delta)/1048576.0;
-    map<string, uint64_t> ctrs = event_counter::get_all_counters();
+    map<string, double> ctrs = event_counter::get_all_counters();
 
     cerr << "--- table statistics ---" << endl;
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
@@ -195,15 +197,17 @@ bench_runner::run()
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
     cerr << "--- system counters ---" << endl;
-    for (map<string, uint64_t>::iterator it = ctrs.begin();
+    for (map<string, double>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
     cerr << "-------------------------" << endl;
 
-
 #ifdef USE_JEMALLOC
     cerr << "printing jemalloc stats..." << endl;
     malloc_stats_print(write_cb, NULL, "");
+#endif
+#ifdef USE_TCMALLOC
+    HeapProfilerDump("before-exit");
 #endif
   }
 
@@ -211,6 +215,12 @@ bench_runner::run()
   cout << agg_throughput << " " << agg_abort_rate << endl;
 
   db->do_txn_finish();
+  for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
+       it != open_tables.end(); ++it) {
+    it->second->clear();
+    delete it->second;
+  }
+  open_tables.clear();
 
   delete_pointers(loaders);
   delete_pointers(workers);

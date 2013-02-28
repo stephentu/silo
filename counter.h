@@ -12,14 +12,18 @@
 #include "core.h"
 #include "util.h"
 
-class event_counter : private util::noncopyable {
-private:
+namespace private_ {
 
   // these objects are *never* supposed to be destructed
   // (this is a purposeful memory leak)
   struct event_ctx : private util::noncopyable {
-    event_ctx(const std::string &name)
-      : name(name)
+
+    static std::vector<event_ctx *> &event_counters();
+    static pthread_spinlock_t &event_counters_lock();
+
+    // tag to avoid making event_ctx virtual
+    event_ctx(const std::string &name, bool avg_tag)
+      : name(name), avg_tag(avg_tag)
     {}
 
     ~event_ctx()
@@ -28,17 +32,19 @@ private:
     }
 
     const std::string name;
-
-    //// global count
-    //volatile util::aligned_padded_u64 global_count;
+    const bool avg_tag;
 
     // per-thread counts
     volatile util::aligned_padded_u64 tl_counts[coreid::NMaxCores];
   };
 
-  static std::vector<event_ctx *> &event_counters();
-  static pthread_spinlock_t &event_counters_lock();
+  struct event_ctx_avg : public event_ctx {
+    event_ctx_avg(const std::string &name) : event_ctx(name, true) {}
+    volatile util::aligned_padded_u64 tl_invokes[coreid::NMaxCores];
+  };
+}
 
+class event_counter : private util::noncopyable {
 public:
   event_counter(const std::string &name);
 
@@ -63,14 +69,29 @@ public:
     return *this;
   }
 
-  // WARNING: an expensive operation!
-  static std::map<std::string, uint64_t> get_all_counters();
 
+  // WARNING: an expensive operation!
+  static std::map<std::string, double> get_all_counters();
   // WARNING: an expensive operation!
   static void reset_all_counters();
 
 private:
-  event_ctx *const ctx;
+  private_::event_ctx *const ctx;
+};
+
+class event_avg_counter : private util::noncopyable {
+public:
+  event_avg_counter(const std::string &name);
+
+  inline ALWAYS_INLINE void
+  offer(uint64_t value)
+  {
+    const size_t id = coreid::core_id();
+    ctx->tl_counts[id].elem += value;
+    ctx->tl_invokes[id].elem++;
+  }
+private:
+  private_::event_ctx_avg *const ctx;
 };
 
 #endif /* _COUNTER_H_ */
