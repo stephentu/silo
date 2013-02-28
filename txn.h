@@ -445,6 +445,7 @@ private:
     static event_counter g_evt_logical_node_bytes_freed;
     static event_counter g_evt_logical_node_spills;
     static event_counter g_evt_replace_logical_node_head;
+    static event_avg_counter g_evt_avg_record_shared_prefix;
 
 public:
 
@@ -518,6 +519,11 @@ public:
       // XXX: one memcpy in common case, two memcpy in spill case
       INVARIANT(is_locked());
       INVARIANT(is_latest());
+
+      const size_t shared = util::first_pos_diff(
+          (const char *) &value_start[0], size,
+          (const char *) r, sz);
+      g_evt_avg_record_shared_prefix.offer(shared);
 
       // try to overwrite this record
       if (likely(txn->can_overwrite_record_tid(version, t))) {

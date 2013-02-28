@@ -258,6 +258,23 @@ format_list(ForwardIterator begin, ForwardIterator end)
   return ss.str();
 }
 
+/**
+ * Returns the lowest position p such that p0+p != p1+p.
+ */
+inline size_t
+first_pos_diff(const char *p0, size_t sz0,
+               const char *p1, size_t sz1)
+{
+  const char *p0end = p0 + sz0;
+  const char *p1end = p1 + sz1;
+  size_t n = 0;
+  while (p0 != p0end &&
+         p1 != p1end &&
+         p0[n] == p1[n])
+    n++;
+  return n;
+}
+
 class timer {
 private:
   timer(const timer &t);
