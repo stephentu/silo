@@ -234,7 +234,9 @@ public:
 
   public:
 
-    void gc_chain(bool do_rcu);
+    // gc_chain() schedules this instance, and all instances
+    // reachable from this instance for deletion via RCU.
+    void gc_chain();
 
     inline bool
     is_locked() const
@@ -440,12 +442,14 @@ private:
     }
 
     static event_counter g_evt_logical_node_creates;
-    static event_counter g_evt_logical_node_deletes;
+    static event_counter g_evt_logical_node_logical_deletes;
+    static event_counter g_evt_logical_node_physical_deletes;
     static event_counter g_evt_logical_node_bytes_allocated;
     static event_counter g_evt_logical_node_bytes_freed;
     static event_counter g_evt_logical_node_spills;
     static event_counter g_evt_replace_logical_node_head;
     static event_avg_counter g_evt_avg_record_shared_prefix;
+    static event_avg_counter g_evt_avg_record_spill_len;
 
 public:
 
@@ -520,10 +524,8 @@ public:
       INVARIANT(is_locked());
       INVARIANT(is_latest());
 
-      const size_t shared = util::first_pos_diff(
-          (const char *) &value_start[0], size,
-          (const char *) r, sz);
-      g_evt_avg_record_shared_prefix.offer(shared);
+      if (!sz)
+        ++g_evt_logical_node_logical_deletes;
 
       // try to overwrite this record
       if (likely(txn->can_overwrite_record_tid(version, t))) {
@@ -539,10 +541,17 @@ public:
 
         // XXX(stephentu): handle this case later
         ALWAYS_ASSERT(false);
+        return false;
       }
+
+      const size_t shared = util::first_pos_diff(
+          (const char *) &value_start[0], size,
+          (const char *) r, sz);
+      g_evt_avg_record_shared_prefix.offer(shared);
 
       // need to spill
       ++g_evt_logical_node_spills;
+      g_evt_avg_record_spill_len.offer(size);
       if (likely(sz <= alloc_size)) {
         logical_node *spill = alloc(version, &value_start[0], size, next, false);
         INVARIANT(!spill->is_latest());
@@ -555,7 +564,7 @@ public:
 
       // XXX(stephentu): handle this case later
       ALWAYS_ASSERT(false);
-      return false;
+      return true;
     }
 
     static inline logical_node *

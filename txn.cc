@@ -13,12 +13,17 @@ using namespace std;
 using namespace util;
 
 event_counter transaction::logical_node::g_evt_logical_node_creates("logical_node_creates");
-event_counter transaction::logical_node::g_evt_logical_node_deletes("logical_node_deletes");
+event_counter transaction::logical_node::g_evt_logical_node_logical_deletes("logical_node_logical_deletes");
+event_counter transaction::logical_node::g_evt_logical_node_physical_deletes("logical_node_physical_deletes");
 event_counter transaction::logical_node::g_evt_logical_node_bytes_allocated("logical_node_bytes_allocated");
 event_counter transaction::logical_node::g_evt_logical_node_bytes_freed("logical_node_bytes_freed");
 event_counter transaction::logical_node::g_evt_logical_node_spills("logical_node_spills");
 event_counter transaction::logical_node::g_evt_replace_logical_node_head("replace_logical_node_head");
+
 event_avg_counter transaction::logical_node::g_evt_avg_record_shared_prefix("avg_record_shared_prefix");
+event_avg_counter transaction::logical_node::g_evt_avg_record_spill_len("avg_record_spill_len");
+
+static event_counter evt_logical_node_spill_deletes("logical_node_spill_deletes");
 
 transaction::logical_node::~logical_node()
 {
@@ -28,29 +33,31 @@ transaction::logical_node::~logical_node()
 
   VERBOSE(cerr << "logical_node: " << hexify(intptr_t(this)) << " is being deleted" << endl);
 
-  // gc the chain
-  if (next)
-    next->gc_chain(false);
+  // free reachable nodes:
+  // don't do this recursively, to avoid overflowing
+  // stack w/ really long chains
+  struct logical_node *cur = next;
+  while (cur) {
+    struct logical_node *tmp = cur->next;
+    cur->next = NULL; // so cur's dtor doesn't attempt to double free
+    release_no_rcu(cur); // just a wrapper for ~logical_node() + free()
+    cur = tmp;
+  }
 
-  ++g_evt_logical_node_deletes;
+  // stats-keeping
+  if (!is_latest())
+    ++evt_logical_node_spill_deletes;
+  ++g_evt_logical_node_physical_deletes;
   g_evt_logical_node_bytes_freed += (alloc_size + sizeof(logical_node));
 }
 
 void
-transaction::logical_node::gc_chain(bool do_rcu)
+transaction::logical_node::gc_chain()
 {
-  INVARIANT(!do_rcu || rcu::in_rcu_region());
+  INVARIANT(rcu::in_rcu_region());
   INVARIANT(!is_latest());
   INVARIANT(!is_enqueued());
-  struct logical_node *cur = this;
-  while (cur) {
-    struct logical_node *next = cur->next;
-    if (do_rcu)
-      release(cur);
-    else
-      release_no_rcu(cur);
-    cur = next;
-  }
+  release(this); // ~logical_node() takes care of all reachable ptrs
 }
 
 string
@@ -742,7 +749,7 @@ transaction_proto1::on_logical_node_spill(
   }
   if (p) {
     *pp = 0;
-    p->gc_chain(true);
+    p->gc_chain();
   }
 }
 
@@ -897,7 +904,7 @@ transaction_proto2::on_logical_node_spill(
     INVARIANT(p != ln);
     INVARIANT(pp);
     *pp = 0;
-    p->gc_chain(true);
+    p->gc_chain();
   }
   if (!ln->size)
     // let the on_delete handler take care of this
@@ -979,7 +986,7 @@ transaction_proto2::try_logical_node_cleanup(const logical_node_context &ctx)
     INVARIANT(p != ctx.ln);
     INVARIANT(pp);
     *pp = 0;
-    p->gc_chain(true);
+    p->gc_chain();
   }
   if (has_chain && !ctx.ln->next) {
     ++evt_local_chain_cleanups;
@@ -1019,7 +1026,7 @@ transaction_proto2::try_chain_cleanup(const logical_node_context &ctx)
   INVARIANT(ctx.ln->is_latest());
   INVARIANT(!ctx.ln->is_deleting());
   // find the first value n w/ EpochId < last_consistent_epoch.
-  // call gc_chain(true) on n->next
+  // call gc_chain() on n->next
   struct logical_node *p = ctx.ln, **pp = 0;
   const bool has_chain = ctx.ln->next;
   bool do_break = false;
@@ -1036,7 +1043,7 @@ transaction_proto2::try_chain_cleanup(const logical_node_context &ctx)
     INVARIANT(p != ctx.ln);
     INVARIANT(pp);
     *pp = 0;
-    p->gc_chain(true);
+    p->gc_chain();
   }
   if (has_chain && !ctx.ln->next) {
     ++evt_local_chain_cleanups;
