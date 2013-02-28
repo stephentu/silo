@@ -10,7 +10,8 @@ USE_MALLOC_MODE=1
 
 ifeq ($(USE_MALLOC_MODE),1)
         CXXFLAGS+=-DUSE_JEMALLOC
-        LDFLAGS+=-ljemalloc
+        LDFLAGS+=-ljemalloc 
+        #LDFLAGS+=-L$(HOME)/jemalloc-bin/lib -ljemalloc 
 else
 ifeq ($(USE_MALLOC_MODE),2)
         CXXFLAGS+=-DUSE_TCMALLOC
@@ -19,7 +20,7 @@ endif
 endif
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
-	  spinbarrier.h counter.h core.h
+	  spinbarrier.h counter.h core.h imstring.h
 SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc txn_btree.cc varint.cc memory.cc
 OBJFILES = $(SRCFILES:.cc=.o)
 

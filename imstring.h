@@ -48,8 +48,13 @@ public:
   inline void
   swap(base_imstring<R> &that)
   {
-    std::swap(p, that.p);
-    std::swap(l, that.l);
+    // std::swap() doesn't work for packed elems
+    uint8_t * const temp_p = p;
+    p = that.p;
+    that.p = temp_p;
+    uint32_t const temp_l = l;
+    l = that.l;
+    that.l = temp_l;
   }
 
   inline
@@ -85,7 +90,7 @@ protected:
 
   uint8_t *p;
   uint32_t l;
-};
+} PACKED;
 
 typedef base_imstring<false> imstring;
 typedef base_imstring<true>  rcu_imstring;
