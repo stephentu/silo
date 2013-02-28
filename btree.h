@@ -514,7 +514,7 @@ private:
       rcu::free_with_fn(n, deleter);
     }
 
-  } CACHE_ALIGNED;
+  } PACKED_CACHE_ALIGNED;
 
   struct internal_node : public node {
     /**
