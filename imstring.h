@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <string>
+#include <limits>
 
 #include "macros.h"
 #include "rcu.h"
@@ -21,17 +22,24 @@ class base_imstring : private util::noncopyable {
   template <bool R>
   friend class base_imstring;
 
+  static inline ALWAYS_INLINE uint32_t
+  CheckBounds(size_t l)
+  {
+    INVARIANT(l <= std::numeric_limits<uint32_t>::max());
+    return l;
+  }
+
 public:
   inline base_imstring() : p(NULL), l(0) {}
 
   base_imstring(const uint8_t *src, size_t l)
-    : p(new uint8_t[l]), l(l)
+    : p(new uint8_t[l]), l(CheckBounds(l))
   {
     memcpy(p, src, l);
   }
 
   base_imstring(const std::string &s)
-    : p(new uint8_t[s.size()]), l(s.size())
+    : p(new uint8_t[s.size()]), l(CheckBounds(s.size()))
   {
     memcpy(p, s.data(), l);
   }
@@ -76,7 +84,7 @@ protected:
   }
 
   uint8_t *p;
-  size_t l;
+  uint32_t l;
 };
 
 typedef base_imstring<false> imstring;
