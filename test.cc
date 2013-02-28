@@ -22,7 +22,8 @@ public:
 #endif
     varint::Test();
     //transaction::Test();
-    //btree::Test();
+    btree::TestFast();
+    //btree::TestSlow();
     txn_btree::Test();
     ret = 0;
   }

@@ -50,6 +50,8 @@ public:
   typedef uint8_t* value_type;
 
   // public to assist in testing
+  // WARNING: if you want to increase NKeysPerNode beyond 15, must also
+  // increase the # of size bits in the header
   static const unsigned int NKeysPerNode = 14;
   static const unsigned int NMinKeysPerNode = NKeysPerNode / 2;
 
@@ -709,6 +711,7 @@ public:
   btree() : root(leaf_node::alloc())
   {
     _static_assert(NKeysPerNode > (sizeof(key_slice) + 2)); // so we can always do a split
+    _static_assert(NKeysPerNode <= (HDR_KEY_SLOTS_MASK >> HDR_KEY_SLOTS_SHIFT));
 
 #ifdef CHECK_INVARIANTS
     root->lock();
@@ -992,7 +995,8 @@ public:
   static std::string
   NodeStringify(const node_opaque_t *n);
 
-  static void Test();
+  static void TestFast();
+  static void TestSlow();
 
 private:
 
