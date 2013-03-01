@@ -139,8 +139,10 @@ public:
    */
   struct logical_node : private util::noncopyable {
   public:
-    //typedef uint64_t version_t;
-    typedef uint32_t version_t; // try to save some space
+    // trying to save space by putting constraints
+    // on node maximums
+    typedef uint32_t version_t;
+    typedef uint16_t node_size_type;
 
   private:
     static const version_t HDR_LOCKED_MASK = 0x1;
@@ -175,8 +177,8 @@ public:
 
     tid_t version;
     // small sizes on purpose
-    uint16_t size; // actual size of record (0 implies absent record)
-    uint16_t alloc_size; // max size record allowed
+    node_size_type size; // actual size of record (0 implies absent record)
+    node_size_type alloc_size; // max size record allowed
 
     enum QueueType {
       QUEUE_TYPE_NONE,
@@ -203,10 +205,10 @@ public:
     // private ctor/dtor b/c we do some special memory stuff
     // ctors start node off as latest node
 
-    static inline ALWAYS_INLINE uint16_t
+    static inline ALWAYS_INLINE node_size_type
     CheckBounds(size_type s)
     {
-      INVARIANT(s <= std::numeric_limits<uint16_t>::max());
+      INVARIANT(s <= std::numeric_limits<node_size_type>::max());
       return s;
     }
 
@@ -519,14 +521,16 @@ public:
         return false;
     }
 
+    typedef std::pair<bool, logical_node *> write_record_ret;
+
     /**
      * Always writes the record in the latest (newest) version slot,
      * not asserting whether or not inserting r @ t would violate the
      * sorted order invariant
      *
-     * Returns true if a spill was induced
+     * XXX: document return value
      */
-    bool
+    write_record_ret
     write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
     {
       // XXX: one memcpy in common case, two memcpy in spill case
@@ -545,13 +549,15 @@ public:
           version = t;
           size = sz;
           memcpy(&value_start[0], r, sz);
-          return false;
+          return write_record_ret(false, NULL);
         }
 
-        // XXX(stephentu): handle this case later
-        std::cerr << "ERROR: alloc_sz: " << alloc_size << ", sz: " << sz << std::endl;
-        ALWAYS_ASSERT(false);
-        return false;
+        // keep in the chain (it's wasteful, but not incorrect)
+        // so that cleanup is easier
+        logical_node *rep = alloc(t, r, sz, this, true);
+        INVARIANT(rep->is_latest());
+        set_latest(false);
+        return write_record_ret(false, rep);
       }
 
       // need to spill
@@ -564,13 +570,13 @@ public:
         version = t;
         size = sz;
         memcpy(&value_start[0], r, sz);
-        return true;
+        return write_record_ret(true, NULL);
       }
 
-      // XXX(stephentu): handle this case later
-      std::cerr << "ERROR: alloc_sz: " << alloc_size << ", sz: " << sz << std::endl;
-      ALWAYS_ASSERT(false);
-      return true;
+      logical_node *rep = alloc(t, r, sz, this, true);
+      INVARIANT(rep->is_latest());
+      set_latest(false);
+      return write_record_ret(true, rep);
     }
 
     // why do we round allocation sizes up?  jemalloc will do this internally
@@ -580,7 +586,13 @@ public:
     static inline logical_node *
     alloc_first(size_type alloc_sz)
     {
-      const size_t actual_alloc_sz = util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + alloc_sz);
+      INVARIANT(alloc_sz <= std::numeric_limits<node_size_type>::max());
+      const size_t max_actual_alloc_sz =
+        std::numeric_limits<node_size_type>::max() + sizeof(logical_node);
+      const size_t actual_alloc_sz =
+        std::min(
+            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + alloc_sz),
+            max_actual_alloc_sz);
       char *p = (char *) malloc(actual_alloc_sz);
       INVARIANT(p);
       return new (p) logical_node(actual_alloc_sz - sizeof(logical_node));
@@ -589,7 +601,13 @@ public:
     static inline logical_node *
     alloc(tid_t version, const_record_type value, size_type sz, struct logical_node *next, bool set_latest)
     {
-      const size_t alloc_sz = util::round_up<size_t, /* lgbase */ 4>(sizeof(logical_node) + sz);
+      INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
+      const size_t max_alloc_sz =
+        std::numeric_limits<node_size_type>::max() + sizeof(logical_node);
+      const size_t alloc_sz =
+        std::min(
+            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + sz),
+            max_alloc_sz);
       char *p = (char *) malloc(alloc_sz);
       INVARIANT(p);
       return new (p) logical_node(version, value, sz, alloc_sz - sizeof(logical_node), next, set_latest);
@@ -1086,6 +1104,9 @@ private:
       tl_cleanup_nodes = new node_cleanup_queue;
     return *tl_cleanup_nodes;
   }
+
+  static void
+  do_logical_node_chain_cleanup(logical_node *ln);
 
   static bool
   try_logical_node_cleanup(const logical_node_context &ctx);

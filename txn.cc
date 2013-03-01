@@ -2,6 +2,7 @@
 #include "amd64.h"
 #include "txn.h"
 #include "txn_btree.h"
+#include "lockguard.h"
 
 #include <algorithm>
 #include <iostream>
@@ -36,6 +37,7 @@ transaction::logical_node::~logical_node()
   struct logical_node *cur = next;
   while (cur) {
     struct logical_node *tmp = cur->next;
+    INVARIANT(!cur->is_enqueued());
     cur->next = NULL; // so cur's dtor doesn't attempt to double free
     release_no_rcu(cur); // just a wrapper for ~logical_node() + free()
     cur = tmp;
@@ -346,15 +348,27 @@ transaction::commit(bool doThrow)
       INVARIANT(it->second.locked);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid.second << endl);
-      bool ret = it->first->write_record_at(
+      const logical_node::write_record_ret ret = it->first->write_record_at(
           this, commit_tid.second,
           (const record_type) it->second.r->data(), it->second.r->size());
-      if (unlikely(ret))
+      lock_guard<logical_node> guard(ret.second);
+      if (unlikely(ret.second)) {
+        // need to unlink it->first from underlying btree, replacing
+        // with ret.second (atomically)
+        btree::value_type old_v = 0;
+        if (it->second.btr->underlying_btree.insert(
+              varkey(*it->second.key), (btree::value_type) ret.second, &old_v, NULL))
+          // should already exist in tree
+          INVARIANT(false);
+        INVARIANT(old_v == (btree::value_type) it->first);
+      }
+      logical_node *latest = ret.second ? ret.second : it->first;
+      if (unlikely(ret.first))
         // spill happened: signal for GC
-        on_logical_node_spill(it->second.btr, *it->second.key, it->first);
+        on_logical_node_spill(it->second.btr, *it->second.key, latest);
       if (it->second.r->empty())
         // logical delete happened: schedule physical deletion
-        on_logical_delete(it->second.btr, *it->second.key, it->first);
+        on_logical_delete(it->second.btr, *it->second.key, latest);
       it->first->unlock();
     }
   }
@@ -731,40 +745,45 @@ transaction_proto1::gen_commit_tid(const vector<logical_node *> &write_nodes)
   return incr_and_get_global_tid();
 }
 
+// XXX(stephentu): proto1 is unmaintained for now, will
+// need to fix later
+
 void
 transaction_proto1::on_logical_node_spill(
     txn_btree *btr, const string &key, logical_node *ln)
 {
-  INVARIANT(ln->is_locked());
-  INVARIANT(rcu::in_rcu_region());
-  struct logical_node *p = ln->next, **pp = &ln->next;
-  for (size_t i = 0; p && i < NMaxChainLength; i++) {
-    pp = &p->next;
-    p = p->next;
-  }
-  if (p) {
-    *pp = 0;
-    p->gc_chain();
-  }
+  NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
+  //INVARIANT(ln->is_locked());
+  //INVARIANT(rcu::in_rcu_region());
+  //struct logical_node *p = ln->next, **pp = &ln->next;
+  //for (size_t i = 0; p && i < NMaxChainLength; i++) {
+  //  pp = &p->next;
+  //  p = p->next;
+  //}
+  //if (p) {
+  //  *pp = 0;
+  //  p->gc_chain();
+  //}
 }
 
 void
 transaction_proto1::on_logical_delete(
     txn_btree *btr, const string &key, logical_node *ln)
 {
-  INVARIANT(ln->is_locked());
-  INVARIANT(ln->is_latest());
-  INVARIANT(!ln->size);
-  INVARIANT(!ln->is_deleting());
-  //btree::value_type removed = 0;
-  //ALWAYS_ASSERT(btr->underlying_btree.remove(varkey(key), &removed));
-  //ALWAYS_ASSERT(removed == (btree::value_type) ln);
-  //logical_node::release(ln);
+  NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
+  //INVARIANT(ln->is_locked());
+  //INVARIANT(ln->is_latest());
+  //INVARIANT(!ln->size);
+  //INVARIANT(!ln->is_deleting());
+  ////btree::value_type removed = 0;
+  ////ALWAYS_ASSERT(btr->underlying_btree.remove(varkey(key), &removed));
+  ////ALWAYS_ASSERT(removed == (btree::value_type) ln);
+  ////logical_node::release(ln);
 
-  // XXX(stephentu): cannot do the above, b/c some consistent
-  // reads might break. we need to enqueue this work to run
-  // after no consistent reads are running at the latest version
-  // of this node
+  //// XXX(stephentu): cannot do the above, b/c some consistent
+  //// reads might break. we need to enqueue this work to run
+  //// after no consistent reads are running at the latest version
+  //// of this node
 }
 
 void
@@ -889,18 +908,9 @@ transaction_proto2::on_logical_node_spill(
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
   INVARIANT(rcu::in_rcu_region());
-  struct logical_node *p = ln->next, **pp = &ln->next;
-  const size_t NMaxChainLength = 1;
-  for (size_t i = 0; i < NMaxChainLength && p; i++) {
-    pp = &p->next;
-    p = p->next;
-  }
-  if (p) {
-    INVARIANT(p != ln);
-    INVARIANT(pp);
-    *pp = 0;
-    p->gc_chain();
-  }
+
+  do_logical_node_chain_cleanup(ln);
+
   if (!ln->size)
     // let the on_delete handler take care of this
     return;
@@ -954,43 +964,79 @@ static event_counter evt_try_delete_revivals("try_delete_revivals");
 static event_counter evt_try_delete_reschedules("try_delete_reschedules");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
-bool
-transaction_proto2::try_logical_node_cleanup(const logical_node_context &ctx)
+static inline bool
+chain_contains_enqueued(const transaction::logical_node *p)
 {
-  bool ret = false;
-  ctx.ln->lock();
-  INVARIANT(ctx.ln->is_enqueued());
-  INVARIANT(ctx.ln->is_latest());
-  INVARIANT(!ctx.ln->is_deleting());
+  const transaction::logical_node *cur = p;
+  while (cur) {
+    if (cur->is_enqueued())
+      return true;
+    cur = cur->next;
+  }
+  return false;
+}
 
-  ctx.ln->set_enqueued(false, logical_node::QUEUE_TYPE_LOCAL);
-
+void
+transaction_proto2::do_logical_node_chain_cleanup(logical_node *ln)
+{
   // try to clean up the chain
-  struct logical_node *p = ctx.ln, **pp = 0;
-  const bool has_chain = ctx.ln->next;
+  INVARIANT(ln->is_latest());
+  struct logical_node *p = ln, **pp = 0;
+  const bool has_chain = ln->next;
   bool do_break = false;
   while (p) {
+    INVARIANT(p == ln || !p->is_latest());
     if (do_break)
       break;
+    do_break = false;
     if (EpochId(p->version) <= g_reads_finished_epoch)
       do_break = true;
     pp = &p->next;
     p = p->next;
   }
   if (p) {
-    INVARIANT(p != ctx.ln);
+    // can only GC a continous chain of not-enqueued.
+    logical_node *last_enq = NULL, *cur = p;
+    while (cur) {
+      if (cur->is_enqueued())
+        last_enq = cur;
+      cur = cur->next;
+    }
+    p = last_enq ? last_enq->next : p;
+  }
+  if (p) {
+    INVARIANT(p != ln);
     INVARIANT(pp);
+    INVARIANT(!p->is_latest());
+    INVARIANT(!chain_contains_enqueued(p));
     *pp = 0;
     p->gc_chain();
   }
-  if (has_chain && !ctx.ln->next) {
+  if (has_chain && !ln->next)
     ++evt_local_chain_cleanups;
-  }
+}
+
+bool
+transaction_proto2::try_logical_node_cleanup(const logical_node_context &ctx)
+{
+  bool ret = false;
+  lock_guard<logical_node> lock(ctx.ln);
+  INVARIANT(rcu::in_rcu_region());
+  INVARIANT(ctx.ln->is_enqueued());
+  INVARIANT(!ctx.ln->is_deleting());
+
+  ctx.ln->set_enqueued(false, logical_node::QUEUE_TYPE_LOCAL);
+  if (!ctx.ln->is_latest())
+    // was replaced, so let the newer handlers do the work
+    return false;
+
+  do_logical_node_chain_cleanup(ctx.ln);
+
   if (!ctx.ln->size) {
     // latest version is a deleted entry, so try to delete
     // from the tree
     const uint64_t v = EpochId(ctx.ln->version);
-    if (g_reads_finished_epoch < v) {
+    if (g_reads_finished_epoch < v || chain_contains_enqueued(ctx.ln)) {
       ret = true;
     } else {
       btree::value_type removed = 0;
@@ -1007,56 +1053,56 @@ transaction_proto2::try_logical_node_cleanup(const logical_node_context &ctx)
     ctx.ln->set_enqueued(true, logical_node::QUEUE_TYPE_LOCAL);
     ++evt_local_cleanup_reschedules;
   }
-  ctx.ln->unlock();
   return ret;
 }
 
 bool
 transaction_proto2::try_chain_cleanup(const logical_node_context &ctx)
 {
-  const uint64_t last_consistent_epoch = g_consistent_epoch;
-  bool ret = false;
-  ctx.ln->lock();
-  INVARIANT(ctx.ln->is_enqueued());
-  INVARIANT(ctx.ln->is_latest());
-  INVARIANT(!ctx.ln->is_deleting());
-  // find the first value n w/ EpochId < last_consistent_epoch.
-  // call gc_chain() on n->next
-  struct logical_node *p = ctx.ln, **pp = 0;
-  const bool has_chain = ctx.ln->next;
-  bool do_break = false;
-  while (p) {
-    if (do_break)
-      break;
-    // XXX(stephentu): do we need g_reads_finished_epoch instead?
-    if (EpochId(p->version) < last_consistent_epoch)
-      do_break = true;
-    pp = &p->next;
-    p = p->next;
-  }
-  if (p) {
-    INVARIANT(p != ctx.ln);
-    INVARIANT(pp);
-    *pp = 0;
-    p->gc_chain();
-  }
-  if (has_chain && !ctx.ln->next) {
-    ++evt_local_chain_cleanups;
-  }
-  if (ctx.ln->next) {
-    // keep enqueued so we can clean up at a later time
-    ret = true;
-  } else {
-    ctx.ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC); // we're done
-  }
-  // XXX(stephentu): I can't figure out why doing the following causes all
-  // sorts of race conditions (seems like the same node gets on the delete
-  // list twice)
-  //if (!ctx.ln->size)
-  //  // schedule for deletion
-  //  on_logical_delete_impl(ctx.btr, ctx.key, ctx.ln);
-  ctx.ln->unlock();
-  return ret;
+  NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
+  //const uint64_t last_consistent_epoch = g_consistent_epoch;
+  //bool ret = false;
+  //ctx.ln->lock();
+  //INVARIANT(ctx.ln->is_enqueued());
+  //INVARIANT(ctx.ln->is_latest());
+  //INVARIANT(!ctx.ln->is_deleting());
+  //// find the first value n w/ EpochId < last_consistent_epoch.
+  //// call gc_chain() on n->next
+  //struct logical_node *p = ctx.ln, **pp = 0;
+  //const bool has_chain = ctx.ln->next;
+  //bool do_break = false;
+  //while (p) {
+  //  if (do_break)
+  //    break;
+  //  // XXX(stephentu): do we need g_reads_finished_epoch instead?
+  //  if (EpochId(p->version) < last_consistent_epoch)
+  //    do_break = true;
+  //  pp = &p->next;
+  //  p = p->next;
+  //}
+  //if (p) {
+  //  INVARIANT(p != ctx.ln);
+  //  INVARIANT(pp);
+  //  *pp = 0;
+  //  p->gc_chain();
+  //}
+  //if (has_chain && !ctx.ln->next) {
+  //  ++evt_local_chain_cleanups;
+  //}
+  //if (ctx.ln->next) {
+  //  // keep enqueued so we can clean up at a later time
+  //  ret = true;
+  //} else {
+  //  ctx.ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC); // we're done
+  //}
+  //// XXX(stephentu): I can't figure out why doing the following causes all
+  //// sorts of race conditions (seems like the same node gets on the delete
+  //// list twice)
+  ////if (!ctx.ln->size)
+  ////  // schedule for deletion
+  ////  on_logical_delete_impl(ctx.btr, ctx.key, ctx.ln);
+  //ctx.ln->unlock();
+  //return ret;
 }
 
 #ifdef LOGICAL_NODE_QUEUE_TRACKING
@@ -1071,50 +1117,51 @@ operator<<(ostream &o, const transaction::logical_node::op_hist_rec &h)
 bool
 transaction_proto2::try_delete_logical_node(const logical_node_context &info)
 {
-  INVARIANT(info.btr);
-  INVARIANT(info.ln);
-  INVARIANT(!info.key.empty());
-  btree::value_type removed = 0;
-  uint64_t v = 0;
-  scoped_rcu_region rcu_region;
-  info.ln->lock();
-#ifdef LOGICAL_NODE_QUEUE_TRACKING
-  if (!info.ln->is_enqueued()) {
-    cerr << "try_delete_logical_node: ln=0x" << hexify(intptr_t(info.ln)) << " is NOT enqueued" << endl;
-    cerr << "  last_queue_type: " << info.ln->last_queue_type << endl;
-    cerr << "  op_hist: " << format_list(info.ln->op_hist.begin(), info.ln->op_hist.end()) << endl;
-  }
-#endif
-  INVARIANT(info.ln->is_enqueued());
-  INVARIANT(!info.ln->is_deleting());
-  //cerr << "try_delete_logical_node: setting ln=0x" << hexify(intptr_t(info.ln)) << " to NOT enqueued" << endl;
-  info.ln->set_enqueued(false, logical_node::QUEUE_TYPE_DELETE); // we are processing this record
-  if (!info.ln->is_latest() || info.ln->size) {
-    // somebody added a record again, so we don't want to delete it
-    ++evt_try_delete_revivals;
-    goto unlock_and_free;
-  }
-  VERBOSE(cerr << "logical_node: 0x" << hexify(intptr_t(info.ln)) << " is being unlinked" << endl
-               << "  g_consistent_epoch=" << g_consistent_epoch << endl
-               << "  ln=" << *info.ln << endl);
-  v = EpochId(info.ln->version);
-  if (g_reads_finished_epoch < v) {
-    // need to reschedule to run when epoch=v ends
-    VERBOSE(cerr << "  rerunning at end of epoch=" << v << endl);
-    info.ln->set_enqueued(true, logical_node::QUEUE_TYPE_DELETE); // re-queue it up
-    info.ln->unlock();
-    // don't free, b/c we need to run again
-    //epoch = v;
-    ++evt_try_delete_reschedules;
-    return true;
-  }
-  ALWAYS_ASSERT(info.btr->underlying_btree.remove(varkey(info.key), &removed));
-  ALWAYS_ASSERT(removed == (btree::value_type) info.ln);
-  logical_node::release(info.ln);
-  ++evt_try_delete_unlinks;
-unlock_and_free:
-  info.ln->unlock();
-  return false;
+  NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
+//  INVARIANT(info.btr);
+//  INVARIANT(info.ln);
+//  INVARIANT(!info.key.empty());
+//  btree::value_type removed = 0;
+//  uint64_t v = 0;
+//  scoped_rcu_region rcu_region;
+//  info.ln->lock();
+//#ifdef LOGICAL_NODE_QUEUE_TRACKING
+//  if (!info.ln->is_enqueued()) {
+//    cerr << "try_delete_logical_node: ln=0x" << hexify(intptr_t(info.ln)) << " is NOT enqueued" << endl;
+//    cerr << "  last_queue_type: " << info.ln->last_queue_type << endl;
+//    cerr << "  op_hist: " << format_list(info.ln->op_hist.begin(), info.ln->op_hist.end()) << endl;
+//  }
+//#endif
+//  INVARIANT(info.ln->is_enqueued());
+//  INVARIANT(!info.ln->is_deleting());
+//  //cerr << "try_delete_logical_node: setting ln=0x" << hexify(intptr_t(info.ln)) << " to NOT enqueued" << endl;
+//  info.ln->set_enqueued(false, logical_node::QUEUE_TYPE_DELETE); // we are processing this record
+//  if (!info.ln->is_latest() || info.ln->size) {
+//    // somebody added a record again, so we don't want to delete it
+//    ++evt_try_delete_revivals;
+//    goto unlock_and_free;
+//  }
+//  VERBOSE(cerr << "logical_node: 0x" << hexify(intptr_t(info.ln)) << " is being unlinked" << endl
+//               << "  g_consistent_epoch=" << g_consistent_epoch << endl
+//               << "  ln=" << *info.ln << endl);
+//  v = EpochId(info.ln->version);
+//  if (g_reads_finished_epoch < v) {
+//    // need to reschedule to run when epoch=v ends
+//    VERBOSE(cerr << "  rerunning at end of epoch=" << v << endl);
+//    info.ln->set_enqueued(true, logical_node::QUEUE_TYPE_DELETE); // re-queue it up
+//    info.ln->unlock();
+//    // don't free, b/c we need to run again
+//    //epoch = v;
+//    ++evt_try_delete_reschedules;
+//    return true;
+//  }
+//  ALWAYS_ASSERT(info.btr->underlying_btree.remove(varkey(info.key), &removed));
+//  ALWAYS_ASSERT(removed == (btree::value_type) info.ln);
+//  logical_node::release(info.ln);
+//  ++evt_try_delete_unlinks;
+//unlock_and_free:
+//  info.ln->unlock();
+//  return false;
 }
 
 static event_avg_counter evt_avg_local_cleanup_queue_len("avg_local_cleanup_queue_len");

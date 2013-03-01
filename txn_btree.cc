@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <limits>
 
 #include "txn_btree.h"
 #include "thread.h"
@@ -490,6 +491,27 @@ test2()
       txn_btree::size_type sz = 0;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(i), v, sz));
       AssertByteEquality(r, v, sz);
+      AssertSuccessfulCommit(t);
+    }
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
+  }
+}
+
+template <typename TxnType>
+static void
+test_inc_value_size()
+{
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    txn_btree btr;
+    const size_t upper = numeric_limits<transaction::logical_node::node_size_type>::max();
+    for (size_t i = 1; i < upper; i++) {
+      const string v(i, 'a');
+      TxnType t(txn_flags);
+      btr.insert(t, u64_varkey(0), (txn_btree::value_type) v.data(), v.size());
       AssertSuccessfulCommit(t);
     }
     txn_epoch_sync<TxnType>::sync();
@@ -1231,6 +1253,7 @@ txn_btree::Test()
   //cerr << "Test proto1" << endl;
   //test1<transaction_proto1>();
   //test2<transaction_proto1>();
+  //test_inc_value_size<transaction_proto1>();
   //test_multi_btree<transaction_proto1>();
   //test_read_only_snapshot<transaction_proto1>();
   //test_long_keys<transaction_proto1>();
@@ -1242,6 +1265,7 @@ txn_btree::Test()
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();
   test2<transaction_proto2>();
+  test_inc_value_size<transaction_proto2>();
   test_multi_btree<transaction_proto2>();
   test_read_only_snapshot<transaction_proto2>();
   test_long_keys<transaction_proto2>();
