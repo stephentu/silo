@@ -1090,6 +1090,8 @@ private:
   process_local_cleanup_nodes();
 
 public:
+  static void purge_local_work_queue();
+
   // public so we can register w/ NDB_THREAD_REGISTER_COMPLETION_CALLBACK
   static void completion_callback(ndb_thread *);
 
@@ -1148,8 +1150,17 @@ struct txn_epoch_sync {
 
 template <>
 struct txn_epoch_sync<transaction_proto2> {
-  static inline void sync() { transaction_proto2::wait_an_epoch(); }
-  static inline void finish() { transaction_proto2::wait_for_empty_work_queue(); }
+  static inline void
+  sync()
+  {
+    transaction_proto2::wait_an_epoch();
+  }
+  static inline void
+  finish()
+  {
+    transaction_proto2::purge_local_work_queue();
+    transaction_proto2::wait_for_empty_work_queue();
+  }
 };
 
 #endif /* _NDB_TXN_H_ */

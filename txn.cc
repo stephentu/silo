@@ -1263,7 +1263,7 @@ transaction_proto2::epoch_loop::run()
 }
 
 void
-transaction_proto2::completion_callback(ndb_thread *p)
+transaction_proto2::purge_local_work_queue()
 {
   if (!tl_cleanup_nodes)
     return;
@@ -1280,6 +1280,12 @@ transaction_proto2::completion_callback(ndb_thread *p)
   tl_cleanup_nodes->clear();
   delete tl_cleanup_nodes;
   tl_cleanup_nodes = NULL;
+}
+
+void
+transaction_proto2::completion_callback(ndb_thread *p)
+{
+  purge_local_work_queue();
 }
 NDB_THREAD_REGISTER_COMPLETION_CALLBACK(transaction_proto2::completion_callback)
 

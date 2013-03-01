@@ -54,6 +54,11 @@ public:
     : value_size_hint(value_size_hint)
   {}
 
+  ~txn_btree()
+  {
+    unsafe_purge(false);
+  }
+
   // memory:
   // k - assumed to point to valid memory, *not* managed by btree
   // v - if k is found, points to a region of (immutable) memory of size sz which
@@ -122,7 +127,7 @@ public:
    * only call when you are sure there are no concurrent modifications on the
    * tree. is neither threadsafe nor transactional
    */
-  void unsafe_purge();
+  void unsafe_purge(bool dump_stats = false);
 
   static void Test();
 

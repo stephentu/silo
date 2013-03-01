@@ -235,12 +235,14 @@ txn_btree::insert_impl(transaction &t, const key_type &k, const value_type v, si
 }
 
 void
-txn_btree::unsafe_purge()
+txn_btree::unsafe_purge(bool dump_stats)
 {
   purge_tree_walker w;
   underlying_btree.tree_walk(w);
   underlying_btree.clear();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
+  if (!dump_stats)
+    return;
   cerr << "record size stats (nbytes => count)" << endl;
   for (map<size_t, size_t>::iterator it = w.purge_stats_ln_record_size_counts.begin();
        it != w.purge_stats_ln_record_size_counts.end(); ++it)
