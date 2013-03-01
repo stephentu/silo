@@ -459,7 +459,6 @@ private:
     static event_counter g_evt_logical_node_bytes_allocated;
     static event_counter g_evt_logical_node_bytes_freed;
     static event_counter g_evt_logical_node_spills;
-    static event_counter g_evt_replace_logical_node_head;
     static event_avg_counter g_evt_avg_record_spill_len;
 
 public:

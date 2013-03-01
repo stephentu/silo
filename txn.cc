@@ -19,7 +19,6 @@ event_counter transaction::logical_node::g_evt_logical_node_physical_deletes("lo
 event_counter transaction::logical_node::g_evt_logical_node_bytes_allocated("logical_node_bytes_allocated");
 event_counter transaction::logical_node::g_evt_logical_node_bytes_freed("logical_node_bytes_freed");
 event_counter transaction::logical_node::g_evt_logical_node_spills("logical_node_spills");
-event_counter transaction::logical_node::g_evt_replace_logical_node_head("replace_logical_node_head");
 
 event_avg_counter transaction::logical_node::g_evt_avg_record_spill_len("avg_record_spill_len");
 
@@ -164,6 +163,8 @@ struct lnode_info {
   bool locked;
   const string *r;
 };
+
+static event_counter evt_logical_node_latest_replacement("logical_node_latest_replacement");
 
 bool
 transaction::commit(bool doThrow)
@@ -361,6 +362,7 @@ transaction::commit(bool doThrow)
           // should already exist in tree
           INVARIANT(false);
         INVARIANT(old_v == (btree::value_type) it->first);
+        ++evt_logical_node_latest_replacement;
       }
       logical_node *latest = ret.second ? ret.second : it->first;
       if (unlikely(ret.first))
