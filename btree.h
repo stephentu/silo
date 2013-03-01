@@ -382,7 +382,31 @@ private:
     leaf_node *prev;
     leaf_node *next;
 
-    imstring suffixes[NKeysPerNode];
+    // starts out empty- once set, doesn't get freed until dtor (even if all
+    // keys w/ suffixes get removed)
+    imstring *suffixes;
+
+    inline ALWAYS_INLINE varkey
+    suffix(size_t i) const
+    {
+      return suffixes ? varkey(suffixes[i]) : varkey();
+    }
+
+    inline void
+    alloc_suffixes()
+    {
+      INVARIANT(is_modifying());
+      INVARIANT(!suffixes);
+      suffixes = new imstring[NKeysPerNode];
+    }
+
+    inline void
+    ensure_suffixes()
+    {
+      INVARIANT(is_modifying());
+      if (!suffixes)
+        alloc_suffixes();
+    }
 
     leaf_node();
     ~leaf_node();
@@ -1154,7 +1178,8 @@ private:
     sift_left(leaf->keys, pos, n);
     sift_left(leaf->values, pos, n);
     sift_left(leaf->lengths, pos, n);
-    sift_swap_left(leaf->suffixes, pos, n);
+    if (leaf->suffixes)
+      sift_swap_left(leaf->suffixes, pos, n);
     leaf->dec_key_slots_used();
   }
 

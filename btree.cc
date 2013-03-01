@@ -73,16 +73,20 @@ btree::node::base_invariant_unique_keys_check() const
     prev.second = leaf->keyslice_length(0);
     ALWAYS_ASSERT(prev.second <= 9);
     ALWAYS_ASSERT(!leaf->value_is_layer(0) || prev.second == 9);
-    if (!leaf->value_is_layer(0) && prev.second == 9)
+    if (!leaf->value_is_layer(0) && prev.second == 9) {
+      ALWAYS_ASSERT(leaf->suffixes);
       ALWAYS_ASSERT(leaf->suffixes[0].size() >= 1);
+    }
     for (size_t i = 1; i < n; i++) {
       leaf_key cur_key;
       cur_key.first = keys[i];
       cur_key.second = leaf->keyslice_length(i);
       ALWAYS_ASSERT(cur_key.second <= 9);
       ALWAYS_ASSERT(!leaf->value_is_layer(i) || cur_key.second == 9);
-      if (!leaf->value_is_layer(i) && cur_key.second == 9)
+      if (!leaf->value_is_layer(i) && cur_key.second == 9) {
+        ALWAYS_ASSERT(leaf->suffixes);
         ALWAYS_ASSERT(leaf->suffixes[i].size() >= 1);
+      }
       ALWAYS_ASSERT(cur_key > prev);
       prev = cur_key;
     }
@@ -138,7 +142,7 @@ static event_counter evt_btree_leaf_node_creates("btree_leaf_node_creates");
 static event_counter evt_btree_leaf_node_deletes("btree_leaf_node_deletes");
 
 btree::leaf_node::leaf_node()
-  : min_key(0), prev(NULL), next(NULL)
+  : min_key(0), prev(NULL), next(NULL), suffixes(NULL)
 {
   hdr = 0;
   ++evt_btree_leaf_node_creates;
@@ -146,6 +150,9 @@ btree::leaf_node::leaf_node()
 
 btree::leaf_node::~leaf_node()
 {
+  if (suffixes)
+    delete [] suffixes;
+  suffixes = NULL;
   ++evt_btree_leaf_node_deletes;
 }
 
@@ -294,7 +301,7 @@ process:
         leaf_node::value_or_node_ptr vn = leaf->values[ret];
         const bool is_layer = leaf->value_is_layer(ret);
         INVARIANT(!is_layer || kslicelen == 9);
-        varkey suffix(leaf->suffixes[ret]);
+        varkey suffix(leaf->suffix(ret));
         if (unlikely(!leaf->check_version(version)))
           goto process;
         leaf_nodes.push_back(leaf);
@@ -459,7 +466,7 @@ btree::search_range_at_layer(
               leaf->values[i],
               leaf->value_is_layer(i),
               leaf->keyslice_length(i),
-              varkey(leaf->suffixes[i])));
+              leaf->suffix(i)));
     }
 
     leaf_node *right_sibling = leaf->next;
@@ -820,7 +827,8 @@ btree::insert0(node *np,
     if (lenmatch != -1) {
       // exact match case
       if (kslicelen <= 8 ||
-          (!leaf->value_is_layer(lenmatch) && varkey(leaf->suffixes[lenmatch]) == k.shift())) {
+          (!leaf->value_is_layer(lenmatch) &&
+           leaf->suffix(lenmatch) == k.shift())) {
         // easy case- we don't modify the node itself
         if (old_v)
           *old_v = leaf->values[lenmatch].v;
@@ -837,6 +845,7 @@ btree::insert0(node *np,
         bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v, insert_info);
         return UnlockAndReturn(locked_nodes, ret ? I_NONE_MOD : I_NONE_NOMOD);
       } else {
+        INVARIANT(leaf->suffixes); // b/c lenmatch != -1 and this is not a layer
         // need to create a new btree layer, and add both existing key and
         // new key to it
 
@@ -850,12 +859,13 @@ btree::insert0(node *np,
         new_root->mark_modifying();
 #endif /* CHECK_INVARIANTS */
         new_root->set_root();
-        key_type old_slice(leaf->suffixes[lenmatch]);
+        varkey old_slice(leaf->suffix(lenmatch));
         new_root->keys[0] = old_slice.slice();
         new_root->values[0] = leaf->values[lenmatch];
         new_root->keyslice_set_length(0, min(old_slice.size(), size_t(9)), false);
         new_root->inc_key_slots_used();
         if (new_root->keyslice_length(0) == 9) {
+          new_root->alloc_suffixes();
           rcu_imstring i(old_slice.data() + 8, old_slice.size() - 8);
           new_root->suffixes[0].swap(i);
         }
@@ -888,11 +898,13 @@ btree::insert0(node *np,
       leaf->values[lenlowerbound + 1].v = v;
       sift_right(leaf->lengths, lenlowerbound + 1, n);
       leaf->keyslice_set_length(lenlowerbound + 1, kslicelen, false);
-      sift_swap_right(leaf->suffixes, lenlowerbound + 1, n);
+      if (leaf->suffixes)
+        sift_swap_right(leaf->suffixes, lenlowerbound + 1, n);
       if (kslicelen == 9) {
+        leaf->ensure_suffixes();
         rcu_imstring i(k.data() + 8, k.size() - 8);
         leaf->suffixes[lenlowerbound + 1].swap(i);
-      } else {
+      } else if (leaf->suffixes) {
         rcu_imstring i;
         leaf->suffixes[lenlowerbound + 1].swap(i);
       }
@@ -973,6 +985,7 @@ btree::insert0(node *np,
         new_leaf->values[0].v = v;
         new_leaf->keyslice_set_length(0, kslicelen, false);
         if (kslicelen == 9) {
+          new_leaf->alloc_suffixes();
           rcu_imstring i(k.data() + 8, k.size() - 8);
           new_leaf->suffixes[0].swap(i);
         }
@@ -1032,15 +1045,22 @@ btree::insert0(node *np,
           new_leaf->keyslice_set_length(pos, kslicelen, false);
           copy_into(&new_leaf->lengths[pos + 1], leaf->lengths, lenlowerbound + 1, NKeysPerNode);
 
-          swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, lenlowerbound + 1);
+          if (leaf->suffixes) {
+            new_leaf->ensure_suffixes();
+            swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, lenlowerbound + 1);
+          }
           if (kslicelen == 9) {
+            new_leaf->ensure_suffixes();
             rcu_imstring i(k.data() + 8, k.size() - 8);
             new_leaf->suffixes[pos].swap(i);
-          } else {
+          } else if (new_leaf->suffixes) {
             rcu_imstring i;
             new_leaf->suffixes[pos].swap(i);
           }
-          swap_with(&new_leaf->suffixes[pos + 1], leaf->suffixes, lenlowerbound + 1, NKeysPerNode);
+          if (leaf->suffixes) {
+            new_leaf->ensure_suffixes();
+            swap_with(&new_leaf->suffixes[pos + 1], leaf->suffixes, lenlowerbound + 1, NKeysPerNode);
+          }
 
           leaf->set_key_slots_used(split_point);
           new_leaf->set_key_slots_used(NKeysPerNode - split_point + 1);
@@ -1060,7 +1080,10 @@ btree::insert0(node *np,
           copy_into(&new_leaf->keys[0], leaf->keys, split_point, NKeysPerNode);
           copy_into(&new_leaf->values[0], leaf->values, split_point, NKeysPerNode);
           copy_into(&new_leaf->lengths[0], leaf->lengths, split_point, NKeysPerNode);
-          swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, NKeysPerNode);
+          if (leaf->suffixes) {
+            new_leaf->ensure_suffixes();
+            swap_with(&new_leaf->suffixes[0], leaf->suffixes, split_point, NKeysPerNode);
+          }
 
           sift_right(leaf->keys, lenlowerbound + 1, split_point);
           leaf->keys[lenlowerbound + 1] = kslice;
@@ -1068,11 +1091,13 @@ btree::insert0(node *np,
           leaf->values[lenlowerbound + 1].v = v;
           sift_right(leaf->lengths, lenlowerbound + 1, split_point);
           leaf->keyslice_set_length(lenlowerbound + 1, kslicelen, false);
-          sift_swap_right(leaf->suffixes, lenlowerbound + 1, split_point);
+          if (leaf->suffixes)
+            sift_swap_right(leaf->suffixes, lenlowerbound + 1, split_point);
           if (kslicelen == 9) {
+            leaf->ensure_suffixes();
             rcu_imstring i(k.data() + 8, k.size() - 8);
             leaf->suffixes[lenlowerbound + 1].swap(i);
-          } else {
+          } else if (leaf->suffixes) {
             rcu_imstring i;
             leaf->suffixes[lenlowerbound + 1].swap(i);
           }
@@ -1269,7 +1294,7 @@ btree::remove0(node *np,
           return UnlockAndReturn(locked_nodes, ret ? R_NONE_MOD : R_NONE_NOMOD);
       } else {
         // suffix check
-        if (varkey(leaf->suffixes[ret]) != k.shift())
+        if (leaf->suffix(ret) != k.shift())
           return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
       }
     }
@@ -1380,13 +1405,18 @@ btree::remove0(node *np,
             copy_into(&leaf->values[n - 1], right_sibling->values, 0, steal_point);
             sift_left(leaf->lengths, ret, n);
             copy_into(&leaf->lengths[n - 1], right_sibling->lengths, 0, steal_point);
-            sift_swap_left(leaf->suffixes, ret, n);
-            swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, steal_point);
+            if (leaf->suffixes)
+              sift_swap_left(leaf->suffixes, ret, n);
+            if (right_sibling->suffixes) {
+              leaf->ensure_suffixes();
+              swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, steal_point);
+            }
 
             sift_left(right_sibling->keys, 0, right_n, steal_point);
             sift_left(right_sibling->values, 0, right_n, steal_point);
             sift_left(right_sibling->lengths, 0, right_n, steal_point);
-            sift_swap_left(right_sibling->suffixes, 0, right_n, steal_point);
+            if (right_sibling->suffixes)
+              sift_swap_left(right_sibling->suffixes, 0, right_n, steal_point);
             leaf->set_key_slots_used(n - 1 + steal_point);
             right_sibling->set_key_slots_used(right_n - steal_point);
             new_key = right_sibling->keys[0];
@@ -1424,9 +1454,13 @@ btree::remove0(node *np,
         sift_left(leaf->lengths, ret, n);
         copy_into(&leaf->lengths[n - 1], right_sibling->lengths, 0, right_n);
 
-        sift_swap_left(leaf->suffixes, ret, n);
+        if (leaf->suffixes)
+          sift_swap_left(leaf->suffixes, ret, n);
 
-        swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
+        if (right_sibling->suffixes) {
+          leaf->ensure_suffixes();
+          swap_with(&leaf->suffixes[n - 1], right_sibling->suffixes, 0, right_n);
+        }
 
         leaf->set_key_slots_used(right_n + (n - 1));
         leaf->next = right_sibling->next;
@@ -1477,9 +1511,14 @@ btree::remove0(node *np,
             sift_right(leaf->lengths, 0, ret, nstolen);
             copy_into(&leaf->lengths[0], &left_sibling->lengths[0], left_n - nstolen, left_n);
 
-            sift_swap_right(leaf->suffixes, ret + 1, n, nstolen - 1);
-            sift_swap_right(leaf->suffixes, 0, ret, nstolen);
-            swap_with(&leaf->suffixes[0], &left_sibling->suffixes[0], left_n - nstolen, left_n);
+            if (leaf->suffixes) {
+              sift_swap_right(leaf->suffixes, ret + 1, n, nstolen - 1);
+              sift_swap_right(leaf->suffixes, 0, ret, nstolen);
+            }
+            if (left_sibling->suffixes) {
+              leaf->ensure_suffixes();
+              swap_with(&leaf->suffixes[0], &left_sibling->suffixes[0], left_n - nstolen, left_n);
+            }
 
             left_sibling->set_key_slots_used(left_n - nstolen);
             leaf->set_key_slots_used(n - 1 + nstolen);
@@ -1515,8 +1554,11 @@ btree::remove0(node *np,
         copy_into(&left_sibling->lengths[left_n], leaf->lengths, 0, ret);
         copy_into(&left_sibling->lengths[left_n + ret], leaf->lengths, ret + 1, n);
 
-        swap_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
-        swap_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);
+        if (leaf->suffixes) {
+          left_sibling->ensure_suffixes();
+          swap_with(&left_sibling->suffixes[left_n], leaf->suffixes, 0, ret);
+          swap_with(&left_sibling->suffixes[left_n + ret], leaf->suffixes, ret + 1, n);
+        }
 
         left_sibling->set_key_slots_used(left_n + (n - 1));
         left_sibling->next = leaf->next;
