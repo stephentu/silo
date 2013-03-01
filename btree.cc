@@ -141,6 +141,8 @@ btree::node::invariant_checker(const key_slice *min_key,
 static event_counter evt_btree_leaf_node_creates("btree_leaf_node_creates");
 static event_counter evt_btree_leaf_node_deletes("btree_leaf_node_deletes");
 
+event_counter btree::leaf_node::g_evt_suffixes_array_created("btree_leaf_node_suffix_array_creates");
+
 btree::leaf_node::leaf_node()
   : min_key(0), prev(NULL), next(NULL), suffixes(NULL)
 {

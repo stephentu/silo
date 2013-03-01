@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "varkey.h"
+#include "counter.h"
 #include "macros.h"
 #include "amd64.h"
 #include "rcu.h"
@@ -392,12 +393,15 @@ private:
       return suffixes ? varkey(suffixes[i]) : varkey();
     }
 
+    static event_counter g_evt_suffixes_array_created;
+
     inline void
     alloc_suffixes()
     {
       INVARIANT(is_modifying());
       INVARIANT(!suffixes);
       suffixes = new imstring[NKeysPerNode];
+      ++g_evt_suffixes_array_created;
     }
 
     inline void
