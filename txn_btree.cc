@@ -244,6 +244,15 @@ txn_btree::unsafe_purge(bool dump_stats)
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
   if (!dump_stats)
     return;
+  size_t v = 0;
+  for (vector<uint16_t>::iterator it = w.purge_stats_nkeys_node.begin();
+       it != w.purge_stats_nkeys_node.end(); ++it)
+    v += *it;
+  const double avg_nkeys_node = double(v)/double(w.purge_stats_nkeys_node.size());
+  const double avg_fill_factor = avg_nkeys_node/double(btree::NKeysPerNode);
+  cerr << "btree node stats" << endl;
+  cerr << "    avg_nkeys_node: " << avg_nkeys_node << endl;
+  cerr << "    avg_fill_factor: " << avg_fill_factor << endl;
   cerr << "record size stats (nbytes => count)" << endl;
   for (map<size_t, size_t>::iterator it = w.purge_stats_ln_record_size_counts.begin();
        it != w.purge_stats_ln_record_size_counts.end(); ++it)
@@ -276,6 +285,9 @@ txn_btree::purge_tree_walker::on_node_success()
 #endif
     transaction::logical_node::release_no_rcu(ln);
   }
+#ifdef TXN_BTREE_DUMP_PURGE_STATS
+  purge_stats_nkeys_node.push_back(spec_values.size());
+#endif
   spec_values.clear();
 }
 
