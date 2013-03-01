@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 #include <stdexcept>
+#include <limits>
 
 #include <tr1/unordered_map>
 
@@ -173,8 +174,9 @@ public:
     struct logical_node *next;
 
     tid_t version;
-    uint32_t size; // actual size of record (0 implies absent record)
-    uint32_t alloc_size; // max size record allowed
+    // small sizes on purpose
+    uint16_t size; // actual size of record (0 implies absent record)
+    uint16_t alloc_size; // max size record allowed
 
     enum QueueType {
       QUEUE_TYPE_NONE,
@@ -200,11 +202,17 @@ public:
   private:
     // private ctor/dtor b/c we do some special memory stuff
     // ctors start node off as latest node
-    // XXX: check for overflow from sizes
+
+    static inline ALWAYS_INLINE uint16_t
+    CheckBounds(size_type s)
+    {
+      INVARIANT(s <= std::numeric_limits<uint16_t>::max());
+      return s;
+    }
 
     logical_node(size_type alloc_size)
       : hdr(HDR_LATEST_MASK), next(0), version(MIN_TID),
-        size(0), alloc_size(alloc_size)
+        size(0), alloc_size(CheckBounds(alloc_size))
 #ifdef LOGICAL_NODE_QUEUE_TRACKING
       , last_queue_type(QUEUE_TYPE_NONE)
 #endif
@@ -220,7 +228,7 @@ public:
                  size_type size, size_type alloc_size,
                  struct logical_node *next, bool set_latest)
       : hdr(set_latest ? HDR_LATEST_MASK : 0), next(next), version(version),
-        size(size), alloc_size(alloc_size)
+        size(CheckBounds(size)), alloc_size(CheckBounds(alloc_size))
 #ifdef LOGICAL_NODE_QUEUE_TRACKING
       , last_queue_type(QUEUE_TYPE_NONE)
 #endif
