@@ -998,6 +998,18 @@ public:
   static void TestFast();
   static void TestSlow();
 
+  static inline size_t
+  InternalNodeSize()
+  {
+    return sizeof(internal_node);
+  }
+
+  static inline size_t
+  LeafNodeSize()
+  {
+    return sizeof(leaf_node);
+  }
+
 private:
 
   /**

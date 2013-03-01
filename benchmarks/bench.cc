@@ -366,6 +366,10 @@ main(int argc, char **argv)
 #else
     cerr << "  allocator   : libc"                  << endl;
 #endif
+
+    cerr << "system properties:" << endl;
+    cerr << "  btree_internal_node_size: " << btree::InternalNodeSize() << endl;
+    cerr << "  btree_leaf_node_size    : " << btree::LeafNodeSize() << endl;
   }
 
   test_fn(db);
