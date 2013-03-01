@@ -549,6 +549,7 @@ public:
         }
 
         // XXX(stephentu): handle this case later
+        std::cerr << "ERROR: alloc_sz: " << alloc_size << ", sz: " << sz << std::endl;
         ALWAYS_ASSERT(false);
         return false;
       }
@@ -567,6 +568,7 @@ public:
       }
 
       // XXX(stephentu): handle this case later
+      std::cerr << "ERROR: alloc_sz: " << alloc_size << ", sz: " << sz << std::endl;
       ALWAYS_ASSERT(false);
       return true;
     }
