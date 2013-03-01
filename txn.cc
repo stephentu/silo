@@ -1173,17 +1173,18 @@ transaction_proto2::process_local_cleanup_nodes()
 {
   if (unlikely(!tl_cleanup_nodes))
     return;
-  node_cleanup_queue new_list;
   evt_avg_local_cleanup_queue_len.offer(tl_cleanup_nodes->size());
   for (node_cleanup_queue::iterator it = tl_cleanup_nodes->begin();
-       it != tl_cleanup_nodes->end(); ++it) {
+       it != tl_cleanup_nodes->end(); ) {
     scoped_rcu_region rcu_region;
     // XXX(stephentu): try-catch block
     if (it->second(it->first))
-      new_list.push_back(*it);
+      // keep around
+      ++it;
+    else
+      // done, erase it
+      it = tl_cleanup_nodes->erase(it);
   }
-  tl_cleanup_nodes->clear();
-  swap(*tl_cleanup_nodes, new_list);
 }
 
 void
