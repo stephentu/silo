@@ -253,6 +253,8 @@ txn_btree::unsafe_purge(bool dump_stats)
   cerr << "btree node stats" << endl;
   cerr << "    avg_nkeys_node: " << avg_nkeys_node << endl;
   cerr << "    avg_fill_factor: " << avg_fill_factor << endl;
+  cerr << "    num_nodes: " << w.purge_stats_nodes << endl;
+  cerr << "    num_nosuffix_nodes: " << w.purge_stats_nosuffix_nodes << endl;
   cerr << "record size stats (nbytes => count)" << endl;
   for (map<size_t, size_t>::iterator it = w.purge_stats_ln_record_size_counts.begin();
        it != w.purge_stats_ln_record_size_counts.end(); ++it)
@@ -276,7 +278,7 @@ txn_btree::purge_tree_walker::on_node_success()
 {
   for (size_t i = 0; i < spec_values.size(); i++) {
     transaction::logical_node *ln =
-      (transaction::logical_node *) spec_values[i];
+      (transaction::logical_node *) spec_values[i].first;
     INVARIANT(ln);
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
     // XXX(stephentu): should we also walk the chain?
@@ -287,6 +289,12 @@ txn_btree::purge_tree_walker::on_node_success()
   }
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
   purge_stats_nkeys_node.push_back(spec_values.size());
+  purge_stats_nodes++;
+  for (size_t i = 0; i < spec_values.size(); i++)
+    if (spec_values[i].second)
+      goto done;
+  purge_stats_nosuffix_nodes++;
+done:
 #endif
   spec_values.clear();
 }

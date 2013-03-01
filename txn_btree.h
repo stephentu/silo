@@ -138,12 +138,17 @@ private:
     virtual void on_node_success();
     virtual void on_node_failure();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
+    purge_tree_walker()
+      : purge_stats_nodes(0),
+        purge_stats_nosuffix_nodes(0) {}
     std::map<size_t, size_t> purge_stats_ln_record_size_counts; // just the record
     std::map<size_t, size_t> purge_stats_ln_alloc_size_counts; // includes overhead
     std::vector<uint16_t> purge_stats_nkeys_node;
+    size_t purge_stats_nodes;
+    size_t purge_stats_nosuffix_nodes;
 #endif
   private:
-    std::vector<btree::value_type> spec_values;
+    std::vector< std::pair<btree::value_type, bool> > spec_values;
   };
 
   struct txn_search_range_callback : public btree::low_level_search_range_callback {

@@ -3510,16 +3510,16 @@ btree::NodeStringify(const node_opaque_t *n)
   return b.str();
 }
 
-vector<btree::value_type>
+vector< pair<btree::value_type, bool> >
 btree::ExtractValues(const node_opaque_t *n)
 {
-  vector<value_type> ret;
+  vector< pair<value_type, bool> > ret;
   if (!n->is_leaf_node())
     return ret;
   const leaf_node *leaf = (const leaf_node *) n;
   const size_t sz = leaf->key_slots_used();
   for (size_t i = 0; i < sz; i++)
     if (!leaf->value_is_layer(i))
-      ret.push_back(leaf->values[i].v);
+      ret.push_back(make_pair(leaf->values[i].v, leaf->keyslice_length(i) > 8));
   return ret;
 }

@@ -382,9 +382,6 @@ private:
     leaf_node *prev;
     leaf_node *next;
 
-    // fields below here are not expected to fit in
-    // 4-cachelines, and are thus not prefetched with the node
-
     imstring suffixes[NKeysPerNode];
 
     leaf_node();
@@ -986,7 +983,8 @@ public:
     return node::Version(n->stable_version());
   }
 
-  static std::vector<value_type>
+  // [value, has_suffix]
+  static std::vector< std::pair<value_type, bool> >
   ExtractValues(const node_opaque_t *n);
 
   /**
