@@ -1,4 +1,7 @@
 *.o
 *.swp
 *.heap
+core
 tags
+test
+benchmarks/bench
