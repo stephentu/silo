@@ -292,7 +292,8 @@ process:
       if (ret != -1) {
         // found
         leaf_node::value_or_node_ptr vn = leaf->values[ret];
-        bool is_layer = kslicelen == 9 && leaf->value_is_layer(ret);
+        const bool is_layer = leaf->value_is_layer(ret);
+        INVARIANT(!is_layer || kslicelen == 9);
         varkey suffix(leaf->suffixes[ret]);
         if (unlikely(!leaf->check_version(version)))
           goto process;
@@ -3449,12 +3450,6 @@ btree::TestFast()
   test2();
   test3();
   test4();
-}
-
-void
-btree::TestSlow()
-{
-  test5();
   test6();
   test7();
   test_varlen_single_layer();
@@ -3466,6 +3461,12 @@ btree::TestSlow()
   test_null_keys_2();
   test_random_keys();
   test_insert_remove_mix();
+}
+
+void
+btree::TestSlow()
+{
+  test5();
   mp_test1();
   mp_test2();
   mp_test3();
