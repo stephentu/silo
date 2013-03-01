@@ -11,6 +11,7 @@
 #include "macros.h"
 #include "rcu.h"
 #include "util.h"
+#include "counter.h"
 
 /**
  * Not-really-immutable string, for perf reasons. Also can use
@@ -22,12 +23,20 @@ class base_imstring : private util::noncopyable {
   template <bool R>
   friend class base_imstring;
 
-  static inline ALWAYS_INLINE uint32_t
+  // we can't really support keys > 65536, but most DBs impose
+  // limits on keys
+  typedef uint16_t internal_size_type;
+
+  static inline ALWAYS_INLINE internal_size_type
   CheckBounds(size_t l)
   {
-    INVARIANT(l <= std::numeric_limits<uint32_t>::max());
+    INVARIANT(l <= std::numeric_limits<internal_size_type>::max());
     return l;
   }
+
+  static event_counter g_evt_imstring_bytes_allocated;
+  static event_counter g_evt_imstring_bytes_freed;
+  static event_avg_counter g_evt_avg_imstring_len;
 
 public:
   inline base_imstring() : p(NULL), l(0) {}
@@ -35,12 +44,16 @@ public:
   base_imstring(const uint8_t *src, size_t l)
     : p(new uint8_t[l]), l(CheckBounds(l))
   {
+    g_evt_imstring_bytes_allocated += l;
+    g_evt_avg_imstring_len.offer(l);
     memcpy(p, src, l);
   }
 
   base_imstring(const std::string &s)
     : p(new uint8_t[s.size()]), l(CheckBounds(s.size()))
   {
+    g_evt_imstring_bytes_allocated += l;
+    g_evt_avg_imstring_len.offer(l);
     memcpy(p, s.data(), l);
   }
 
@@ -52,7 +65,7 @@ public:
     uint8_t * const temp_p = p;
     p = that.p;
     that.p = temp_p;
-    uint32_t const temp_l = l;
+    internal_size_type const temp_l = l;
     l = that.l;
     that.l = temp_l;
   }
@@ -61,6 +74,7 @@ public:
   ~base_imstring()
   {
     release();
+    g_evt_imstring_bytes_freed += l;
   }
 
   inline const uint8_t *
@@ -75,7 +89,7 @@ public:
     return l;
   }
 
-protected:
+private:
 
   inline void
   release()
@@ -89,8 +103,17 @@ protected:
   }
 
   uint8_t *p;
-  uint32_t l;
+  internal_size_type l;
 } PACKED;
+
+template <bool RCU>
+event_counter base_imstring<RCU>::g_evt_imstring_bytes_allocated("imstring_bytes_allocated");
+
+template <bool RCU>
+event_counter base_imstring<RCU>::g_evt_imstring_bytes_freed("imstring_bytes_freed");
+
+template <bool RCU>
+event_avg_counter base_imstring<RCU>::g_evt_avg_imstring_len("avg_imstring_len");
 
 typedef base_imstring<false> imstring;
 typedef base_imstring<true>  rcu_imstring;
