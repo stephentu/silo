@@ -331,7 +331,7 @@ private:
     stable_version() const
     {
       uint64_t v = hdr;
-      while (is_modifying()) {
+      while (IsModifying(v)) {
         nop_pause();
         v = hdr;
       }
