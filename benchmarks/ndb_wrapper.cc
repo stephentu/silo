@@ -230,5 +230,5 @@ ndb_ordered_index::clear()
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
   cerr << "purging txn index: " << name << endl;
 #endif
-  return btr.unsafe_purge();
+  return btr.unsafe_purge(true);
 }
