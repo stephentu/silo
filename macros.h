@@ -8,6 +8,7 @@
 //#define NODE_PREFETCH
 //#define DIE_ON_ABORT
 //#define TRAP_LARGE_ALLOOCATIONS
+#define USE_BUILTIN_MEMCPY
 #define CHECK_INVARIANTS
 #define TXN_BTREE_DUMP_PURGE_STATS
 #define USE_VARINT_ENCODING
@@ -72,5 +73,11 @@
     ALWAYS_ASSERT(false); \
     throw ::std::runtime_error(what); \
   } while (0)
+
+#ifdef USE_BUILTIN_MEMCPY
+#define NDB_MEMCPY __builtin_memcpy
+#else
+#define NDB_MEMCPY memcpy
+#endif
 
 #endif /* _MACROS_H_ */
