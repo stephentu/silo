@@ -999,9 +999,7 @@ tpcc_worker::txn_new_order()
   const uint districtID = RandomNumber(r, 1, 10);
   const uint customerID = GetCustomerId(r);
   const uint numItems = RandomNumber(r, 5, 15);
-  vector<uint> itemIDs(numItems),
-               supplierWarehouseIDs(numItems),
-               orderQuantities(numItems);
+  uint itemIDs[15], supplierWarehouseIDs[15], orderQuantities[15];
   bool allLocal = true;
   for (uint i = 0; i < numItems; i++) {
     itemIDs[i] = GetItemId(r);
