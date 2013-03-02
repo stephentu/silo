@@ -407,7 +407,7 @@ struct btree::leaf_kvinfo {
 bool
 btree::search_range_at_layer(
     leaf_node *leaf,
-    const string &prefix,
+    const string_type &prefix,
     const key_type &lower,
     bool inc_lower,
     const key_type *upper,
@@ -421,7 +421,7 @@ btree::search_range_at_layer(
 
   key_slice last_keyslice = 0;
   size_t last_keyslice_len = 0;
-  string last_keyslice_suffix;
+  string_type last_keyslice_suffix;
   bool emitted_last_keyslice = false;
   if (!inc_lower) {
     last_keyslice = lower.slice();
@@ -432,7 +432,7 @@ btree::search_range_at_layer(
   key_slice lower_slice = lower.slice();
   key_slice next_key = lower_slice;
   size_t prefix_size = prefix.size();
-  string slice_buffer(prefix);
+  string_type slice_buffer(prefix);
   slice_buffer.reserve(slice_buffer.size() + 8);
   uint64_t upper_slice = upper ? upper->slice() : 0;
   while (!upper || next_key <= upper_slice) {
@@ -527,7 +527,7 @@ btree::search_range_at_layer(
               buf[i].suffix.data() + buf[i].suffix.size());
         // we give the actual version # minus all the other bits, b/c they are not
         // important here and make comparison easier at higher layers
-        if (!callback.invoke(varkey(slice_buffer), buf[i].vn.v, leaf, node::Version(version)))
+        if (!callback.invoke(slice_buffer, buf[i].vn.v, leaf, node::Version(version)))
           return false;
       }
       last_keyslice = buf[i].key;
@@ -564,7 +564,7 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
   while (!leaf_nodes.empty()) {
     leaf_node *cur = leaf_nodes.back();
     leaf_nodes.pop_back();
-    string prefix;
+    string_type prefix;
     prefix.insert(prefix.end(), lower.data(), lower.data() + 8 * leaf_nodes.size());
     key_type layer_upper;
     bool layer_has_upper = false;
@@ -2025,9 +2025,9 @@ namespace test6_ns {
       pair< string, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(const btree::key_type &k, btree::value_type v) const
+    operator()(const btree::string_type &k, btree::value_type v) const
     {
-      data->push_back(make_pair(k.str(), v));
+      data->push_back(make_pair(k, v));
       return true;
     }
     kv_vec *data;
@@ -2195,14 +2195,13 @@ public:
   }
 
   virtual bool
-  invoke(const btree::key_type &k, btree::value_type v)
+  invoke(const btree::string_type &k, btree::value_type v)
   {
     VERBOSE(cerr << "test_range_scan_helper::invoke(): received key(size="
-                 << k.str().size() << "): " << hexify(k.str()) << endl);
-    string cur_key = k.str();
+                 << k.size() << "): " << hexify(k) << endl);
     if (!keys.empty())
-      ALWAYS_ASSERT(keys.back() < cur_key);
-    keys.push_back(cur_key);
+      ALWAYS_ASSERT(keys.back() < k);
+    keys.push_back(k);
     return true;
   }
 
@@ -2931,15 +2930,15 @@ namespace mp_test7_ns {
       pair< string, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(const btree::key_type &k, btree::value_type v) const
+    operator()(const btree::string_type &k, btree::value_type v) const
     {
       //ALWAYS_ASSERT(data->empty() || data->back().first < k.str());
-      if (!data->empty() && data->back().first >= k.str()) {
+      if (!data->empty() && data->back().first >= k) {
         cerr << "prev: " << hexify(data->back().first) << endl;
-        cerr << "cur : " << hexify(k.str()) << endl;
+        cerr << "cur : " << hexify(k) << endl;
         ALWAYS_ASSERT(false);
       }
-      data->push_back(make_pair(k.str(), v));
+      data->push_back(make_pair(k, v));
       return true;
     }
     kv_vec *data;

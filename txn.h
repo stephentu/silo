@@ -124,7 +124,8 @@ public:
   static const tid_t MIN_TID = 0;
   static const tid_t MAX_TID = (tid_t) -1;
 
-  typedef varkey key_type;
+  typedef btree::key_type key_type;
+  typedef btree::string_type string_type;
 
   // declared here so logical_node::write_record_at() can see it.
   virtual bool
@@ -436,7 +437,7 @@ private:
     }
 
     bool
-    record_at(tid_t t, tid_t &start_t, std::string &r, bool require_latest) const
+    record_at(tid_t t, tid_t &start_t, string_type &r, bool require_latest) const
     {
     retry:
       const version_t v = stable_version();
@@ -473,7 +474,7 @@ public:
      * is an error- this will cause deadlock
      */
     inline bool
-    stable_read(tid_t t, tid_t &start_t, std::string &r) const
+    stable_read(tid_t t, tid_t &start_t, string_type &r) const
     {
       return record_at(t, start_t, r, true);
     }
@@ -726,13 +727,13 @@ protected:
   //
   // Is also called within an RCU read region
   virtual void on_logical_node_spill(
-      txn_btree *btr, const std::string &key, logical_node *ln) = 0;
+      txn_btree *btr, const string_type &key, logical_node *ln) = 0;
 
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
   // the logical node for actual deletion
   virtual void on_logical_delete(
-      txn_btree *btr, const std::string &key, logical_node *ln) = 0;
+      txn_btree *btr, const string_type &key, logical_node *ln) = 0;
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called
   // with the commit tid. before on_tid_finish() is called, state is updated
@@ -753,15 +754,15 @@ protected:
 
   struct read_record_t {
     tid_t t; // value was read at t
-    std::string r; // contents read @ t
+    string_type r; // contents read @ t
     const logical_node *ln; // node read from
   };
 
   friend std::ostream &
   operator<<(std::ostream &o, const transaction::read_record_t &rr);
 
-  typedef std::tr1::unordered_map<std::string, read_record_t> read_set_map;
-  typedef std::tr1::unordered_map<std::string, std::string> write_set_map;
+  typedef std::tr1::unordered_map<string_type, read_record_t> read_set_map;
+  typedef std::tr1::unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 
@@ -771,7 +772,7 @@ protected:
     absent_range_vec absent_range_set; // ranges do not overlap
     node_scan_map node_scan; // we scanned these nodes at verison v
 
-    bool local_search_str(const std::string &k, const_record_type &v, size_type &sz) const;
+    bool local_search_str(const string_type &k, const_record_type &v, size_type &sz) const;
 
     inline bool
     local_search(const key_type &k, const_record_type &v, size_type &sz) const
@@ -796,34 +797,34 @@ protected:
     key_range_t(const key_type &a, const key_type &b)
       : a(a.str()), has_b(true), b(b.str())
     { }
-    key_range_t(const key_type &a, const std::string &b)
+    key_range_t(const key_type &a, const string_type &b)
       : a(a.str()), has_b(true), b(b)
     { }
     key_range_t(const key_type &a, bool has_b, const key_type &b)
       : a(a.str()), has_b(has_b), b(b.str())
     { }
-    key_range_t(const key_type &a, bool has_b, const std::string &b)
+    key_range_t(const key_type &a, bool has_b, const string_type &b)
       : a(a.str()), has_b(has_b), b(b)
     { }
 
-    key_range_t(const std::string &a) : a(a), has_b(false), b() {}
-    key_range_t(const std::string &a, const key_type &b)
+    key_range_t(const string_type &a) : a(a), has_b(false), b() {}
+    key_range_t(const string_type &a, const key_type &b)
       : a(a), has_b(true), b(b.str())
     { }
-    key_range_t(const std::string &a, bool has_b, const key_type &b)
+    key_range_t(const string_type &a, bool has_b, const key_type &b)
       : a(a), has_b(has_b), b(b.str())
     { }
 
-    key_range_t(const std::string &a, const std::string &b)
+    key_range_t(const string_type &a, const string_type &b)
       : a(a), has_b(true), b(b)
     { }
-    key_range_t(const std::string &a, bool has_b, const std::string &b)
+    key_range_t(const string_type &a, bool has_b, const string_type &b)
       : a(a), has_b(has_b), b(b)
     { }
 
-    std::string a;
+    string_type a;
     bool has_b; // false indicates infinity, true indicates use b
-    std::string b; // has meaning only if !has_b
+    string_type b; // has meaning only if !has_b
 
     inline bool
     is_empty_range() const
@@ -910,9 +911,9 @@ protected:
   virtual tid_t gen_commit_tid(
       const std::vector<logical_node *> &write_nodes);
   virtual void on_logical_node_spill(
-      txn_btree *btr, const std::string &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, logical_node *ln);
   virtual void on_logical_delete(
-      txn_btree *btr, const std::string &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, logical_node *ln);
   virtual void on_tid_finish(tid_t commit_tid);
 
 private:
@@ -994,14 +995,14 @@ protected:
   }
 
   virtual void on_logical_node_spill(
-      txn_btree *btr, const std::string &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, logical_node *ln);
   virtual void on_logical_delete(
-      txn_btree *btr, const std::string &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, logical_node *ln);
   virtual void on_tid_finish(tid_t commit_tid) {}
 
 private:
   static void on_logical_delete_impl(
-      txn_btree *btr, const std::string &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, logical_node *ln);
 
   // the global epoch this txn is running in (this # is read when it starts)
   uint64_t current_epoch;
@@ -1052,7 +1053,7 @@ private:
     friend class transaction_proto2;
   public:
     epoch_loop()
-      : ndb_thread(true, std::string("epochloop")), is_wq_empty(true) {}
+      : ndb_thread(true, string_type("epochloop")), is_wq_empty(true) {}
     virtual void run();
   private:
     volatile bool is_wq_empty;
@@ -1077,7 +1078,7 @@ private:
   struct logical_node_context {
     logical_node_context() : btr(), key(), ln() {}
     logical_node_context(txn_btree *btr,
-                         const std::string &key,
+                         const string_type &key,
                          logical_node *ln)
       : btr(btr), key(key), ln(ln)
     {
@@ -1086,7 +1087,7 @@ private:
       INVARIANT(ln);
     }
     txn_btree *btr;
-    std::string key;
+    string_type key;
     logical_node *ln;
   };
 

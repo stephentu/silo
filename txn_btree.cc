@@ -10,7 +10,7 @@ using namespace std;
 using namespace util;
 
 bool
-txn_btree::search(transaction &t, const key_type &k, value_type &v, size_type &sz)
+txn_btree::search(transaction &t, const string_type &k, value_type &v, size_type &sz)
 {
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
@@ -23,14 +23,13 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v, size_type &s
   //
   // note (1)-(3) are served by transaction::local_search()
 
-  const string sk(k.str());
-  if (ctx.local_search_str(sk, v, sz))
+  if (ctx.local_search_str(k, v, sz))
     return (bool) v;
 
   btree::value_type underlying_v;
-  if (!underlying_btree.search(k, underlying_v)) {
+  if (!underlying_btree.search(varkey(k), underlying_v)) {
     // all records exist in the system at MIN_TID with no value
-    transaction::read_record_t *read_rec = &ctx.read_set[sk];
+    transaction::read_record_t *read_rec = &ctx.read_set[k];
     read_rec->t = transaction::MIN_TID;
     read_rec->r.clear();
     read_rec->ln = NULL;
@@ -40,7 +39,7 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v, size_type &s
     INVARIANT(ln);
     prefetch_node(ln);
     transaction::tid_t start_t = 0;
-    string r;
+    string_type r;
 
     const pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
     const transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
@@ -60,7 +59,7 @@ txn_btree::search(transaction &t, const key_type &k, value_type &v, size_type &s
     if (r.empty())
       ++transaction::g_evt_read_logical_deleted_node_search;
 
-    transaction::read_record_t *read_rec = &ctx.read_set[sk];
+    transaction::read_record_t *read_rec = &ctx.read_set[k];
     read_rec->t = start_t;
     swap(read_rec->r, r);
     read_rec->ln = ln;
@@ -93,27 +92,26 @@ txn_btree::txn_search_range_callback::on_resp_node(
 
 bool
 txn_btree::txn_search_range_callback::invoke(
-    const key_type &k, btree::value_type v,
+    const btree::string_type &k, btree::value_type v,
     const btree::node_opaque_t *n, uint64_t version)
 {
   t->ensure_active();
-  VERBOSE(cerr << "search range k: " << k << " from <node=0x" << hexify(intptr_t(n))
+  VERBOSE(cerr << "search range k: " << hexify(k) << " from <node=0x" << hexify(intptr_t(n))
                << ", version=" << version << ">" << endl
                << "  " << *((transaction::logical_node *) v) << endl);
-  const string sk(k.str());
   if (!(t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
     transaction::key_range_t r =
-      invoked ? transaction::key_range_t(next_key(prev_key), sk) :
-                transaction::key_range_t(lower, sk);
+      invoked ? transaction::key_range_t(next_key(prev_key), k) :
+                transaction::key_range_t(lower, k);
     VERBOSE(cerr << "  range: " << r << endl);
     if (!r.is_empty_range())
       ctx->add_absent_range(r);
   }
-  prev_key = sk;
+  prev_key = k;
   invoked = true;
   value_type local_v = 0;
   size_type local_sz = 0;
-  bool local_read = ctx->local_search_str(sk, local_v, local_sz);
+  bool local_read = ctx->local_search_str(k, local_v, local_sz);
   bool ret = true; // true means keep going, false means stop
   if (local_read && local_v) {
     // found locally and record is not deleted
@@ -121,12 +119,12 @@ txn_btree::txn_search_range_callback::invoke(
     ret = caller_callback->invoke(k, local_v, local_sz);
   }
   transaction::read_set_map::const_iterator it;
-  if (!local_read || ((it = ctx->read_set.find(sk)) == ctx->read_set.end())) {
+  if (!local_read || ((it = ctx->read_set.find(k)) == ctx->read_set.end())) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
     INVARIANT(ln);
     prefetch_node(ln);
     transaction::tid_t start_t = 0;
-    string r;
+    string_type r;
     const pair<bool, transaction::tid_t> snapshot_tid_t =
       t->consistent_snapshot_tid();
     const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
@@ -143,7 +141,7 @@ txn_btree::txn_search_range_callback::invoke(
     }
     if (r.empty())
       ++transaction::g_evt_read_logical_deleted_node_scan;
-    transaction::read_record_t *read_rec = &ctx->read_set[sk];
+    transaction::read_record_t *read_rec = &ctx->read_set[k];
     read_rec->t = start_t;
     swap(read_rec->r, r);
     read_rec->ln = ln;
@@ -154,7 +152,7 @@ txn_btree::txn_search_range_callback::invoke(
       ret = caller_callback->invoke(k,
           (const value_type) read_rec->r.data(), read_rec->r.size());
   } else {
-    INVARIANT(((it = ctx->read_set.find(sk)) != ctx->read_set.end()));
+    INVARIANT(((it = ctx->read_set.find(k)) != ctx->read_set.end()));
   }
   if (!ret)
     caller_stopped = true;
@@ -162,34 +160,36 @@ txn_btree::txn_search_range_callback::invoke(
 }
 
 bool
-txn_btree::absent_range_validation_callback::invoke(const key_type &k, btree::value_type v)
+txn_btree::absent_range_validation_callback::invoke(const string_type &k, btree::value_type v)
 {
   transaction::logical_node *ln = (transaction::logical_node *) v;
   INVARIANT(ln);
-  VERBOSE(cerr << "absent_range_validation_callback: key " << k
+  VERBOSE(cerr << "absent_range_validation_callback: key " << hexify(k)
                << " found logical_node 0x" << hexify(ln) << endl);
-  const bool did_write = ctx->write_set.find(k.str()) != ctx->write_set.end();
+  const bool did_write = ctx->write_set.find(k) != ctx->write_set.end();
   failed_flag = did_write ? !ln->latest_value_is_nil() : !ln->stable_latest_value_is_nil();
   if (failed_flag)
-    VERBOSE(cerr << "absent_range_validation_callback: key " << k
+    VERBOSE(cerr << "absent_range_validation_callback: key " << hexify(k)
                  << " found logical_node 0x" << hexify(ln) << endl);
   return !failed_flag;
 }
 
 void
 txn_btree::search_range_call(transaction &t,
-                             const key_type &lower,
-                             const key_type *upper,
+                             const string_type &lower,
+                             const string_type *upper,
                              search_range_callback &callback)
 {
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
 
   if (upper)
-    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this)) << ")::search_range_call [" << lower
-                 << ", " << *upper << ")" << endl);
+    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this))
+                 << ")::search_range_call [" << hexify(lower)
+                 << ", " << hexify(*upper) << ")" << endl);
   else
-    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this)) << ")::search_range_call [" << lower
+    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this))
+                 << ")::search_range_call [" << hexify(lower)
                  << ", +inf)" << endl);
 
   // many cases to consider:
@@ -205,26 +205,28 @@ txn_btree::search_range_call(transaction &t,
   if (unlikely(upper && *upper <= lower))
     return;
 
-  txn_search_range_callback c(&t, &ctx, lower, upper, &callback);
-  underlying_btree.search_range_call(lower, upper, c);
+  key_type lower_k(lower);
+  key_type upper_k(upper ? key_type(*upper) : key_type());
+  txn_search_range_callback c(&t, &ctx, lower_k, &callback);
+  underlying_btree.search_range_call(lower_k, upper ? &upper_k : NULL, c);
   if (c.caller_stopped)
     return;
   if (!(t.get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
     if (upper)
       ctx.add_absent_range(
           transaction::key_range_t(
-            c.invoked ? next_key(c.prev_key) : lower.str(), *upper));
+            c.invoked ? next_key(c.prev_key) : lower, *upper));
     else
       ctx.add_absent_range(
           transaction::key_range_t(
-            c.invoked ? next_key(c.prev_key) : lower.str()));
+            c.invoked ? next_key(c.prev_key) : lower));
   }
 }
 
 void
-txn_btree::insert_impl(transaction &t, const key_type &k, const value_type v, size_type sz)
+txn_btree::insert_impl(transaction &t, const string_type &k, const value_type v, size_type sz)
 {
-  INVARIANT((!v) == (!sz));
+  INVARIANT(!v == !sz);
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
   if (unlikely(t.get_flags() & transaction::TXN_FLAG_READ_ONLY)) {
@@ -232,7 +234,7 @@ txn_btree::insert_impl(transaction &t, const key_type &k, const value_type v, si
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  ctx.write_set[k.str()].assign((const char *) v, sz);
+  ctx.write_set[k].assign((const char *) v, sz);
 }
 
 void
@@ -309,7 +311,7 @@ txn_btree::purge_tree_walker::on_node_failure()
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
   inline bool
-  operator()(const txn_btree::key_type &k, txn_btree::value_type v, txn_btree::size_type sz) const
+  operator()(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz) const
   {
     (*ctr)++;
     return true;
@@ -633,7 +635,7 @@ public:
   counting_scan_callback(uint64_t expect) : ctr(0), expect(expect) {}
 
   virtual bool
-  invoke(const txn_btree::key_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+  invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
   {
     AssertByteEquality(rec(expect), v, sz);
     ctr++;
@@ -832,7 +834,7 @@ namespace mp_test2_ns {
   public:
     counting_scan_callback() : ctr(0), has_last(false), last(0) {}
     virtual bool
-    invoke(const txn_btree::key_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+    invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
     {
       ALWAYS_ASSERT(sz == sizeof(rec));
       rec *r = (rec *) v;
@@ -1061,7 +1063,7 @@ namespace mp_test3_ns {
         }
       }
     }
-    virtual bool invoke(const txn_btree::key_type &k, txn_btree::value_type v, txn_btree::size_type)
+    virtual bool invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type)
     {
       sum += ((rec *) v)->v;
       return true;

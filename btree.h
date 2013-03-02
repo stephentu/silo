@@ -47,6 +47,7 @@ class btree : public rcu_enabled {
   friend class txn_btree;
 public:
   typedef varkey key_type;
+  typedef std::string string_type;
   typedef uint64_t key_slice;
   typedef uint8_t* value_type;
 
@@ -810,7 +811,7 @@ public:
     /**
      * This key/value pair was read from node n @ version
      */
-    virtual bool invoke(const key_type &k, value_type v,
+    virtual bool invoke(const string_type &k, value_type v,
                         const node_opaque_t *n, uint64_t version) = 0;
   };
 
@@ -825,13 +826,13 @@ public:
     }
 
     virtual bool
-    invoke(const key_type &k, value_type v,
+    invoke(const string_type &k, value_type v,
            const node_opaque_t *n, uint64_t version)
     {
       return invoke(k, v);
     }
 
-    virtual bool invoke(const key_type &k, value_type v) = 0;
+    virtual bool invoke(const string_type &k, value_type v) = 0;
   };
 
 private:
@@ -840,7 +841,7 @@ private:
   public:
     type_callback_wrapper(T *callback) : callback(callback) {}
     virtual bool
-    invoke(const key_type &k, value_type v)
+    invoke(const string_type &k, value_type v)
     {
       return callback->operator()(k, v);
     }
@@ -851,7 +852,7 @@ private:
   struct leaf_kvinfo;
 
   bool search_range_at_layer(leaf_node *leaf,
-                             const std::string &prefix,
+                             const string_type &prefix,
                              const key_type &lower,
                              bool inc_lower,
                              const key_type *upper,

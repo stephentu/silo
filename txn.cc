@@ -150,18 +150,18 @@ transaction::~transaction()
 struct lnode_info {
   lnode_info() {}
   lnode_info(txn_btree *btr,
-             const string *key,
+             const txn_btree::string_type *key,
              bool locked,
-             const string *r)
+             const txn_btree::string_type *r)
     : btr(btr),
       key(key),
       locked(locked),
       r(r)
   {}
   txn_btree *btr;
-  const string *key;
+  const txn_btree::string_type *key;
   bool locked;
-  const string *r;
+  const txn_btree::string_type *r;
 };
 
 static event_counter evt_logical_node_latest_replacement("logical_node_latest_replacement");
@@ -585,7 +585,7 @@ transaction::Test()
 }
 
 bool
-transaction::txn_context::local_search_str(const string &k, const_record_type &v, size_type &sz) const
+transaction::txn_context::local_search_str(const string_type &k, const_record_type &v, size_type &sz) const
 {
   // XXX: we require stable references
   {
@@ -668,7 +668,7 @@ transaction::txn_context::add_absent_range(const key_range_t &range)
       new_absent_range_set.end(),
       absent_range_set.begin(),
       merge_left ? (it - 1) : it);
-  string left_key = merge_left ? (it - 1)->a : min(it->a, range.a);
+  string_type left_key = merge_left ? (it - 1)->a : min(it->a, range.a);
 
   if (range.has_b) {
     if (!it->has_b || it->b >= range.b) {
@@ -752,7 +752,7 @@ transaction_proto1::gen_commit_tid(const vector<logical_node *> &write_nodes)
 
 void
 transaction_proto1::on_logical_node_spill(
-    txn_btree *btr, const string &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, logical_node *ln)
 {
   NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   //INVARIANT(ln->is_locked());
@@ -770,7 +770,7 @@ transaction_proto1::on_logical_node_spill(
 
 void
 transaction_proto1::on_logical_delete(
-    txn_btree *btr, const string &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, logical_node *ln)
 {
   NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   //INVARIANT(ln->is_locked());
@@ -905,7 +905,7 @@ transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
 
 void
 transaction_proto2::on_logical_node_spill(
-    txn_btree *btr, const string &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, logical_node *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
@@ -926,14 +926,14 @@ transaction_proto2::on_logical_node_spill(
 
 void
 transaction_proto2::on_logical_delete(
-    txn_btree *btr, const string &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, logical_node *ln)
 {
   on_logical_delete_impl(btr, key, ln);
 }
 
 void
 transaction_proto2::on_logical_delete_impl(
-    txn_btree *btr, const string &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, logical_node *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
