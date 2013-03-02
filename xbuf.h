@@ -42,8 +42,7 @@ public:
 
   ~xbuf()
   {
-    if (b)
-      free(b);
+    reset();
   }
 
   inline xbuf &
@@ -113,6 +112,12 @@ public:
     return size() == 0;
   }
 
+  inline void
+  clear()
+  {
+    reset();
+  }
+
   inline const char *
   data() const
   {
@@ -129,16 +134,68 @@ public:
     return (h = ndb::hash_bytes(b, l, seed));
   }
 
-  const char &
+  inline const char &
   operator[](size_t pos) const
   {
     return reinterpret_cast<const char &>(b[pos]);
+  }
+
+  inline char &
+  operator[](size_t pos)
+  {
+    h = -1;
+    return reinterpret_cast<char &>(b[pos]);
+  }
+
+  inline void
+  reserve(size_t pos)
+  {
+    // no-op for xbuf
   }
 
   inline void
   assign(const char *p, size_t len)
   {
     assignFrom(p, len);
+  }
+
+  void
+  resize(size_t n, char c = 0)
+  {
+    if (unlikely(!n)) {
+      reset();
+      return;
+    }
+    uint8_t *const new_b = AllocRaw(n);
+    if (n <= l) {
+      INVARIANT(b);
+      NDB_MEMCPY(new_b, b, n);
+      b = new_b;
+      l = n;
+      h = -1;
+    } else {
+      NDB_MEMCPY(new_b, b, l);
+      NDB_MEMSET(new_b + l, c, n - l);
+      b = new_b;
+      l = n;
+      h = -1;
+    }
+  }
+
+  xbuf &
+  append(const char *s, size_t n)
+  {
+    if (unlikely(!n))
+      return *this;
+    uint8_t *const new_b = AllocRaw(l + n);
+    NDB_MEMCPY(new_b, b, l);
+    NDB_MEMCPY(new_b + l, s, n);
+    const size_t new_l = l + n;
+    reset();
+    b = new_b;
+    l = new_l;
+    h = -1;
+    return *this;
   }
 
 private:
@@ -151,11 +208,24 @@ private:
   }
 
   inline void
-  assignFrom(const char *p, size_t len)
+  reset()
   {
-    INVARIANT((const char *) b != p); // would be bad
     if (b)
       free(b);
+    b = 0;
+    l = 0;
+    h = -1;
+  }
+
+  inline void
+  assignFrom(const char *p, size_t len)
+  {
+    if (unlikely(!len)) {
+      reset();
+      return;
+    }
+    INVARIANT((const char *) b != p); // would be bad
+    reset();
     b = AllocRaw(len);
     NDB_MEMCPY(b, p, len);
     l = len;
@@ -168,9 +238,12 @@ private:
     // stupid self assignment
     if (unlikely(this == &that))
       return;
+    if (!that.l) {
+      reset();
+      return;
+    }
     INVARIANT(b != that.b); // would be bad
-    if (b)
-      free(b);
+    reset();
     b = AllocRaw(that.l);
     NDB_MEMCPY(b, that.b, that.l);
     l = that.l;

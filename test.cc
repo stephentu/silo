@@ -35,6 +35,17 @@ XbufTest()
   swap(a, b);
   ALWAYS_ASSERT(a == "world");
   ALWAYS_ASSERT(b == "hello");
+
+  xbuf t0;
+  t0.resize(10, 'a');
+  ALWAYS_ASSERT(t0.size() == 10);
+  ALWAYS_ASSERT(t0 == xbuf("aaaaaaaaaa"));
+  t0.append("foobar", 6);
+  ALWAYS_ASSERT(t0 == xbuf("aaaaaaaaaafoobar"));
+  t0.resize(5);
+  ALWAYS_ASSERT(t0 == xbuf("aaaaa"));
+
+
   cout << xbuf("xbuf test passed") << endl;
 }
 
@@ -55,7 +66,7 @@ public:
     varint::Test();
     //transaction::Test();
     btree::TestFast();
-    //btree::TestSlow();
+    btree::TestSlow();
     txn_btree::Test();
     ret = 0;
   }

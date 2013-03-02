@@ -523,8 +523,7 @@ btree::search_range_at_layer(
           }
         }
         if (buf[i].length == 9)
-          slice_buffer.insert(slice_buffer.end(), buf[i].suffix.data(),
-              buf[i].suffix.data() + buf[i].suffix.size());
+          slice_buffer.append((const char *) buf[i].suffix.data(), buf[i].suffix.size());
         // we give the actual version # minus all the other bits, b/c they are not
         // important here and make comparison easier at higher layers
         if (!callback.invoke(slice_buffer, buf[i].vn.v, leaf, node::Version(version)))
@@ -565,7 +564,7 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
     leaf_node *cur = leaf_nodes.back();
     leaf_nodes.pop_back();
     string_type prefix;
-    prefix.insert(prefix.end(), lower.data(), lower.data() + 8 * leaf_nodes.size());
+    prefix.append((const char *) lower.data(), 8 * leaf_nodes.size());
     key_type layer_upper;
     bool layer_has_upper = false;
     if (upper && upper->size() >= (8 * leaf_nodes.size())) {
@@ -2022,7 +2021,7 @@ test5()
 namespace test6_ns {
   struct scan_callback {
     typedef vector<
-      pair< string, btree::value_type > > kv_vec;
+      pair< btree::string_type, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
     operator()(const btree::string_type &k, btree::value_type v) const
@@ -2165,11 +2164,11 @@ public:
     expect() : tag(), expected_size() {}
     expect(size_t expected_size)
       : tag(0), expected_size(expected_size) {}
-    expect(const set<string> &expected_keys)
+    expect(const set<btree::string_type> &expected_keys)
       : tag(1), expected_keys(expected_keys) {}
     uint8_t tag;
     size_t expected_size;
-    set<string> expected_keys;
+    set<btree::string_type> expected_keys;
   };
 
   enum ExpectType {
@@ -2222,7 +2221,8 @@ public:
       switch (ex_type) {
       case EXPECT_EXACT: {
         ALWAYS_ASSERT(keys.size() == expectation.expected_keys.size());
-        vector<string> cmp(expectation.expected_keys.begin(), expectation.expected_keys.end());
+        vector<btree::string_type> cmp(
+            expectation.expected_keys.begin(), expectation.expected_keys.end());
         for (size_t i = 0; i < keys.size(); i++) {
           if (keys[i] != cmp[i]) {
             cerr << "A: " << hexify(keys[i]) << endl;
@@ -2235,8 +2235,8 @@ public:
       case EXPECT_ATLEAST: {
         ALWAYS_ASSERT(keys.size() >= expectation.expected_keys.size());
         // every key in the expected set must be present
-        set<string> keyset(keys.begin(), keys.end());
-        for (set<string>::iterator it = expectation.expected_keys.begin();
+        set<btree::string_type> keyset(keys.begin(), keys.end());
+        for (set<btree::string_type>::iterator it = expectation.expected_keys.begin();
              it != expectation.expected_keys.end(); ++it)
           ALWAYS_ASSERT(keyset.count(*it) == 1);
         break;
@@ -2252,7 +2252,7 @@ private:
   expect expectation;
   ExpectType ex_type;
 
-  vector<string> keys;
+  vector<btree::string_type> keys;
 };
 
 static void
@@ -2274,7 +2274,7 @@ test_two_layer_range_scan()
     btr.invariant_checker();
   }
 
-  test_range_scan_helper::expect ex(set<string>(keys, keys + ARRAY_NELEMS(keys)));
+  test_range_scan_helper::expect ex(set<btree::string_type>(keys, keys + ARRAY_NELEMS(keys)));
   test_range_scan_helper tester(btr, varkey(""), NULL, ex);
   tester.test();
 }
@@ -2366,28 +2366,28 @@ test_null_keys_2()
 
   fast_random r(9084398309893);
 
-  set<string> prefixes;
+  set<btree::string_type> prefixes;
   for (size_t i = 0; i < nprefixes; i++) {
   retry:
-    string k = r.next_string(r.next() % 30);
+    const btree::string_type k = r.next_string(r.next() % 30);
     if (prefixes.count(k) == 1)
       goto retry;
     prefixes.insert(k);
   }
 
-  set<string> keys;
-  for (set<string>::iterator it = prefixes.begin();
+  set<btree::string_type> keys;
+  for (set<btree::string_type>::iterator it = prefixes.begin();
        it != prefixes.end(); ++it) {
-    string k = *it;
+    const btree::string_type k = *it;
     for (size_t i = 1; i <= 12; i++) {
-      string x = k;
+      btree::string_type x = k;
       x.resize(x.size() + i);
       keys.insert(x);
     }
   }
 
   size_t ctr = 1;
-  for (set<string>::iterator it = keys.begin();
+  for (set<btree::string_type>::iterator it = keys.begin();
        it != keys.end(); ++it, ++ctr) {
     ALWAYS_ASSERT(btr.insert(varkey(*it), (btree::value_type) it->data()));
     btr.invariant_checker();
@@ -2395,7 +2395,7 @@ test_null_keys_2()
   }
   ALWAYS_ASSERT(btr.size() == keys.size());
 
-  for (set<string>::iterator it = keys.begin();
+  for (set<btree::string_type>::iterator it = keys.begin();
        it != keys.end(); ++it) {
     btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(*it), v));
@@ -2407,7 +2407,7 @@ test_null_keys_2()
   tester.test();
 
   ctr = keys.size() - 1;
-  for (set<string>::iterator it = keys.begin();
+  for (set<btree::string_type>::iterator it = keys.begin();
        it != keys.end(); ++it, --ctr) {
     ALWAYS_ASSERT(btr.remove(varkey(*it)));
     btr.invariant_checker();
@@ -2425,16 +2425,17 @@ test_random_keys()
   const size_t nkeys = 10000;
   const unsigned int maxkeylen = 1000;
 
-  set<string> keyset;
-  vector<string> keys;
+  set<btree::string_type> keyset;
+  vector<btree::string_type> keys;
+  keys.resize(nkeys);
   for (size_t i = 0; i < nkeys; i++) {
   retry:
-    string k = r.next_string(r.next() % (maxkeylen + 1));
+    btree::string_type k = r.next_string(r.next() % (maxkeylen + 1));
     if (keyset.count(k) == 1)
       goto retry;
     keyset.insert(k);
-    keys.push_back(k);
-    btr.insert(varkey(keys.back()), (btree::value_type) keys.back().data());
+    swap(keys[i], k);
+    btr.insert(varkey(keys[i]), (btree::value_type) keys[i].data());
     btr.invariant_checker();
   }
 
@@ -2927,7 +2928,7 @@ namespace mp_test7_ns {
 
   struct scan_callback {
     typedef vector<
-      pair< string, btree::value_type > > kv_vec;
+      pair< btree::string_type, btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
     operator()(const btree::string_type &k, btree::value_type v) const
@@ -2973,8 +2974,8 @@ namespace mp_test7_ns {
       while (running) {
         scan_callback::kv_vec data;
         btr->search_range(u64_varkey(nkeys / 2), NULL, scan_callback(&data));
-        set<string> scan_keys;
-        string prev;
+        set<btree::string_type> scan_keys;
+        btree::string_type prev;
         for (size_t i = 0; i < data.size(); i++) {
           if (i != 0) {
             ALWAYS_ASSERT(data[i].first != prev);
@@ -3154,11 +3155,11 @@ namespace mp_test_long_keys_ns {
   static const size_t ninsertkeys_perthread = 500000;
   static const size_t nremovekeys_perthread = 500000;
 
-  typedef vector<string> key_vec;
+  typedef vector<btree::string_type> key_vec;
 
   class insert_worker : public btree_worker {
   public:
-    insert_worker(const vector<string> &keys, btree &btr)
+    insert_worker(const vector<btree::string_type> &keys, btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -3166,12 +3167,12 @@ namespace mp_test_long_keys_ns {
         ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (btree::value_type) keys[i].data()));
     }
   private:
-    vector<string> keys;
+    vector<btree::string_type> keys;
   };
 
   class remove_worker : public btree_worker {
   public:
-    remove_worker(const vector<string> &keys, btree &btr)
+    remove_worker(const vector<btree::string_type> &keys, btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -3179,14 +3180,14 @@ namespace mp_test_long_keys_ns {
         ALWAYS_ASSERT(btr->remove(varkey(keys[i])));
     }
   private:
-    vector<string> keys;
+    vector<btree::string_type> keys;
   };
 
   static volatile bool running = false;
 
   class scan_worker : public btree_worker {
   public:
-    scan_worker(const set<string> &ex, btree &btr)
+    scan_worker(const set<btree::string_type> &ex, btree &btr)
       : btree_worker(btr), ex(ex) {}
     virtual void run()
     {
@@ -3208,12 +3209,12 @@ mp_test_long_keys()
 
   btree btr;
   vector<key_vec> inps;
-  set<string> existing_keys, insert_keys, remove_keys;
+  set<btree::string_type> existing_keys, insert_keys, remove_keys;
 
   fast_random r(189230589352);
   for (size_t i = 0; i < 10000; i++) {
   retry0:
-    string k = r.next_string((r.next() % 200) + 9);
+    btree::string_type k = r.next_string((r.next() % 200) + 9);
     if (existing_keys.count(k) == 1)
       goto retry0;
     existing_keys.insert(k);
@@ -3225,7 +3226,7 @@ mp_test_long_keys()
     key_vec inp;
     for (size_t j = 0; j < ninsertkeys_perthread; j++) {
     retry:
-      string k = r.next_string((r.next() % 200) + 9);
+      btree::string_type k = r.next_string((r.next() % 200) + 9);
       if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1)
         goto retry;
       insert_keys.insert(k);
@@ -3237,7 +3238,7 @@ mp_test_long_keys()
   for (size_t i = nthreads / 2; i < nthreads; i++) {
     key_vec inp;
     for (size_t j = 0; j < nremovekeys_perthread;) {
-      string k = r.next_string((r.next() % 200) + 9);
+      btree::string_type k = r.next_string((r.next() % 200) + 9);
       if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1 || remove_keys.count(k) == 1)
         continue;
       ALWAYS_ASSERT(btr.insert(varkey(k), (btree::value_type) k.data()));
@@ -3272,12 +3273,12 @@ mp_test_long_keys()
   btr.invariant_checker();
 
   ALWAYS_ASSERT(btr.size() == (insert_keys.size() + existing_keys.size()));
-  for (set<string>::iterator it = insert_keys.begin();
+  for (set<btree::string_type>::iterator it = insert_keys.begin();
        it != insert_keys.end(); ++it) {
     btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(*it), v));
   }
-  for (set<string>::iterator it = remove_keys.begin();
+  for (set<btree::string_type>::iterator it = remove_keys.begin();
        it != remove_keys.end(); ++it) {
     btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(varkey(*it), v));

@@ -1053,7 +1053,7 @@ private:
     friend class transaction_proto2;
   public:
     epoch_loop()
-      : ndb_thread(true, string_type("epochloop")), is_wq_empty(true) {}
+      : ndb_thread(true, std::string("epochloop")), is_wq_empty(true) {}
     virtual void run();
   private:
     volatile bool is_wq_empty;

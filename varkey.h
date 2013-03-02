@@ -11,6 +11,7 @@
 #include "imstring.h"
 #include "macros.h"
 #include "util.h"
+#include "xbuf.h"
 
 class varkey {
   friend std::ostream &operator<<(std::ostream &o, const varkey &k);
@@ -23,6 +24,11 @@ public:
   }
 
   explicit inline varkey(const std::string &s)
+    : p((const uint8_t *) s.data()), l(s.size())
+  {
+  }
+
+  explicit inline varkey(const xbuf &s)
     : p((const uint8_t *) s.data()), l(s.size())
   {
   }

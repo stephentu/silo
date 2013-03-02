@@ -48,6 +48,7 @@ class btree : public rcu_enabled {
 public:
   typedef varkey key_type;
   typedef std::string string_type;
+  //typedef xbuf string_type;
   typedef uint64_t key_slice;
   typedef uint8_t* value_type;
 
