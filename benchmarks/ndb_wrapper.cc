@@ -165,7 +165,7 @@ public:
     : upcall(&upcall) {}
 
   virtual bool
-  invoke(const txn_btree::key_type &k, const txn_btree::value_type v, txn_btree::size_type sz)
+  invoke(const txn_btree::string_type &k, const txn_btree::value_type v, txn_btree::size_type sz)
   {
     const char *key = (const char *) k.data();
     const size_t keylen = k.size();
