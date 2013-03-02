@@ -26,6 +26,7 @@
 #include "static_assert.h"
 #include "rcu.h"
 #include "thread.h"
+#include "spinlock.h"
 
 // just a debug option to help track down a particular
 // race condition
@@ -1142,7 +1143,7 @@ private:
   static volatile uint64_t g_reads_finished_epoch CACHE_ALIGNED;
 
   // for synchronizing with the epoch incrementor loop
-  static volatile util::aligned_padded_elem<pthread_spinlock_t>
+  static util::aligned_padded_elem<spinlock>
     g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
 
   struct work_record_t {

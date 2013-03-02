@@ -326,21 +326,6 @@ public:
   }
 };
 
-class scoped_spinlock {
-public:
-  inline scoped_spinlock(pthread_spinlock_t *l)
-    : l(l)
-  {
-    ALWAYS_ASSERT(pthread_spin_lock(l) == 0);
-  }
-  inline ~scoped_spinlock()
-  {
-    ALWAYS_ASSERT(pthread_spin_unlock(l) == 0);
-  }
-private:
-  pthread_spinlock_t *const l;
-};
-
 //  The following is taken from:
 //  Boost noncopyable.hpp header file  --------------------------------------//
 

@@ -1,5 +1,6 @@
 #include "counter.h"
 #include "util.h"
+#include "lockguard.h"
 
 using namespace std;
 using namespace util;
@@ -12,20 +13,11 @@ event_ctx::event_counters()
   return s_counters;
 }
 
-pthread_spinlock_t &
+spinlock &
 event_ctx::event_counters_lock()
 {
-  static pthread_spinlock_t *volatile l = NULL;
-  if (!l) {
-    pthread_spinlock_t *sl = new pthread_spinlock_t;
-    ALWAYS_ASSERT(pthread_spin_init(sl, PTHREAD_PROCESS_PRIVATE) == 0);
-    if (!__sync_bool_compare_and_swap(&l, NULL, sl)) {
-      ALWAYS_ASSERT(pthread_spin_destroy(sl) == 0);
-      delete sl;
-    }
-  }
-  INVARIANT(l);
-  return *l;
+  static spinlock s_lock;
+  return s_lock;
 }
 
 map<string, double>
@@ -33,8 +25,8 @@ event_counter::get_all_counters()
 {
   map<string, double> ret;
   const vector<event_ctx *> &evts = event_ctx::event_counters();
-  pthread_spinlock_t &l = event_ctx::event_counters_lock();
-  scoped_spinlock sl(&l);
+  spinlock &l = event_ctx::event_counters_lock();
+  lock_guard<spinlock> sl(l);
   for (vector<event_ctx *>::const_iterator it = evts.begin();
        it != evts.end(); ++it) {
     uint64_t c = 0;
@@ -58,8 +50,8 @@ void
 event_counter::reset_all_counters()
 {
   const vector<event_ctx *> &evts = event_ctx::event_counters();
-  pthread_spinlock_t &l = event_ctx::event_counters_lock();
-  scoped_spinlock sl(&l);
+  spinlock &l = event_ctx::event_counters_lock();
+  lock_guard<spinlock> sl(l);
   for (vector<event_ctx *>::const_iterator it = evts.begin();
        it != evts.end(); ++it)
     for (size_t i = 0; i < coreid::NMaxCores; i++) {
@@ -72,17 +64,17 @@ event_counter::reset_all_counters()
 event_counter::event_counter(const string &name)
   : ctx(new event_ctx(name, false))
 {
-  pthread_spinlock_t &l = event_ctx::event_counters_lock();
+  spinlock &l = event_ctx::event_counters_lock();
   vector<event_ctx *> &evts = event_ctx::event_counters();
-  scoped_spinlock sl(&l);
+  lock_guard<spinlock> sl(l);
   evts.push_back(ctx);
 }
 
 event_avg_counter::event_avg_counter(const string &name)
   : ctx(new event_ctx_avg(name))
 {
-  pthread_spinlock_t &l = event_ctx::event_counters_lock();
+  spinlock &l = event_ctx::event_counters_lock();
   vector<event_ctx *> &evts = event_ctx::event_counters();
-  scoped_spinlock sl(&l);
+  lock_guard<spinlock> sl(l);
   evts.push_back(ctx);
 }

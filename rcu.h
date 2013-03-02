@@ -9,6 +9,8 @@
 #include <list>
 #include <utility>
 
+#include "spinlock.h"
+
 class rcu {
 public:
   typedef uint64_t epoch_t;
@@ -37,9 +39,8 @@ public:
   struct sync {
     volatile epoch_t local_epoch;
     delete_queue local_queues[2];
-    pthread_spinlock_t local_critical_mutex;
-    sync(epoch_t local_epoch);
-    ~sync();
+    spinlock local_critical_mutex;
+    sync(epoch_t local_epoch) : local_epoch(local_epoch) {}
   };
 
   /**
@@ -76,7 +77,7 @@ public:
 
 private:
   static void *gc_thread_loop(void *p);
-  static pthread_spinlock_t *rcu_mutex();
+  static spinlock &rcu_mutex();
 
   static volatile epoch_t global_epoch;
   static delete_queue global_queues[2];

@@ -12,6 +12,11 @@ public:
     if (likely(l))
       l->lock();
   }
+  lock_guard(BasicLockable &l)
+    : l(&l)
+  {
+    l.lock();
+  }
   ~lock_guard()
   {
     if (likely(l))

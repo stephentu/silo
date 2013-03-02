@@ -11,6 +11,7 @@
 #include "macros.h"
 #include "core.h"
 #include "util.h"
+#include "spinlock.h"
 
 namespace private_ {
 
@@ -19,7 +20,7 @@ namespace private_ {
   struct event_ctx : private util::noncopyable {
 
     static std::vector<event_ctx *> &event_counters();
-    static pthread_spinlock_t &event_counters_lock();
+    static spinlock &event_counters_lock();
 
     // tag to avoid making event_ctx virtual
     event_ctx(const std::string &name, bool avg_tag)

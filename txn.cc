@@ -815,7 +815,7 @@ transaction_proto2::transaction_proto2(uint64_t flags)
   VERBOSE(cerr << "new transaction_proto2 (core=" << my_core_id
                << ", nest=" << tl_nest_level << ")" << endl);
   if (tl_nest_level++ == 0)
-    ALWAYS_ASSERT(pthread_spin_lock(&g_epoch_spinlocks[my_core_id].elem) == 0);
+    g_epoch_spinlocks[my_core_id].elem.lock();
   current_epoch = g_current_epoch;
   if (get_flags() & TXN_FLAG_READ_ONLY)
     last_consistent_tid = MakeTid(0, 0, g_consistent_epoch);
@@ -828,7 +828,7 @@ transaction_proto2::~transaction_proto2()
                << ", nest=" << tl_nest_level << ")" << endl);
   ALWAYS_ASSERT(tl_nest_level > 0);
   if (!--tl_nest_level) {
-    ALWAYS_ASSERT(pthread_spin_unlock(&g_epoch_spinlocks[my_core_id].elem) == 0);
+    g_epoch_spinlocks[my_core_id].elem.unlock();
     // XXX(stephentu): tune this
     if (tl_last_cleanup_epoch != current_epoch) {
       process_local_cleanup_nodes();
@@ -1198,10 +1198,8 @@ transaction_proto2::wait_for_empty_work_queue()
 bool
 transaction_proto2::InitEpochScheme()
 {
-  for (size_t i = 0; i < NMaxCores; i++) {
-    ALWAYS_ASSERT(pthread_spin_init(&g_epoch_spinlocks[i].elem, PTHREAD_PROCESS_PRIVATE) == 0);
+  for (size_t i = 0; i < NMaxCores; i++)
     g_work_queues[i].elem = new work_q;
-  }
   g_epoch_loop.start();
   return true;
 }
@@ -1256,7 +1254,7 @@ transaction_proto2::epoch_loop::run()
     // wait for each core to finish epoch (g_current_epoch - 1)
     const size_t l_core_count = coreid::core_count();
     for (size_t i = 0; i < l_core_count; i++) {
-      scoped_spinlock l(&g_epoch_spinlocks[i].elem);
+      lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
       work_q &core_q = *g_work_queues[i].elem;
       for (work_q::iterator it = core_q.begin(); it != core_q.end(); ++it) {
         if (pq.empty())
@@ -1280,7 +1278,7 @@ transaction_proto2::epoch_loop::run()
     // threads will finish any oustanding consistent reads at
     // g_consistent_epoch - 1
     for (size_t i = 0; i < l_core_count; i++) {
-      scoped_spinlock l(&g_epoch_spinlocks[i].elem);
+      lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
     }
 
     // sync point 2: all consistent reads will be operating at
@@ -1349,5 +1347,5 @@ volatile uint64_t transaction_proto2::g_current_epoch = 1;
 volatile uint64_t transaction_proto2::g_consistent_epoch = 1;
 volatile uint64_t transaction_proto2::g_reads_finished_epoch = 0;
 
-volatile aligned_padded_elem<pthread_spinlock_t> transaction_proto2::g_epoch_spinlocks[NMaxCores];
+aligned_padded_elem<spinlock> transaction_proto2::g_epoch_spinlocks[NMaxCores];
 volatile aligned_padded_elem<transaction_proto2::work_q*> transaction_proto2::g_work_queues[NMaxCores];

@@ -8,6 +8,7 @@
 #include "util.h"
 #include "thread.h"
 #include "counter.h"
+#include "lockguard.h"
 
 using namespace std;
 using namespace util;
@@ -23,37 +24,17 @@ map<pthread_t, rcu::sync *> rcu::sync_map;
 __thread rcu::sync *rcu::tl_sync = NULL;
 __thread unsigned int rcu::tl_crit_section_depth = 0;
 
-rcu::sync::sync(epoch_t local_epoch)
-  : local_epoch(local_epoch)
-{
-  ALWAYS_ASSERT(pthread_spin_init(&local_critical_mutex, PTHREAD_PROCESS_PRIVATE) == 0);
-}
-
-rcu::sync::~sync()
-{
-  ALWAYS_ASSERT(pthread_spin_destroy(&local_critical_mutex) == 0);
-}
-
-pthread_spinlock_t *
+spinlock &
 rcu::rcu_mutex()
 {
-  static pthread_spinlock_t *volatile l = NULL;
-  if (!l) {
-    pthread_spinlock_t *sl = new pthread_spinlock_t;
-    ALWAYS_ASSERT(pthread_spin_init(sl, PTHREAD_PROCESS_PRIVATE) == 0);
-    if (!__sync_bool_compare_and_swap(&l, NULL, sl)) {
-      ALWAYS_ASSERT(pthread_spin_destroy(sl) == 0);
-      delete sl;
-    }
-  }
-  INVARIANT(l);
-  return l;
+  static spinlock s_lock;
+  return s_lock;
 }
 
 void
 rcu::register_sync(pthread_t p, sync *s)
 {
-  scoped_spinlock l(rcu_mutex());
+  lock_guard<spinlock> l(rcu_mutex());
   map<pthread_t, sync *>::iterator it = sync_map.find(p);
   ALWAYS_ASSERT(it == sync_map.end());
   sync_map[p] = s;
@@ -62,7 +43,7 @@ rcu::register_sync(pthread_t p, sync *s)
 rcu::sync *
 rcu::unregister_sync(pthread_t p)
 {
-  scoped_spinlock l(rcu_mutex());
+  lock_guard<spinlock> l(rcu_mutex());
   map<pthread_t, sync *>::iterator it = sync_map.find(p);
   if (it == sync_map.end())
     return NULL;
@@ -101,7 +82,7 @@ rcu::enable()
   if (gc_thread_started)
     return;
   {
-    scoped_spinlock l(rcu_mutex());
+    lock_guard<spinlock> l(rcu_mutex());
     if (gc_thread_started)
       return;
     gc_thread_started = true;
@@ -126,7 +107,7 @@ rcu::region_begin()
   INVARIANT(gc_thread_started);
   if (likely(!tl_crit_section_depth++)) {
     tl_sync->local_epoch = global_epoch;
-    ALWAYS_ASSERT(pthread_spin_lock(&tl_sync->local_critical_mutex) == 0);
+    tl_sync->local_critical_mutex.lock();
   }
 }
 
@@ -146,7 +127,7 @@ rcu::region_end()
   INVARIANT(tl_crit_section_depth);
   INVARIANT(gc_thread_started);
   if (likely(!--tl_crit_section_depth))
-    ALWAYS_ASSERT(pthread_spin_unlock(&tl_sync->local_critical_mutex) == 0);
+    tl_sync->local_critical_mutex.unlock();
 }
 
 bool
@@ -163,11 +144,7 @@ static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 
 class gc_reaper_thread : public ndb_thread {
 public:
-  gc_reaper_thread()
-    : ndb_thread(true, "rcu-reaper")
-  {
-    ALWAYS_ASSERT(pthread_spin_init(&lock, PTHREAD_PROCESS_PRIVATE) == 0);
-  }
+  gc_reaper_thread() : ndb_thread(true, "rcu-reaper") {}
   virtual void
   run()
   {
@@ -178,7 +155,7 @@ public:
     for (;;) {
       // see if any elems to process
       {
-        scoped_spinlock l(&lock);
+        lock_guard<spinlock> l(lock);
         stack_queue.swap(queue);
       }
       evt_avg_gc_reaper_queue_len.offer(stack_queue.size());
@@ -196,7 +173,7 @@ public:
       stack_queue.clear();
     }
   }
-  pthread_spinlock_t lock;
+  spinlock lock;
   rcu::delete_queue queue;
 };
 
@@ -231,14 +208,14 @@ rcu::gc_thread_loop(void *p)
     // now wait for each thread to finish any outstanding critical sections
     // from the previous epoch, and advance it forward to the global epoch
     {
-      scoped_spinlock l(rcu_mutex()); // prevents new threads from joining
+      lock_guard<spinlock> l(rcu_mutex()); // prevents new threads from joining
       for (map<pthread_t, sync *>::iterator it = sync_map.begin();
            it != sync_map.end(); ++it) {
         sync *s = it->second;
         const epoch_t local_epoch = s->local_epoch;
         if (local_epoch != global_epoch) {
           INVARIANT(local_epoch == cleaning_epoch);
-          scoped_spinlock l0(&s->local_critical_mutex);
+          lock_guard<spinlock> l0(s->local_critical_mutex);
           s->local_epoch = global_epoch;
         }
 
@@ -249,7 +226,7 @@ rcu::gc_thread_loop(void *p)
         evt_avg_rcu_delete_queue_len.offer(local_queue.size());
 
         gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NReapers];
-        scoped_spinlock l0(&reaper_loop.lock);
+        lock_guard<spinlock> l0(reaper_loop.lock);
         if (reaper_loop.queue.empty()) {
           reaper_loop.queue.swap(local_queue);
           INVARIANT(local_queue.empty());
@@ -267,7 +244,7 @@ rcu::gc_thread_loop(void *p)
       delete_queue &global_queue = global_queues[cleaning_epoch % 2];
       if (unlikely(!global_queue.empty())) {
         gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NReapers];
-        scoped_spinlock l0(&reaper_loop.lock);
+        lock_guard<spinlock> l0(reaper_loop.lock);
         if (reaper_loop.queue.empty()) {
           reaper_loop.queue.swap(global_queue);
           INVARIANT(global_queue.empty());
