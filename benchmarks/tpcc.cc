@@ -327,16 +327,24 @@ public:
     return buf;
   }
 
-  static inline string
-  OOrderCIDKey(int32_t o_w_id, int32_t o_d_id, int32_t o_c_id, int32_t o_id)
+  static const size_t OOrderCIDKeySize = 4 * sizeof(int32_t);
+
+  static inline void
+  OOrderCIDKey(uint8_t *buf, int32_t o_w_id, int32_t o_d_id, int32_t o_c_id, int32_t o_id)
   {
     big_endian_trfm<int32_t> t;
-    string buf(4 * sizeof(int32_t), 0);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(o_w_id);
     *p++ = t(o_d_id);
     *p++ = t(o_c_id);
     *p++ = t(o_id);
+  }
+
+  static inline string
+  OOrderCIDKey(int32_t o_w_id, int32_t o_d_id, int32_t o_c_id, int32_t o_id)
+  {
+    string buf(OOrderCIDKeySize, 0);
+    OOrderCIDKey((uint8_t *) &buf[0], o_w_id, o_d_id, o_c_id, o_id);
     return buf;
   }
 
@@ -1643,17 +1651,21 @@ tpcc_worker::txn_order_status()
   try {
 
     customer customer;
-    string customerPK;
+    uint8_t customerPK[CustomerPrimaryKeySize];
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       string lastname = GetNonUniformCustomerLastNameRun(r);
       lastname.resize(16);
 
-      const string lowkey = CustomerNameIdxKey(warehouse_id, districtID, lastname, string(16, 0));
-      const string highkey = CustomerNameIdxKey(warehouse_id, districtID, lastname, string(16, 255));
+      uint8_t lowkey[CustomerNameIdxKeySize], highkey[CustomerNameIdxKeySize];
+      static const string zeros(16, 0);
+      static const string ones(16, 255);
+      CustomerNameIdxKey(lowkey, warehouse_id, districtID, lastname, zeros);
+      CustomerNameIdxKey(highkey, warehouse_id, districtID, lastname, ones);
       limit_callback c(-1);
-      tbl_customer_name_idx->scan(txn, lowkey.data(), lowkey.size(),
-                                  highkey.data(), highkey.size(), true, c);
+      tbl_customer_name_idx->scan(
+          txn, (const char *) lowkey, CustomerNameIdxKeySize,
+          (const char *) highkey, CustomerNameIdxKeySize, true, c);
       ALWAYS_ASSERT(!c.values.empty());
       int index = c.values.size() / 2;
       if (c.values.size() % 2 == 0)
@@ -1666,16 +1678,18 @@ tpcc_worker::txn_order_status()
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_name_idx_mem->c_ptr, &customer_temp);
         customer = *c;
-        customerPK = CustomerPrimaryKey(warehouse_id, districtID, customer.c_id);
+        CustomerPrimaryKey(customerPK, warehouse_id, districtID, customer.c_id);
       } else {
         customer_name_idx_nomem customer_name_idx_nomem_temp;
         const customer_name_idx_nomem *customer_name_idx_nomem =
           customer_name_idx_nomem_enc.read(
               (const uint8_t *) c.values[index].second.data(), &customer_name_idx_nomem_temp);
-        customerPK = CustomerPrimaryKey(warehouse_id, districtID, customer_name_idx_nomem->c_id);
+        CustomerPrimaryKey(customerPK, warehouse_id, districtID, customer_name_idx_nomem->c_id);
         char *customer_v = 0;
         size_t customer_vlen = 0;
-        ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
+        ALWAYS_ASSERT(tbl_customer->get(
+              txn, (const char *) customerPK, CustomerPrimaryKeySize,
+              customer_v, customer_vlen));
         if (!idx_manages_get_mem) mm.manage(customer_v);
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
@@ -1684,10 +1698,12 @@ tpcc_worker::txn_order_status()
     } else {
       // cust by ID
       const uint customerID = GetCustomerId(r);
-      customerPK = CustomerPrimaryKey(warehouse_id, districtID, customerID);
+      CustomerPrimaryKey(customerPK, warehouse_id, districtID, customerID);
       char *customer_v = 0;
       size_t customer_vlen = 0;
-      ALWAYS_ASSERT(tbl_customer->get(txn, customerPK.data(), customerPK.size(), customer_v, customer_vlen));
+      ALWAYS_ASSERT(tbl_customer->get(
+            txn, (const char *) customerPK, CustomerPrimaryKeySize,
+            customer_v, customer_vlen));
       if (!idx_manages_get_mem) mm.manage(customer_v);
       ::customer customer_temp;
       const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
@@ -1695,15 +1711,12 @@ tpcc_worker::txn_order_status()
     }
 
     limit_callback c_oorder(-1);
-    const string oorder_lowkey = OOrderCIDKey(warehouse_id, districtID, customer.c_id, 0);
-    const string oorder_highkey = OOrderCIDKey(warehouse_id, districtID, customer.c_id, numeric_limits<int32_t>::max());
-    tbl_oorder_c_id_idx->scan(txn, oorder_lowkey.data(), oorder_lowkey.size(),
-        oorder_highkey.data(), oorder_highkey.size(), true, c_oorder);
-    //if (unlikely(c_oorder.values.empty())) {
-    //  cerr << "oorder_lokey: " << hexify(oorder_lowkey) << endl;
-    //  cerr << "oorder_hikey: " << hexify(oorder_highkey) << endl;
-    //  db->print_txn_debug(txn);
-    //}
+    uint8_t oorder_lowkey[OOrderPrimaryKeySize], oorder_highkey[OOrderPrimaryKeySize];
+    OOrderCIDKey(oorder_lowkey, warehouse_id, districtID, customer.c_id, 0);
+    OOrderCIDKey(oorder_highkey, warehouse_id, districtID, customer.c_id, numeric_limits<int32_t>::max());
+    tbl_oorder_c_id_idx->scan(
+        txn, (const char *) oorder_lowkey, OOrderCIDKeySize,
+        (const char *) oorder_highkey, OOrderCIDKeySize, true, c_oorder);
     ALWAYS_ASSERT(!c_oorder.values.empty());
 
     uint o_id;
@@ -1722,11 +1735,12 @@ tpcc_worker::txn_order_status()
     }
 
     limit_callback c_order_line(-1);
-    const string order_line_lowkey = OrderLinePrimaryKey(warehouse_id, districtID, o_id, 0);
-    const string order_line_highkey = OrderLinePrimaryKey(warehouse_id, districtID, o_id,
-        numeric_limits<int32_t>::max());
-    tbl_order_line->scan(txn, order_line_lowkey.data(), order_line_lowkey.size(),
-        order_line_highkey.data(), order_line_highkey.size(), true, c_order_line);
+    uint8_t order_line_lowkey[OrderLinePrimaryKeySize], order_line_highkey[OrderLinePrimaryKeySize];
+    OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, o_id, 0);
+    OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
+    tbl_order_line->scan(
+        txn, (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
+        (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c_order_line);
     for (size_t i = 0; i < c_order_line.values.size(); i++) {
       order_line order_line_temp;
       const order_line *order_line UNUSED =
@@ -1753,11 +1767,13 @@ tpcc_worker::txn_stock_level()
   scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
   try {
-
-    const string districtPK = DistrictPrimaryKey(warehouse_id, districtID);
+    uint8_t districtPK[DistrictPrimaryKeySize];
+    DistrictPrimaryKey(districtPK, warehouse_id, districtID);
     char *district_v = 0;
     size_t district_vlen = 0;
-    ALWAYS_ASSERT(tbl_district->get(txn, districtPK.data(), districtPK.size(), district_v, district_vlen));
+    ALWAYS_ASSERT(tbl_district->get(
+          txn, (const char *) districtPK, DistrictPrimaryKeySize,
+          district_v, district_vlen));
     if (!idx_manages_get_mem) mm.manage(district_v);
     district district_temp;
     const district *district =
@@ -1766,10 +1782,12 @@ tpcc_worker::txn_stock_level()
     // manual joins are fun!
     limit_callback c(-1);
     int32_t lower = district->d_next_o_id >= 20 ? (district->d_next_o_id - 20) : 0;
-    const string order_line_lowkey = OrderLinePrimaryKey(warehouse_id, districtID, lower, 0);
-    const string order_line_highkey = OrderLinePrimaryKey(warehouse_id, districtID, district->d_next_o_id, 0);
-    tbl_order_line->scan(txn, order_line_lowkey.data(), order_line_lowkey.size(),
-        order_line_highkey.data(), order_line_highkey.size(), true, c);
+    uint8_t order_line_lowkey[OrderLinePrimaryKeySize], order_line_highkey[OrderLinePrimaryKeySize];
+    OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, lower, 0);
+    OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, district->d_next_o_id, 0);
+    tbl_order_line->scan(txn,
+        (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
+        (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c);
     set<uint> s_i_ids;
     for (vector<limit_callback::kv_pair>::iterator it = c.values.begin();
          it != c.values.end(); ++it) {
@@ -1781,10 +1799,13 @@ tpcc_worker::txn_stock_level()
     set<uint> s_i_ids_distinct;
     for (set<uint>::iterator it = s_i_ids.begin();
          it != s_i_ids.end(); ++it) {
-      const string stockPK = StockPrimaryKey(warehouse_id, *it);
+      uint8_t stockPK[StockPrimaryKeySize];
+      StockPrimaryKey(stockPK, warehouse_id, *it);
       char *stock_v = 0;
       size_t stock_vlen = 0;
-      ALWAYS_ASSERT(tbl_stock->get(txn, stockPK.data(), stockPK.size(), stock_v, stock_vlen));
+      ALWAYS_ASSERT(tbl_stock->get(
+            txn, (const char *) stockPK, StockPrimaryKeySize,
+            stock_v, stock_vlen));
       if (!idx_manages_get_mem) mm.manage(stock_v);
       stock stock_temp;
       const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
