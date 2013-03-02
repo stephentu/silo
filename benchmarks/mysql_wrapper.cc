@@ -184,7 +184,7 @@ mysql_ordered_index::get(
     unsigned long *lengths = mysql_fetch_lengths(res);
     value = (char *) malloc(lengths[0]);
     ALWAYS_ASSERT(key);
-    memcpy(value, row[0], lengths[0]);
+    NDB_MEMCPY(value, row[0], lengths[0]);
     ret = true;
   }
   mysql_free_result(res);

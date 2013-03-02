@@ -501,7 +501,7 @@ test2()
     txn_btree btr;
     btr.set_value_size_hint(256);
     bufrec r;
-    memset(r.buf, 'a', ARRAY_NELEMS(r.buf));
+    NDB_MEMSET(r.buf, 'a', ARRAY_NELEMS(r.buf));
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
       btr.insert_object(t, u64_varkey(i), r);

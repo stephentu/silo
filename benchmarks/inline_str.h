@@ -39,7 +39,7 @@ public:
 		if (zeropad) {
 			INVARIANT(N >= sz);
 			std::string r(N, 0);
-			memcpy((char *) r.data(), &buf[0], sz);
+			NDB_MEMCPY((char *) r.data(), &buf[0], sz);
 			return r;
 		} else {
 			return std::string(&buf[0], sz);
@@ -68,7 +68,7 @@ public:
   assign(const char *s, size_t n)
   {
     INVARIANT(n <= N);
-    memcpy(&buf[0], s, n);
+    NDB_MEMCPY(&buf[0], s, n);
     sz = n;
   }
 
@@ -108,7 +108,7 @@ class inline_str_fixed {
 public:
   inline_str_fixed()
   {
-    memset(&buf[0], 0, N);
+    NDB_MEMSET(&buf[0], 0, N);
   }
 
   inline_str_fixed(const char *s)
@@ -154,9 +154,9 @@ public:
   assign(const char *s, size_t n)
   {
     INVARIANT(n <= N);
-    memcpy(&buf[0], s, n);
+    NDB_MEMCPY(&buf[0], s, n);
     if ((N - n) > 0) // to suppress compiler warning
-      memset(&buf[n], ' ', N - n); // pad with spaces
+      NDB_MEMSET(&buf[n], ' ', N - n); // pad with spaces
   }
 
   inline ALWAYS_INLINE void
@@ -190,7 +190,7 @@ struct serializer< inline_str_base<IntSizeType, N> > {
   {
     serializer<IntSizeType> s;
     buf = write(buf, &obj->sz);
-    memcpy(buf, &obj->buf[0], obj->sz);
+    NDB_MEMCPY(buf, &obj->buf[0], obj->sz);
     return buf + obj->sz;
   }
 
@@ -199,7 +199,7 @@ struct serializer< inline_str_base<IntSizeType, N> > {
   {
     serializer<IntSizeType> s;
     buf = read(buf, &obj->sz);
-    memcpy(&obj->buf[0], buf, obj->sz);
+    NDB_MEMCPY(&obj->buf[0], buf, obj->sz);
     return buf + obj->sz;
   }
 

@@ -460,7 +460,7 @@ public:
   {
     INVARIANT(warehouse_id >= 1);
     INVARIANT(warehouse_id <= NumWarehouses());
-    memset(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
+    NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
   }
 
   ssize_t txn_new_order();

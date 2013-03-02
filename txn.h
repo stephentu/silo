@@ -238,7 +238,7 @@ public:
 #endif
     {
       INVARIANT(size <= alloc_size);
-      memcpy(&value_start[0], r, size);
+      NDB_MEMCPY(&value_start[0], r, size);
       ++g_evt_logical_node_creates;
       g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node));
     }
@@ -534,7 +534,7 @@ public:
     write_record_ret
     write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
     {
-      // XXX: one memcpy in common case, two memcpy in spill case
+      // XXX: one NDB_MEMCPY in common case, two NDB_MEMCPY in spill case
       INVARIANT(is_locked());
       INVARIANT(is_latest());
 
@@ -549,7 +549,7 @@ public:
           // directly update in place
           version = t;
           size = sz;
-          memcpy(&value_start[0], r, sz);
+          NDB_MEMCPY(&value_start[0], r, sz);
           return write_record_ret(false, NULL);
         }
 
@@ -570,7 +570,7 @@ public:
         next = spill;
         version = t;
         size = sz;
-        memcpy(&value_start[0], r, sz);
+        NDB_MEMCPY(&value_start[0], r, sz);
         return write_record_ret(true, NULL);
       }
 

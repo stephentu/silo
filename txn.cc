@@ -1218,7 +1218,7 @@ transaction_proto2::epoch_loop::run()
 {
   // runs as daemon thread
   struct timespec t;
-  memset(&t, 0, sizeof(t));
+  NDB_MEMSET(&t, 0, sizeof(t));
   work_pq pq;
   timer loop_timer;
   for (;;) {

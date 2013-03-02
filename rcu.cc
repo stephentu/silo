@@ -149,7 +149,7 @@ public:
   run()
   {
     struct timespec t;
-    memset(&t, 0, sizeof(t));
+    NDB_MEMSET(&t, 0, sizeof(t));
     t.tv_nsec = rcu_epoch_ns;
     rcu::delete_queue stack_queue;
     for (;;) {
@@ -184,7 +184,7 @@ rcu::gc_thread_loop(void *p)
 {
   // runs as daemon thread
   struct timespec t;
-  memset(&t, 0, sizeof(t));
+  NDB_MEMSET(&t, 0, sizeof(t));
   timer loop_timer;
   const unsigned int NReapers = 4;
   static gc_reaper_thread reaper_loops[NReapers];

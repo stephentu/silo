@@ -46,7 +46,7 @@ public:
   {
     g_evt_imstring_bytes_allocated += l;
     g_evt_avg_imstring_len.offer(l);
-    memcpy(p, src, l);
+    NDB_MEMCPY(p, src, l);
   }
 
   base_imstring(const std::string &s)
@@ -54,7 +54,7 @@ public:
   {
     g_evt_imstring_bytes_allocated += l;
     g_evt_avg_imstring_len.offer(l);
-    memcpy(p, s.data(), l);
+    NDB_MEMCPY(p, s.data(), l);
   }
 
   template <bool R>

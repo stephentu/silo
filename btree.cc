@@ -486,7 +486,7 @@ btree::search_range_at_layer(
         continue;
       size_t ncpy = min(buf[i].length, size_t(8));
       slice_buffer.resize(prefix_size + ncpy);
-      memcpy(&slice_buffer[0] + prefix_size, buf[i].keyslice(), ncpy);
+      NDB_MEMCPY(&slice_buffer[0] + prefix_size, buf[i].keyslice(), ncpy);
       if (buf[i].layer) {
         // recurse into layer
         leaf_node *next_layer = leftmost_descend_layer(buf[i].vn.n);
