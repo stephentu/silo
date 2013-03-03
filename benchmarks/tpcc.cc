@@ -1093,6 +1093,7 @@ tpcc_worker::txn_new_order()
   const uint customerID = GetCustomerId(r);
   const uint numItems = RandomNumber(r, 5, 15);
   uint itemIDs[15], supplierWarehouseIDs[15], orderQuantities[15];
+  uint8_t obj_buf[1024];
   bool allLocal = true;
   for (uint i = 0; i < numItems; i++) {
     itemIDs[i] = GetItemId(r);
@@ -1157,19 +1158,17 @@ tpcc_worker::txn_new_order()
     uint8_t newOrderPK[NewOrderPrimaryKeySize];
     NewOrderPrimaryKey(newOrderPK, warehouse_id, districtID, district->d_next_o_id);
     const size_t new_order_sz = new_order_enc.nbytes(&new_order);
-    uint8_t new_order_buf[new_order_sz];
     tbl_new_order->insert(
         txn, (const char *) newOrderPK, NewOrderPrimaryKeySize,
-        (const char *) new_order_enc.write(new_order_buf, &new_order), new_order_sz);
+        (const char *) new_order_enc.write(obj_buf, &new_order), new_order_sz);
     ret += new_order_sz;
 
     district_new = *district;
     district_new.d_next_o_id++;
     const size_t district_sz = district_enc.nbytes(&district_new);
-    uint8_t district_buf[district_sz];
     tbl_district->put(
         txn, (const char *) districtPK, DistrictPrimaryKeySize,
-        (const char *) district_enc.write(district_buf, &district_new), district_sz);
+        (const char *) district_enc.write(obj_buf, &district_new), district_sz);
 
     oorder oorder;
     oorder.o_w_id = int32_t(warehouse_id);
@@ -1184,10 +1183,9 @@ tpcc_worker::txn_new_order()
     uint8_t oorderPK[OOrderPrimaryKeySize];
     OOrderPrimaryKey(oorderPK, warehouse_id, districtID, new_order.no_o_id);
     const size_t oorder_sz = oorder_enc.nbytes(&oorder);
-    uint8_t oorder_buf[oorder_sz];
     tbl_oorder->insert(
         txn, (const char *) oorderPK, OOrderPrimaryKeySize,
-        (const char *) oorder_enc.write(oorder_buf, &oorder), oorder_sz);
+        (const char *) oorder_enc.write(obj_buf, &oorder), oorder_sz);
     ret += oorder_sz;
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
@@ -1227,10 +1225,9 @@ tpcc_worker::txn_new_order()
       stock_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
 
       const size_t stock_sz = stock_enc.nbytes(&stock_new);
-      uint8_t stock_buf[stock_sz];
       tbl_stock->put(
           txn, (const char *) stockPK, StockPrimaryKeySize,
-          (const char *) stock_enc.write(stock_buf, &stock_new), stock_sz);
+          (const char *) stock_enc.write(obj_buf, &stock_new), stock_sz);
 
       order_line order_line;
       order_line.ol_w_id = int32_t(warehouse_id);
@@ -1285,10 +1282,9 @@ tpcc_worker::txn_new_order()
       uint8_t orderLinePK[OrderLinePrimaryKeySize];
       OrderLinePrimaryKey(orderLinePK, warehouse_id, districtID, new_order.no_o_id, ol_number);
       const size_t order_line_sz = order_line_enc.nbytes(&order_line);
-      uint8_t order_line_buf[order_line_sz];
       tbl_order_line->insert(
           txn, (const char *) orderLinePK, OrderLinePrimaryKeySize,
-          (const char *) order_line_enc.write(order_line_buf, &order_line), order_line_sz);
+          (const char *) order_line_enc.write(obj_buf, &order_line), order_line_sz);
       ret += order_line_sz;
     }
 
@@ -1310,6 +1306,7 @@ tpcc_worker::txn_delivery()
 {
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
+  uint8_t obj_buf[1024];
 
   scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
@@ -1369,10 +1366,9 @@ tpcc_worker::txn_delivery()
         order_line_new = *order_line;
         order_line_new.ol_delivery_d = ts;
         const size_t order_line_sz = order_line_enc.nbytes(&order_line_new);
-        uint8_t order_line_buf[order_line_sz];
         tbl_order_line->put(
             txn, it->first.data(), it->first.size(),
-            (const char *) order_line_enc.write(order_line_buf, &order_line_new), order_line_sz);
+            (const char *) order_line_enc.write(obj_buf, &order_line_new), order_line_sz);
       }
 
       // delete new order
@@ -1385,10 +1381,9 @@ tpcc_worker::txn_delivery()
       oorder_new = *oorder;
       oorder_new.o_carrier_id = o_carrier_id;
       const size_t oorder_sz = oorder_enc.nbytes(&oorder_new);
-      uint8_t oorder_buf[oorder_sz];
       tbl_oorder->put(
           txn, (const char *) oorderPK, OOrderPrimaryKeySize,
-          (const char *) oorder_enc.write(oorder_buf, &oorder_new), oorder_sz);
+          (const char *) oorder_enc.write(obj_buf, &oorder_new), oorder_sz);
 
       // update orderlines
       const uint c_id = oorder->o_c_id;
@@ -1408,11 +1403,10 @@ tpcc_worker::txn_delivery()
       customer_new = *customer;
       customer_new.c_balance += ol_total;
       const size_t customer_sz = customer_enc.nbytes(&customer_new);
-      uint8_t customer_buf[customer_sz];
       const char *customer_p =
         tbl_customer->put(
             txn, (const char *) customerPK, CustomerPrimaryKeySize,
-            (const char *) customer_enc.write(customer_buf, &customer_new), customer_sz);
+            (const char *) customer_enc.write(obj_buf, &customer_new), customer_sz);
       ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
       if (customer_p) {
         // need to update secondary index
@@ -1423,10 +1417,9 @@ tpcc_worker::txn_delivery()
         rec.c_id = customer_new.c_id;
         rec.c_ptr = intptr_t(customer_p);
         const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
-        uint8_t buf[sz];
         tbl_customer_name_idx->put(
             txn, customerNameKey.data(), customerNameKey.size(),
-            (const char *) customer_name_idx_mem_enc.write(buf, &rec), sz);
+            (const char *) customer_name_idx_mem_enc.write(obj_buf, &rec), sz);
       }
     }
     if (db->commit_txn(txn)) {
@@ -1446,6 +1439,7 @@ ssize_t
 tpcc_worker::txn_payment()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
+  uint8_t obj_buf[1024];
   uint customerDistrictID, customerWarehouseID;
   if (NumWarehouses() == 1 || RandomNumber(r, 1, 100) <= 85) {
     customerDistrictID = districtID;
@@ -1477,10 +1471,9 @@ tpcc_worker::txn_payment()
     warehouse_new = *warehouse;
     warehouse_new.w_ytd += paymentAmount;
     const size_t warehouse_sz = warehouse_enc.nbytes(&warehouse_new);
-    uint8_t warehouse_buf[warehouse_sz];
     tbl_warehouse->put(
         txn, (const char *) warehousePK, WarehousePrimaryKeySize,
-        (const char *) warehouse_enc.write(warehouse_buf, &warehouse_new), warehouse_sz);
+        (const char *) warehouse_enc.write(obj_buf, &warehouse_new), warehouse_sz);
 
     uint8_t districtPK[DistrictPrimaryKeySize];
     DistrictPrimaryKey(districtPK, warehouse_id, districtID);
@@ -1495,10 +1488,9 @@ tpcc_worker::txn_payment()
     district_new = *district;
     district_new.d_ytd += paymentAmount;
     const size_t district_sz = district_enc.nbytes(&district_new);
-    uint8_t district_buf[district_sz];
     tbl_district->put(
         txn, (const char *) districtPK, DistrictPrimaryKeySize,
-        (const char *) district_enc.write(district_buf, &district_new), district_sz);
+        (const char *) district_enc.write(obj_buf, &district_new), district_sz);
 
     customer customer;
     uint8_t customerPK[CustomerPrimaryKeySize];
@@ -1577,11 +1569,10 @@ tpcc_worker::txn_payment()
     }
 
     const size_t customer_sz = customer_enc.nbytes(&customer);
-    uint8_t customer_buf[customer_sz];
     const char *customer_p =
       tbl_customer->put(
           txn, (const char *) customerPK, CustomerPrimaryKeySize,
-          (const char *) customer_enc.write(customer_buf, &customer), customer_sz);
+          (const char *) customer_enc.write(obj_buf, &customer), customer_sz);
     ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
     if (customer_p) {
       // need to update secondary index
@@ -1592,10 +1583,9 @@ tpcc_worker::txn_payment()
       rec.c_id = customer.c_id;
       rec.c_ptr = intptr_t(customer_p);
       const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
-      uint8_t buf[sz];
       tbl_customer_name_idx->put(
           txn, customerNameKey.data(), customerNameKey.size(),
-            (const char *) customer_name_idx_mem_enc.write(buf, &rec), sz);
+            (const char *) customer_name_idx_mem_enc.write(obj_buf, &rec), sz);
     }
 
     // XXX(stephentu): write directly into history.h_data
@@ -1621,10 +1611,9 @@ tpcc_worker::txn_payment()
     HistoryPrimaryKey(historyPK, history.h_c_id, history.h_c_d_id, history.h_c_w_id,
                       history.h_d_id, history.h_w_id, history.h_date);
     const size_t history_sz = history_enc.nbytes(&history);
-    uint8_t history_buf[history_sz];
     tbl_history->insert(txn,
         (const char *) historyPK, HistoryPrimaryKeySize,
-        (const char *) history_enc.write(history_buf, &history), history_sz);
+        (const char *) history_enc.write(obj_buf, &history), history_sz);
     ret += history_sz;
 
     if (db->commit_txn(txn)) {
