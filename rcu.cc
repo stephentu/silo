@@ -144,7 +144,11 @@ static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 
 class gc_reaper_thread : public ndb_thread {
 public:
-  gc_reaper_thread() : ndb_thread(true, "rcu-reaper") {}
+  gc_reaper_thread()
+    : ndb_thread(true, "rcu-reaper")
+  {
+    queue.reserve(32000);
+  }
   virtual void
   run()
   {
@@ -152,6 +156,7 @@ public:
     NDB_MEMSET(&t, 0, sizeof(t));
     t.tv_nsec = rcu_epoch_ns;
     rcu::delete_queue stack_queue;
+    stack_queue.reserve(32000);
     for (;;) {
       // see if any elems to process
       {

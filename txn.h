@@ -1095,14 +1095,21 @@ private:
   // note that work will run under a RCU region
   typedef bool (*local_work_callback_t)(const logical_node_context &);
   typedef std::pair<logical_node_context, local_work_callback_t> local_work_t;
-  typedef std::list<local_work_t> node_cleanup_queue;
+  typedef std::vector<local_work_t> node_cleanup_queue;
+  //typedef std::list<local_work_t> node_cleanup_queue;
 
   static __thread node_cleanup_queue *tl_cleanup_nodes;
+  static __thread node_cleanup_queue *tl_cleanup_nodes_buf;
   static inline node_cleanup_queue &
   local_cleanup_nodes()
   {
-    if (unlikely(!tl_cleanup_nodes))
+    if (unlikely(!tl_cleanup_nodes)) {
       tl_cleanup_nodes = new node_cleanup_queue;
+      tl_cleanup_nodes_buf = new node_cleanup_queue;
+
+      tl_cleanup_nodes->reserve(16000);
+      tl_cleanup_nodes_buf->reserve(16000);
+    }
     return *tl_cleanup_nodes;
   }
 

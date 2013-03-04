@@ -1173,18 +1173,19 @@ transaction_proto2::process_local_cleanup_nodes()
 {
   if (unlikely(!tl_cleanup_nodes))
     return;
+  INVARIANT(tl_cleanup_nodes_buf);
+  INVARIANT(tl_cleanup_nodes_buf->empty());
   evt_avg_local_cleanup_queue_len.offer(tl_cleanup_nodes->size());
   for (node_cleanup_queue::iterator it = tl_cleanup_nodes->begin();
-       it != tl_cleanup_nodes->end(); ) {
+       it != tl_cleanup_nodes->end(); ++it) {
     scoped_rcu_region rcu_region;
     // XXX(stephentu): try-catch block
     if (it->second(it->first))
       // keep around
-      ++it;
-    else
-      // done, erase it
-      it = tl_cleanup_nodes->erase(it);
+      tl_cleanup_nodes_buf->push_back(*it);
   }
+  swap(*tl_cleanup_nodes, *tl_cleanup_nodes_buf);
+  tl_cleanup_nodes_buf->clear();
 }
 
 void
@@ -1327,6 +1328,7 @@ transaction_proto2::purge_local_work_queue()
   }
   tl_cleanup_nodes->clear();
   delete tl_cleanup_nodes;
+  delete tl_cleanup_nodes_buf;
   tl_cleanup_nodes = NULL;
 }
 
@@ -1341,6 +1343,7 @@ __thread unsigned int transaction_proto2::tl_nest_level = 0;
 __thread uint64_t transaction_proto2::tl_last_commit_tid = MIN_TID;
 __thread uint64_t transaction_proto2::tl_last_cleanup_epoch = MIN_TID;
 __thread transaction_proto2::node_cleanup_queue *transaction_proto2::tl_cleanup_nodes = NULL;
+__thread transaction_proto2::node_cleanup_queue *transaction_proto2::tl_cleanup_nodes_buf = NULL;
 
 // start epoch at 1, to avoid some boundary conditions
 volatile uint64_t transaction_proto2::g_current_epoch = 1;
