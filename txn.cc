@@ -1319,6 +1319,7 @@ transaction_proto2::purge_local_work_queue()
   // lock and dequeue all the nodes
   // XXX(stephentu): maybe we should run another iteration of
   // process_local_cleanup_nodes()
+  INVARIANT(tl_cleanup_nodes_buf);
   for (node_cleanup_queue::iterator it = tl_cleanup_nodes->begin();
        it != tl_cleanup_nodes->end(); ++it) {
     it->first.ln->lock();
@@ -1329,7 +1330,7 @@ transaction_proto2::purge_local_work_queue()
   tl_cleanup_nodes->clear();
   delete tl_cleanup_nodes;
   delete tl_cleanup_nodes_buf;
-  tl_cleanup_nodes = NULL;
+  tl_cleanup_nodes = tl_cleanup_nodes_buf = NULL;
 }
 
 void

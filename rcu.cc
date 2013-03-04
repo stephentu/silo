@@ -156,7 +156,7 @@ public:
     NDB_MEMSET(&t, 0, sizeof(t));
     t.tv_nsec = rcu_epoch_ns;
     rcu::delete_queue stack_queue;
-    stack_queue.reserve(32000);
+    stack_queue.reserve(rcu::SyncDeleteQueueBufSize);
     for (;;) {
       // see if any elems to process
       {
@@ -191,9 +191,8 @@ rcu::gc_thread_loop(void *p)
   struct timespec t;
   NDB_MEMSET(&t, 0, sizeof(t));
   timer loop_timer;
-  const unsigned int NReapers = 4;
-  static gc_reaper_thread reaper_loops[NReapers];
-  for (unsigned int i = 0; i < NReapers; i++)
+  static gc_reaper_thread reaper_loops[NGCReapers];
+  for (unsigned int i = 0; i < NGCReapers; i++)
     reaper_loops[i].start();
   unsigned int rr = 0;
   for (;;) {
@@ -230,7 +229,7 @@ rcu::gc_thread_loop(void *p)
         delete_queue &local_queue = s->local_queues[cleaning_epoch % 2];
         evt_avg_rcu_delete_queue_len.offer(local_queue.size());
 
-        gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NReapers];
+        gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NGCReapers];
         lock_guard<spinlock> l0(reaper_loop.lock);
         if (reaper_loop.queue.empty()) {
           reaper_loop.queue.swap(local_queue);
@@ -248,7 +247,7 @@ rcu::gc_thread_loop(void *p)
       // pull the ones from the global queue
       delete_queue &global_queue = global_queues[cleaning_epoch % 2];
       if (unlikely(!global_queue.empty())) {
-        gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NReapers];
+        gc_reaper_thread &reaper_loop = reaper_loops[rr++ % NGCReapers];
         lock_guard<spinlock> l0(reaper_loop.lock);
         if (reaper_loop.queue.empty()) {
           reaper_loop.queue.swap(global_queue);

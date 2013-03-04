@@ -34,6 +34,10 @@ public:
     delete [] (T *) p;
   }
 
+  // XXX(stephentu): tune?
+  static const size_t SyncDeleteQueueBufSize = 16384;
+  static const size_t NGCReapers = 4;
+
   // all RCU threads interact w/ the RCU subsystem via
   // a sync struct
   struct sync {
@@ -43,8 +47,8 @@ public:
     sync(epoch_t local_epoch)
       : local_epoch(local_epoch)
     {
-      local_queues[0].reserve(16000);
-      local_queues[1].reserve(16000);
+      local_queues[0].reserve(SyncDeleteQueueBufSize);
+      local_queues[1].reserve(SyncDeleteQueueBufSize);
     }
   };
 

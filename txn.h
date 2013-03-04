@@ -1098,17 +1098,19 @@ private:
   typedef std::vector<local_work_t> node_cleanup_queue;
   //typedef std::list<local_work_t> node_cleanup_queue;
 
+  static const size_t TlNodeQueueBufSize = 16384;
+
   static __thread node_cleanup_queue *tl_cleanup_nodes;
   static __thread node_cleanup_queue *tl_cleanup_nodes_buf;
   static inline node_cleanup_queue &
   local_cleanup_nodes()
   {
     if (unlikely(!tl_cleanup_nodes)) {
+      INVARIANT(!tl_cleanup_nodes_buf);
       tl_cleanup_nodes = new node_cleanup_queue;
       tl_cleanup_nodes_buf = new node_cleanup_queue;
-
-      tl_cleanup_nodes->reserve(16000);
-      tl_cleanup_nodes_buf->reserve(16000);
+      tl_cleanup_nodes->reserve(TlNodeQueueBufSize);
+      tl_cleanup_nodes_buf->reserve(TlNodeQueueBufSize);
     }
     return *tl_cleanup_nodes;
   }
