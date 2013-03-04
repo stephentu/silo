@@ -291,7 +291,7 @@ retry:
     // use the process label to skip node prefetch
 process:
     uint64_t version = cur->stable_version();
-    if (node::IsDeleting(version))
+    if (unlikely(node::IsDeleting(version)))
       // XXX: maybe we can only retry at the parent of this node, not the
       // root node of the b-tree *layer*
       goto retry;
