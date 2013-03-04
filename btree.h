@@ -20,6 +20,7 @@
 #include "rcu.h"
 #include "static_assert.h"
 #include "util.h"
+#include "small_vector.h"
 
 /** options */
 
@@ -785,7 +786,7 @@ public:
   inline bool
   search(const key_type &k, value_type &v) const
   {
-    std::vector<leaf_node *> ns;
+    small_vector<leaf_node *> ns;
     scoped_rcu_region rcu_region;
     return search_impl(k, v, ns);
   }
@@ -1116,7 +1117,7 @@ private:
   /**
    * Assumes RCU region scope is held
    */
-  bool search_impl(const key_type &k, value_type &v, std::vector<leaf_node *> &leaf_nodes) const;
+  bool search_impl(const key_type &k, value_type &v, small_vector<leaf_node *> &leaf_nodes) const;
 
   bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent,
                    value_type *old_v, std::pair< const node_opaque_t *, uint64_t > *insert_info);

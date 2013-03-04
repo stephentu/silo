@@ -21,7 +21,7 @@ endif
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h counter.h core.h imstring.h lockguard.h spinlock.h hash_bytes.h \
-	  xbuf.h
+	  xbuf.h small_vector.h
 SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc \
 	txn_btree.cc varint.cc memory.cc hash_bytes.cc
 OBJFILES = $(SRCFILES:.cc=.o)
