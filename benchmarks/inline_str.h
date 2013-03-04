@@ -33,6 +33,19 @@ public:
     assign(s);
   }
 
+  inline size_t
+  max_size() const
+  {
+    return N;
+  }
+
+  inline const char *
+  c_str() const
+  {
+    buf[sz] = 0;
+    return &buf[0];
+  }
+
   inline std::string
   str(bool zeropad = false) const
   {
@@ -78,6 +91,22 @@ public:
     assign(s.data(), s.size());
   }
 
+  inline void
+  resize(size_t n, char c = 0)
+  {
+    INVARIANT(n <= N);
+    if (n > sz)
+      NDB_MEMSET(&buf[sz], c, n - sz);
+    sz = n;
+  }
+
+  inline void
+  resize_junk(size_t n)
+  {
+    INVARIANT(n <= N);
+    sz = n;
+  }
+
   inline bool
   operator==(const inline_str_base &other) const
   {
@@ -92,7 +121,7 @@ public:
 
 private:
   IntSizeType sz;
-  char buf[N];
+  mutable char buf[N + 1];
 } PACKED;
 
 template <unsigned int N>

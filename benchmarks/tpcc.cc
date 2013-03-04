@@ -144,18 +144,31 @@ public:
 
   static string NameTokens[];
 
+  // all tokens are at most 5 chars long
+  static const size_t CustomerLastNameMaxSize = 5 * 3;
+
+  static inline size_t
+  GetCustomerLastName(uint8_t *buf, fast_random &r, int num)
+  {
+    const string &s0 = NameTokens[num / 100];
+    const string &s1 = NameTokens[(num / 10) % 10];
+    const string &s2 = NameTokens[num % 10];
+    uint8_t *const begin = buf;
+    const size_t s0_sz = s0.size();
+    const size_t s1_sz = s1.size();
+    const size_t s2_sz = s2.size();
+    NDB_MEMCPY(buf, s0.data(), s0_sz); buf += s0_sz;
+    NDB_MEMCPY(buf, s1.data(), s1_sz); buf += s1_sz;
+    NDB_MEMCPY(buf, s2.data(), s2_sz); buf += s2_sz;
+    return buf - begin;
+  }
+
   static inline string
   GetCustomerLastName(fast_random &r, int num)
   {
-    // all tokens are at most 5 chars long
     string ret;
-    ret.reserve(5 * 3);
-    const string &s0 = NameTokens[num / 100];
-    ret.insert(ret.end(), s0.begin(), s0.end());
-    const string &s1 = NameTokens[(num / 10) % 10];
-    ret.insert(ret.end(), s1.begin(), s1.end());
-    const string &s2 = NameTokens[num % 10];
-    ret.insert(ret.end(), s2.begin(), s2.end());
+    ret.resize(CustomerLastNameMaxSize);
+    ret.resize(GetCustomerLastName((uint8_t *) &ret[0], r, num));
     return ret;
   }
 
@@ -163,6 +176,12 @@ public:
   GetNonUniformCustomerLastNameLoad(fast_random &r)
   {
     return GetCustomerLastName(r, NonUniformRandom(r, 255, 157, 0, 999));
+  }
+
+  static inline ALWAYS_INLINE size_t
+  GetNonUniformCustomerLastNameRun(uint8_t *buf, fast_random &r)
+  {
+    return GetCustomerLastName(buf, r, NonUniformRandom(r, 255, 223, 0, 999));
   }
 
   static inline ALWAYS_INLINE string
@@ -227,26 +246,29 @@ public:
 
   static const size_t CustomerNameIdxKeySize = 2 * sizeof(int32_t) + 2 * 16;
 
+  // assumes c_last and c_first are buffers of exactly 16 chars long
   static inline void
   CustomerNameIdxKey(uint8_t *buf, int32_t c_w_id, int32_t c_d_id,
-                     const string &c_last, const string &c_first)
+                     const uint8_t *c_last, const uint8_t *c_first)
   {
     big_endian_trfm<int32_t> t;
-    INVARIANT(c_last.size() == 16);
-    INVARIANT(c_first.size() == 16);
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(c_w_id);
     *p++ = t(c_d_id);
-    NDB_MEMCPY(((char *) p), c_last.data(), 16);
-    NDB_MEMCPY(((char *) p) + 16, c_first.data(), 16);
+    NDB_MEMCPY(((char *) p), c_last, 16);
+    NDB_MEMCPY(((char *) p) + 16, c_first, 16);
   }
 
   static inline string
   CustomerNameIdxKey(int32_t c_w_id, int32_t c_d_id,
                      const string &c_last, const string &c_first)
   {
+    INVARIANT(c_last.size() == 16);
+    INVARIANT(c_first.size() == 16);
     string buf(CustomerNameIdxKeySize, 0);
-    CustomerNameIdxKey((uint8_t *) &buf[0], c_w_id, c_d_id, c_last, c_first);
+    CustomerNameIdxKey((uint8_t *) &buf[0], c_w_id, c_d_id,
+        (const uint8_t *) c_last.data(),
+        (const uint8_t *) c_first.data());
     return buf;
   }
 
@@ -1183,9 +1205,28 @@ tpcc_worker::txn_new_order()
     uint8_t oorderPK[OOrderPrimaryKeySize];
     OOrderPrimaryKey(oorderPK, warehouse_id, districtID, new_order.no_o_id);
     const size_t oorder_sz = oorder_enc.nbytes(&oorder);
-    tbl_oorder->insert(
+    const char *oorder_ret = tbl_oorder->insert(
         txn, (const char *) oorderPK, OOrderPrimaryKeySize,
         (const char *) oorder_enc.write(obj_buf, &oorder), oorder_sz);
+    uint8_t oorderCIDPK[OOrderCIDKeySize];
+    OOrderCIDKey(oorderCIDPK, warehouse_id, districtID, customerID, new_order.no_o_id);
+    INVARIANT(!db->index_has_stable_put_memory() || oorder_ret);
+    if (oorder_ret) {
+      oorder_c_id_idx_mem rec;
+      rec.o_id = oorder.o_id;
+      rec.o_ptr = (intptr_t) oorder_ret;
+      const size_t sz = oorder_c_id_idx_mem_enc.nbytes(&rec);
+      tbl_oorder_c_id_idx->insert(
+          txn, (const char *) oorderCIDPK, OOrderCIDKeySize,
+          (const char *) oorder_c_id_idx_mem_enc.write(obj_buf, &rec), sz);
+    } else {
+      oorder_c_id_idx_nomem rec;
+      rec.o_id = oorder.o_id;
+      const size_t sz = oorder_c_id_idx_nomem_enc.nbytes(&rec);
+      tbl_oorder_c_id_idx->insert(
+          txn, (const char *) oorderCIDPK, OOrderCIDKeySize,
+          (const char *) oorder_c_id_idx_nomem_enc.write(obj_buf, &rec), sz);
+    }
     ret += oorder_sz;
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
@@ -1311,7 +1352,6 @@ tpcc_worker::txn_delivery()
   scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
   const bool idx_manages_get_mem = db->index_manages_get_memory();
-  const bool idx_stable_put_mem = db->index_has_stable_put_memory();
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -1319,19 +1359,19 @@ tpcc_worker::txn_delivery()
               highkey[NewOrderPrimaryKeySize];
       NewOrderPrimaryKey(lowkey, warehouse_id, d, last_no_o_ids[d]);
       NewOrderPrimaryKey(highkey, warehouse_id, d, numeric_limits<int32_t>::max());
-      limit_callback new_order_c(1);
+      static_limit_callback<1> new_order_c;
       //{
       //  scoped_timer st("NewOrderScan");
         tbl_new_order->scan(txn, (const char *) lowkey, NewOrderPrimaryKeySize,
                             (const char *) highkey, NewOrderPrimaryKeySize,
                             true, new_order_c);
       //}
-      if (unlikely(new_order_c.values.empty()))
+      if (unlikely(!new_order_c.size()))
         continue;
-      ALWAYS_ASSERT(new_order_c.values.size() == 1);
+      INVARIANT(new_order_c.size() == 1);
       new_order new_order_temp;
       const new_order *new_order =
-        new_order_enc.read((const uint8_t *) new_order_c.values.front().second.data(), &new_order_temp);
+        new_order_enc.read((const uint8_t *) new_order_c.values[0].second.data(), &new_order_temp);
       last_no_o_ids[d] = new_order->no_o_id + 1;
 
       uint8_t oorderPK[OOrderPrimaryKeySize];
@@ -1345,7 +1385,7 @@ tpcc_worker::txn_delivery()
       oorder oorder_temp, oorder_new;
       const oorder *oorder = oorder_enc.read((const uint8_t *) oorder_v, &oorder_temp);
 
-      limit_callback c(-1);
+      static_limit_callback<15> c; // never more than 15 order_lines per order
       uint8_t order_line_lowkey[OrderLinePrimaryKeySize],
               order_line_highkey[OrderLinePrimaryKeySize];
       OrderLinePrimaryKey(order_line_lowkey, warehouse_id, d,
@@ -1357,17 +1397,16 @@ tpcc_worker::txn_delivery()
           (const char *) order_line_highkey, OrderLinePrimaryKeySize,
           true, c);
       float sum = 0.0;
-      for (vector<limit_callback::kv_pair>::iterator it = c.values.begin();
-           it != c.values.end(); ++it) {
+      for (size_t i = 0; i < c.size(); i++) {
         order_line order_line_temp, order_line_new;
         const order_line *order_line =
-          order_line_enc.read((const uint8_t *) it->second.data(), &order_line_temp);
+          order_line_enc.read((const uint8_t *) c.values[i].second.data(), &order_line_temp);
         sum += order_line->ol_amount;
         order_line_new = *order_line;
         order_line_new.ol_delivery_d = ts;
         const size_t order_line_sz = order_line_enc.nbytes(&order_line_new);
         tbl_order_line->put(
-            txn, it->first.data(), it->first.size(),
+            txn, c.values[i].first.data(), c.values[i].first.size(),
             (const char *) order_line_enc.write(obj_buf, &order_line_new), order_line_sz);
       }
 
@@ -1375,7 +1414,7 @@ tpcc_worker::txn_delivery()
       uint8_t new_orderPK[NewOrderPrimaryKeySize];
       NewOrderPrimaryKey(new_orderPK, warehouse_id, d, new_order->no_o_id);
       tbl_new_order->remove(txn, (const char *) new_orderPK, NewOrderPrimaryKeySize);
-      ret -= new_order_c.values.front().second.size();
+      ret -= new_order_c.values[0].second.size();
 
       // update oorder
       oorder_new = *oorder;
@@ -1407,7 +1446,7 @@ tpcc_worker::txn_delivery()
         tbl_customer->put(
             txn, (const char *) customerPK, CustomerPrimaryKeySize,
             (const char *) customer_enc.write(obj_buf, &customer_new), customer_sz);
-      ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
+      INVARIANT(!db->index_has_stable_put_memory() || customer_p);
       if (customer_p) {
         // need to update secondary index
         const string customerNameKey = CustomerNameIdxKey(
@@ -1496,21 +1535,26 @@ tpcc_worker::txn_payment()
     uint8_t customerPK[CustomerPrimaryKeySize];
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
-      string lastname = GetNonUniformCustomerLastNameRun(r);
-      lastname.resize(16);
+      uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
+      _static_assert(sizeof(lastname_buf) == 16);
+      NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
+      GetNonUniformCustomerLastNameRun(lastname_buf, r);
 
       uint8_t lowkey[CustomerNameIdxKeySize], highkey[CustomerNameIdxKeySize];
       static const string zeros(16, 0);
       static const string ones(16, 255);
-      CustomerNameIdxKey(lowkey, customerWarehouseID, customerDistrictID, lastname, zeros);
-      CustomerNameIdxKey(highkey, customerWarehouseID, customerDistrictID, lastname, ones);
-      limit_callback c(-1);
+      CustomerNameIdxKey(lowkey, customerWarehouseID, customerDistrictID,
+          lastname_buf, (const uint8_t *) zeros.data());
+      CustomerNameIdxKey(highkey, customerWarehouseID, customerDistrictID,
+          lastname_buf, (const uint8_t *) ones.data());
+      static_limit_callback<1024> c; // probably a safe bet for now
       tbl_customer_name_idx->scan(
           txn, (const char *) lowkey, CustomerNameIdxKeySize,
           (const char *) highkey, CustomerNameIdxKeySize, true, c);
-      ALWAYS_ASSERT(!c.values.empty());
-      int index = c.values.size() / 2;
-      if (c.values.size() % 2 == 0)
+      INVARIANT(c.size() > 0);
+      INVARIANT(c.size() < 1024); // we should detect this
+      int index = c.size() / 2;
+      if (c.size() % 2 == 0)
         index--;
       if (idx_stable_put_mem) {
         customer_name_idx_mem customer_name_idx_mem_temp;
@@ -1556,16 +1600,28 @@ tpcc_worker::txn_payment()
     customer.c_ytd_payment += paymentAmount;
     customer.c_payment_cnt++;
     if (strncmp(customer.c_credit.data(), "BC", 2) == 0) {
-      // XXX: lots of copying here, should just write directly
-      // into customer.c_data buffer
-      ostringstream b;
-      b << customer.c_id << " " << customer.c_d_id << " " << customer.c_w_id
-        << " " << districtID << " " << warehouse_id << " " << paymentAmount
-        << " | " << customer.c_data.str();
-      string s = b.str();
-      if (s.length() > 500)
-        s.resize(500);
-      customer.c_data.assign(s);
+      //ostringstream b;
+      //b << customer.c_id << " " << customer.c_d_id << " " << customer.c_w_id
+      //  << " " << districtID << " " << warehouse_id << " " << paymentAmount
+      //  << " | " << customer.c_data.str();
+      //string s = b.str();
+      //if (s.length() > 500)
+      //  s.resize(500);
+      //customer.c_data.assign(s);
+
+      // copy less
+      char buf[501];
+      int n = snprintf(buf, sizeof(buf), "%d %d %d %d %d %f | %s",
+                       customer.c_id,
+                       customer.c_d_id,
+                       customer.c_w_id,
+                       districtID,
+                       warehouse_id,
+                       paymentAmount,
+                       customer.c_data.c_str());
+      customer.c_data.resize_junk(
+          min(static_cast<size_t>(n), customer.c_data.max_size()));
+      NDB_MEMCPY((void *) customer.c_data.data(), &buf[0], customer.c_data.size());
     }
 
     const size_t customer_sz = customer_enc.nbytes(&customer);
@@ -1588,16 +1644,17 @@ tpcc_worker::txn_payment()
             (const char *) customer_name_idx_mem_enc.write(obj_buf, &rec), sz);
     }
 
-    // XXX(stephentu): write directly into history.h_data
-    string w_name = warehouse->w_name.str();
-    if (w_name.size() > 10)
-      w_name.resize(10);
-    string d_name = district->d_name.str();
-    if (d_name.size() > 10)
-      d_name.resize(10);
-    const string h_data = w_name + "    " + d_name;
-
     history history;
+
+    //string w_name = warehouse->w_name.str();
+    //if (w_name.size() > 10)
+    //  w_name.resize(10);
+    //string d_name = district->d_name.str();
+    //if (d_name.size() > 10)
+    //  d_name.resize(10);
+    //const string h_data = w_name + "    " + d_name;
+    //history.h_data.assign(h_data);
+
     history.h_c_d_id = customer.c_d_id;
     history.h_c_w_id = customer.c_w_id;
     history.h_c_id = customer.c_id;
@@ -1605,7 +1662,12 @@ tpcc_worker::txn_payment()
     history.h_w_id = warehouse_id;
     history.h_date = ts;
     history.h_amount = paymentAmount;
-    history.h_data.assign(h_data);
+    history.h_data.resize_junk(history.h_data.max_size());
+    int n = snprintf((char *) history.h_data.data(), history.h_data.max_size() + 1,
+                     "%.10s    %.10s",
+                     warehouse->w_name.c_str(),
+                     district->d_name.c_str());
+    history.h_data.resize_junk(min(static_cast<size_t>(n), history.h_data.max_size()));
 
     uint8_t historyPK[HistoryPrimaryKeySize];
     HistoryPrimaryKey(historyPK, history.h_c_id, history.h_c_d_id, history.h_c_w_id,
@@ -1643,21 +1705,26 @@ tpcc_worker::txn_order_status()
     uint8_t customerPK[CustomerPrimaryKeySize];
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
-      string lastname = GetNonUniformCustomerLastNameRun(r);
-      lastname.resize(16);
+      uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
+      _static_assert(sizeof(lastname_buf) == 16);
+      NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
+      GetNonUniformCustomerLastNameRun(lastname_buf, r);
 
       uint8_t lowkey[CustomerNameIdxKeySize], highkey[CustomerNameIdxKeySize];
       static const string zeros(16, 0);
       static const string ones(16, 255);
-      CustomerNameIdxKey(lowkey, warehouse_id, districtID, lastname, zeros);
-      CustomerNameIdxKey(highkey, warehouse_id, districtID, lastname, ones);
-      limit_callback c(-1);
+      CustomerNameIdxKey(lowkey, warehouse_id, districtID,
+          lastname_buf, (const uint8_t *) zeros.data());
+      CustomerNameIdxKey(highkey, warehouse_id, districtID,
+          lastname_buf, (const uint8_t *) ones.data());
+      static_limit_callback<1024> c;
       tbl_customer_name_idx->scan(
           txn, (const char *) lowkey, CustomerNameIdxKeySize,
           (const char *) highkey, CustomerNameIdxKeySize, true, c);
-      ALWAYS_ASSERT(!c.values.empty());
-      int index = c.values.size() / 2;
-      if (c.values.size() % 2 == 0)
+      INVARIANT(c.size() > 0);
+      INVARIANT(c.size() < 1024);
+      int index = c.size() / 2;
+      if (c.size() % 2 == 0)
         index--;
       if (idx_stable_put_mem) {
         customer_name_idx_mem customer_name_idx_mem_temp;
@@ -1676,9 +1743,12 @@ tpcc_worker::txn_order_status()
         CustomerPrimaryKey(customerPK, warehouse_id, districtID, customer_name_idx_nomem->c_id);
         char *customer_v = 0;
         size_t customer_vlen = 0;
-        ALWAYS_ASSERT(tbl_customer->get(
+        if (!tbl_customer->get(
               txn, (const char *) customerPK, CustomerPrimaryKeySize,
-              customer_v, customer_vlen));
+              customer_v, customer_vlen)) {
+          cerr << warehouse_id << ", " << districtID << ", " << customer_name_idx_nomem->c_id << endl;
+          INVARIANT(false);
+        }
         if (!idx_manages_get_mem) mm.manage(customer_v);
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
@@ -1699,6 +1769,8 @@ tpcc_worker::txn_order_status()
       customer = *c;
     }
 
+    // XXX: store last value from client so we don't have to scan
+    // from the beginning
     limit_callback c_oorder(-1);
     uint8_t oorder_lowkey[OOrderPrimaryKeySize], oorder_highkey[OOrderPrimaryKeySize];
     OOrderCIDKey(oorder_lowkey, warehouse_id, districtID, customer.c_id, 0);
@@ -1723,14 +1795,14 @@ tpcc_worker::txn_order_status()
       o_id = oorder_c_id_idx_nomem->o_id;
     }
 
-    limit_callback c_order_line(-1);
+    static_limit_callback<15> c_order_line;
     uint8_t order_line_lowkey[OrderLinePrimaryKeySize], order_line_highkey[OrderLinePrimaryKeySize];
     OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, o_id, 0);
     OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
     tbl_order_line->scan(
         txn, (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
         (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c_order_line);
-    for (size_t i = 0; i < c_order_line.values.size(); i++) {
+    for (size_t i = 0; i < c_order_line.size(); i++) {
       order_line order_line_temp;
       const order_line *order_line UNUSED =
         order_line_enc.read((const uint8_t *) c_order_line.values[i].second.data(), &order_line_temp);
@@ -1769,20 +1841,20 @@ tpcc_worker::txn_stock_level()
       district_enc.read((const uint8_t *) district_v, &district_temp);
 
     // manual joins are fun!
-    limit_callback c(-1);
+    static_limit_callback<20 * 15> c;
     int32_t lower = district->d_next_o_id >= 20 ? (district->d_next_o_id - 20) : 0;
-    uint8_t order_line_lowkey[OrderLinePrimaryKeySize], order_line_highkey[OrderLinePrimaryKeySize];
+    uint8_t order_line_lowkey[OrderLinePrimaryKeySize],
+            order_line_highkey[OrderLinePrimaryKeySize];
     OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, lower, 0);
     OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, district->d_next_o_id, 0);
     tbl_order_line->scan(txn,
         (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
         (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c);
     set<uint> s_i_ids;
-    for (vector<limit_callback::kv_pair>::iterator it = c.values.begin();
-         it != c.values.end(); ++it) {
+    for (size_t i = 0; i < c.size(); i++) {
       order_line order_line_temp;
       const order_line *order_line =
-        order_line_enc.read((const uint8_t *) it->second.data(), &order_line_temp);
+        order_line_enc.read((const uint8_t *) c.values[i].second.data(), &order_line_temp);
       s_i_ids.insert(order_line->ol_i_id);
     }
     set<uint> s_i_ids_distinct;

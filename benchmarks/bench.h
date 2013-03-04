@@ -10,6 +10,7 @@
 
 #include "abstract_db.h"
 #include "../macros.h"
+#include "../static_assert.h"
 #include "../thread.h"
 #include "../util.h"
 #include "../spinbarrier.h"
@@ -199,6 +200,37 @@ public:
   std::vector<kv_pair> values;
 
   const ssize_t limit;
+private:
+  size_t n;
+};
+
+template <size_t N>
+class static_limit_callback : public abstract_ordered_index::scan_callback {
+public:
+  static_limit_callback() : n(0)
+  {
+    _static_assert(N > 0);
+  }
+
+  virtual bool invoke(
+      const char *key, size_t key_len,
+      const char *value, size_t value_len)
+  {
+    INVARIANT(n < N);
+    values[n] = std::make_pair(
+        std::string(key, key_len), std::string(value, value_len));
+    return ++n < N;
+  }
+
+  inline size_t
+  size() const
+  {
+    return n;
+  }
+
+  typedef std::pair<std::string, std::string> kv_pair;
+  kv_pair values[N];
+
 private:
   size_t n;
 };
