@@ -731,6 +731,12 @@ private:
 
   node *volatile root;
 
+#ifdef USE_SMALL_CONTAINER_OPT
+  typedef small_vector<leaf_node *> leaf_node_ptr_vec;
+#else
+  typedef std::vector<leaf_node *> leaf_node_ptr_vec;
+#endif
+
 public:
 
   // XXX(stephentu): trying out a very opaque node API for now
@@ -786,7 +792,7 @@ public:
   inline bool
   search(const key_type &k, value_type &v) const
   {
-    small_vector<leaf_node *> ns;
+    leaf_node_ptr_vec ns;
     scoped_rcu_region rcu_region;
     return search_impl(k, v, ns);
   }
@@ -1117,7 +1123,7 @@ private:
   /**
    * Assumes RCU region scope is held
    */
-  bool search_impl(const key_type &k, value_type &v, small_vector<leaf_node *> &leaf_nodes) const;
+  bool search_impl(const key_type &k, value_type &v, leaf_node_ptr_vec &leaf_nodes) const;
 
   bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent,
                    value_type *old_v, std::pair< const node_opaque_t *, uint64_t > *insert_info);

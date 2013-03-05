@@ -261,7 +261,7 @@ btree::recursive_delete(node *n)
 
 bool
 btree::search_impl(const key_type &k, value_type &v,
-                   small_vector<leaf_node *> &leaf_nodes) const
+                   leaf_node_ptr_vec &leaf_nodes) const
 {
 
 retry:
@@ -553,7 +553,7 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
 {
   if (unlikely(upper && *upper <= lower))
     return;
-  small_vector<leaf_node *> leaf_nodes;
+  leaf_node_ptr_vec leaf_nodes;
   value_type v = 0;
   scoped_rcu_region rcu_region;
   search_impl(lower, v, leaf_nodes);

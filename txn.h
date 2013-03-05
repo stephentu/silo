@@ -762,15 +762,17 @@ protected:
   friend std::ostream &
   operator<<(std::ostream &o, const transaction::read_record_t &rr);
 
-  //typedef std::tr1::unordered_map<string_type, read_record_t> read_set_map;
-  //typedef std::tr1::unordered_map<string_type, string_type> write_set_map;
-  //typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
-  //typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
-
+#ifdef USE_SMALL_CONTAINER_OPT
   typedef small_unordered_map<string_type, read_record_t> read_set_map;
   typedef small_unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef small_unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+#else
+  typedef std::tr1::unordered_map<string_type, read_record_t> read_set_map;
+  typedef std::tr1::unordered_map<string_type, string_type> write_set_map;
+  typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
+  typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+#endif
 
   struct txn_context {
     read_set_map read_set;
@@ -883,7 +885,11 @@ protected:
   abort_reason reason;
   const uint64_t flags;
 
+#ifdef USE_SMALL_CONTAINER_OPT
   typedef small_unordered_map<txn_btree *, txn_context> ctx_map_type;
+#else
+  typedef std::tr1::unordered_map<txn_btree *, txn_context> ctx_map_type;
+#endif
   ctx_map_type ctx_map;
 };
 
