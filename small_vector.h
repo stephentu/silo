@@ -9,7 +9,7 @@
  *
  * XXX(stephentu): allow custom allocator
  */
-template <typename T, size_t SmallSize = 64>
+template <typename T, size_t SmallSize = 128>
 class small_vector {
   typedef std::vector<T> large_vector_type;
 public:
