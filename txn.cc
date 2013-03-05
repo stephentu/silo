@@ -190,7 +190,7 @@ transaction::commit(bool doThrow)
   const pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
   pair<bool, tid_t> commit_tid(false, 0);
 
-  for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
+  for (ctx_map_type::iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it) {
     INVARIANT(!(get_flags() & TXN_FLAG_READ_ONLY) || outer_it->second.write_set.empty());
     for (write_set_map::iterator it = outer_it->second.write_set.begin();
@@ -266,7 +266,7 @@ transaction::commit(bool doThrow)
       VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
 
     // do read validation
-    for (map<txn_btree *, txn_context>::iterator outer_it = ctx_map.begin();
+    for (ctx_map_type::iterator outer_it = ctx_map.begin();
          outer_it != ctx_map.end(); ++outer_it) {
       for (read_set_map::iterator it = outer_it->second.read_set.begin();
            it != outer_it->second.read_set.end(); ++it) {
@@ -475,7 +475,7 @@ transaction::dump_debug_info() const
   cerr << "  Abort Reason: " << AbortReasonStr(reason) << endl;
   cerr << "  Flags: " << transaction_flags_to_str(flags) << endl;
   cerr << "  Read/Write sets:" << endl;
-  for (map<txn_btree *, txn_context>::const_iterator it = ctx_map.begin();
+  for (ctx_map_type::const_iterator it = ctx_map.begin();
        it != ctx_map.end(); ++it) {
     cerr << "    Btree @ " << hexify(it->first) << ":" << endl;
 
@@ -871,7 +871,7 @@ transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
   INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);
 
   tid_t ret = l_last_commit_tid;
-  for (map<txn_btree *, txn_context>::const_iterator outer_it = ctx_map.begin();
+  for (ctx_map_type::const_iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it)
     for (read_set_map::const_iterator it = outer_it->second.read_set.begin();
          it != outer_it->second.read_set.end(); ++it) {

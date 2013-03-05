@@ -882,7 +882,9 @@ protected:
   txn_state state;
   abort_reason reason;
   const uint64_t flags;
-  std::map<txn_btree *, txn_context> ctx_map;
+
+  typedef small_unordered_map<txn_btree *, txn_context> ctx_map_type;
+  ctx_map_type ctx_map;
 };
 
 class transaction_abort_exception : public std::exception {
