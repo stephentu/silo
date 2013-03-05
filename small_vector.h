@@ -150,6 +150,11 @@ private:
   public:
     iterator_() : large(false), p(0) {}
 
+    template <typename O, typename L>
+    iterator_(const iterator_<O, L> &other)
+      : large(other.large), p(other.p)
+    {}
+
     ObjType &
     operator*() const
     {

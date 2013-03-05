@@ -212,6 +212,11 @@ private:
   public:
     iterator_() : large(false), b(0), bend(0) {}
 
+    template <typename S, typename L, typename V>
+    iterator_(const iterator_<S, L, V> &other)
+      : large(other.large), b(other.b), bend(other.bend)
+    {}
+
     ValueType &
     operator*() const
     {
