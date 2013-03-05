@@ -25,7 +25,6 @@
 /** options */
 
 //#define LOCK_OWNERSHIP_CHECKING
-#define BTREE_NODE_ALLOC_CACHE_ALIGNED
 
 /**
  * A concurrent, variable key length b+-tree, optimized for read heavy
