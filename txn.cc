@@ -147,23 +147,6 @@ transaction::~transaction()
   rcu::region_end();
 }
 
-struct lnode_info {
-  lnode_info() {}
-  lnode_info(txn_btree *btr,
-             const txn_btree::string_type *key,
-             bool locked,
-             const txn_btree::string_type *r)
-    : btr(btr),
-      key(key),
-      locked(locked),
-      r(r)
-  {}
-  txn_btree *btr;
-  const txn_btree::string_type *key;
-  bool locked;
-  const txn_btree::string_type *r;
-};
-
 static event_counter evt_logical_node_latest_replacement("logical_node_latest_replacement");
 
 bool
@@ -186,7 +169,7 @@ transaction::commit(bool doThrow)
   }
 
   // fetch logical_nodes for insert
-  map<logical_node *, lnode_info> logical_nodes;
+  typename vec<lnode_pair>::type logical_nodes;
   const pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
   pair<bool, tid_t> commit_tid(false, 0);
 
@@ -199,8 +182,10 @@ transaction::commit(bool doThrow)
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
-        INVARIANT(logical_nodes.find((logical_node *) v) == logical_nodes.end());
-        logical_nodes[(logical_node *) v] = lnode_info(outer_it->first, &it->first, false, &it->second);
+        logical_nodes.push_back(
+            make_pair(
+              (logical_node *) v,
+              lnode_info(outer_it->first, &it->first, false, &it->second)));
       } else {
         logical_node *ln = logical_node::alloc_first(it->second.size());
         // XXX: underlying btree api should return the existing value if
@@ -229,8 +214,9 @@ transaction::commit(bool doThrow)
             SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
           }
         }
-        INVARIANT(logical_nodes.find(ln) == logical_nodes.end());
-        logical_nodes[ln] = lnode_info(outer_it->first, &it->first, false, &it->second);
+        logical_nodes.push_back(
+            make_pair(
+              ln, lnode_info(outer_it->first, &it->first, false, &it->second)));
       }
     }
   }
@@ -239,9 +225,8 @@ transaction::commit(bool doThrow)
     // we don't have consistent tids, or not a read-only txn
 
     // lock the logical nodes in sort order
-    typename vec<logical_node *>::type lnodes;
-    lnodes.reserve(logical_nodes.size());
-    for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
+    sort(logical_nodes.begin(), logical_nodes.end(), LNodeComp());
+    for (typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
       VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
       it->first->lock();
@@ -253,13 +238,12 @@ transaction::commit(bool doThrow)
         abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
         goto do_abort;
       }
-      lnodes.push_back(it->first);
     }
 
     // acquire commit tid (if not read-only txn)
     if (!logical_nodes.empty()) {
       commit_tid.first = true;
-      commit_tid.second = gen_commit_tid(lnodes);
+      commit_tid.second = gen_commit_tid(logical_nodes);
     }
 
     if (logical_nodes.empty())
@@ -346,7 +330,7 @@ transaction::commit(bool doThrow)
     }
 
     // commit actual records
-    for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
+    for (typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
       INVARIANT(it->second.locked);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
@@ -389,7 +373,7 @@ do_abort:
     VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
     VERBOSE(cerr << "aborting txn" << endl);
-  for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
+  for (typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
        it != logical_nodes.end(); ++it)
     if (it->second.locked)
       it->first->unlock();
@@ -744,7 +728,7 @@ transaction_proto1::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto1::gen_commit_tid(const typename vec<logical_node *>::type &write_nodes)
+transaction_proto1::gen_commit_tid(const typename vec<lnode_pair>::type &write_nodes)
 {
   return incr_and_get_global_tid();
 }
@@ -863,7 +847,7 @@ transaction_proto2::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto2::gen_commit_tid(const typename vec<logical_node *>::type &write_nodes)
+transaction_proto2::gen_commit_tid(const typename vec<lnode_pair>::type &write_nodes)
 {
   const size_t my_core_id = coreid::core_id();
   const tid_t l_last_commit_tid = tl_last_commit_tid;
@@ -882,11 +866,11 @@ transaction_proto2::gen_commit_tid(const typename vec<logical_node *>::type &wri
       if (it->second.t > ret)
         ret = it->second.t;
     }
-  for (typename vec<logical_node *>::type::const_iterator it = write_nodes.begin();
+  for (typename vec<lnode_pair>::type::const_iterator it = write_nodes.begin();
        it != write_nodes.end(); ++it) {
-    INVARIANT((*it)->is_locked());
-    INVARIANT((*it)->is_latest());
-    const tid_t t = (*it)->version;
+    INVARIANT(it->first->is_locked());
+    INVARIANT(it->first->is_latest());
+    const tid_t t = it->first->version;
     // XXX(stephentu): we are overly conservative for now- technically this
     // abort isn't necessary (we really should just write the value in the correct
     // position)

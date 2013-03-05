@@ -713,13 +713,39 @@ protected:
 
   void abort_impl(abort_reason r);
 
+  struct lnode_info {
+    lnode_info() {}
+    lnode_info(txn_btree *btr,
+               const string_type *key,
+               bool locked,
+               const string_type *r)
+      : btr(btr),
+        key(key),
+        locked(locked),
+        r(r)
+    {}
+    txn_btree *btr;
+    const string_type *key;
+    bool locked;
+    const string_type *r;
+  };
+  typedef std::pair<logical_node *, lnode_info> lnode_pair;
+
+  struct LNodeComp {
+  inline ALWAYS_INLINE bool
+  operator()(const lnode_pair &lhs, const lnode_pair &rhs) const
+  {
+    return lhs.first < rhs.first;
+  }
+  };
+
   /**
    * create a new, unique TID for a txn. at the point which gen_commit_tid(),
    * it still has not been decided whether or not this txn will commit
    * successfully
    */
   virtual tid_t gen_commit_tid(
-      const typename util::vec<logical_node *>::type &write_nodes) = 0;
+      const typename util::vec<lnode_pair>::type &write_nodes) = 0;
 
   virtual bool can_read_tid(tid_t t) const { return true; }
 
@@ -923,7 +949,7 @@ protected:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
 
   virtual tid_t gen_commit_tid(
-      const typename util::vec<logical_node *>::type &write_nodes);
+      const typename util::vec<lnode_pair>::type &write_nodes);
   virtual void on_logical_node_spill(
       txn_btree *btr, const string_type &key, logical_node *ln);
   virtual void on_logical_delete(
@@ -999,7 +1025,7 @@ public:
 
 protected:
   virtual tid_t gen_commit_tid(
-      const typename util::vec<logical_node *>::type &write_nodes);
+      const typename util::vec<lnode_pair>::type &write_nodes);
 
   // can only read elements in this epoch or previous epochs
   virtual bool
