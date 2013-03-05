@@ -58,7 +58,7 @@ public:
     if (unlikely(large_elems))
       return large_elems->front();
     INVARIANT(n > 0);
-    INVARIANT(n <= N);
+    INVARIANT(n <= SmallSize);
     return *ptr();
   }
 
@@ -74,7 +74,7 @@ public:
     if (unlikely(large_elems))
       return large_elems->back();
     INVARIANT(n > 0);
-    INVARIANT(n <= N);
+    INVARIANT(n <= SmallSize);
     return ptr()[n - 1];
   }
 
