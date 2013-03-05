@@ -230,6 +230,28 @@ Test()
     assert_vecs_equal(v, stl_v);
   }
 
+  {
+    small_vector<int, 3> v;
+    v.push_back(10);
+    v.push_back(2);
+    v.push_back(5);
+    v.push_back(7);
+    v.push_back(3);
+    v.push_back(100);
+    sort(v.begin(), v.end());
+
+    vector<int> stl_v;
+    stl_v.push_back(10);
+    stl_v.push_back(2);
+    stl_v.push_back(5);
+    stl_v.push_back(7);
+    stl_v.push_back(3);
+    stl_v.push_back(100);
+    sort(stl_v.begin(), stl_v.end());
+
+    assert_vecs_equal(v, stl_v);
+  }
+
   cout << "vec test passed" << endl;
 }
 
