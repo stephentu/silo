@@ -11,7 +11,7 @@
  * For under SmallSize, uses linear probing on a fixed size array. Otherwise,
  * delegates to a regular std::unordered_map
  *
- * XXX(stpehentu): allow custom allocator
+ * XXX(stephentu): allow custom allocator
  */
 template <typename Key,
           typename T,
@@ -62,7 +62,10 @@ private:
     construct(const key_type &k, const mapped_type &v)
     {
       INVARIANT(!mapped);
-      new (&buf[0]) bucket_value_type(k, v);
+      // directly construct into pair (is safe for pair), bypassing
+      // pair ctor
+      new (&ref().first)  key_type(k);
+      new (&ref().second) mapped_type(v);
       mapped = true;
     }
 

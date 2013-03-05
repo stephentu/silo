@@ -6,6 +6,8 @@
 
 /**
  * References are not guaranteed to be stable across mutation
+ *
+ * XXX(stephentu): allow custom allocator
  */
 template <typename T, size_t SmallSize = 128>
 class small_vector {
