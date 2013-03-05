@@ -295,7 +295,7 @@ process:
       // XXX: maybe we can only retry at the parent of this node, not the
       // root node of the b-tree *layer*
       goto retry;
-    if (leaf_node *leaf = AsLeafCheck(cur)) {
+    if (leaf_node *leaf = AsLeafCheck(cur, version)) {
       key_search_ret kret = leaf->key_search(kslice, kslicelen);
       ssize_t ret = kret.first;
       if (ret != -1) {

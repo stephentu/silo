@@ -56,14 +56,16 @@
 // XXX: would be nice if we checked these during single threaded execution
 #define SINGLE_THREADED_INVARIANT(expr) ((void)0)
 
+#define always_prefetch(n) \
+  do { \
+    __builtin_prefetch(((uint8_t *)n)); \
+    __builtin_prefetch(((uint8_t *)n) + 1 * CACHELINE_SIZE); \
+    __builtin_prefetch(((uint8_t *)n) + 2 * CACHELINE_SIZE); \
+    __builtin_prefetch(((uint8_t *)n) + 3 * CACHELINE_SIZE); \
+  } while (0)
+
 #ifdef NODE_PREFETCH
-  #define prefetch_node(n) \
-    do { \
-      __builtin_prefetch(((uint8_t *)n)); \
-      __builtin_prefetch(((uint8_t *)n) + 1 * CACHELINE_SIZE); \
-      __builtin_prefetch(((uint8_t *)n) + 2 * CACHELINE_SIZE); \
-      __builtin_prefetch(((uint8_t *)n) + 3 * CACHELINE_SIZE); \
-    } while (0)
+  #define prefetch_node(n) always_prefetch(n)
 #else
   #define prefetch_node(n) ((void)0)
 #endif /* NODE_PREFETCH */

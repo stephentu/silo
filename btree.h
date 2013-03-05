@@ -680,10 +680,22 @@ private:
     return AsInternal(const_cast<node *>(n));
   }
 
+  static inline leaf_node *
+  AsLeafCheck(node *n, uint64_t v)
+  {
+    return likely(n) && node::IsLeafNode(v) ? static_cast<leaf_node *>(n) : NULL;
+  }
+
   static inline leaf_node*
   AsLeafCheck(node *n)
   {
     return likely(n) && n->is_leaf_node() ? static_cast<leaf_node *>(n) : NULL;
+  }
+
+  static inline const leaf_node*
+  AsLeafCheck(const node *n, uint64_t v)
+  {
+    return AsLeafCheck(const_cast<node *>(n), v);
   }
 
   static inline const leaf_node*
