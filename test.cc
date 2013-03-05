@@ -8,6 +8,7 @@
 #include "txn_btree.h"
 #include "varint.h"
 #include "xbuf.h"
+#include "small_vector.h"
 #include "small_unordered_map.h"
 
 using namespace std;
@@ -47,6 +48,130 @@ XbufTest()
   ALWAYS_ASSERT(t0 == xbuf("aaaaa"));
 
   cout << xbuf("xbuf test passed") << endl;
+}
+
+namespace small_vector_ns {
+
+typedef small_vector<string, 4> vec_type;
+typedef vector<string> stl_vec_type;
+
+template <typename VecType>
+static void
+init_vec0(VecType &v)
+{
+  ALWAYS_ASSERT(v.empty());
+  ALWAYS_ASSERT(v.size() == 0);
+
+  v.push_back("a");
+  ALWAYS_ASSERT(!v.empty());
+  ALWAYS_ASSERT(v.size() == 1);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "a");
+
+  v.push_back("b");
+  ALWAYS_ASSERT(v.size() == 2);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "b");
+
+  v.push_back("c");
+  ALWAYS_ASSERT(v.size() == 3);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "c");
+
+  v.push_back("d");
+  ALWAYS_ASSERT(v.size() == 4);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "d");
+}
+
+template <typename VecType>
+static void
+init_vec1(VecType &v)
+{
+  ALWAYS_ASSERT(v.empty());
+  ALWAYS_ASSERT(v.size() == 0);
+
+  v.push_back("a");
+  ALWAYS_ASSERT(!v.empty());
+  ALWAYS_ASSERT(v.size() == 1);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "a");
+
+  v.push_back("b");
+  ALWAYS_ASSERT(v.size() == 2);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "b");
+
+  v.push_back("c");
+  ALWAYS_ASSERT(v.size() == 3);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "c");
+
+  v.push_back("d");
+  ALWAYS_ASSERT(v.size() == 4);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "d");
+
+  v.push_back("e");
+  ALWAYS_ASSERT(v.size() == 5);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "e");
+
+  v.push_back("f");
+  ALWAYS_ASSERT(v.size() == 6);
+  ALWAYS_ASSERT(v.front() == "a");
+  ALWAYS_ASSERT(v.back() == "f");
+}
+
+static void
+assert_vecs_equal(vec_type &v, const stl_vec_type &stl_v)
+{
+  ALWAYS_ASSERT(v.size() == stl_v.size());
+  stl_vec_type tmp(v.begin(), v.end());
+  ALWAYS_ASSERT(tmp == stl_v);
+  const vec_type &cv = v;
+  stl_vec_type tmp1(cv.begin(), cv.end());
+  ALWAYS_ASSERT(tmp1 == stl_v);
+}
+
+static void
+Test()
+{
+  {
+    vec_type v;
+    stl_vec_type stl_v;
+    init_vec0(v);
+    init_vec0(stl_v);
+    vec_type v_copy(v);
+    vec_type v_assign;
+    ALWAYS_ASSERT(v_assign.empty());
+    v_assign = v;
+    assert_vecs_equal(v, stl_v);
+    assert_vecs_equal(v_copy, stl_v);
+    assert_vecs_equal(v_assign, stl_v);
+    v.clear();
+    assert_vecs_equal(v, stl_vec_type());
+  }
+
+  {
+    vec_type v;
+    stl_vec_type stl_v;
+    init_vec1(v);
+    init_vec1(stl_v);
+    vec_type v_copy(v);
+    vec_type v_assign;
+    ALWAYS_ASSERT(v_assign.empty());
+    v_assign = v;
+    assert_vecs_equal(v, stl_v);
+    assert_vecs_equal(v_copy, stl_v);
+    assert_vecs_equal(v_assign, stl_v);
+    v.clear();
+    assert_vecs_equal(v, stl_vec_type());
+  }
+
+  cout << "vec test passed" << endl;
+}
+
 }
 
 namespace small_map_ns {
@@ -238,6 +363,7 @@ public:
 #endif
     XbufTest();
     varint::Test();
+    small_vector_ns::Test();
     small_map_ns::Test();
     //transaction::Test();
     btree::TestFast();

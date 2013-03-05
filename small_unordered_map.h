@@ -11,7 +11,6 @@
  * For under SmallSize, uses linear probing on a fixed size array. Otherwise,
  * delegates to a regular std::unordered_map
  *
- * XXX(stephentu): Has imprecise destructor semantics. should fix this
  * XXX(stpehentu): allow custom allocator
  */
 template <typename Key,
