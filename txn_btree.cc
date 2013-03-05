@@ -106,8 +106,8 @@ txn_btree::txn_search_range_callback::invoke(
     VERBOSE(cerr << "  range: " << r << endl);
     if (!r.is_empty_range())
       ctx->add_absent_range(r);
+    prev_key = k;
   }
-  prev_key = k;
   invoked = true;
   value_type local_v = 0;
   size_type local_sz = 0;
@@ -118,7 +118,7 @@ txn_btree::txn_search_range_callback::invoke(
     INVARIANT(local_sz > 0);
     ret = caller_callback->invoke(k, local_v, local_sz);
   }
-  transaction::read_set_map::const_iterator it;
+  transaction::read_set_map::iterator it;
   if (!local_read || ((it = ctx->read_set.find(k)) == ctx->read_set.end())) {
     transaction::logical_node *ln = (transaction::logical_node *) v;
     INVARIANT(ln);

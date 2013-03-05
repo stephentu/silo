@@ -27,6 +27,7 @@
 #include "rcu.h"
 #include "thread.h"
 #include "spinlock.h"
+#include "small_unordered_map.h"
 
 // just a debug option to help track down a particular
 // race condition
@@ -761,10 +762,15 @@ protected:
   friend std::ostream &
   operator<<(std::ostream &o, const transaction::read_record_t &rr);
 
-  typedef std::tr1::unordered_map<string_type, read_record_t> read_set_map;
-  typedef std::tr1::unordered_map<string_type, string_type> write_set_map;
+  //typedef std::tr1::unordered_map<string_type, read_record_t> read_set_map;
+  //typedef std::tr1::unordered_map<string_type, string_type> write_set_map;
+  //typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
+  //typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+
+  typedef small_unordered_map<string_type, read_record_t> read_set_map;
+  typedef small_unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
-  typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+  typedef small_unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 
   struct txn_context {
     read_set_map read_set;

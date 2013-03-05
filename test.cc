@@ -8,6 +8,7 @@
 #include "txn_btree.h"
 #include "varint.h"
 #include "xbuf.h"
+#include "small_unordered_map.h"
 
 using namespace std;
 using namespace tr1;
@@ -45,8 +46,181 @@ XbufTest()
   t0.resize(5);
   ALWAYS_ASSERT(t0 == xbuf("aaaaa"));
 
-
   cout << xbuf("xbuf test passed") << endl;
+}
+
+namespace small_map_ns {
+
+typedef small_unordered_map<string, string, 4> map_type;
+typedef map<string, string> stl_map_type;
+
+static void
+assert_map_contains(map_type &m, const string &k, const string &v)
+{
+  ALWAYS_ASSERT(!m.empty());
+  ALWAYS_ASSERT(m[k] == v);
+  {
+    map_type::iterator it = m.find(k);
+    ALWAYS_ASSERT(it != m.end());
+    ALWAYS_ASSERT(it->first == k);
+    ALWAYS_ASSERT(it->second == v);
+  }
+  const map_type &const_m = m;
+  {
+    map_type::const_iterator it = const_m.find(k);
+    ALWAYS_ASSERT(it != const_m.end());
+    ALWAYS_ASSERT(it->first == k);
+    ALWAYS_ASSERT(it->second == v);
+  }
+}
+
+static void
+assert_map_equals(map_type &m, const stl_map_type &stl_m)
+{
+  ALWAYS_ASSERT(m.size() == stl_m.size());
+
+  // reg version prefix
+  {
+    stl_map_type test;
+    for (map_type::iterator it = m.begin();
+         it != m.end(); ++it) {
+      ALWAYS_ASSERT(test.find(it->first) == test.end());
+      test[it->first] = it->second;
+    }
+    ALWAYS_ASSERT(test == stl_m);
+  }
+
+  // reg version postfix
+  {
+    stl_map_type test;
+    for (map_type::iterator it = m.begin();
+         it != m.end(); it++) {
+      ALWAYS_ASSERT(test.find(it->first) == test.end());
+      test[it->first] = it->second;
+    }
+    ALWAYS_ASSERT(test == stl_m);
+  }
+
+  // const version prefix
+  {
+    const map_type &const_m = m;
+    stl_map_type test;
+    for (map_type::const_iterator it = const_m.begin();
+         it != const_m.end(); ++it) {
+      ALWAYS_ASSERT(test.find(it->first) == test.end());
+      test[it->first] = it->second;
+    }
+    ALWAYS_ASSERT(test == stl_m);
+  }
+
+  // const version postfix
+  {
+    const map_type &const_m = m;
+    stl_map_type test;
+    for (map_type::const_iterator it = const_m.begin();
+         it != const_m.end(); it++) {
+      ALWAYS_ASSERT(test.find(it->first) == test.end());
+      test[it->first] = it->second;
+    }
+    ALWAYS_ASSERT(test == stl_m);
+  }
+}
+
+template <typename T>
+static void
+init_map(T& m)
+{
+  m["a"] = "1";
+  m["b"] = "2";
+  m["c"] = "3";
+  m["d"] = "4";
+}
+
+template <typename T>
+static void
+init_map1(T& m)
+{
+  m["a"] = "1";
+  m["b"] = "2";
+  m["c"] = "3";
+  m["d"] = "4";
+  m["e"] = "5";
+  m["f"] = "6";
+}
+
+void
+Test()
+{
+  {
+    map_type m, m_copy;
+    stl_map_type stl_m;
+    init_map(m);
+    init_map(stl_m);
+    m_copy = m;
+    map_type m_construct(m);
+    for (stl_map_type::iterator it = stl_m.begin();
+         it != stl_m.end(); ++it) {
+      assert_map_contains(m, it->first, it->second);
+      assert_map_contains(m_copy, it->first, it->second);
+    }
+    assert_map_equals(m, stl_m);
+    assert_map_equals(m_copy, stl_m);
+    assert_map_equals(m_construct, stl_m);
+  }
+
+  {
+    map_type m, m_copy;
+    stl_map_type stl_m;
+    init_map1(m);
+    init_map1(stl_m);
+    m_copy = m;
+    map_type m_construct(m);
+    for (stl_map_type::iterator it = stl_m.begin();
+         it != stl_m.end(); ++it) {
+      assert_map_contains(m, it->first, it->second);
+      assert_map_contains(m_copy, it->first, it->second);
+    }
+    assert_map_equals(m, stl_m);
+    assert_map_equals(m_copy, stl_m);
+    assert_map_equals(m_construct, stl_m);
+  }
+
+  {
+    map_type m;
+    ALWAYS_ASSERT(m.empty());
+    ALWAYS_ASSERT(m.size() == 0);
+    m["a"] = "1";
+    ALWAYS_ASSERT(!m.empty());
+    ALWAYS_ASSERT(m.size() == 1);
+    m["b"] = "2";
+    ALWAYS_ASSERT(!m.empty());
+    ALWAYS_ASSERT(m.size() == 2);
+    m["b"] = "2";
+    ALWAYS_ASSERT(!m.empty());
+    ALWAYS_ASSERT(m.size() == 2);
+    m["c"] = "3";
+    ALWAYS_ASSERT(!m.empty());
+    ALWAYS_ASSERT(m.size() == 3);
+    m["d"] = "4";
+    ALWAYS_ASSERT(!m.empty());
+    ALWAYS_ASSERT(m.size() == 4);
+
+    m.clear();
+    ALWAYS_ASSERT(m.empty());
+    ALWAYS_ASSERT(m.size() == 0);
+    m["a"] = "1";
+    m["b"] = "2";
+    m["c"] = "3";
+    m["d"] = "4";
+    m["d"] = "4";
+    m["d"] = "4";
+    m["e"] = "5";
+    ALWAYS_ASSERT(!m.empty());
+    ALWAYS_ASSERT(m.size() == 5);
+  }
+
+  cout << "map test passed" << endl;
+}
 }
 
 class main_thread : public ndb_thread {
@@ -64,9 +238,10 @@ public:
 #endif
     XbufTest();
     varint::Test();
+    small_map_ns::Test();
     //transaction::Test();
     btree::TestFast();
-    btree::TestSlow();
+    //btree::TestSlow();
     txn_btree::Test();
     ret = 0;
   }
