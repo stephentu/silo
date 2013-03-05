@@ -261,7 +261,7 @@ btree::recursive_delete(node *n)
 
 bool
 btree::search_impl(const key_type &k, value_type &v,
-                   leaf_node_ptr_vec &leaf_nodes) const
+                   typename vec<leaf_node *>::type &leaf_nodes) const
 {
 
 retry:
@@ -438,7 +438,7 @@ btree::search_range_at_layer(
   while (!upper || next_key <= upper_slice) {
     prefetch_node(leaf);
 
-    vector<leaf_kvinfo> buf;
+    typename vec<leaf_kvinfo>::type buf;
     uint64_t version = leaf->stable_version();
     key_slice leaf_min_key = leaf->min_key;
     if (leaf_min_key > next_key) {
@@ -553,7 +553,7 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
 {
   if (unlikely(upper && *upper <= lower))
     return;
-  leaf_node_ptr_vec leaf_nodes;
+  typename vec<leaf_node *>::type leaf_nodes;
   value_type v = 0;
   scoped_rcu_region rcu_region;
   search_impl(lower, v, leaf_nodes);
@@ -588,8 +588,9 @@ btree::insert_impl(node **root_location, const key_type &k, value_type v,
 retry:
   key_slice mk;
   node *ret;
+  //typename vec<insert_parent_entry>::type parents;
   vector<insert_parent_entry> parents;
-  vector<node *> locked_nodes;
+  typename vec<node *>::type locked_nodes;
   scoped_rcu_region rcu_region;
   node *local_root = *root_location;
   insert_status status =
@@ -638,8 +639,9 @@ btree::remove_impl(node **root_location, const key_type &k, value_type *old_v)
 retry:
   key_slice new_key;
   node *replace_node = NULL;
+  //typename vec<remove_parent_entry>::type parents;
   vector<remove_parent_entry> parents;
-  vector<node *> locked_nodes;
+  typename vec<node *>::type locked_nodes;
   scoped_rcu_region rcu_region;
   node *local_root = *root_location;
   remove_status status = remove0(local_root,
@@ -766,8 +768,9 @@ btree::insert0(node *np,
                pair< const node_opaque_t *, uint64_t > *insert_info,
                key_slice &min_key,
                node *&new_node,
+               //typename vec<insert_parent_entry>::type &parents,
                vector<insert_parent_entry> &parents,
-               vector<node *> &locked_nodes)
+               typename vec<node *>::type &locked_nodes)
 {
   uint64_t kslice = k.slice();
   size_t kslicelen = min(k.size(), size_t(9));
@@ -1245,8 +1248,9 @@ btree::remove0(node *np,
                node *right_node,
                key_slice &new_key,
                node *&replace_node,
+               //typename vec<remove_parent_entry>::type &parents,
                vector<remove_parent_entry> &parents,
-               vector<node *> &locked_nodes)
+               typename vec<node *>::type &locked_nodes)
 {
   uint64_t kslice = k.slice();
   size_t kslicelen = min(k.size(), size_t(9));
