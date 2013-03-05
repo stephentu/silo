@@ -134,6 +134,21 @@ assert_vecs_equal(vec_type &v, const stl_vec_type &stl_v)
   ALWAYS_ASSERT(tmp1 == stl_v);
 }
 
+struct foo {
+  int a;
+  int b;
+  int c;
+  int d;
+
+  foo()
+    : a(), b(), c(), d()
+  {}
+
+  foo(int a, int b, int c, int d)
+    : a(a), b(b), c(c), d(d)
+  {}
+};
+
 static void
 Test()
 {
@@ -167,6 +182,29 @@ Test()
     assert_vecs_equal(v_assign, stl_v);
     v.clear();
     assert_vecs_equal(v, stl_vec_type());
+  }
+
+  {
+    for (int iter = 0; iter < 10; iter++) {
+      small_vector<foo> v;
+      for (int i = 0; i < 20; i++) {
+        v.push_back(foo(i, i + 1, i + 2, i + 3));
+        ALWAYS_ASSERT(v.back().a == i);
+        ALWAYS_ASSERT(v.back().b == (i + 1));
+        ALWAYS_ASSERT(v.back().c == (i + 2));
+        ALWAYS_ASSERT(v.back().d == (i + 3));
+        ALWAYS_ASSERT(v[i].a == i);
+        ALWAYS_ASSERT(v[i].b == (i + 1));
+        ALWAYS_ASSERT(v[i].c == (i + 2));
+        ALWAYS_ASSERT(v[i].d == (i + 3));
+      }
+      for (int i = 0; i < 20; i++) {
+        ALWAYS_ASSERT(v[i].a == i);
+        ALWAYS_ASSERT(v[i].b == (i + 1));
+        ALWAYS_ASSERT(v[i].c == (i + 2));
+        ALWAYS_ASSERT(v[i].d == (i + 3));
+      }
+    }
   }
 
   cout << "vec test passed" << endl;

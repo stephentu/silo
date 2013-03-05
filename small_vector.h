@@ -9,7 +9,7 @@
  *
  * XXX(stephentu): allow custom allocator
  */
-template <typename T, size_t SmallSize = 128>
+template <typename T, size_t SmallSize = 64>
 class small_vector {
   typedef std::vector<T> large_vector_type;
 public:
@@ -119,7 +119,7 @@ public:
   {
     if (unlikely(large_elems))
       return large_elems->operator[](i);
-    return ptr()[n];
+    return ptr()[i];
   }
 
   inline const_reference
