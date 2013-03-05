@@ -716,18 +716,18 @@ protected:
   struct lnode_info {
     lnode_info() {}
     lnode_info(txn_btree *btr,
-               const string_type *key,
+               const string_type &key,
                bool locked,
-               const string_type *r)
+               const string_type &r)
       : btr(btr),
         key(key),
         locked(locked),
         r(r)
     {}
     txn_btree *btr;
-    const string_type *key;
+    string_type key;
     bool locked;
-    const string_type *r;
+    string_type r;
   };
   typedef std::pair<logical_node *, lnode_info> lnode_pair;
 

@@ -185,7 +185,7 @@ transaction::commit(bool doThrow)
         logical_nodes.push_back(
             make_pair(
               (logical_node *) v,
-              lnode_info(outer_it->first, &it->first, false, &it->second)));
+              lnode_info(outer_it->first, it->first, false, it->second)));
       } else {
         logical_node *ln = logical_node::alloc_first(it->second.size());
         // XXX: underlying btree api should return the existing value if
@@ -216,7 +216,7 @@ transaction::commit(bool doThrow)
         }
         logical_nodes.push_back(
             make_pair(
-              ln, lnode_info(outer_it->first, &it->first, false, &it->second)));
+              ln, lnode_info(outer_it->first, it->first, false, it->second)));
       }
     }
   }
@@ -337,14 +337,14 @@ transaction::commit(bool doThrow)
                    << " at commit_tid " << commit_tid.second << endl);
       const logical_node::write_record_ret ret = it->first->write_record_at(
           this, commit_tid.second,
-          (const record_type) it->second.r->data(), it->second.r->size());
+          (const record_type) it->second.r.data(), it->second.r.size());
       lock_guard<logical_node> guard(ret.second);
       if (unlikely(ret.second)) {
         // need to unlink it->first from underlying btree, replacing
         // with ret.second (atomically)
         btree::value_type old_v = 0;
         if (it->second.btr->underlying_btree.insert(
-              varkey(*it->second.key), (btree::value_type) ret.second, &old_v, NULL))
+              varkey(it->second.key), (btree::value_type) ret.second, &old_v, NULL))
           // should already exist in tree
           INVARIANT(false);
         INVARIANT(old_v == (btree::value_type) it->first);
@@ -353,10 +353,10 @@ transaction::commit(bool doThrow)
       logical_node *latest = ret.second ? ret.second : it->first;
       if (unlikely(ret.first))
         // spill happened: signal for GC
-        on_logical_node_spill(it->second.btr, *it->second.key, latest);
-      if (it->second.r->empty())
+        on_logical_node_spill(it->second.btr, it->second.key, latest);
+      if (it->second.r.empty())
         // logical delete happened: schedule physical deletion
-        on_logical_delete(it->second.btr, *it->second.key, latest);
+        on_logical_delete(it->second.btr, it->second.key, latest);
       it->first->unlock();
     }
   }
