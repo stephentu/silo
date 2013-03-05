@@ -262,7 +262,7 @@ private:
     operator-(int n) const
     {
       iterator_ cpy = *this;
-      return cpy += n;
+      return cpy -= n;
     }
 
     inline intptr_t
