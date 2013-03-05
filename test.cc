@@ -13,6 +13,7 @@
 
 using namespace std;
 using namespace tr1;
+using namespace util;
 
 void
 XbufTest()
@@ -150,6 +151,15 @@ struct foo {
   {}
 };
 
+struct PComp {
+  inline bool
+  operator()(const pair<uint32_t, uint32_t> &a,
+             const pair<uint32_t, uint32_t> &b) const
+  {
+    return a.first < b.first;
+  }
+};
+
 static void
 Test()
 {
@@ -250,6 +260,22 @@ Test()
     sort(stl_v.begin(), stl_v.end());
 
     assert_vecs_equal(v, stl_v);
+  }
+
+  {
+    fast_random r(29395);
+    small_vector< pair<uint32_t, uint32_t> > v;
+    vector< pair<uint32_t, uint32_t> > stl_v;
+    for (size_t i = 0; i < 48; i++) {
+      uint32_t x = r.next();
+      v.push_back(make_pair(x, x + 1));
+      stl_v.push_back(make_pair(x, x + 1));
+    }
+    sort(v.begin(), v.end(), PComp());
+    sort(stl_v.begin(), stl_v.end(), PComp());
+    assert_vecs_equal(v, stl_v);
+    for (size_t i = 0; i < 48; i++)
+      ALWAYS_ASSERT(v[i].first + 1 == v[i].second);
   }
 
   cout << "vec test passed" << endl;
