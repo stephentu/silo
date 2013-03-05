@@ -199,6 +199,7 @@ transaction::commit(bool doThrow)
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
+        INVARIANT(logical_nodes.find((logical_node *) v) == logical_nodes.end());
         logical_nodes[(logical_node *) v] = lnode_info(outer_it->first, &it->first, false, &it->second);
       } else {
         logical_node *ln = logical_node::alloc_first(it->second.size());
@@ -228,6 +229,7 @@ transaction::commit(bool doThrow)
             SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
           }
         }
+        INVARIANT(logical_nodes.find(ln) == logical_nodes.end());
         logical_nodes[ln] = lnode_info(outer_it->first, &it->first, false, &it->second);
       }
     }
@@ -237,7 +239,7 @@ transaction::commit(bool doThrow)
     // we don't have consistent tids, or not a read-only txn
 
     // lock the logical nodes in sort order
-    vector<logical_node *> lnodes;
+    typename vec<logical_node *>::type lnodes;
     lnodes.reserve(logical_nodes.size());
     for (map<logical_node *, lnode_info>::iterator it = logical_nodes.begin();
          it != logical_nodes.end(); ++it) {
@@ -742,7 +744,7 @@ transaction_proto1::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto1::gen_commit_tid(const vector<logical_node *> &write_nodes)
+transaction_proto1::gen_commit_tid(const typename vec<logical_node *>::type &write_nodes)
 {
   return incr_and_get_global_tid();
 }
@@ -861,7 +863,7 @@ transaction_proto2::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
+transaction_proto2::gen_commit_tid(const typename vec<logical_node *>::type &write_nodes)
 {
   const size_t my_core_id = coreid::core_id();
   const tid_t l_last_commit_tid = tl_last_commit_tid;
@@ -880,7 +882,7 @@ transaction_proto2::gen_commit_tid(const vector<logical_node *> &write_nodes)
       if (it->second.t > ret)
         ret = it->second.t;
     }
-  for (vector<logical_node *>::const_iterator it = write_nodes.begin();
+  for (typename vec<logical_node *>::type::const_iterator it = write_nodes.begin();
        it != write_nodes.end(); ++it) {
     INVARIANT((*it)->is_locked());
     INVARIANT((*it)->is_latest());

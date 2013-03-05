@@ -719,7 +719,7 @@ protected:
    * successfully
    */
   virtual tid_t gen_commit_tid(
-      const std::vector<logical_node *> &write_nodes) = 0;
+      const typename util::vec<logical_node *>::type &write_nodes) = 0;
 
   virtual bool can_read_tid(tid_t t) const { return true; }
 
@@ -923,7 +923,7 @@ protected:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
 
   virtual tid_t gen_commit_tid(
-      const std::vector<logical_node *> &write_nodes);
+      const typename util::vec<logical_node *>::type &write_nodes);
   virtual void on_logical_node_spill(
       txn_btree *btr, const string_type &key, logical_node *ln);
   virtual void on_logical_delete(
@@ -999,7 +999,7 @@ public:
 
 protected:
   virtual tid_t gen_commit_tid(
-      const std::vector<logical_node *> &write_nodes);
+      const typename util::vec<logical_node *>::type &write_nodes);
 
   // can only read elements in this epoch or previous epochs
   virtual bool

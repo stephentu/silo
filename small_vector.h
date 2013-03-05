@@ -142,20 +142,27 @@ public:
     n = 0;
   }
 
+  inline void
+  reserve(size_t n)
+  {
+    if (unlikely(large_elems))
+      large_elems->reserve(n);
+  }
+
 private:
 
   template <typename ObjType, typename LargeTypeIter>
   class iterator_ : public std::iterator<std::forward_iterator_tag, ObjType> {
     friend class small_vector;
   public:
-    iterator_() : large(false), p(0) {}
+    inline iterator_() : large(false), p(0) {}
 
     template <typename O, typename L>
-    iterator_(const iterator_<O, L> &other)
+    inline iterator_(const iterator_<O, L> &other)
       : large(other.large), p(other.p)
     {}
 
-    ObjType &
+    inline ObjType &
     operator*() const
     {
       if (unlikely(large))
@@ -163,7 +170,7 @@ private:
       return *p;
     }
 
-    ObjType *
+    inline ObjType *
     operator->() const
     {
       if (unlikely(large))
@@ -171,7 +178,7 @@ private:
       return p;
     }
 
-    bool
+    inline bool
     operator==(const iterator_ &o) const
     {
       if (unlikely(large && o.large))
@@ -181,13 +188,13 @@ private:
       return false;
     }
 
-    bool
+    inline bool
     operator!=(const iterator_ &o) const
     {
       return !operator==(o);
     }
 
-    iterator_ &
+    inline iterator_ &
     operator++()
     {
       if (unlikely(large)) {
@@ -198,7 +205,7 @@ private:
       return *this;
     }
 
-    iterator_
+    inline iterator_
     operator++(int)
     {
       iterator_ cur = *this;
@@ -229,7 +236,7 @@ public:
       const T, typename large_vector_type::const_iterator>
     const_iterator;
 
-  iterator
+  inline iterator
   begin()
   {
     if (unlikely(large_elems))
@@ -237,7 +244,7 @@ public:
     return iterator(ptr());
   }
 
-  const_iterator
+  inline const_iterator
   begin() const
   {
     if (unlikely(large_elems))
@@ -245,7 +252,7 @@ public:
     return const_iterator(ptr());
   }
 
-  iterator
+  inline iterator
   end()
   {
     if (unlikely(large_elems))
@@ -253,7 +260,7 @@ public:
     return iterator(ptr() + n);
   }
 
-  const_iterator
+  inline const_iterator
   end() const
   {
     if (unlikely(large_elems))
@@ -278,13 +285,13 @@ private:
     }
   }
 
-  inline T *
+  inline ALWAYS_INLINE T *
   ptr()
   {
     return reinterpret_cast<T *>(&small_elems_buf[0]);
   }
 
-  inline const T *
+  inline ALWAYS_INLINE const T *
   ptr() const
   {
     return reinterpret_cast<const T *>(&small_elems_buf[0]);

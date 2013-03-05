@@ -84,15 +84,6 @@ private:
 
   typedef std::pair<ssize_t, size_t> key_search_ret;
 
-  template <typename T>
-  struct vec {
-#ifdef USE_SMALL_CONTAINER_OPT
-    typedef small_vector<T> type;
-#else
-    typedef std::vector<T> type;
-#endif
-  };
-
   struct node {
 
     /**
@@ -715,16 +706,16 @@ private:
   }
 
   static inline void
-  UnlockNodes(const typename vec<node *>::type &locked_nodes)
+  UnlockNodes(const typename util::vec<node *>::type &locked_nodes)
   {
-    for (typename vec<node *>::type::const_iterator it = locked_nodes.begin();
+    for (typename util::vec<node *>::type::const_iterator it = locked_nodes.begin();
          it != locked_nodes.end(); ++it)
       (*it)->unlock();
   }
 
   template <typename T>
   static inline T
-  UnlockAndReturn(const typename vec<node *>::type &locked_nodes, T t)
+  UnlockAndReturn(const typename util::vec<node *>::type &locked_nodes, T t)
   {
     UnlockNodes(locked_nodes);
     return t;
@@ -795,7 +786,7 @@ public:
   inline bool
   search(const key_type &k, value_type &v) const
   {
-    typename vec<leaf_node *>::type ns;
+    typename util::vec<leaf_node *>::type ns;
     scoped_rcu_region rcu_region;
     return search_impl(k, v, ns);
   }
@@ -1127,7 +1118,7 @@ private:
    * Assumes RCU region scope is held
    */
   bool search_impl(const key_type &k, value_type &v,
-                   typename vec<leaf_node *>::type &leaf_nodes) const;
+                   typename util::vec<leaf_node *>::type &leaf_nodes) const;
 
   bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent,
                    value_type *old_v, std::pair< const node_opaque_t *, uint64_t > *insert_info);
@@ -1161,9 +1152,9 @@ private:
           std::pair< const node_opaque_t *, uint64_t > *insert_info,
           key_slice &min_key,
           node *&new_node,
-          //typename vec<insert_parent_entry>::type &parents,
+          //typename util::vec<insert_parent_entry>::type &parents,
           std::vector<insert_parent_entry> &parents,
-          typename vec<node *>::type &locked_nodes);
+          typename util::vec<node *>::type &locked_nodes);
 
   enum remove_status {
     R_NONE_NOMOD,
@@ -1245,9 +1236,9 @@ private:
           node *right_node,
           key_slice &new_key,
           node *&replace_node,
-          //typename vec<remove_parent_entry>::type &parents,
+          //typename util::vec<remove_parent_entry>::type &parents,
           std::vector<remove_parent_entry> &parents,
-          typename vec<node *>::type &locked_nodes);
+          typename util::vec<node *>::type &locked_nodes);
 };
 
 #endif /* _NDB_BTREE_H_ */

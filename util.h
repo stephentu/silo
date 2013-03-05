@@ -14,6 +14,7 @@
 
 #include "macros.h"
 #include "xbuf.h"
+#include "small_vector.h"
 
 namespace util {
 
@@ -386,6 +387,16 @@ struct std_pair_first_cmp {
     FirstComp c;
     return c(lhs.first, rhs.first);
   }
+};
+
+// deal with small container opt vectors correctly
+template <typename T>
+struct vec {
+#ifdef USE_SMALL_CONTAINER_OPT
+  typedef small_vector<T> type;
+#else
+  typedef std::vector<T> type;
+#endif
 };
 
 }
