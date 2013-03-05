@@ -123,14 +123,15 @@ init_vec1(VecType &v)
   ALWAYS_ASSERT(v.back() == "f");
 }
 
+template <typename VecA, typename VecB>
 static void
-assert_vecs_equal(vec_type &v, const stl_vec_type &stl_v)
+assert_vecs_equal(VecA &v, const VecB &stl_v)
 {
   ALWAYS_ASSERT(v.size() == stl_v.size());
-  stl_vec_type tmp(v.begin(), v.end());
+  VecB tmp(v.begin(), v.end());
   ALWAYS_ASSERT(tmp == stl_v);
-  const vec_type &cv = v;
-  stl_vec_type tmp1(cv.begin(), cv.end());
+  const VecA &cv = v;
+  VecB tmp1(cv.begin(), cv.end());
   ALWAYS_ASSERT(tmp1 == stl_v);
 }
 
@@ -205,6 +206,28 @@ Test()
         ALWAYS_ASSERT(v[i].d == (i + 3));
       }
     }
+  }
+
+  {
+    small_vector<int> v;
+    v.push_back(10);
+    v.push_back(2);
+    v.push_back(5);
+    v.push_back(7);
+    v.push_back(3);
+    v.push_back(100);
+    sort(v.begin(), v.end());
+
+    vector<int> stl_v;
+    stl_v.push_back(10);
+    stl_v.push_back(2);
+    stl_v.push_back(5);
+    stl_v.push_back(7);
+    stl_v.push_back(3);
+    stl_v.push_back(100);
+    sort(stl_v.begin(), stl_v.end());
+
+    assert_vecs_equal(v, stl_v);
   }
 
   cout << "vec test passed" << endl;

@@ -152,7 +152,7 @@ public:
 private:
 
   template <typename ObjType, typename LargeTypeIter>
-  class iterator_ : public std::iterator<std::forward_iterator_tag, ObjType> {
+  class iterator_ : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
     friend class small_vector;
   public:
     inline iterator_() : large(false), p(0) {}
@@ -181,10 +181,11 @@ private:
     inline bool
     operator==(const iterator_ &o) const
     {
-      if (unlikely(large && o.large))
-        return large_it == o.large_it;
-      if (!large && !o.large)
+      if (likely(!large && !o.large))
         return p == o.p;
+      if (likely(large && o.large))
+        return large_it == o.large_it;
+      INVARIANT(false);
       return false;
     }
 
@@ -192,6 +193,87 @@ private:
     operator!=(const iterator_ &o) const
     {
       return !operator==(o);
+    }
+
+    inline bool
+    operator<(const iterator_ &o) const
+    {
+      if (likely(!large && !o.large))
+        return p < o.p;
+      if (likely(large && o.large))
+        return large_it < o.large_it;
+      INVARIANT(false);
+      return false;
+    }
+
+    inline bool
+    operator>=(const iterator_ &o) const
+    {
+      return !operator<(o);
+    }
+
+    inline bool
+    operator>(const iterator_ &o) const
+    {
+      if (likely(!large && !o.large))
+        return p > o.p;
+      if (likely(large && o.large))
+        return large_it > o.large_it;
+      INVARIANT(false);
+      return false;
+    }
+
+    inline bool
+    operator<=(const iterator_ &o) const
+    {
+      return !operator>(o);
+    }
+
+    inline iterator_ &
+    operator+=(int n)
+    {
+      if (unlikely(large)) {
+        large_it += n;
+        return *this;
+      }
+      p += n;
+      return *this;
+    }
+
+    inline iterator_ &
+    operator-=(int n)
+    {
+      if (unlikely(large)) {
+        large_it -= n;
+        return *this;
+      }
+      p -= n;
+      return *this;
+    }
+
+    inline iterator_
+    operator+(int n) const
+    {
+      iterator_ cpy = *this;
+      return cpy += n;
+    }
+
+    inline iterator_
+    operator-(int n) const
+    {
+      iterator_ cpy = *this;
+      return cpy += n;
+    }
+
+    inline intptr_t
+    operator-(const iterator_ &o) const
+    {
+      if (likely(!large && !o.large))
+        return p - o.p;
+      if (likely(large && o.large))
+        return large_it - o.large_it;
+      INVARIANT(false);
+      return 0;
     }
 
     inline iterator_ &
@@ -210,6 +292,25 @@ private:
     {
       iterator_ cur = *this;
       ++(*this);
+      return cur;
+    }
+
+    inline iterator_ &
+    operator--()
+    {
+      if (unlikely(large)) {
+        --large_it;
+        return *this;
+      }
+      --p;
+      return *this;
+    }
+
+    inline iterator_
+    operator--(int)
+    {
+      iterator_ cur = *this;
+      --(*this);
       return cur;
     }
 
