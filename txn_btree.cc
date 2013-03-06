@@ -23,7 +23,7 @@ txn_btree::search(transaction &t, const string_type &k, value_type &v, size_type
   //
   // note (1)-(3) are served by transaction::local_search()
 
-  if (ctx.local_search_str(k, v, sz))
+  if (ctx.local_search_str(t, k, v, sz))
     return (bool) v;
 
   btree::value_type underlying_v;
@@ -111,7 +111,7 @@ txn_btree::txn_search_range_callback::invoke(
   invoked = true;
   value_type local_v = 0;
   size_type local_sz = 0;
-  bool local_read = ctx->local_search_str(k, local_v, local_sz);
+  bool local_read = ctx->local_search_str(*t, k, local_v, local_sz);
   bool ret = true; // true means keep going, false means stop
   if (local_read && local_v) {
     // found locally and record is not deleted

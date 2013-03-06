@@ -571,7 +571,7 @@ transaction::Test()
 }
 
 bool
-transaction::txn_context::local_search_str(const string_type &k, const_record_type &v, size_type &sz) const
+transaction::txn_context::local_search_str(const transaction &t, const string_type &k, const_record_type &v, size_type &sz) const
 {
   // XXX: we require stable references
   {
@@ -596,8 +596,8 @@ transaction::txn_context::local_search_str(const string_type &k, const_record_ty
     }
   }
 
-  // XXX: low-level scan protocol can avoid this check
-  if (key_in_absent_set(varkey(k))) {
+  if (!(t.get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) &&
+      key_in_absent_set(varkey(k))) {
     VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in absent set" << endl);
     v = NULL;
     sz = 0;

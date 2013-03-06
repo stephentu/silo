@@ -806,14 +806,14 @@ protected:
     absent_range_vec absent_range_set; // ranges do not overlap
     node_scan_map node_scan; // we scanned these nodes at verison v
 
-    bool local_search_str(const string_type &k, const_record_type &v, size_type &sz) const;
+    bool local_search_str(const transaction &t, const string_type &k, const_record_type &v, size_type &sz) const;
 
     inline bool
-    local_search(const key_type &k, const_record_type &v, size_type &sz) const
+    local_search(const transaction &t, const key_type &k, const_record_type &v, size_type &sz) const
     {
       // XXX: we have to make an un-necessary copy of the key each time we search
       // the write/read set- we need to find a way to avoid this
-      return local_search_str(k.str(), v, sz);
+      return local_search_str(t, k.str(), v, sz);
     }
 
     bool key_in_absent_set(const key_type &k) const;
