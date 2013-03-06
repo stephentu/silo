@@ -217,8 +217,9 @@ public:
       const char *value, size_t value_len)
   {
     INVARIANT(n < N);
-    values[n] = std::make_pair(
-        std::string(key, key_len), std::string(value, value_len));
+    values.push_back(
+        std::make_pair(
+          std::string(key, key_len), std::string(value, value_len)));
     return ++n < N;
   }
 
