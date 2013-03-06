@@ -390,10 +390,10 @@ struct std_pair_first_cmp {
 };
 
 // deal with small container opt vectors correctly
-template <typename T>
+template <typename T, size_t SmallSize = 123>
 struct vec {
 #ifdef USE_SMALL_CONTAINER_OPT
-  typedef small_vector<T> type;
+  typedef small_vector<T, SmallSize> type;
 #else
   typedef std::vector<T> type;
 #endif
