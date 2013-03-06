@@ -1348,6 +1348,36 @@ tpcc_worker::txn_new_order()
   return 0;
 }
 
+class new_order_scan_callback : public abstract_ordered_index::scan_callback {
+public:
+  new_order_scan_callback(new_order *tmp) : tmp(tmp), ptr(0), value_sz(0) {}
+  virtual bool invoke(
+      const char *key, size_t key_len,
+      const char *value, size_t value_len)
+  {
+    value_sz = value_len;
+    ptr = new_order_enc.read((const uint8_t *) value, tmp);
+    return false;
+  }
+  inline const new_order *
+  get() const
+  {
+    INVARIANT(ptr);
+    return ptr;
+  }
+  inline size_t
+  get_value_size() const
+  {
+    INVARIANT(value_sz);
+    return value_sz;
+  }
+private:
+  new_order *tmp;
+  const new_order *ptr;
+  size_t value_sz;
+  encoder<new_order> new_order_enc;
+};
+
 ssize_t
 tpcc_worker::txn_delivery()
 {
@@ -1365,19 +1395,15 @@ tpcc_worker::txn_delivery()
               highkey[NewOrderPrimaryKeySize];
       NewOrderPrimaryKey(lowkey, warehouse_id, d, last_no_o_ids[d]);
       NewOrderPrimaryKey(highkey, warehouse_id, d, numeric_limits<int32_t>::max());
-      static_limit_callback<1> new_order_c;
-      //{
-      //  scoped_timer st("NewOrderScan");
+      new_order new_order_tmp;
+      new_order_scan_callback new_order_c(&new_order_tmp);
+      {
+        //scoped_timer st("NewOrderScan");
         tbl_new_order->scan(txn, (const char *) lowkey, NewOrderPrimaryKeySize,
                             (const char *) highkey, NewOrderPrimaryKeySize,
                             true, new_order_c);
-      //}
-      if (unlikely(!new_order_c.size()))
-        continue;
-      INVARIANT(new_order_c.size() == 1);
-      new_order new_order_temp;
-      const new_order *new_order =
-        new_order_enc.read((const uint8_t *) new_order_c.values[0].second.data(), &new_order_temp);
+      }
+      const new_order *new_order = new_order_c.get();
       last_no_o_ids[d] = new_order->no_o_id + 1;
 
       uint8_t oorderPK[OOrderPrimaryKeySize];
@@ -1398,6 +1424,7 @@ tpcc_worker::txn_delivery()
                           new_order->no_o_id, 0);
       OrderLinePrimaryKey(order_line_highkey, warehouse_id, d,
                           new_order->no_o_id, numeric_limits<int32_t>::max());
+      // XXX(stephentu): mutable scans would help here
       tbl_order_line->scan(txn,
           (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
           (const char *) order_line_highkey, OrderLinePrimaryKeySize,
@@ -1420,7 +1447,7 @@ tpcc_worker::txn_delivery()
       uint8_t new_orderPK[NewOrderPrimaryKeySize];
       NewOrderPrimaryKey(new_orderPK, warehouse_id, d, new_order->no_o_id);
       tbl_new_order->remove(txn, (const char *) new_orderPK, NewOrderPrimaryKeySize);
-      ret -= new_order_c.values[0].second.size();
+      ret -= new_order_c.get_value_size();
 
       // update oorder
       oorder_new = *oorder;
@@ -1697,6 +1724,21 @@ tpcc_worker::txn_payment()
   return 0;
 }
 
+class order_line_nop_callback : public abstract_ordered_index::scan_callback {
+public:
+  order_line_nop_callback() {}
+  virtual bool invoke(
+      const char *key, size_t key_len,
+      const char *value, size_t value_len)
+  {
+    order_line order_line_temp;
+    const order_line *order_line UNUSED =
+      order_line_enc.read((const uint8_t *) value, &order_line_temp);
+    return true;
+  }
+  encoder<order_line> order_line_enc;
+};
+
 ssize_t
 tpcc_worker::txn_order_status()
 {
@@ -1801,18 +1843,13 @@ tpcc_worker::txn_order_status()
       o_id = oorder_c_id_idx_nomem->o_id;
     }
 
-    static_limit_callback<15> c_order_line;
+    order_line_nop_callback c_order_line;
     uint8_t order_line_lowkey[OrderLinePrimaryKeySize], order_line_highkey[OrderLinePrimaryKeySize];
     OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, o_id, 0);
     OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
     tbl_order_line->scan(
         txn, (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
         (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c_order_line);
-    for (size_t i = 0; i < c_order_line.size(); i++) {
-      order_line order_line_temp;
-      const order_line *order_line UNUSED =
-        order_line_enc.read((const uint8_t *) c_order_line.values[i].second.data(), &order_line_temp);
-    }
 
     if (db->commit_txn(txn))
       ntxn_commits++;
