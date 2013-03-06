@@ -225,11 +225,11 @@ public:
   inline size_t
   size() const
   {
-    return n;
+    return values.size();
   }
 
   typedef std::pair<std::string, std::string> kv_pair;
-  kv_pair values[N];
+  typename util::vec<kv_pair, N>::type values;
 
 private:
   size_t n;
