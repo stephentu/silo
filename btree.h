@@ -865,7 +865,7 @@ private:
   struct leaf_kvinfo;
 
   bool search_range_at_layer(leaf_node *leaf,
-                             const string_type &prefix,
+                             string_type &prefix,
                              const key_type &lower,
                              bool inc_lower,
                              const key_type *upper,

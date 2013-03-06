@@ -399,15 +399,32 @@ struct btree::leaf_kvinfo {
   }
 };
 
+class string_restore {
+public:
+  inline string_restore(btree::string_type &s, size_t n)
+    : s(&s), n(n) {}
+  inline ~string_restore()
+  {
+    s->resize(n);
+  }
+private:
+  btree::string_type *s;
+  size_t n;
+};
+
 // recursively read the range from the layer down
 //
 // all args relative to prefix.
+//
+// prefix is non-const, meaning that this function might modify the contents.
+// it is guaranteed, however, to restore prefix to the state it was before the
+// invocation
 //
 // returns true if we keep going
 bool
 btree::search_range_at_layer(
     leaf_node *leaf,
-    const string_type &prefix,
+    string_type &prefix,
     const key_type &lower,
     bool inc_lower,
     const key_type *upper,
@@ -431,15 +448,15 @@ btree::search_range_at_layer(
 
   key_slice lower_slice = lower.slice();
   key_slice next_key = lower_slice;
-  size_t prefix_size = prefix.size();
-  string_type slice_buffer(prefix);
-  slice_buffer.reserve(slice_buffer.size() + 8);
-  uint64_t upper_slice = upper ? upper->slice() : 0;
+  const size_t prefix_size = prefix.size();
+  prefix.reserve(prefix_size + 8); // allow for next layer
+  const uint64_t upper_slice = upper ? upper->slice() : 0;
+  string_restore restorer(prefix, prefix_size);
   while (!upper || next_key <= upper_slice) {
     prefetch_node(leaf);
 
     typename vec<leaf_kvinfo>::type buf;
-    uint64_t version = leaf->stable_version();
+    const uint64_t version = leaf->stable_version();
     key_slice leaf_min_key = leaf->min_key;
     if (leaf_min_key > next_key) {
       // go left
@@ -471,7 +488,7 @@ btree::search_range_at_layer(
               leaf->suffix(i)));
     }
 
-    leaf_node *right_sibling = leaf->next;
+    leaf_node *const right_sibling = leaf->next;
     key_slice leaf_max_key = right_sibling ? right_sibling->min_key : 0;
     if (unlikely(!leaf->check_version(version)))
       continue;
@@ -484,17 +501,16 @@ btree::search_range_at_layer(
           ((buf[i].key < last_keyslice) ||
            (buf[i].key == last_keyslice && buf[i].length <= last_keyslice_len)))
         continue;
-      size_t ncpy = min(buf[i].length, size_t(8));
-      slice_buffer.resize(prefix_size + ncpy);
-      NDB_MEMCPY(&slice_buffer[0] + prefix_size, buf[i].keyslice(), ncpy);
+      const size_t ncpy = min(buf[i].length, size_t(8));
+      prefix.replace(prefix.begin() + prefix_size, prefix.end(), buf[i].keyslice(), ncpy);
       if (buf[i].layer) {
         // recurse into layer
-        leaf_node *next_layer = leftmost_descend_layer(buf[i].vn.n);
+        leaf_node *const next_layer = leftmost_descend_layer(buf[i].vn.n);
         varkey zerokey;
         if (emitted_last_keyslice && last_keyslice == buf[i].key)
           // NB(stephentu): this is implied by the filter above
           INVARIANT(last_keyslice_len <= 8);
-        if (!search_range_at_layer(next_layer, slice_buffer, zerokey, false, NULL, callback))
+        if (!search_range_at_layer(next_layer, prefix, zerokey, false, NULL, callback))
           return false;
       } else {
         // check if we are before the start
@@ -523,10 +539,10 @@ btree::search_range_at_layer(
           }
         }
         if (buf[i].length == 9)
-          slice_buffer.append((const char *) buf[i].suffix.data(), buf[i].suffix.size());
+          prefix.append((const char *) buf[i].suffix.data(), buf[i].suffix.size());
         // we give the actual version # minus all the other bits, b/c they are not
         // important here and make comparison easier at higher layers
-        if (!callback.invoke(slice_buffer, buf[i].vn.v, leaf, node::Version(version)))
+        if (!callback.invoke(prefix, buf[i].vn.v, leaf, node::Version(version)))
           return false;
       }
       last_keyslice = buf[i].key;
@@ -570,10 +586,16 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
       layer_upper = upper->shift_many(leaf_nodes.size());
       layer_has_upper = true;
     }
+#ifdef CHECK_INVARIANTS
+    string_type prefix_before(prefix);
+#endif
     if (!search_range_at_layer(
           cur, prefix, lower.shift_many(leaf_nodes.size()),
           first, layer_has_upper ? &layer_upper : NULL, callback))
       return;
+#ifdef CHECK_INVARIANTS
+    INVARIANT(prefix == prefix_before);
+#endif
     first = false;
     if (!leaf_nodes.empty()) {
       INVARIANT(prefix.size() >= 8);
