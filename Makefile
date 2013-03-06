@@ -8,6 +8,10 @@ LDFLAGS := -lpthread
 # 2 = tcmalloc
 USE_MALLOC_MODE=1
 
+# 0 = disable perf counters
+# 1 = enable perf counters
+USE_PERF_CTRS=1
+
 ifeq ($(USE_MALLOC_MODE),1)
         CXXFLAGS+=-DUSE_JEMALLOC
         LDFLAGS+=-ljemalloc 
@@ -19,9 +23,13 @@ ifeq ($(USE_MALLOC_MODE),2)
 endif
 endif
 
+ifeq ($(USE_PERF_CTRS),1)
+	CXXFLAGS+=-DUSE_PERF_CTRS --std=c++0x
+endif
+
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h counter.h core.h imstring.h lockguard.h spinlock.h hash_bytes.h \
-	  xbuf.h small_vector.h small_unordered_map.h
+	  xbuf.h small_vector.h small_unordered_map.h scopedperf.hh
 SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc \
 	txn_btree.cc varint.cc memory.cc hash_bytes.cc
 OBJFILES = $(SRCFILES:.cc=.o)
@@ -29,7 +37,7 @@ OBJFILES = $(SRCFILES:.cc=.o)
 MYSQL_SHARE_DIR=/x/stephentu/mysql-5.5.29/build/sql/share
 
 BENCH_CXXFLAGS := $(CXXFLAGS) -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
-BENCH_LDFLAGS := $(LDFLAGS) -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
+BENCH_LDFLAGS := $(LDFLAGS) -L/usr/lib/mysql -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
 
 BENCH_HEADERS = $(HEADERS) \
 	benchmarks/abstract_db.h \

@@ -16,6 +16,7 @@
 #include "mysql_wrapper.h"
 
 #include "../counter.h"
+#include "../scopedperf.hh"
 
 #ifdef USE_JEMALLOC
 //cannot include this header b/c conflicts with malloc.h
@@ -201,6 +202,8 @@ bench_runner::run()
     for (map<string, double>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
+    cerr << "--- perf counters (if enabled) ---" << endl;
+    PERF_EXPR(scopedperf::perfsum_base::printall());
     cerr << "---------------------------------------" << endl;
 
 #ifdef USE_JEMALLOC

@@ -13,6 +13,7 @@
 #include "tpcc.h"
 #include "../txn.h"
 #include "../macros.h"
+#include "../scopedperf.hh"
 
 // tpcc schemas
 using namespace std;
@@ -533,13 +534,13 @@ public:
     //w.push_back(workload_desc("Payment", 1.0, TxnPayment)); // ~32k ops/sec
     //w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k ops/sec
     //w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); // ~33k ops/sec
-    //w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
+    w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
 
-    w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
-    w.push_back(workload_desc("Payment", 0.43, TxnPayment));
-    w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
-    w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
-    w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
+    //w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
+    //w.push_back(workload_desc("Payment", 0.43, TxnPayment));
+    //w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
+    //w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
+    //w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
     return w;
   }
 
@@ -1881,6 +1882,8 @@ public:
   set<uint> s_i_ids;
 };
 
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_tod, stock_level_perf_cg)
+
 ssize_t
 tpcc_worker::txn_stock_level()
 {
@@ -1910,13 +1913,12 @@ tpcc_worker::txn_stock_level()
     OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, lower, 0);
     OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, district->d_next_o_id, 0);
     {
-      //scoped_timer st("OrderLineScan");
+      ANON_REGION("StockLevelOrderLineScan", &stock_level_perf_cg);
       tbl_order_line->scan(txn,
           (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
           (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c);
     }
     {
-      //scoped_timer st("StockTableJoins");
       set<uint> s_i_ids_distinct;
       for (set<uint>::iterator it = c.s_i_ids.begin();
            it != c.s_i_ids.end(); ++it) {
