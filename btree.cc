@@ -430,15 +430,10 @@ btree::search_range_at_layer(
     const key_type *upper,
     low_level_search_range_callback &callback) const
 {
-  // XXX(stephentu): why did I think this was a reasonable invariant before?
-  //INVARIANT(lower.size() <= 8);
-
-  VERBOSE(cerr << "lower (size=" << lower.size() << ", inc=" << inc_lower
-               << "): " << hexify(lower.str()) << endl);
+  VERBOSE(cerr << "search_range_at_layer: prefix.size()=" << prefix.size() << endl);
 
   key_slice last_keyslice = 0;
   size_t last_keyslice_len = 0;
-  string_type last_keyslice_suffix;
   bool emitted_last_keyslice = false;
   if (!inc_lower) {
     last_keyslice = lower.slice();
@@ -490,6 +485,7 @@ btree::search_range_at_layer(
 
     leaf_node *const right_sibling = leaf->next;
     key_slice leaf_max_key = right_sibling ? right_sibling->min_key : 0;
+
     if (unlikely(!leaf->check_version(version)))
       continue;
 
@@ -547,8 +543,6 @@ btree::search_range_at_layer(
       }
       last_keyslice = buf[i].key;
       last_keyslice_len = buf[i].length;
-      if (last_keyslice_len == 9)
-        last_keyslice_suffix = buf[i].suffix.str();
       emitted_last_keyslice = true;
     }
 
