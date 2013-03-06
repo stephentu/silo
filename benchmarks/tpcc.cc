@@ -529,6 +529,12 @@ public:
   get_workload() const
   {
     workload_desc_vec w;
+    //w.push_back(workload_desc("NewOrder", 1.0, TxnNewOrder)); // ~10k ops/sec
+    //w.push_back(workload_desc("Payment", 1.0, TxnPayment)); // ~32k ops/sec
+    //w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k ops/sec
+    //w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); // ~33k ops/sec
+    //w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
+
     w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
     w.push_back(workload_desc("Payment", 0.43, TxnPayment));
     w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
@@ -1819,6 +1825,25 @@ tpcc_worker::txn_order_status()
   return 0;
 }
 
+class order_line_scan_callback : public abstract_ordered_index::scan_callback {
+public:
+  order_line_scan_callback() : n(0) {}
+  virtual bool invoke(
+      const char *key, size_t key_len,
+      const char *value, size_t value_len)
+  {
+    order_line order_line_temp;
+    const order_line *order_line =
+      order_line_enc.read((const uint8_t *) value, &order_line_temp);
+    s_i_ids.insert(order_line->ol_i_id);
+    n++;
+    return true;
+  }
+  size_t n;
+  encoder<order_line> order_line_enc;
+  set<uint> s_i_ids;
+};
+
 ssize_t
 tpcc_worker::txn_stock_level()
 {
@@ -1841,37 +1866,36 @@ tpcc_worker::txn_stock_level()
       district_enc.read((const uint8_t *) district_v, &district_temp);
 
     // manual joins are fun!
-    static_limit_callback<20 * 15> c;
+    order_line_scan_callback c;
     int32_t lower = district->d_next_o_id >= 20 ? (district->d_next_o_id - 20) : 0;
     uint8_t order_line_lowkey[OrderLinePrimaryKeySize],
             order_line_highkey[OrderLinePrimaryKeySize];
     OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, lower, 0);
     OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, district->d_next_o_id, 0);
-    tbl_order_line->scan(txn,
-        (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
-        (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c);
-    set<uint> s_i_ids;
-    for (size_t i = 0; i < c.size(); i++) {
-      order_line order_line_temp;
-      const order_line *order_line =
-        order_line_enc.read((const uint8_t *) c.values[i].second.data(), &order_line_temp);
-      s_i_ids.insert(order_line->ol_i_id);
+    {
+      //scoped_timer st("OrderLineScan");
+      tbl_order_line->scan(txn,
+          (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
+          (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c);
     }
-    set<uint> s_i_ids_distinct;
-    for (set<uint>::iterator it = s_i_ids.begin();
-         it != s_i_ids.end(); ++it) {
-      uint8_t stockPK[StockPrimaryKeySize];
-      StockPrimaryKey(stockPK, warehouse_id, *it);
-      char *stock_v = 0;
-      size_t stock_vlen = 0;
-      ALWAYS_ASSERT(tbl_stock->get(
-            txn, (const char *) stockPK, StockPrimaryKeySize,
-            stock_v, stock_vlen));
-      if (!idx_manages_get_mem) mm.manage(stock_v);
-      stock stock_temp;
-      const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
-      if (stock->s_quantity < int(threshold))
-        s_i_ids_distinct.insert(stock->s_i_id);
+    {
+      //scoped_timer st("StockTableJoins");
+      set<uint> s_i_ids_distinct;
+      for (set<uint>::iterator it = c.s_i_ids.begin();
+           it != c.s_i_ids.end(); ++it) {
+        uint8_t stockPK[StockPrimaryKeySize];
+        StockPrimaryKey(stockPK, warehouse_id, *it);
+        char *stock_v = 0;
+        size_t stock_vlen = 0;
+        ALWAYS_ASSERT(tbl_stock->get(
+              txn, (const char *) stockPK, StockPrimaryKeySize,
+              stock_v, stock_vlen));
+        if (!idx_manages_get_mem) mm.manage(stock_v);
+        stock stock_temp;
+        const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
+        if (stock->s_quantity < int(threshold))
+          s_i_ids_distinct.insert(stock->s_i_id);
+      }
     }
     // NB(stephentu): s_i_ids_distinct.size() is the computed result of this txn
     if (db->commit_txn(txn))
