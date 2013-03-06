@@ -774,7 +774,7 @@ killable_region(Perfsum *ps, getcpu_fn getcpu = sched_getcpu)
 #define PERF_REGION(var, text, group) ((void)0)
 #define KILLABLE_REGION(var, text, group) ((void)0)
 
-#define STATIC_COUNTER_DECL(type, name)
+#define STATIC_COUNTER_DECL(ctrtype, ctrname, groupname)
 #define PERF_EXPR(expr) ((void)0)
 
 #endif /* USE_PERF_CTRS */
