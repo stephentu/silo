@@ -558,13 +558,12 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
   scoped_rcu_region rcu_region;
   search_impl(lower, v, leaf_nodes);
   INVARIANT(!leaf_nodes.empty());
-  VERBOSE(cerr << "search_range_call(): leaf_nodes.size() = " << leaf_nodes.size() << endl);
+  //cerr << "search_range_call(): leaf_nodes.size() = " << leaf_nodes.size() << endl;
   bool first = true;
+  string_type prefix((const char *) lower.data(), 8 * (leaf_nodes.size() - 1));
   while (!leaf_nodes.empty()) {
     leaf_node *cur = leaf_nodes.back();
     leaf_nodes.pop_back();
-    string_type prefix;
-    prefix.append((const char *) lower.data(), 8 * leaf_nodes.size());
     key_type layer_upper;
     bool layer_has_upper = false;
     if (upper && upper->size() >= (8 * leaf_nodes.size())) {
@@ -576,6 +575,10 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
           first, layer_has_upper ? &layer_upper : NULL, callback))
       return;
     first = false;
+    if (!leaf_nodes.empty()) {
+      INVARIANT(prefix.size() >= 8);
+      prefix.resize(prefix.size() - 8);
+    }
   }
 }
 
