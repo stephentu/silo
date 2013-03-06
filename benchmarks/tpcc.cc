@@ -534,13 +534,13 @@ public:
     //w.push_back(workload_desc("Payment", 1.0, TxnPayment)); // ~32k ops/sec
     //w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k ops/sec
     //w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); // ~33k ops/sec
-    w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
+    //w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
 
-    //w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
-    //w.push_back(workload_desc("Payment", 0.43, TxnPayment));
-    //w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
-    //w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
-    //w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
+    w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
+    w.push_back(workload_desc("Payment", 0.43, TxnPayment));
+    w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
+    w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
+    w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
     return w;
   }
 

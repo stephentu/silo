@@ -570,9 +570,15 @@ transaction::Test()
   cout << PrintRangeSet(t.absent_range_set) << endl;
 }
 
+static event_counter evt_local_search_lookups("local_search_lookups");
+static event_counter evt_local_search_read_set_hits("local_search_write_set_hits");
+static event_counter evt_local_search_write_set_hits("local_search_read_set_hits");
+
 bool
 transaction::txn_context::local_search_str(const transaction &t, const string_type &k, const_record_type &v, size_type &sz) const
 {
+  ++evt_local_search_lookups;
+
   // XXX: we require stable references
   {
     transaction::write_set_map::const_iterator it = write_set.find(k);
@@ -581,6 +587,7 @@ transaction::txn_context::local_search_str(const transaction &t, const string_ty
       VERBOSE(cerr << "  value: " << hexify(it->second) << endl);
       v = (const_record_type) it->second.data();
       sz = it->second.size();
+      ++evt_local_search_write_set_hits;
       return true;
     }
   }
@@ -592,6 +599,7 @@ transaction::txn_context::local_search_str(const transaction &t, const string_ty
       VERBOSE(cerr << "  value: " << hexify(it->second.r) << endl);
       v = (const_record_type) it->second.r.data();
       sz = it->second.r.size();
+      ++evt_local_search_read_set_hits;
       return true;
     }
   }
