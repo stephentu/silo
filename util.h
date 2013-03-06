@@ -296,6 +296,12 @@ public:
     return t1 - t0;
   }
 
+  inline double
+  lap_ms()
+  {
+    return lap() / 1000.0;
+  }
+
 private:
   static uint64_t
   cur_usec()
