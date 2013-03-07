@@ -1044,7 +1044,7 @@ protected:
   virtual void on_tid_finish(tid_t commit_tid) {}
 
 private:
-  static void on_logical_delete_impl(
+  void on_logical_delete_impl(
       txn_btree *btr, const string_type &key, logical_node *ln);
 
   // the global epoch this txn is running in (this # is read when it starts)

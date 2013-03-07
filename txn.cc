@@ -304,20 +304,27 @@ transaction::commit(bool doThrow)
       }
 
       // check the nodes we read as absent are actually absent
+      VERBOSE(cerr << "absent_set.size(): " << outer_it->second.absent_set.size() << endl);
       for (absent_set_map::iterator it = outer_it->second.absent_set.begin();
            it != outer_it->second.absent_set.end(); ++it) {
         btree::value_type v = 0;
-        if (!outer_it->first->underlying_btree.search(varkey(it->first), v))
+        if (!outer_it->first->underlying_btree.search(varkey(it->first), v)) {
           // done
+          VERBOSE(cerr << "absent key " << hexify(it->first) << " was not found in btree" << endl);
           continue;
+        }
         const transaction::logical_node *ln = (const transaction::logical_node *) v;
         if (it->second ? ln->latest_value_is_nil() :
-                         ln->stable_latest_value_is_nil())
+                         ln->stable_latest_value_is_nil()) {
           // NB(stephentu): this seems like an optimization,
           // but its actually necessary- otherwise a newly inserted
           // key which we read first would always get aborted
+          VERBOSE(cerr << "absent key " << hexify(it->first) << " @ logical_node "
+                       << hexify(ln) << " has latest value nil" << endl);
           continue;
+        }
         abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
+        goto do_abort;
       }
 
       // check the nodes we scanned are still the same
@@ -620,7 +627,6 @@ transaction::txn_context::local_search_str(const transaction &t, const string_ty
     transaction::absent_set_map::const_iterator it = absent_set.find(k);
     if (it != absent_set.end()) {
       VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in absent set"  << endl);
-      VERBOSE(cerr << "  value: " << hexify(it->second.r) << endl);
       v.clear();
       ++evt_local_search_absent_set_hits;
       return true;
@@ -959,10 +965,10 @@ transaction_proto2::on_logical_delete_impl(
     return;
   ln->set_enqueued(true, logical_node::QUEUE_TYPE_LOCAL);
   INVARIANT(ln->is_enqueued());
-  VERBOSE(cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(info->ln))
+  VERBOSE(cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(ln))
                << " at current_epoch=" << current_epoch
                << ", latest_version_epoch=" << EpochId(ln->version) << endl
-               << "  ln=" << *info->ln << endl);
+               << "  ln=" << *ln << endl);
   local_cleanup_nodes().push_back(
       local_work_t(logical_node_context(btr, key, ln), try_logical_node_cleanup));
 }

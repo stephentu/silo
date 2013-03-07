@@ -470,12 +470,12 @@ public:
 #ifndef CHECK_INVARIANTS
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
-    //XbufTest();
-    //varint::Test();
-    //small_vector_ns::Test();
-    //small_map_ns::Test();
+    XbufTest();
+    varint::Test();
+    small_vector_ns::Test();
+    small_map_ns::Test();
     //transaction::Test();
-    //btree::TestFast();
+    btree::TestFast();
     //btree::TestSlow();
     txn_btree::Test();
     ret = 0;

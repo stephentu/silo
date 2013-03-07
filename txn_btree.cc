@@ -29,6 +29,7 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v)
   btree::value_type underlying_v;
   if (!underlying_btree.search(varkey(k), underlying_v)) {
     // all records exist in the system at MIN_TID with no value
+    INVARIANT(ctx.absent_set.find(k) == ctx.absent_set.end());
     ctx.absent_set[k] = false;
     return false;
   } else {
@@ -537,6 +538,38 @@ test2()
 
 template <typename TxnType>
 static void
+test_absent_key_race()
+{
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
+    txn_btree btr;
+
+    {
+      TxnType t0(txn_flags), t1(txn_flags);
+      txn_btree::string_type v0, v1;
+      ALWAYS_ASSERT_COND_IN_TXN(t0, !btr.search(t0, u64_varkey(0), v0));
+      ALWAYS_ASSERT_COND_IN_TXN(t1, !btr.search(t1, u64_varkey(0), v1));
+
+      // t0 does a write
+      btr.insert_object(t0, u64_varkey(0), rec(1));
+
+      // t1 does a write
+      btr.insert_object(t1, u64_varkey(0), rec(1));
+
+      // t0 should win, t1 should abort
+      AssertSuccessfulCommit(t0);
+      AssertFailedCommit(t1);
+    }
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
+  }
+}
+
+template <typename TxnType>
+static void
 test_inc_value_size()
 {
   for (size_t txn_flags_idx = 0;
@@ -818,16 +851,21 @@ mp_test1()
 
     worker<TxnType> w0(btr, txn_flags);
     worker<TxnType> w1(btr, txn_flags);
+    worker<TxnType> w2(btr, txn_flags);
+    worker<TxnType> w3(btr, txn_flags);
 
-    w0.start(); w1.start();
-    w0.join(); w1.join();
+    w0.start(); w1.start(); w2.start(); w3.start();
+    w0.join(); w1.join(); w2.join(); w3.join();
 
     {
       TxnType t(txn_flags);
       txn_btree::string_type v;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
       ALWAYS_ASSERT_COND_IN_TXN(t, !v.empty());
-      ALWAYS_ASSERT_COND_IN_TXN(t, ((const rec *) v.data())->v == (niters * 2));
+      const uint64_t rv = ((const rec *) v.data())->v;
+      if (rv != (niters * 4))
+        cerr << "v: " << rv << ", expected: " << (niters * 4) << endl;
+      ALWAYS_ASSERT_COND_IN_TXN(t, rv == (niters * 4));
       AssertSuccessfulCommit(t);
     }
 
@@ -1298,6 +1336,7 @@ txn_btree::Test()
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();
   test2<transaction_proto2>();
+  test_absent_key_race<transaction_proto2>();
   test_inc_value_size<transaction_proto2>();
   test_multi_btree<transaction_proto2>();
   test_read_only_snapshot<transaction_proto2>();
