@@ -1820,7 +1820,10 @@ public:
   set<uint> s_i_ids;
 };
 
-STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_tod, stock_level_perf_cg)
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe1_tod, stock_level_probe1_cg)
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe2_tod, stock_level_probe2_cg)
+
 static event_avg_counter evt_avg_stock_level_loop_join_lookups("stock_level_loop_join_lookups");
 
 ssize_t
@@ -1847,23 +1850,26 @@ tpcc_worker::txn_stock_level()
     OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, lower, 0);
     OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, district->d_next_o_id, 0);
     {
-      ANON_REGION("StockLevelOrderLineScan:", &stock_level_perf_cg);
+      ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
       tbl_order_line->scan(txn,
           (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
           (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c);
     }
     {
-      ANON_REGION("StockLevelLoopJoin:", &stock_level_perf_cg);
       set<uint> s_i_ids_distinct;
       for (set<uint>::iterator it = c.s_i_ids.begin();
            it != c.s_i_ids.end(); ++it) {
+        ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
         uint8_t stockPK[StockPrimaryKeySize];
         StockPrimaryKey(stockPK, warehouse_id, *it);
         const serializer<int32_t> i32s;
         const serializer<int16_t> i16s;
         const size_t nbytesread = 2 * i32s.max_nbytes() + i16s.max_nbytes();
-        ALWAYS_ASSERT(tbl_stock->get(
-              txn, (const char *) stockPK, StockPrimaryKeySize, obj_v, nbytesread));
+        {
+          ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
+          ALWAYS_ASSERT(tbl_stock->get(
+                txn, (const char *) stockPK, StockPrimaryKeySize, obj_v, nbytesread));
+        }
         INVARIANT(obj_v.size() <= nbytesread);
         const uint8_t *ptr = (const uint8_t *) obj_v.data();
         int32_t i32tmp;
