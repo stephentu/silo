@@ -11,6 +11,7 @@
 #include "thread.h"
 #include "txn.h"
 #include "util.h"
+#include "scopedperf.hh"
 
 using namespace std;
 using namespace util;
@@ -259,10 +260,13 @@ btree::recursive_delete(node *n)
   }
 }
 
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, btree_search_impl_tod, btree_search_impl_perf_cg);
+
 bool
 btree::search_impl(const key_type &k, value_type &v,
                    typename vec<leaf_node *>::type &leaf_nodes) const
 {
+  ANON_REGION("btree::search_impl:", &btree_search_impl_perf_cg);
 
 retry:
   node *cur;
