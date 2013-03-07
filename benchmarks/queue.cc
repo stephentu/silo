@@ -150,15 +150,12 @@ public:
   txn_consume_noscan()
   {
     void *txn = db->new_txn(txn_flags);
-    const bool idx_manages_get_mem = db->index_manages_get_memory();
     try {
       const string k = queue_key(id, ctr);
-      char *v = 0;
-      size_t vlen = 0;
+      string v;
       bool found = false;
       ssize_t ret = 0;
-      if (likely((found = tbl->get(txn, k.data(), k.size(), v, vlen)))) {
-        if (!idx_manages_get_mem) free(v);
+      if (likely((found = tbl->get(txn, k.data(), k.size(), v)))) {
         tbl->remove(txn, k.data(), k.size());
         ret = -queue_values.size();
       }

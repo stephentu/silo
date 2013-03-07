@@ -168,7 +168,7 @@ bool
 mysql_ordered_index::get(
     void *txn,
     const char *key, size_t keylen,
-    char *&value, size_t &valuelen)
+    string &value)
 {
   INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(keylen <= 256);
@@ -182,9 +182,8 @@ mysql_ordered_index::get(
   bool ret = false;
   if (row) {
     unsigned long *lengths = mysql_fetch_lengths(res);
-    value = (char *) malloc(lengths[0]);
     ALWAYS_ASSERT(key);
-    NDB_MEMCPY(value, row[0], lengths[0]);
+    value.assign(row[0], lengths[0]);
     ret = true;
   }
   mysql_free_result(res);

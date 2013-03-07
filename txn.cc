@@ -186,6 +186,20 @@ transaction::commit(bool doThrow)
             make_pair(
               (logical_node *) v,
               lnode_info(outer_it->first, it->first, false, it->second)));
+        // mark that we hold lock in read set
+        read_set_map::iterator read_it =
+          outer_it->second.read_set.find((const logical_node *) v);
+        if (read_it != outer_it->second.read_set.end()) {
+          INVARIANT(!read_it->second.holds_lock);
+          read_it->second.holds_lock = true;
+        }
+        // mark that we hold lock in absent set
+        absent_set_map::iterator absent_it =
+          outer_it->second.absent_set.find(it->first);
+        if (absent_it != outer_it->second.absent_set.end()) {
+          INVARIANT(!absent_it->second);
+          absent_it->second = true;
+        }
       } else {
         logical_node *ln = logical_node::alloc_first(it->second.size());
         // XXX: underlying btree api should return the existing value if
@@ -217,6 +231,20 @@ transaction::commit(bool doThrow)
         logical_nodes.push_back(
             make_pair(
               ln, lnode_info(outer_it->first, it->first, false, it->second)));
+        // mark that we hold lock in read set
+        read_set_map::iterator read_it =
+          outer_it->second.read_set.find(ln);
+        if (read_it != outer_it->second.read_set.end()) {
+          INVARIANT(!read_it->second.holds_lock);
+          read_it->second.holds_lock = true;
+        }
+        // mark that we hold lock in absent set
+        absent_set_map::iterator absent_it =
+          outer_it->second.absent_set.find(it->first);
+        if (absent_it != outer_it->second.absent_set.end()) {
+          INVARIANT(!absent_it->second);
+          absent_it->second = true;
+        }
       }
     }
   }
@@ -254,40 +282,14 @@ transaction::commit(bool doThrow)
     // do read validation
     for (ctx_map_type::iterator outer_it = ctx_map.begin();
          outer_it != ctx_map.end(); ++outer_it) {
+      // check the nodes we actually read are still the latest version
       for (read_set_map::iterator it = outer_it->second.read_set.begin();
            it != outer_it->second.read_set.end(); ++it) {
-        const bool did_write = outer_it->second.write_set.find(it->first) != outer_it->second.write_set.end();
-        const transaction::logical_node *ln = NULL;
-        if (likely(it->second.ln)) {
-          ln = it->second.ln;
-        } else {
-          btree::value_type v = 0;
-          if (outer_it->first->underlying_btree.search(varkey(it->first), v))
-            ln = (const transaction::logical_node *) v;
-        }
-
-        if (unlikely(!ln)) {
-          INVARIANT(!it->second.ln); // otherwise ln == it->second.ln
-          INVARIANT(!did_write); // otherwise it would be there in the tree
-          INVARIANT(it->second.r.empty()); // b/c ln did not exist when we read it
-          // trivially validated
-          continue;
-        } else if (unlikely(!it->second.ln)) {
-          // have in tree now but we didnt read it initially
-          if (did_write ? ln->latest_value_is_nil() :
-                          ln->stable_latest_value_is_nil())
-            // NB(stephentu): this seems like an optimization,
-            // but its actually necessary- otherwise a newly inserted
-            // key would always get aborted
-            continue;
-          abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
-          goto do_abort;
-        }
-
+        const transaction::logical_node *ln = it->first;
         VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
                      << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
-        if (likely(did_write ?
+        if (likely(it->second.holds_lock ?
               ln->is_latest_version(it->second.t) :
               ln->stable_is_latest_version(it->second.t)))
           continue;
@@ -301,7 +303,26 @@ transaction::commit(bool doThrow)
         goto do_abort;
       }
 
+      // check the nodes we read as absent are actually absent
+      for (absent_set_map::iterator it = outer_it->second.absent_set.begin();
+           it != outer_it->second.absent_set.end(); ++it) {
+        btree::value_type v = 0;
+        if (!outer_it->first->underlying_btree.search(varkey(it->first), v))
+          // done
+          continue;
+        const transaction::logical_node *ln = (const transaction::logical_node *) v;
+        if (it->second ? ln->latest_value_is_nil() :
+                         ln->stable_latest_value_is_nil())
+          // NB(stephentu): this seems like an optimization,
+          // but its actually necessary- otherwise a newly inserted
+          // key which we read first would always get aborted
+          continue;
+        abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
+      }
+
+      // check the nodes we scanned are still the same
       if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
+        // do it the fast way
         INVARIANT(outer_it->second.absent_range_set.empty());
         for (node_scan_map::iterator it = outer_it->second.node_scan.begin();
              it != outer_it->second.node_scan.end(); ++it) {
@@ -314,6 +335,7 @@ transaction::commit(bool doThrow)
           }
         }
       } else {
+        // do it the slow way
         INVARIANT(outer_it->second.node_scan.empty());
         for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
              it != outer_it->second.absent_range_set.end(); ++it) {
@@ -444,19 +466,17 @@ transaction_flags_to_str(uint64_t flags)
 }
 
 inline ostream &
-operator<<(ostream &o, const transaction::read_record_t &rr)
+operator<<(ostream &o, const transaction::read_record_t &r)
 {
-  o << "[tid_read=" << g_proto_version_str(rr.t)
-    << ", size=" << rr.r.size()
-    << ", ln_ptr=0x" << hexify(intptr_t(rr.ln))
-    << ", ln=" << *rr.ln << "]";
+  o << "[tid_read=" << g_proto_version_str(r.t)
+    << ", locked=" << r.holds_lock << "]";
   return o;
 }
 
 void
 transaction::dump_debug_info() const
 {
-  cerr << "Transaction (obj=0x" << hexify(this) << ") -- state "
+  cerr << "Transaction (obj=" << hexify(this) << ") -- state "
        << transaction_state_to_cstr(state) << endl;
   cerr << "  Abort Reason: " << AbortReasonStr(reason) << endl;
   cerr << "  Flags: " << transaction_flags_to_str(flags) << endl;
@@ -469,7 +489,13 @@ transaction::dump_debug_info() const
     // read-set
     for (read_set_map::const_iterator rs_it = it->second.read_set.begin();
          rs_it != it->second.read_set.end(); ++rs_it)
-      cerr << "      Key 0x" << hexify(rs_it->first) << " @ " << rs_it->second << endl;
+      cerr << "      Node " << hexify(rs_it->first) << " @ " << rs_it->second << endl;
+
+    cerr << "      === Absent Set ===" << endl;
+    // absent-set
+    for (absent_set_map::const_iterator as_it = it->second.absent_set.begin();
+         as_it != it->second.absent_set.end(); ++as_it)
+      cerr << "      Key 0x" << hexify(as_it->first) << " : locked=" << as_it->second << endl;
 
     cerr << "      === Write Set ===" << endl;
     // write-set
@@ -571,35 +597,32 @@ transaction::Test()
 }
 
 static event_counter evt_local_search_lookups("local_search_lookups");
-static event_counter evt_local_search_read_set_hits("local_search_write_set_hits");
 static event_counter evt_local_search_write_set_hits("local_search_read_set_hits");
+static event_counter evt_local_search_absent_set_hits("local_search_absent_set_hits");
 
 bool
-transaction::txn_context::local_search_str(const transaction &t, const string_type &k, const_record_type &v, size_type &sz) const
+transaction::txn_context::local_search_str(const transaction &t, const string_type &k, string_type &v) const
 {
   ++evt_local_search_lookups;
 
-  // XXX: we require stable references
   {
     transaction::write_set_map::const_iterator it = write_set.find(k);
     if (it != write_set.end()) {
       VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in write set"  << endl);
       VERBOSE(cerr << "  value: " << hexify(it->second) << endl);
-      v = (const_record_type) it->second.data();
-      sz = it->second.size();
+      v = it->second;
       ++evt_local_search_write_set_hits;
       return true;
     }
   }
 
   {
-    transaction::read_set_map::const_iterator it = read_set.find(k);
-    if (it != read_set.end()) {
-      VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in read set"  << endl);
+    transaction::absent_set_map::const_iterator it = absent_set.find(k);
+    if (it != absent_set.end()) {
+      VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in absent set"  << endl);
       VERBOSE(cerr << "  value: " << hexify(it->second.r) << endl);
-      v = (const_record_type) it->second.r.data();
-      sz = it->second.r.size();
-      ++evt_local_search_read_set_hits;
+      v.clear();
+      ++evt_local_search_absent_set_hits;
       return true;
     }
   }
@@ -607,8 +630,7 @@ transaction::txn_context::local_search_str(const transaction &t, const string_ty
   if (!(t.get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) &&
       key_in_absent_set(varkey(k))) {
     VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in absent set" << endl);
-    v = NULL;
-    sz = 0;
+    v.clear();
     return true;
   }
 

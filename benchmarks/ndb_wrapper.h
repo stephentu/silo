@@ -14,8 +14,6 @@ public:
 
   ndb_wrapper(Proto proto) : proto(proto) {}
 
-	virtual bool index_manages_get_memory() const { return true; }
-
   virtual void
   do_txn_epoch_sync() const
   {
@@ -69,7 +67,7 @@ public:
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
-      char *&value, size_t &valuelen);
+      std::string &value);
   virtual const char * put(
       void *txn,
       const char *key, size_t keylen,

@@ -2,6 +2,7 @@
 #define _ABSTRACT_ORDERED_INDEX_H_
 
 #include <stdint.h>
+#include <string>
 
 /**
  * The underlying index manages memory for keys/values, but
@@ -16,24 +17,11 @@ public:
   /**
    * Get a key of length keylen. The underlying DB does not manage
    * the memory associated with key. Returns true if found, false otherwise
-   *
-   * The return condition for the value is as follows (kind of hacky):
-   * A) if the DB from which this index was opened supports direct memory
-   *    access, then value points to a pointer of length valuelen which
-   *    is NOT the responsibility of the caller to free. This memory is
-   *    NOT to be modified (really should be const char *), and is only valid
-   *    until the associated txn object is freed.
-   * B) otherwise, a pointer allocated by malloc() of length valuelen is returned,
-   *    and it is the responsibility of the caller to free() it.
-   *
-   * Return the result in value (of size valuelen). The caller becomes
-   * responsible for the memory pointed to by value. This memory is
-   * allocated by using malloc().
    */
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
-      char *&value, size_t &valuelen) = 0;
+      std::string &value) = 0;
 
   class scan_callback {
   public:

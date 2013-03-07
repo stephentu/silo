@@ -46,13 +46,10 @@ public:
   txn_read()
   {
     void *txn = db->new_txn(txn_flags);
-    const bool idx_manages_get_mem = db->index_manages_get_memory();
     const string k = u64_varkey(r.next() % nkeys).str();
     try {
-      char *v = 0;
-      size_t vlen = 0;
-      ALWAYS_ASSERT(tbl->get(txn, k.data(), k.size(), v, vlen));
-      if (!idx_manages_get_mem) free(v);
+      string v;
+      ALWAYS_ASSERT(tbl->get(txn, k.data(), k.size(), v));
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {

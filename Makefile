@@ -10,7 +10,7 @@ USE_MALLOC_MODE=1
 
 # 0 = disable perf counters
 # 1 = enable perf counters
-USE_PERF_CTRS=1
+USE_PERF_CTRS=0
 
 ifeq ($(USE_MALLOC_MODE),1)
         CXXFLAGS+=-DUSE_JEMALLOC

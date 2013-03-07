@@ -66,16 +66,17 @@ public:
     unsafe_purge(false);
   }
 
-  bool search(transaction &t, const string_type &k, value_type &v, size_type &sz);
+  // either returns false or v is set to not-empty with value
+  bool search(transaction &t, const string_type &k, string_type &v);
 
   // memory:
   // k - assumed to point to valid memory, *not* managed by btree
   // v - if k is found, points to a region of (immutable) memory of size sz which
   //     is guaranteed to be valid memory as long as transaction t is in scope
   inline bool
-  search(transaction &t, const key_type &k, value_type &v, size_type &sz)
+  search(transaction &t, const key_type &k, string_type &v)
   {
-    return search(t, to_string_type(k), v, sz);
+    return search(t, to_string_type(k), v);
   }
 
   void

@@ -39,7 +39,7 @@ public:
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
-      char *&value, size_t &valuelen);
+      std::string &value);
 
   virtual const char * put(
       void *txn,

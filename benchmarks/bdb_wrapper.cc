@@ -72,15 +72,14 @@ bool
 bdb_ordered_index::get(
     void *txn,
     const char *key, size_t keylen,
-    char *&value, size_t &valuelen)
+    string &value)
 {
   Dbt kdbt((void *) key, keylen);
   Dbt vdbt;
-  vdbt.set_flags(DB_DBT_MALLOC);
+  //vdbt.set_flags(DB_DBT_MALLOC);
   int retno = db->get((DbTxn *) txn, &kdbt, &vdbt, 0);
   ALWAYS_ASSERT(retno == 0 || retno == DB_NOTFOUND);
-  value = (char *) vdbt.get_data();
-  valuelen = vdbt.get_size();
+  value.assign((char *) vdbt.get_data(), vdbt.get_size());
   return retno == 0;
 }
 

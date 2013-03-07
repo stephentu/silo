@@ -780,21 +780,23 @@ protected:
   }
 
   struct read_record_t {
-    tid_t t; // value was read at t
-    string_type r; // contents read @ t
-    const logical_node *ln; // node read from
+    read_record_t() : t(0), holds_lock(false) {}
+    tid_t t;
+    bool holds_lock;
   };
 
   friend std::ostream &
-  operator<<(std::ostream &o, const transaction::read_record_t &rr);
+  operator<<(std::ostream &o, const read_record_t &r);
 
 #ifdef USE_SMALL_CONTAINER_OPT
-  typedef small_unordered_map<string_type, read_record_t> read_set_map;
+  typedef small_unordered_map<const logical_node *, read_record_t> read_set_map;
+  typedef small_unordered_map<string_type, bool> absent_set_map;
   typedef small_unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef small_unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 #else
-  typedef std::tr1::unordered_map<string_type, read_record_t> read_set_map;
+  typedef std::tr1::unordered_map<const logical_node *, read_record_t> read_set_map;
+  typedef std::tr1::unordered_map<string_type, bool> absent_set_map;
   typedef std::tr1::unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
@@ -802,18 +804,19 @@ protected:
 
   struct txn_context {
     read_set_map read_set;
+    absent_set_map absent_set;
     write_set_map write_set;
     absent_range_vec absent_range_set; // ranges do not overlap
     node_scan_map node_scan; // we scanned these nodes at verison v
 
-    bool local_search_str(const transaction &t, const string_type &k, const_record_type &v, size_type &sz) const;
+    bool local_search_str(const transaction &t, const string_type &k, string_type &v) const;
 
     inline bool
-    local_search(const transaction &t, const key_type &k, const_record_type &v, size_type &sz) const
+    local_search(const transaction &t, const key_type &k, string_type &v) const
     {
       // XXX: we have to make an un-necessary copy of the key each time we search
       // the write/read set- we need to find a way to avoid this
-      return local_search_str(t, k.str(), v, sz);
+      return local_search_str(t, k.str(), v);
     }
 
     bool key_in_absent_set(const key_type &k) const;

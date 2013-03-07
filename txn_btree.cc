@@ -10,62 +10,66 @@ using namespace std;
 using namespace util;
 
 bool
-txn_btree::search(transaction &t, const string_type &k, value_type &v, size_type &sz)
+txn_btree::search(transaction &t, const string_type &k, string_type &v)
 {
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
 
   // priority is
   // 1) write set
-  // 2) local read set
-  // 3) range set
-  // 4) query underlying tree
+  // 2) absent set
+  // 3) absent range set
+  // 4) underlying tree
   //
   // note (1)-(3) are served by transaction::local_search()
 
-  if (ctx.local_search_str(t, k, v, sz))
-    return (bool) v;
+  if (ctx.local_search_str(t, k, v))
+    return !v.empty();
 
   btree::value_type underlying_v;
   if (!underlying_btree.search(varkey(k), underlying_v)) {
     // all records exist in the system at MIN_TID with no value
-    transaction::read_record_t *read_rec = &ctx.read_set[k];
-    read_rec->t = transaction::MIN_TID;
-    read_rec->r.clear();
-    read_rec->ln = NULL;
+    ctx.absent_set[k] = false;
     return false;
   } else {
-    transaction::logical_node *ln = (transaction::logical_node *) underlying_v;
+    const transaction::logical_node * const ln =
+      (const transaction::logical_node *) underlying_v;
     INVARIANT(ln);
     prefetch_node(ln);
     transaction::tid_t start_t = 0;
-    string_type r;
 
-    const pair<bool, transaction::tid_t> snapshot_tid_t = t.consistent_snapshot_tid();
-    const transaction::tid_t snapshot_tid = snapshot_tid_t.first ? snapshot_tid_t.second : transaction::MAX_TID;
+    const pair<bool, transaction::tid_t> snapshot_tid_t =
+      t.consistent_snapshot_tid();
+    const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
+      snapshot_tid_t.second : transaction::MAX_TID;
 
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
-      transaction::abort_reason r = transaction::ABORT_REASON_UNSTABLE_READ;
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, v))) {
+      const transaction::abort_reason r =
+        transaction::ABORT_REASON_UNSTABLE_READ;
       t.abort_impl(r);
       throw transaction_abort_exception(r);
     }
 
     if (unlikely(!t.can_read_tid(start_t))) {
-      transaction::abort_reason r = transaction::ABORT_REASON_FUTURE_TID_READ;
+      const transaction::abort_reason r =
+        transaction::ABORT_REASON_FUTURE_TID_READ;
       t.abort_impl(r);
       throw transaction_abort_exception(r);
     }
 
-    if (r.empty())
+    if (v.empty())
       ++transaction::g_evt_read_logical_deleted_node_search;
-
-    transaction::read_record_t *read_rec = &ctx.read_set[k];
-    read_rec->t = start_t;
-    swap(read_rec->r, r);
-    read_rec->ln = ln;
-    v = (value_type) read_rec->r.data();
-    sz = read_rec->r.size();
-    return !read_rec->r.empty();
+    transaction::read_record_t * const read_rec = &ctx.read_set[ln];
+    if (!read_rec->t) {
+      // XXX(stephentu): this doesn't work if we allow wrap around
+      read_rec->t = start_t;
+    } else if (unlikely(read_rec->t != start_t)) {
+      const transaction::abort_reason r =
+        transaction::ABORT_REASON_READ_NODE_INTEREFERENCE;
+      t.abort_impl(r);
+      throw transaction_abort_exception(r);
+    }
+    return !v.empty();
   }
 }
 
@@ -82,7 +86,8 @@ txn_btree::txn_search_range_callback::on_resp_node(
       ctx->node_scan[n] = version;
     } else {
       if (unlikely(it->second != version)) {
-        transaction::abort_reason r = transaction::ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED;
+        const transaction::abort_reason r =
+          transaction::ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED;
         t->abort_impl(r);
         throw transaction_abort_exception(r);
       }
@@ -109,18 +114,16 @@ txn_btree::txn_search_range_callback::invoke(
     prev_key = k;
   }
   invoked = true;
-  value_type local_v = 0;
-  size_type local_sz = 0;
-  bool local_read = ctx->local_search_str(*t, k, local_v, local_sz);
+  string_type local_v;
+  bool local_read = ctx->local_search_str(*t, k, local_v);
   bool ret = true; // true means keep going, false means stop
-  if (local_read && local_v) {
-    // found locally and record is not deleted
-    INVARIANT(local_sz > 0);
-    ret = caller_callback->invoke(k, local_v, local_sz);
+  if (local_read && !local_v.empty()) {
+    // found locally non-deleted copy, so let client read own writes
+    ret = caller_callback->invoke(
+        k, (const value_type) local_v.data(), local_v.size());
   }
-  transaction::read_set_map::iterator it;
-  if (!local_read || ((it = ctx->read_set.find(k)) == ctx->read_set.end())) {
-    transaction::logical_node *ln = (transaction::logical_node *) v;
+  const transaction::logical_node * const ln = (transaction::logical_node *) v;
+  if (ctx->read_set.find(ln) == ctx->read_set.end()) {
     INVARIANT(ln);
     prefetch_node(ln);
     transaction::tid_t start_t = 0;
@@ -130,29 +133,35 @@ txn_btree::txn_search_range_callback::invoke(
     const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
       snapshot_tid_t.second : transaction::MAX_TID;
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
-      transaction::abort_reason r = transaction::ABORT_REASON_UNSTABLE_READ;
+      const transaction::abort_reason r =
+        transaction::ABORT_REASON_UNSTABLE_READ;
       t->abort_impl(r);
       throw transaction_abort_exception(r);
     }
     if (unlikely(!t->can_read_tid(start_t))) {
-      transaction::abort_reason r = transaction::ABORT_REASON_FUTURE_TID_READ;
+      const transaction::abort_reason r =
+        transaction::ABORT_REASON_FUTURE_TID_READ;
       t->abort_impl(r);
       throw transaction_abort_exception(r);
     }
     if (r.empty())
       ++transaction::g_evt_read_logical_deleted_node_scan;
-    transaction::read_record_t *read_rec = &ctx->read_set[k];
-    read_rec->t = start_t;
-    swap(read_rec->r, r);
-    read_rec->ln = ln;
-    VERBOSE(cerr << "read <t=" << start_t << ", sz=" << read_rec->r.size()
-                 << ", r=" << hexify(read_rec->r) << "> (local_read="
+    transaction::read_record_t * const read_rec = &ctx->read_set[ln];
+    if (!read_rec->t) {
+      // XXX(stephentu): this doesn't work if we allow wrap around
+      read_rec->t = start_t;
+    } else if (unlikely(read_rec->t != start_t)) {
+      const transaction::abort_reason r =
+        transaction::ABORT_REASON_READ_NODE_INTEREFERENCE;
+      t->abort_impl(r);
+      throw transaction_abort_exception(r);
+    }
+    VERBOSE(cerr << "read <t=" << start_t << ", sz=" << r.size()
+                 << "> (local_read="
                  << (local_read ? "Y" : "N") << ")" << endl);
-    if (!local_read && !read_rec->r.empty())
-      ret = caller_callback->invoke(k,
-          (const value_type) read_rec->r.data(), read_rec->r.size());
-  } else {
-    INVARIANT(((it = ctx->read_set.find(k)) != ctx->read_set.end()));
+    if (!local_read && !r.empty())
+      ret = caller_callback->invoke(
+          k, (const value_type) r.data(), r.size());
   }
   if (!ret)
     caller_stopped = true;
@@ -369,6 +378,13 @@ AssertByteEquality(const T &t, txn_btree::value_type v, txn_btree::size_type sz)
   }
 }
 
+template <typename T>
+inline void
+AssertByteEquality(const T &t, const txn_btree::string_type &v)
+{
+  AssertByteEquality(t, (txn_btree::value_type) v.data(), v.size());
+}
+
 struct rec {
   rec() : v() {}
   rec(uint64_t v) : v(v) {}
@@ -393,35 +409,35 @@ test1()
 
     VERBOSE(cerr << "Testing with flags=0x" << hexify(txn_flags) << endl);
 
-    txn_btree btr;
-    btr.set_value_size_hint(sizeof(rec));
+    txn_btree btr(sizeof(rec));
 
     {
       TxnType t(txn_flags);
-      txn_btree::value_type v = 0;
-      txn_btree::size_type sz = 0;
-      ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, u64_varkey(0), v, sz));
+      txn_btree::string_type v;
+      ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, u64_varkey(0), v));
       btr.insert_object(t, u64_varkey(0), rec(0));
-      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v, sz));
-      VERBOSE(cerr << "sz: " << sz << endl);
-      AssertByteEquality(rec(0), v, sz);
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
+      ALWAYS_ASSERT_COND_IN_TXN(t, !v.empty());
+      AssertByteEquality(rec(0), v);
       AssertSuccessfulCommit(t);
       VERBOSE(cerr << "------" << endl);
     }
 
     {
       TxnType t0(txn_flags), t1(txn_flags);
-      txn_btree::value_type v0, v1;
-      txn_btree::size_type sz0, sz1;
+      txn_btree::string_type v0, v1;
 
-      ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0, sz0));
-      VERBOSE(cerr << "sz0: " << sz0 << endl);
-      AssertByteEquality(rec(0), v0, sz0);
+      ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
+      ALWAYS_ASSERT_COND_IN_TXN(t0, !v0.empty());
+      AssertByteEquality(rec(0), v0);
 
       btr.insert_object(t0, u64_varkey(0), rec(1));
-      ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1, sz1));
-      VERBOSE(cerr << "sz1: " << sz1 << endl);
-      AssertByteEquality(rec(0), v1, sz1); // we don't read-uncommitted
+      ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1));
+      ALWAYS_ASSERT_COND_IN_TXN(t1, !v1.empty());
+
+      if (t1.consistent_snapshot_tid().first)
+        // we don't read-uncommitted for consistent snapshot
+        AssertByteEquality(rec(0), v1);
 
       AssertSuccessfulCommit(t0);
       try {
@@ -438,15 +454,16 @@ test1()
     {
       // racy insert
       TxnType t0(txn_flags), t1(txn_flags);
-      txn_btree::value_type v0, v1;
-      txn_btree::size_type sz0, sz1;
+      txn_btree::string_type v0, v1;
 
-      ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0, sz0));
-      AssertByteEquality(rec(1), v0, sz0);
+      ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
+      ALWAYS_ASSERT_COND_IN_TXN(t0, !v0.empty());
+      AssertByteEquality(rec(1), v0);
 
       btr.insert_object(t0, u64_varkey(0), rec(2));
-      ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1, sz1));
-      AssertByteEquality(rec(1), v1, sz1);
+      ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1));
+      ALWAYS_ASSERT_COND_IN_TXN(t1, !v1.empty());
+      // our API allows v1 to be a dirty read though (t1 will abort)
 
       btr.insert_object(t1, u64_varkey(0), rec(3));
 
@@ -498,8 +515,7 @@ test2()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr;
-    btr.set_value_size_hint(256);
+    txn_btree btr(sizeof(bufrec));
     bufrec r;
     NDB_MEMSET(r.buf, 'a', ARRAY_NELEMS(r.buf));
     for (size_t i = 0; i < 100; i++) {
@@ -509,10 +525,9 @@ test2()
     }
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
-      txn_btree::value_type v = 0;
-      txn_btree::size_type sz = 0;
-      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(i), v, sz));
-      AssertByteEquality(r, v, sz);
+      txn_btree::string_type v;
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(i), v));
+      AssertByteEquality(r, v);
       AssertSuccessfulCommit(t);
     }
     txn_epoch_sync<TxnType>::sync();
@@ -559,15 +574,16 @@ test_multi_btree()
 
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
-      txn_btree::value_type v0 = 0, v1 = 0;
-      txn_btree::size_type sz0 = 0, sz1 = 0;
-      bool ret0 = btr0.search(t, u64_varkey(i), v0, sz0);
-      bool ret1 = btr1.search(t, u64_varkey(i), v1, sz1);
+      txn_btree::string_type v0, v1;
+      bool ret0 = btr0.search(t, u64_varkey(i), v0);
+      bool ret1 = btr1.search(t, u64_varkey(i), v1);
       AssertSuccessfulCommit(t);
       ALWAYS_ASSERT_COND_IN_TXN(t, ret0);
+      ALWAYS_ASSERT_COND_IN_TXN(t, !v0.empty());
       ALWAYS_ASSERT_COND_IN_TXN(t, ret1);
-      AssertByteEquality(rec(123), v0, sz0);
-      AssertByteEquality(rec(123), v1, sz1);
+      ALWAYS_ASSERT_COND_IN_TXN(t, !v1.empty());
+      AssertByteEquality(rec(123), v0);
+      AssertByteEquality(rec(123), v1);
     }
 
     txn_epoch_sync<TxnType>::sync();
@@ -598,15 +614,16 @@ test_read_only_snapshot()
 
     {
       TxnType t0(txn_flags), t1(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-      txn_btree::value_type v0, v1;
-      txn_btree::size_type sz0, sz1;
-      ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0, sz0));
-      AssertByteEquality(rec(0), v0, sz0);
+      txn_btree::string_type v0, v1;
+      ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
+      ALWAYS_ASSERT_COND_IN_TXN(t0, !v0.empty());
+      AssertByteEquality(rec(0), v0);
 
       btr.insert_object(t0, u64_varkey(0), rec(1));
 
-      ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1, sz1));
-      AssertByteEquality(rec(0), v1, sz1);
+      ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1));
+      ALWAYS_ASSERT_COND_IN_TXN(t1, !v1.empty());
+      AssertByteEquality(rec(0), v1);
 
       AssertSuccessfulCommit(t0);
       AssertSuccessfulCommit(t1);
@@ -723,10 +740,9 @@ test_long_keys2()
 
     {
       TxnType t(txn_flags);
-      txn_btree::value_type v = 0;
-      txn_btree::size_type sz = 0;
-      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, varkey(lowkey_s), v, sz));
-      AssertByteEquality(rec(12345), v, sz);
+      txn_btree::string_type v;
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, varkey(lowkey_s), v));
+      AssertByteEquality(rec(12345), v);
       AssertSuccessfulCommit(t);
     }
 
@@ -771,12 +787,11 @@ namespace mp_test1_ns {
         TxnType t(txn_flags);
         try {
           rec r;
-          txn_btree::value_type v = 0;
-          txn_btree::size_type sz = 0;
-          if (!btr->search(t, u64_varkey(0), v, sz)) {
+          txn_btree::string_type v;
+          if (!btr->search(t, u64_varkey(0), v)) {
             r.v = 1;
           } else {
-            r = *((rec *) v);
+            r = *((const rec *) v.data());
             r.v++;
           }
           btr->insert_object(t, u64_varkey(0), r);
@@ -809,10 +824,10 @@ mp_test1()
 
     {
       TxnType t(txn_flags);
-      txn_btree::value_type v = 0;
-      txn_btree::size_type sz = 0;
-      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v, sz));
-      ALWAYS_ASSERT_COND_IN_TXN(t, ((rec *) v)->v == (niters * 2));
+      txn_btree::string_type v;
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
+      ALWAYS_ASSERT_COND_IN_TXN(t, !v.empty());
+      ALWAYS_ASSERT_COND_IN_TXN(t, ((const rec *) v.data())->v == (niters * 2));
       AssertSuccessfulCommit(t);
     }
 
@@ -867,18 +882,17 @@ namespace mp_test2_ns {
           TxnType t(txn_flags);
           try {
             rec ctr_rec;
-            txn_btree::value_type v = 0, v_ctr = 0;
-            txn_btree::size_type sz = 0, sz_ctr = 0;
-            ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr, sz_ctr));
-            ALWAYS_ASSERT_COND_IN_TXN(t, sz_ctr == sizeof(rec));
-            ALWAYS_ASSERT_COND_IN_TXN(t, ((rec *) v_ctr)->v > 1);
-            if (btr->search(t, u64_varkey(i), v, sz)) {
-              AssertByteEquality(rec(i), v, sz);
+            txn_btree::string_type v, v_ctr;
+            ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr));
+            ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
+            ALWAYS_ASSERT_COND_IN_TXN(t, ((const rec *) v_ctr.data())->v > 1);
+            if (btr->search(t, u64_varkey(i), v)) {
+              AssertByteEquality(rec(i), v);
               btr->remove(t, u64_varkey(i));
-              ctr_rec.v = ((rec *) v_ctr)->v - 1;
+              ctr_rec.v = ((const rec *) v_ctr.data())->v - 1;
             } else {
               btr->insert_object(t, u64_varkey(i), rec(i));
-              ctr_rec.v = ((rec *) v_ctr)->v + 1;
+              ctr_rec.v = ((const rec *) v_ctr.data())->v + 1;
             }
             btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
             t.commit(true);
@@ -902,18 +916,18 @@ namespace mp_test2_ns {
       while (running) {
         try {
           TxnType t(txn_flags);
-          txn_btree::value_type v_ctr = 0;
-          txn_btree::size_type sz_ctr = 0;
-          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr, sz_ctr));
+          txn_btree::string_type v_ctr;
+          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr));
+          ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
           counting_scan_callback c;
           const u64_varkey kend(range_end);
           btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
           t.commit(true);
-          if (c.ctr != ((rec *) v_ctr)->v) {
-            cerr << "ctr: " << c.ctr << ", v_ctr: " << ((rec *) v_ctr)->v << endl;
+          if (c.ctr != ((const rec *) v_ctr.data())->v) {
+            cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
             cerr << "validations: " << validations << endl;
           }
-          ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((rec *) v_ctr)->v);
+          ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((const rec *) v_ctr.data())->v);
           validations++;
           VERBOSE(cerr << "successful validation" << endl);
         } catch (transaction_abort_exception &e) {
@@ -956,18 +970,17 @@ mp_test2()
     {
       // make sure the first validation passes
       TxnType t(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-      txn_btree::value_type v_ctr = 0;
-      txn_btree::size_type sz_ctr = 0;
-      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(ctr_key), v_ctr, sz_ctr));
-      ALWAYS_ASSERT_COND_IN_TXN(t, sz_ctr == sizeof(rec));
+      txn_btree::string_type v_ctr;
+      ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(ctr_key), v_ctr));
+      ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
       counting_scan_callback c;
       const u64_varkey kend(range_end);
       btr.search_range_call(t, u64_varkey(range_begin), &kend, c);
       AssertSuccessfulCommit(t);
-      if (c.ctr != ((rec *) v_ctr)->v) {
-        cerr << "ctr: " << c.ctr << ", v_ctr: " << ((rec *) v_ctr)->v << endl;
+      if (c.ctr != ((const rec *) v_ctr.data())->v) {
+        cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
       }
-      ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((rec *) v_ctr)->v);
+      ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((const rec *) v_ctr.data())->v);
       VERBOSE(cerr << "initial read only scan passed" << endl);
     }
 
@@ -1018,12 +1031,11 @@ namespace mp_test3_ns {
           uint64_t b = r.next() % naccounts;
           while (unlikely(a == b))
             b = r.next() % naccounts;
-          txn_btree::value_type arecv, brecv;
-          txn_btree::size_type a_sz, b_sz;
-          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(a), arecv, a_sz));
-          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(b), brecv, b_sz));
-          const rec *arec = (const rec *) arecv;
-          const rec *brec = (const rec *) brecv;
+          txn_btree::string_type arecv, brecv;
+          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(a), arecv));
+          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(b), brecv));
+          const rec *arec = (const rec *) arecv.data();
+          const rec *brec = (const rec *) brecv.data();
           if (arec->v == 0) {
             t.abort();
           } else {
@@ -1087,10 +1099,9 @@ namespace mp_test3_ns {
           TxnType t(txn_flags);
           uint64_t sum = 0;
           for (uint64_t i = 0; i < naccounts; i++) {
-            txn_btree::value_type v = 0;
-            txn_btree::size_type sz = 0;
-            ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(i), v, sz));
-            sum += ((rec *) v)->v;
+            txn_btree::string_type v;
+            ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(i), v));
+            sum += ((const rec *) v.data())->v;
           }
           t.commit(true);
           if (sum != (naccounts * amount_per_person)) {
@@ -1195,12 +1206,11 @@ namespace read_only_perf_ns {
       retry:
         try {
           TxnType t(txn_flags);
-          txn_btree::value_type v = 0;
-          txn_btree::size_type sz = 0;
-          bool found = btr->search(t, u64_varkey(k), v, sz);
+          txn_btree::string_type v;
+          bool found = btr->search(t, u64_varkey(k), v);
           t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, found);
-          AssertByteEquality(rec(k + 1), v, sz);
+          AssertByteEquality(rec(k + 1), v);
         } catch (transaction_abort_exception &e) {
           goto retry;
         }
@@ -1272,6 +1282,7 @@ read_only_perf()
 void
 txn_btree::Test()
 {
+  // XXX(stephentu): proto1 is bit-rotting for now
   //cerr << "Test proto1" << endl;
   //test1<transaction_proto1>();
   //test2<transaction_proto1>();

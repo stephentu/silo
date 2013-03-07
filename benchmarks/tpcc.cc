@@ -563,7 +563,6 @@ protected:
   load()
   {
     void *txn = db->new_txn(txn_flags);
-    const bool idx_manages_get_mem = db->index_manages_get_memory();
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
       vector<warehouse> warehouses;
@@ -603,14 +602,12 @@ protected:
       for (uint i = 1; i <= NumWarehouses(); i++) {
         warehouse warehouse_tmp;
         const string warehousePK = WarehousePrimaryKey(i);
-        char *warehouse_v = 0;
-        size_t warehouse_vlen = 0;
-        ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v, warehouse_vlen));
+        string warehouse_v;
+        ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v));
         warehouse warehouse_temp;
         const warehouse *warehouse =
-          warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
+          warehouse_enc.read((const uint8_t *) warehouse_v.data(), &warehouse_temp);
         ALWAYS_ASSERT(warehouses[i - 1] == *warehouse);
-        if (!idx_manages_get_mem) free(warehouse_v);
         //if (verbose)
         //  cerr << "warehouse_vlen = " << warehouse_vlen << ", sizeof(warehouse) = " << sizeof(*warehouse) << endl;
       }
@@ -837,7 +834,6 @@ protected:
   load()
   {
     const ssize_t bsize = db->txn_max_batch_size();
-    //const bool idx_manages_get_mem = db->index_manages_get_memory();
     const bool idx_stable_put_mem = db->index_has_stable_put_memory();
     void *txn = db->new_txn(txn_flags);
     uint64_t total_sz = 0;
@@ -1123,6 +1119,7 @@ tpcc_worker::txn_new_order()
   const uint numItems = RandomNumber(r, 5, 15);
   uint itemIDs[15], supplierWarehouseIDs[15], orderQuantities[15];
   uint8_t obj_buf[1024];
+  string obj_v;
   bool allLocal = true;
   for (uint i = 0; i < numItems; i++) {
     itemIDs[i] = GetItemId(r);
@@ -1138,46 +1135,32 @@ tpcc_worker::txn_new_order()
   }
 
   // XXX(stephentu): implement rollback
-  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
-  const bool idx_manages_get_mem = db->index_manages_get_memory();
   try {
     ssize_t ret = 0;
     uint8_t customerPK[CustomerPrimaryKeySize];
     CustomerPrimaryKey(customerPK, warehouse_id, districtID, customerID);
-    char *customer_v = 0;
-    size_t customer_vlen = 0;
     ALWAYS_ASSERT(tbl_customer->get(
-          txn, (const char *) customerPK, CustomerPrimaryKeySize,
-          customer_v, customer_vlen));
-    if (!idx_manages_get_mem) mm.manage(customer_v);
+          txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
     customer customer_temp;
     const customer *customer UNUSED =
-      customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+      customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
 
     uint8_t warehousePK[WarehousePrimaryKeySize];
     WarehousePrimaryKey(warehousePK, warehouse_id);
-    char *warehouse_v = 0;
-    size_t warehouse_vlen = 0;
     ALWAYS_ASSERT(tbl_warehouse->get(
-          txn, (const char *) warehousePK, WarehousePrimaryKeySize,
-          warehouse_v, warehouse_vlen));
-    if (!idx_manages_get_mem) mm.manage(warehouse_v);
+          txn, (const char *) warehousePK, WarehousePrimaryKeySize, obj_v));
     warehouse warehouse_temp;
     const warehouse *warehouse UNUSED =
-      warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
+      warehouse_enc.read((const uint8_t *) obj_v.data(), &warehouse_temp);
 
     uint8_t districtPK[DistrictPrimaryKeySize];
     DistrictPrimaryKey(districtPK, warehouse_id, districtID);
-    char *district_v = 0;
-    size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(
-          txn, (const char *) districtPK, DistrictPrimaryKeySize,
-          district_v, district_vlen));
-    if (!idx_manages_get_mem) mm.manage(district_v);
+          txn, (const char *) districtPK, DistrictPrimaryKeySize, obj_v));
     district district_temp, district_new;
     const district *district =
-      district_enc.read((const uint8_t *) district_v, &district_temp);
+      district_enc.read((const uint8_t *) obj_v.data(), &district_temp);
 
     new_order new_order;
     new_order.no_w_id = int32_t(warehouse_id);
@@ -1243,25 +1226,17 @@ tpcc_worker::txn_new_order()
 
       uint8_t itemPK[ItemPrimaryKeySize];
       ItemPrimaryKey(itemPK, ol_i_id);
-      char *item_v = 0;
-      size_t item_vlen = 0;
       ALWAYS_ASSERT(tbl_item->get(
-            txn, (const char *) itemPK, ItemPrimaryKeySize,
-            item_v, item_vlen));
-      if (!idx_manages_get_mem) mm.manage(item_v);
+            txn, (const char *) itemPK, ItemPrimaryKeySize, obj_v));
       item item_temp;
-      const item *item = item_enc.read((const uint8_t *) item_v, &item_temp);
+      const item *item = item_enc.read((const uint8_t *) obj_v.data(), &item_temp);
 
       uint8_t stockPK[StockPrimaryKeySize];
       StockPrimaryKey(stockPK, warehouse_id, ol_i_id);
-      char *stock_v = 0;
-      size_t stock_vlen = 0;
       ALWAYS_ASSERT(tbl_stock->get(
-            txn, (const char *) stockPK, StockPrimaryKeySize,
-            stock_v, stock_vlen));
-      if (!idx_manages_get_mem) mm.manage(stock_v);
+            txn, (const char *) stockPK, StockPrimaryKeySize, obj_v));
       stock stock_temp, stock_new;
-      const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
+      const stock *stock = stock_enc.read((const uint8_t *) obj_v.data(), &stock_temp);
       stock_new = *stock;
 
       if (stock_new.s_quantity - ol_quantity >= 10)
@@ -1385,10 +1360,9 @@ tpcc_worker::txn_delivery()
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
   uint8_t obj_buf[1024];
+  string obj_v;
 
-  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
-  const bool idx_manages_get_mem = db->index_manages_get_memory();
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -1409,14 +1383,10 @@ tpcc_worker::txn_delivery()
 
       uint8_t oorderPK[OOrderPrimaryKeySize];
       OOrderPrimaryKey(oorderPK, warehouse_id, d, new_order->no_o_id);
-      char *oorder_v;
-      size_t oorder_len;
       ALWAYS_ASSERT(tbl_oorder->get(
-            txn, (const char *) oorderPK, OOrderPrimaryKeySize,
-            oorder_v, oorder_len));
-      if (!idx_manages_get_mem) mm.manage(oorder_v);
+            txn, (const char *) oorderPK, OOrderPrimaryKeySize, obj_v));
       oorder oorder_temp, oorder_new;
-      const oorder *oorder = oorder_enc.read((const uint8_t *) oorder_v, &oorder_temp);
+      const oorder *oorder = oorder_enc.read((const uint8_t *) obj_v.data(), &oorder_temp);
 
       static_limit_callback<15> c; // never more than 15 order_lines per order
       uint8_t order_line_lowkey[OrderLinePrimaryKeySize],
@@ -1465,14 +1435,10 @@ tpcc_worker::txn_delivery()
       // update customer
       uint8_t customerPK[CustomerPrimaryKeySize];
       CustomerPrimaryKey(customerPK, warehouse_id, d, c_id);
-      char *customer_v;
-      size_t customer_len;
       ALWAYS_ASSERT(tbl_customer->get(
-            txn, (const char *) customerPK, CustomerPrimaryKeySize,
-            customer_v, customer_len));
-      if (!idx_manages_get_mem) mm.manage(customer_v);
+            txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
       customer customer_temp, customer_new;
-      const customer *customer = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+      const customer *customer = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
       customer_new = *customer;
       customer_new.c_balance += ol_total;
       const size_t customer_sz = customer_enc.nbytes(&customer_new);
@@ -1513,6 +1479,7 @@ tpcc_worker::txn_payment()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   uint8_t obj_buf[1024];
+  string obj_v;
   uint customerDistrictID, customerWarehouseID;
   if (NumWarehouses() == 1 || RandomNumber(r, 1, 100) <= 85) {
     customerDistrictID = districtID;
@@ -1525,22 +1492,16 @@ tpcc_worker::txn_payment()
   }
   const float paymentAmount = (float) (RandomNumber(r, 100, 500000) / 100.0);
   const uint32_t ts = GetCurrentTimeMillis();
-  const bool idx_manages_get_mem = db->index_manages_get_memory();
   const bool idx_stable_put_mem = db->index_has_stable_put_memory();
-  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags);
   try {
     ssize_t ret = 0;
     uint8_t warehousePK[WarehousePrimaryKeySize];
     WarehousePrimaryKey(warehousePK, warehouse_id);
-    char *warehouse_v = 0;
-    size_t warehouse_vlen = 0;
     ALWAYS_ASSERT(tbl_warehouse->get(
-          txn, (const char *) warehousePK, WarehousePrimaryKeySize,
-          warehouse_v, warehouse_vlen));
-    if (!idx_manages_get_mem) mm.manage(warehouse_v);
+          txn, (const char *) warehousePK, WarehousePrimaryKeySize, obj_v));
     warehouse warehouse_temp, warehouse_new;
-    const warehouse *warehouse = warehouse_enc.read((const uint8_t *) warehouse_v, &warehouse_temp);
+    const warehouse *warehouse = warehouse_enc.read((const uint8_t *) obj_v.data(), &warehouse_temp);
     warehouse_new = *warehouse;
     warehouse_new.w_ytd += paymentAmount;
     const size_t warehouse_sz = warehouse_enc.nbytes(&warehouse_new);
@@ -1550,14 +1511,10 @@ tpcc_worker::txn_payment()
 
     uint8_t districtPK[DistrictPrimaryKeySize];
     DistrictPrimaryKey(districtPK, warehouse_id, districtID);
-    char *district_v = 0;
-    size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(
-          txn, (const char *) districtPK, DistrictPrimaryKeySize,
-          district_v, district_vlen));
-    if (!idx_manages_get_mem) mm.manage(district_v);
+          txn, (const char *) districtPK, DistrictPrimaryKeySize, obj_v));
     district district_temp, district_new;
-    const district *district = district_enc.read((const uint8_t *) district_v, &district_temp);
+    const district *district = district_enc.read((const uint8_t *) obj_v.data(), &district_temp);
     district_new = *district;
     district_new.d_ytd += paymentAmount;
     const size_t district_sz = district_enc.nbytes(&district_new);
@@ -1605,28 +1562,20 @@ tpcc_worker::txn_payment()
           customer_name_idx_nomem_enc.read(
               (const uint8_t *) c.values[index].second.data(), &customer_name_idx_nomem_temp);
         CustomerPrimaryKey(customerPK, customerWarehouseID, customerDistrictID, customer_name_idx_nomem->c_id);
-        char *customer_v = 0;
-        size_t customer_vlen = 0;
         ALWAYS_ASSERT(tbl_customer->get(
-              txn, (const char *) customerPK, CustomerPrimaryKeySize,
-              customer_v, customer_vlen));
-        if (!idx_manages_get_mem) mm.manage(customer_v);
+              txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
         ::customer customer_temp;
-        const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+        const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
         customer = *c;
       }
     } else {
       // cust by ID
       const uint customerID = GetCustomerId(r);
       CustomerPrimaryKey(customerPK, customerWarehouseID, customerDistrictID, customerID);
-      char *customer_v = 0;
-      size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(
-            txn, (const char *) customerPK, CustomerPrimaryKeySize,
-            customer_v, customer_vlen));
-      if (!idx_manages_get_mem) mm.manage(customer_v);
+            txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
       ::customer customer_temp;
-      const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+      const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
       customer = *c;
     }
 
@@ -1744,10 +1693,9 @@ ssize_t
 tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  const bool idx_manages_get_mem = db->index_manages_get_memory();
   const bool idx_stable_put_mem = db->index_has_stable_put_memory();
-  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
+  string obj_v;
   try {
 
     customer customer;
@@ -1790,31 +1738,20 @@ tpcc_worker::txn_order_status()
           customer_name_idx_nomem_enc.read(
               (const uint8_t *) c.values[index].second.data(), &customer_name_idx_nomem_temp);
         CustomerPrimaryKey(customerPK, warehouse_id, districtID, customer_name_idx_nomem->c_id);
-        char *customer_v = 0;
-        size_t customer_vlen = 0;
-        if (!tbl_customer->get(
-              txn, (const char *) customerPK, CustomerPrimaryKeySize,
-              customer_v, customer_vlen)) {
-          cerr << warehouse_id << ", " << districtID << ", " << customer_name_idx_nomem->c_id << endl;
-          INVARIANT(false);
-        }
-        if (!idx_manages_get_mem) mm.manage(customer_v);
+        ALWAYS_ASSERT(tbl_customer->get(
+              txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
         ::customer customer_temp;
-        const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+        const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
         customer = *c;
       }
     } else {
       // cust by ID
       const uint customerID = GetCustomerId(r);
       CustomerPrimaryKey(customerPK, warehouse_id, districtID, customerID);
-      char *customer_v = 0;
-      size_t customer_vlen = 0;
       ALWAYS_ASSERT(tbl_customer->get(
-            txn, (const char *) customerPK, CustomerPrimaryKeySize,
-            customer_v, customer_vlen));
-      if (!idx_manages_get_mem) mm.manage(customer_v);
+            txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
       ::customer customer_temp;
-      const ::customer *c = customer_enc.read((const uint8_t *) customer_v, &customer_temp);
+      const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
       customer = *c;
     }
 
@@ -1889,21 +1826,16 @@ tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  const bool idx_manages_get_mem = db->index_manages_get_memory();
-  scoped_memory_manager mm;
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
+  string obj_v;
   try {
     uint8_t districtPK[DistrictPrimaryKeySize];
     DistrictPrimaryKey(districtPK, warehouse_id, districtID);
-    char *district_v = 0;
-    size_t district_vlen = 0;
     ALWAYS_ASSERT(tbl_district->get(
-          txn, (const char *) districtPK, DistrictPrimaryKeySize,
-          district_v, district_vlen));
-    if (!idx_manages_get_mem) mm.manage(district_v);
+          txn, (const char *) districtPK, DistrictPrimaryKeySize, obj_v));
     district district_temp;
     const district *district =
-      district_enc.read((const uint8_t *) district_v, &district_temp);
+      district_enc.read((const uint8_t *) obj_v.data(), &district_temp);
 
     // manual joins are fun!
     order_line_scan_callback c;
@@ -1924,14 +1856,10 @@ tpcc_worker::txn_stock_level()
            it != c.s_i_ids.end(); ++it) {
         uint8_t stockPK[StockPrimaryKeySize];
         StockPrimaryKey(stockPK, warehouse_id, *it);
-        char *stock_v = 0;
-        size_t stock_vlen = 0;
         ALWAYS_ASSERT(tbl_stock->get(
-              txn, (const char *) stockPK, StockPrimaryKeySize,
-              stock_v, stock_vlen));
-        if (!idx_manages_get_mem) mm.manage(stock_v);
+              txn, (const char *) stockPK, StockPrimaryKeySize, obj_v));
         stock stock_temp;
-        const stock *stock = stock_enc.read((const uint8_t *) stock_v, &stock_temp);
+        const stock *stock = stock_enc.read((const uint8_t *) obj_v.data(), &stock_temp);
         if (stock->s_quantity < int(threshold))
           s_i_ids_distinct.insert(stock->s_i_id);
       }

@@ -118,17 +118,12 @@ bool
 ndb_ordered_index::get(
     void *txn,
     const char *key, size_t keylen,
-    char *&value, size_t &valuelen)
+    string &value)
 {
   try {
-    txn_btree::value_type v = 0;
-    txn_btree::size_type sz = 0;
-    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen), v, sz))
+    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen), value))
       return false;
-    INVARIANT(v != NULL);
-    INVARIANT(sz > 0);
-    value = (char *) v;
-    valuelen = sz;
+    INVARIANT(!value.empty());
     return true;
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();

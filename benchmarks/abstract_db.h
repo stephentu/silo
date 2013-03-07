@@ -38,13 +38,6 @@ public:
    */
   virtual ssize_t txn_max_batch_size() const { return -1; }
 
-  /**
-   * Returns true if the values returned by get() are managed
-   * by the transaction, instead of the caller (don't need to
-   * call free explicitly)
-   */
-  virtual bool index_manages_get_memory() const { return false; }
-
   virtual bool index_has_stable_put_memory() const { return false; }
 
   /**
