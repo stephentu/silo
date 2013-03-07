@@ -67,7 +67,7 @@ public:
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
-      std::string &value);
+      std::string &value, size_t max_bytes_read);
   virtual const char * put(
       void *txn,
       const char *key, size_t keylen,

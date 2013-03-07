@@ -10,8 +10,10 @@ using namespace std;
 using namespace util;
 
 bool
-txn_btree::search(transaction &t, const string_type &k, string_type &v)
+txn_btree::search(transaction &t, const string_type &k, string_type &v,
+                  size_t max_bytes_read)
 {
+  INVARIANT(max_bytes_read > 0);
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
 
@@ -23,8 +25,11 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v)
   //
   // note (1)-(3) are served by transaction::local_search()
 
-  if (ctx.local_search_str(t, k, v))
+  if (ctx.local_search_str(t, k, v)) {
+    if (v.size() > max_bytes_read)
+      v.resize(max_bytes_read);
     return !v.empty();
+  }
 
   btree::value_type underlying_v;
   if (!underlying_btree.search(varkey(k), underlying_v)) {
@@ -44,7 +49,7 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v)
     const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
       snapshot_tid_t.second : transaction::MAX_TID;
 
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, v))) {
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, v, max_bytes_read))) {
       const transaction::abort_reason r =
         transaction::ABORT_REASON_UNSTABLE_READ;
       t.abort_impl(r);

@@ -118,10 +118,11 @@ bool
 ndb_ordered_index::get(
     void *txn,
     const char *key, size_t keylen,
-    string &value)
+    string &value, size_t max_bytes_read)
 {
   try {
-    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen), value))
+    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen),
+                    value, max_bytes_read))
       return false;
     INVARIANT(!value.empty());
     return true;

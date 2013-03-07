@@ -438,7 +438,8 @@ private:
     }
 
     bool
-    record_at(tid_t t, tid_t &start_t, string_type &r, bool require_latest) const
+    record_at(tid_t t, tid_t &start_t, string_type &r, size_t max_len,
+              bool require_latest) const
     {
     retry:
       const version_t v = stable_version();
@@ -448,12 +449,12 @@ private:
         if (unlikely(require_latest && !IsLatest(v)))
           return false;
         start_t = version;
-        r.reserve(size);
-        r.assign((const char *) &value_start[0], size);
+        const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
+        r.assign((const char *) &value_start[0], read_sz);
       }
       if (unlikely(!check_version(v)))
         goto retry;
-      return found ? true : (p ? p->record_at(t, start_t, r, false) : false);
+      return found ? true : (p ? p->record_at(t, start_t, r, max_len, false) : false);
     }
 
     static event_counter g_evt_logical_node_creates;
@@ -475,9 +476,10 @@ public:
      * is an error- this will cause deadlock
      */
     inline bool
-    stable_read(tid_t t, tid_t &start_t, string_type &r) const
+    stable_read(tid_t t, tid_t &start_t, string_type &r,
+                size_t max_len = string_type::npos) const
     {
-      return record_at(t, start_t, r, true);
+      return record_at(t, start_t, r, max_len, true);
     }
 
     inline bool

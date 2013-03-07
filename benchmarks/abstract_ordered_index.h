@@ -21,7 +21,7 @@ public:
   virtual bool get(
       void *txn,
       const char *key, size_t keylen,
-      std::string &value) = 0;
+      std::string &value, size_t max_bytes_read = std::string::npos) = 0;
 
   class scan_callback {
   public:

@@ -608,7 +608,8 @@ static event_counter evt_local_search_write_set_hits("local_search_write_set_hit
 static event_counter evt_local_search_absent_set_hits("local_search_absent_set_hits");
 
 bool
-transaction::txn_context::local_search_str(const transaction &t, const string_type &k, string_type &v) const
+transaction::txn_context::local_search_str(
+    const transaction &t, const string_type &k, string_type &v) const
 {
   ++evt_local_search_lookups;
 

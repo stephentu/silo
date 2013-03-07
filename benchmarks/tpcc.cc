@@ -1859,12 +1859,20 @@ tpcc_worker::txn_stock_level()
            it != c.s_i_ids.end(); ++it) {
         uint8_t stockPK[StockPrimaryKeySize];
         StockPrimaryKey(stockPK, warehouse_id, *it);
+        const serializer<int32_t> i32s;
+        const serializer<int16_t> i16s;
+        const size_t nbytesread = 2 * i32s.max_nbytes() + i16s.max_nbytes();
         ALWAYS_ASSERT(tbl_stock->get(
-              txn, (const char *) stockPK, StockPrimaryKeySize, obj_v));
-        stock stock_temp;
-        const stock *stock = stock_enc.read((const uint8_t *) obj_v.data(), &stock_temp);
-        if (stock->s_quantity < int(threshold))
-          s_i_ids_distinct.insert(stock->s_i_id);
+              txn, (const char *) stockPK, StockPrimaryKeySize, obj_v, nbytesread));
+        INVARIANT(obj_v.size() <= nbytesread);
+        const uint8_t *ptr = (const uint8_t *) obj_v.data();
+        int32_t i32tmp;
+        int16_t i16tmp;
+        ptr = i32s.read(ptr, &i32tmp);
+        ptr = i32s.read(ptr, &i32tmp);
+        i16s.read(ptr, &i16tmp);
+        if (i16tmp < int(threshold))
+          s_i_ids_distinct.insert(i32tmp);
       }
       evt_avg_stock_level_loop_join_lookups.offer(c.s_i_ids.size());
       // NB(stephentu): s_i_ids_distinct.size() is the computed result of this txn

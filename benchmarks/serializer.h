@@ -28,6 +28,12 @@ struct serializer {
   {
     return sizeof(*obj);
   }
+
+  inline size_t
+  max_nbytes() const
+  {
+    return sizeof(T);
+  }
 };
 
 // serializer<T> specializations
@@ -49,6 +55,12 @@ struct serializer<uint32_t> {
   nbytes(const uint32_t *obj) const
   {
     return size_uvint32(*obj);
+  }
+
+  size_t
+  max_nbytes() const
+  {
+    return 5;
   }
 };
 
@@ -78,6 +90,12 @@ struct serializer<int32_t> {
     serializer<uint32_t> s;
     const uint32_t v = encode(*obj);
     return s.nbytes(&v);
+  }
+
+  size_t
+  max_nbytes() const
+  {
+    return 5;
   }
 
 private:

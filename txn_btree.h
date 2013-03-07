@@ -67,16 +67,19 @@ public:
   }
 
   // either returns false or v is set to not-empty with value
-  bool search(transaction &t, const string_type &k, string_type &v);
+  // precondition: max_bytes_read > 0
+  bool search(transaction &t, const string_type &k, string_type &v,
+              size_t max_bytes_read = string_type::npos);
 
   // memory:
   // k - assumed to point to valid memory, *not* managed by btree
   // v - if k is found, points to a region of (immutable) memory of size sz which
   //     is guaranteed to be valid memory as long as transaction t is in scope
   inline bool
-  search(transaction &t, const key_type &k, string_type &v)
+  search(transaction &t, const key_type &k, string_type &v,
+         size_t max_bytes_read = string_type::npos)
   {
-    return search(t, to_string_type(k), v);
+    return search(t, to_string_type(k), v, max_bytes_read);
   }
 
   void
