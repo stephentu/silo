@@ -604,7 +604,7 @@ transaction::Test()
 }
 
 static event_counter evt_local_search_lookups("local_search_lookups");
-static event_counter evt_local_search_write_set_hits("local_search_read_set_hits");
+static event_counter evt_local_search_write_set_hits("local_search_write_set_hits");
 static event_counter evt_local_search_absent_set_hits("local_search_absent_set_hits");
 
 bool
