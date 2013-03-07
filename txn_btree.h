@@ -147,6 +147,13 @@ public:
     insert(t, k, (value_type) &obj, sizeof(obj));
   }
 
+  template <typename T>
+  inline void
+  insert_object(transaction &t, const string_type &k, const T &obj)
+  {
+    insert(t, k, (value_type) &obj, sizeof(obj));
+  }
+
   inline void
   remove(transaction &t, const string_type &k)
   {
