@@ -49,7 +49,7 @@ public:
     const string k = u64_varkey(r.next() % nkeys).str();
     try {
       string v;
-      ALWAYS_ASSERT(tbl->get(txn, k.data(), k.size(), v));
+      ALWAYS_ASSERT(tbl->get(txn, k, v));
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -106,9 +106,7 @@ protected:
           rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
           const size_t sz = enc.nbytes(&rec);
           uint8_t buf[sz];
-          tbl->insert(
-              txn, k.data(), k.size(),
-              (const char *) enc.write(buf, &rec), sz);
+          tbl->insert(txn, k, (const char *) enc.write(buf, &rec), sz);
         }
         if (verbose)
           cerr << "batch 1/1 done" << endl;
@@ -124,9 +122,7 @@ protected:
             rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
             const size_t sz = enc.nbytes(&rec);
             uint8_t buf[sz];
-            tbl->insert(
-                txn, k.data(), k.size(),
-                (const char *) enc.write(buf, &rec), sz);
+            tbl->insert(txn, k, (const char *) enc.write(buf, &rec), sz);
           }
           if (verbose)
             cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

@@ -21,6 +21,32 @@ using namespace util;
 
 typedef uint uint;
 
+// config constants
+
+static inline ALWAYS_INLINE size_t
+NumWarehouses()
+{
+  return (size_t) scale_factor;
+}
+
+static inline ALWAYS_INLINE size_t
+NumItems()
+{
+  return 100000;
+}
+
+static inline ALWAYS_INLINE size_t
+NumDistrictsPerWarehouse()
+{
+  return 10;
+}
+
+static inline ALWAYS_INLINE size_t
+NumCustomersPerDistrict()
+{
+  return 3000;
+}
+
 class tpcc_worker_mixin {
 public:
   tpcc_worker_mixin(const map<string, abstract_ordered_index *> &open_tables) :
@@ -83,32 +109,6 @@ public:
     return tl_hack++;
   }
 
-  // config constants
-
-  static inline ALWAYS_INLINE size_t
-  NumWarehouses()
-  {
-    return (size_t) scale_factor;
-  }
-
-  static inline ALWAYS_INLINE size_t
-  NumItems()
-  {
-    return 100000;
-  }
-
-  static inline ALWAYS_INLINE size_t
-  NumDistrictsPerWarehouse()
-  {
-    return 10;
-  }
-
-  static inline ALWAYS_INLINE size_t
-  NumCustomersPerDistrict()
-  {
-    return 3000;
-  }
-
   // utils for generating random #s and strings
 
   static inline ALWAYS_INLINE int
@@ -164,6 +164,12 @@ public:
     return buf - begin;
   }
 
+  static inline ALWAYS_INLINE size_t
+  GetCustomerLastName(char *buf, fast_random &r, int num)
+  {
+    return GetCustomerLastName((uint8_t *) buf, r, num);
+  }
+
   static inline string
   GetCustomerLastName(fast_random &r, int num)
   {
@@ -185,6 +191,12 @@ public:
     return GetCustomerLastName(buf, r, NonUniformRandom(r, 255, 223, 0, 999));
   }
 
+  static inline ALWAYS_INLINE size_t
+  GetNonUniformCustomerLastNameRun(char *buf, fast_random &r)
+  {
+    return GetNonUniformCustomerLastNameRun((uint8_t *) buf, r);
+  }
+
   static inline ALWAYS_INLINE string
   GetNonUniformCustomerLastNameRun(fast_random &r)
   {
@@ -202,7 +214,7 @@ public:
     uint i = 0;
     string buf(len - 1, 0);
     while (i < (len - 1)) {
-      char c = (char) r.next_char();
+      const char c = (char) r.next_char();
       // XXX(stephentu): oltpbench uses java's Character.isLetter(), which
       // is a less restrictive filter than isalnum()
       if (!isalnum(c))
@@ -237,6 +249,12 @@ public:
     *p++ = t(c_id);
   }
 
+  static inline ALWAYS_INLINE void
+  CustomerPrimaryKey(char *buf, int32_t c_w_id, int32_t c_d_id, int32_t c_id)
+  {
+    CustomerPrimaryKey((uint8_t *) buf, c_w_id, c_d_id, c_id);
+  }
+
   static inline string
   CustomerPrimaryKey(int32_t c_w_id, int32_t c_d_id, int32_t c_id)
   {
@@ -258,6 +276,18 @@ public:
     *p++ = t(c_d_id);
     NDB_MEMCPY(((char *) p), c_last, 16);
     NDB_MEMCPY(((char *) p) + 16, c_first, 16);
+  }
+
+  static inline ALWAYS_INLINE void
+  CustomerNameIdxKey(char *buf, int32_t c_w_id, int32_t c_d_id,
+                     const char *c_last, const char *c_first)
+  {
+    CustomerNameIdxKey(
+        (uint8_t *) buf,
+        c_w_id,
+        c_d_id,
+        (const uint8_t *) c_last,
+        (const uint8_t *) c_first);
   }
 
   static inline string
@@ -284,6 +314,12 @@ public:
     *p++ = t(d_id);
   }
 
+  static inline ALWAYS_INLINE void
+  DistrictPrimaryKey(char *buf, int32_t d_w_id, int32_t d_id)
+  {
+    DistrictPrimaryKey((uint8_t *) buf, d_w_id, d_id);
+  }
+
   static inline string
   DistrictPrimaryKey(int32_t d_w_id, int32_t d_id)
   {
@@ -300,6 +336,12 @@ public:
     big_endian_trfm<int32_t> t;
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(i_id);
+  }
+
+  static inline ALWAYS_INLINE void
+  ItemPrimaryKey(char *buf, int32_t i_id)
+  {
+    ItemPrimaryKey((uint8_t *) buf, i_id);
   }
 
   static inline string
@@ -322,6 +364,12 @@ public:
     *p++ = t(no_o_id);
   }
 
+  static inline ALWAYS_INLINE void
+  NewOrderPrimaryKey(char *buf, int32_t no_w_id, int32_t no_d_id, int32_t no_o_id)
+  {
+    NewOrderPrimaryKey((uint8_t *) buf, no_w_id, no_d_id, no_o_id);
+  }
+
   static inline string
   NewOrderPrimaryKey(int32_t no_w_id, int32_t no_d_id, int32_t no_o_id)
   {
@@ -340,6 +388,12 @@ public:
     *p++ = t(o_w_id);
     *p++ = t(o_d_id);
     *p++ = t(o_id);
+  }
+
+  static inline ALWAYS_INLINE void
+  OOrderPrimaryKey(char *buf, int32_t o_w_id, int32_t o_d_id, int32_t o_id)
+  {
+    OOrderPrimaryKey((uint8_t *) buf, o_w_id, o_d_id, o_id);
   }
 
   static inline string
@@ -363,6 +417,12 @@ public:
     *p++ = t(o_id);
   }
 
+  static inline ALWAYS_INLINE void
+  OOrderCIDKey(char *buf, int32_t o_w_id, int32_t o_d_id, int32_t o_c_id, int32_t o_id)
+  {
+    OOrderCIDKey((uint8_t *) buf, o_w_id, o_d_id, o_c_id, o_id);
+  }
+
   static inline string
   OOrderCIDKey(int32_t o_w_id, int32_t o_d_id, int32_t o_c_id, int32_t o_id)
   {
@@ -384,6 +444,12 @@ public:
     *p++ = t(ol_number);
   }
 
+  static inline ALWAYS_INLINE void
+  OrderLinePrimaryKey(char *buf, int32_t ol_w_id, int32_t ol_d_id, int32_t ol_o_id, int32_t ol_number)
+  {
+    OrderLinePrimaryKey((uint8_t *) buf, ol_w_id, ol_d_id, ol_o_id, ol_number);
+  }
+
   static inline string
   OrderLinePrimaryKey(int32_t ol_w_id, int32_t ol_d_id, int32_t ol_o_id, int32_t ol_number)
   {
@@ -401,6 +467,12 @@ public:
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(s_w_id);
     *p++ = t(s_i_id);
+  }
+
+  static inline void
+  StockPrimaryKey(char *buf, int32_t s_w_id, int32_t s_i_id)
+  {
+    StockPrimaryKey((uint8_t *) buf, s_w_id, s_i_id);
   }
 
   static inline string
@@ -428,6 +500,14 @@ public:
     *p++ = t(h_date);
   }
 
+  static inline ALWAYS_INLINE void
+  HistoryPrimaryKey(char *buf, int32_t h_c_id, int32_t h_c_d_id, int32_t h_c_w_id,
+                    int32_t h_d_id, int32_t h_w_id, uint32_t h_date)
+  {
+    HistoryPrimaryKey((uint8_t *) buf, h_c_id, h_c_d_id, h_c_w_id,
+                      h_d_id, h_w_id, h_date);
+  }
+
   static inline string
   HistoryPrimaryKey(int32_t h_c_id, int32_t h_c_d_id, int32_t h_c_w_id,
                     int32_t h_d_id, int32_t h_w_id, uint32_t h_date)
@@ -446,6 +526,12 @@ public:
     big_endian_trfm<int32_t> t;
     int32_t *p = (int32_t *) &buf[0];
     *p++ = t(w_id);
+  }
+
+  static inline ALWAYS_INLINE void
+  WarehousePrimaryKey(char *buf, int32_t w_id)
+  {
+    WarehousePrimaryKey((uint8_t *) buf, w_id);
   }
 
   static inline string
@@ -535,13 +621,13 @@ public:
     //w.push_back(workload_desc("Payment", 1.0, TxnPayment)); // ~32k ops/sec
     //w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k ops/sec
     //w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); // ~33k ops/sec
-    w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
+    //w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
 
-    //w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
-    //w.push_back(workload_desc("Payment", 0.43, TxnPayment));
-    //w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
-    //w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
-    //w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
+    w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
+    w.push_back(workload_desc("Payment", 0.43, TxnPayment));
+    w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
+    w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
+    w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
     return w;
   }
 
@@ -593,7 +679,7 @@ protected:
         uint8_t buf[sz];
         const string pk = WarehousePrimaryKey(i);
         tbl_warehouse->insert(
-            txn, pk.data(), pk.size(),
+            txn, pk,
             (const char *) warehouse_enc.write(buf, &warehouse), sz);
 
         warehouses.push_back(warehouse);
@@ -604,13 +690,11 @@ protected:
         warehouse warehouse_tmp;
         const string warehousePK = WarehousePrimaryKey(i);
         string warehouse_v;
-        ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK.data(), warehousePK.size(), warehouse_v));
+        ALWAYS_ASSERT(tbl_warehouse->get(txn, warehousePK, warehouse_v));
         warehouse warehouse_temp;
         const warehouse *warehouse =
           warehouse_enc.read((const uint8_t *) warehouse_v.data(), &warehouse_temp);
         ALWAYS_ASSERT(warehouses[i - 1] == *warehouse);
-        //if (verbose)
-        //  cerr << "warehouse_vlen = " << warehouse_vlen << ", sizeof(warehouse) = " << sizeof(*warehouse) << endl;
       }
       ALWAYS_ASSERT(db->commit_txn(txn));
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -664,7 +748,7 @@ protected:
         uint8_t buf[sz];
         const string pk = ItemPrimaryKey(i);
         tbl_item->insert(
-            txn, pk.data(), pk.size(),
+            txn, pk,
             (const char *) item_enc.write(buf, &item), sz);
 
         if (bsize != -1 && !(i % bsize)) {
@@ -738,7 +822,7 @@ protected:
           uint8_t buf[sz];
           const string pk = StockPrimaryKey(w, i);
           tbl_stock->insert(
-              txn, pk.data(), pk.size(),
+              txn, pk,
               (const char *) stock_enc.write(buf, &stock), sz);
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
@@ -799,7 +883,7 @@ protected:
           uint8_t buf[sz];
           const string pk = DistrictPrimaryKey(w, d);
           tbl_district->insert(
-              txn, pk.data(), pk.size(),
+              txn, pk,
               (const char *) district_enc.write(buf, &district), sz);
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
@@ -883,7 +967,7 @@ protected:
             uint8_t buf[sz];
             total_sz += sz;
             const char *customer_p =
-              tbl_customer->insert(txn, pk.data(), pk.size(),
+              tbl_customer->insert(txn, pk,
                                    (const char *) customer_enc.write(buf, &customer), sz);
             ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
 
@@ -906,7 +990,7 @@ protected:
               const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
               uint8_t buf[sz];
               tbl_customer_name_idx->insert(
-                  txn, customerNameKey.data(), customerNameKey.size(),
+                  txn, customerNameKey,
                   (const char *) customer_name_idx_mem_enc.write(buf, &rec), sz);
             } else {
               // index structure is:
@@ -917,7 +1001,7 @@ protected:
               const size_t sz = customer_name_idx_nomem_enc.nbytes(&rec);
               uint8_t buf[sz];
               tbl_customer_name_idx->insert(
-                  txn, customerNameKey.data(), customerNameKey.size(),
+                  txn, customerNameKey,
                   (const char *) customer_name_idx_nomem_enc.write(buf, &rec), sz);
             }
 
@@ -940,7 +1024,7 @@ protected:
             const size_t history_sz = history_enc.nbytes(&history);
             uint8_t history_buf[history_sz];
             tbl_history->insert(
-                txn, pk.data(), pk.size(),
+                txn, pk,
                 (const char *) history_enc.write(history_buf, &history), history_sz);
 
             if (bsize != -1 && !((++ctr) % bsize)) {
@@ -1010,7 +1094,7 @@ protected:
             n_oorders++;
             uint8_t buf[sz];
             const char *oorder_ret =
-              tbl_oorder->insert(txn, oorderPK.data(), oorderPK.size(),
+              tbl_oorder->insert(txn, oorderPK,
                   (const char *) oorder_enc.write(buf, &oorder), sz);
 
             const string oorderCIDPK = OOrderCIDKey(w, d, oorder.o_c_id, c);
@@ -1021,7 +1105,7 @@ protected:
               const size_t sz = oorder_c_id_idx_mem_enc.nbytes(&rec);
               uint8_t buf[sz];
               tbl_oorder_c_id_idx->insert(
-                  txn, oorderCIDPK.data(), oorderCIDPK.size(),
+                  txn, oorderCIDPK,
                   (const char *) oorder_c_id_idx_mem_enc.write(buf, &rec), sz);
             } else {
               oorder_c_id_idx_nomem rec;
@@ -1029,7 +1113,7 @@ protected:
               const size_t sz = oorder_c_id_idx_nomem_enc.nbytes(&rec);
               uint8_t buf[sz];
               tbl_oorder_c_id_idx->insert(
-                  txn, oorderCIDPK.data(), oorderCIDPK.size(),
+                  txn, oorderCIDPK,
                   (const char *) oorder_c_id_idx_nomem_enc.write(buf, &rec), sz);
             }
 
@@ -1049,7 +1133,7 @@ protected:
               n_new_orders++;
               uint8_t buf[sz];
               tbl_new_order->insert(
-                  txn, newOrderPK.data(), newOrderPK.size(),
+                  txn, newOrderPK,
                   (const char *) new_order_enc.write(buf, &new_order), sz);
 
               if (bsize != -1 && !((++ctr) % bsize)) {
@@ -1084,7 +1168,7 @@ protected:
               n_order_lines++;
               uint8_t buf[sz];
               tbl_order_line->insert(
-                  txn, orderLinePK.data(), orderLinePK.size(),
+                  txn, orderLinePK,
                   (const char *) order_line_enc.write(buf, &order_line), sz);
 
               if (bsize != -1 && !((++ctr) % bsize)) {
@@ -1112,6 +1196,114 @@ protected:
   }
 };
 
+static inline ALWAYS_INLINE char *
+WriteBuf(string &buf, size_t s)
+{
+  buf.clear();   // shake off shared references
+  buf.resize(s); // give us [buf.data(), buf.data() + s) to write with
+  return (char *) buf.data(); // we can now safely write to [buf.data(), buf.data() + s)
+}
+
+struct checker {
+  // these sanity checks are just a few simple checks to make sure
+  // the data is not entirely corrupted
+
+  static inline ALWAYS_INLINE void
+  SanityCheckCustomer(const customer *c, int32_t c_w_id, int32_t c_d_id, int32_t c_id)
+  {
+    INVARIANT(c_w_id >= 1 && static_cast<size_t>(c_w_id) <= NumWarehouses());
+    INVARIANT(c_d_id >= 1 && static_cast<size_t>(c_d_id) <= NumDistrictsPerWarehouse());
+    INVARIANT(c_id >= 1 && static_cast<size_t>(c_id) <= NumCustomersPerDistrict());
+    INVARIANT(c->c_w_id == c_w_id);
+    INVARIANT(c->c_d_id == c_d_id);
+    INVARIANT(c->c_id == c_id);
+    INVARIANT(c->c_credit == "BC" || c->c_credit == "GC");
+    INVARIANT(c->c_middle == "OE");
+  }
+
+  static inline ALWAYS_INLINE void
+  SanityCheckWarehouse(const warehouse *w, int32_t w_id)
+  {
+    INVARIANT(w_id >= 1 && static_cast<size_t>(w_id) <= NumWarehouses());
+    INVARIANT(w->w_id == w_id);
+    INVARIANT(w->w_state.size() == 2);
+    INVARIANT(w->w_zip == "123456789");
+  }
+
+  static inline ALWAYS_INLINE void
+  SanityCheckDistrict(const district *d, int32_t d_w_id, int32_t d_id)
+  {
+    INVARIANT(d_w_id >= 1 && static_cast<size_t>(d_w_id) <= NumWarehouses());
+    INVARIANT(d_id >= 1 && static_cast<size_t>(d_id) <= NumDistrictsPerWarehouse());
+    INVARIANT(d->d_w_id == d_w_id);
+    INVARIANT(d->d_id == d_id);
+    INVARIANT(d->d_next_o_id >= 3001);
+    INVARIANT(d->d_state.size() == 2);
+    INVARIANT(d->d_zip == "123456789");
+  }
+
+  static inline ALWAYS_INLINE void
+  SanityCheckItem(const item *i, int32_t i_id)
+  {
+    INVARIANT(i_id >= 1 && static_cast<size_t>(i_id) <= NumItems());
+    INVARIANT(i->i_id == i_id);
+    INVARIANT(i->i_price >= 1.0 && i->i_price <= 100.0);
+  }
+
+  static inline ALWAYS_INLINE void
+  SanityCheckStock(const stock *s, int32_t s_w_id, int32_t s_i_id)
+  {
+    INVARIANT(s_w_id >= 1 && static_cast<size_t>(s_w_id) <= NumWarehouses());
+    INVARIANT(s_i_id >= 1 && static_cast<size_t>(s_i_id) <= NumItems());
+    INVARIANT(s->s_w_id == s_w_id);
+    INVARIANT(s->s_i_id == s_i_id);
+  }
+
+  static inline ALWAYS_INLINE void
+  SanityCheckNewOrder(const new_order *n, int32_t no_w_id, int32_t no_d_id, int32_t no_o_id)
+  {
+    INVARIANT(no_w_id >= 1 && static_cast<size_t>(no_w_id) <= NumWarehouses());
+    INVARIANT(no_d_id >= 1 && static_cast<size_t>(no_d_id) <= NumDistrictsPerWarehouse());
+    INVARIANT(n->no_w_id == no_w_id);
+    INVARIANT(n->no_d_id == no_d_id);
+    INVARIANT(n->no_o_id == no_o_id);
+  }
+
+  static inline ALWAYS_INLINE void
+  SanityCheckOOrder(const oorder *o, int32_t o_w_id, int32_t o_d_id, int32_t o_id)
+  {
+    INVARIANT(o_w_id >= 1 && static_cast<size_t>(o_w_id) <= NumWarehouses());
+    INVARIANT(o_d_id >= 1 && static_cast<size_t>(o_d_id) <= NumDistrictsPerWarehouse());
+    INVARIANT(o->o_w_id == o_w_id);
+    INVARIANT(o->o_d_id == o_d_id);
+    INVARIANT(o->o_id == o_id);
+    INVARIANT(o->o_c_id >= 1 && static_cast<size_t>(o->o_c_id) <= NumCustomersPerDistrict());
+    INVARIANT(o->o_carrier_id >= 0 && static_cast<size_t>(o->o_carrier_id) <= NumDistrictsPerWarehouse());
+    INVARIANT(o->o_ol_cnt >= 5 && o->o_ol_cnt <= 15);
+  }
+
+  static inline ALWAYS_INLINE void
+  SanityCheckOrderLine(const order_line *o, int32_t ol_w_id, int32_t ol_d_id, int32_t ol_o_id, int32_t ol_number)
+  {
+//    cerr << "ol_w_id: " << ol_w_id << endl;
+//    cerr << "ol_d_id: " << ol_d_id << endl;
+//    cerr << "ol_o_id: " << ol_o_id << endl;
+//    cerr << "ol->ol_w_id: " << o->ol_w_id << endl;
+//    cerr << "ol->ol_d_id: " << o->ol_d_id << endl;
+//    cerr << "ol->ol_o_id: " << o->ol_o_id << endl;
+
+    INVARIANT(ol_w_id >= 1 && static_cast<size_t>(ol_w_id) <= NumWarehouses());
+    INVARIANT(ol_d_id >= 1 && static_cast<size_t>(ol_d_id) <= NumDistrictsPerWarehouse());
+    INVARIANT(ol_number >= 1 && ol_number <= 15);
+    INVARIANT(o->ol_w_id == ol_w_id);
+    INVARIANT(o->ol_d_id == ol_d_id);
+    INVARIANT(o->ol_o_id == ol_o_id);
+    INVARIANT(o->ol_number == ol_number);
+    INVARIANT(o->ol_i_id >= 1 && static_cast<size_t>(o->ol_i_id) <= NumItems());
+  }
+
+};
+
 ssize_t
 tpcc_worker::txn_new_order()
 {
@@ -1120,7 +1312,7 @@ tpcc_worker::txn_new_order()
   const uint numItems = RandomNumber(r, 5, 15);
   uint itemIDs[15], supplierWarehouseIDs[15], orderQuantities[15];
   uint8_t obj_buf[1024];
-  string obj_v;
+  string obj_key, obj_v;
   bool allLocal = true;
   for (uint i = 0; i < numItems; i++) {
     itemIDs[i] = GetItemId(r);
@@ -1139,48 +1331,47 @@ tpcc_worker::txn_new_order()
   void *txn = db->new_txn(txn_flags);
   try {
     ssize_t ret = 0;
-    uint8_t customerPK[CustomerPrimaryKeySize];
-    CustomerPrimaryKey(customerPK, warehouse_id, districtID, customerID);
-    ALWAYS_ASSERT(tbl_customer->get(
-          txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
+    CustomerPrimaryKey(WriteBuf(obj_key, CustomerPrimaryKeySize), warehouse_id, districtID, customerID);
+    ALWAYS_ASSERT(tbl_customer->get(txn, obj_key, obj_v));
     customer customer_temp;
-    const customer *customer UNUSED =
+    const customer *customer =
       customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
+    checker::SanityCheckCustomer(customer, warehouse_id, districtID, customerID);
 
-    uint8_t warehousePK[WarehousePrimaryKeySize];
-    WarehousePrimaryKey(warehousePK, warehouse_id);
-    ALWAYS_ASSERT(tbl_warehouse->get(
-          txn, (const char *) warehousePK, WarehousePrimaryKeySize, obj_v));
+    WarehousePrimaryKey(WriteBuf(obj_key, WarehousePrimaryKeySize), warehouse_id);
+    ALWAYS_ASSERT(tbl_warehouse->get(txn, obj_key, obj_v));
     warehouse warehouse_temp;
-    const warehouse *warehouse UNUSED =
+    const warehouse *warehouse =
       warehouse_enc.read((const uint8_t *) obj_v.data(), &warehouse_temp);
+    checker::SanityCheckWarehouse(warehouse, warehouse_id);
 
-    uint8_t districtPK[DistrictPrimaryKeySize];
-    DistrictPrimaryKey(districtPK, warehouse_id, districtID);
-    ALWAYS_ASSERT(tbl_district->get(
-          txn, (const char *) districtPK, DistrictPrimaryKeySize, obj_v));
+    DistrictPrimaryKey(WriteBuf(obj_key, DistrictPrimaryKeySize), warehouse_id, districtID);
+    ALWAYS_ASSERT(tbl_district->get(txn, obj_key, obj_v));
     district district_temp, district_new;
     const district *district =
       district_enc.read((const uint8_t *) obj_v.data(), &district_temp);
+    checker::SanityCheckDistrict(district, warehouse_id, districtID);
 
     new_order new_order;
     new_order.no_w_id = int32_t(warehouse_id);
     new_order.no_d_id = int32_t(districtID);
     new_order.no_o_id = district->d_next_o_id;
 
-    uint8_t newOrderPK[NewOrderPrimaryKeySize];
-    NewOrderPrimaryKey(newOrderPK, warehouse_id, districtID, district->d_next_o_id);
+    NewOrderPrimaryKey(
+        WriteBuf(obj_key, NewOrderPrimaryKeySize),
+        warehouse_id, districtID, district->d_next_o_id);
     const size_t new_order_sz = new_order_enc.nbytes(&new_order);
     tbl_new_order->insert(
-        txn, (const char *) newOrderPK, NewOrderPrimaryKeySize,
+        txn, obj_key,
         (const char *) new_order_enc.write(obj_buf, &new_order), new_order_sz);
     ret += new_order_sz;
 
     district_new = *district;
     district_new.d_next_o_id++;
+    DistrictPrimaryKey(WriteBuf(obj_key, DistrictPrimaryKeySize), warehouse_id, districtID);
     const size_t district_sz = district_enc.nbytes(&district_new);
     tbl_district->put(
-        txn, (const char *) districtPK, DistrictPrimaryKeySize,
+        txn, obj_key,
         (const char *) district_enc.write(obj_buf, &district_new), district_sz);
 
     oorder oorder;
@@ -1193,14 +1384,12 @@ tpcc_worker::txn_new_order()
     oorder.o_all_local = allLocal;
     oorder.o_entry_d = GetCurrentTimeMillis();
 
-    uint8_t oorderPK[OOrderPrimaryKeySize];
-    OOrderPrimaryKey(oorderPK, warehouse_id, districtID, new_order.no_o_id);
+    OOrderPrimaryKey(WriteBuf(obj_key, OOrderPrimaryKeySize), warehouse_id, districtID, new_order.no_o_id);
     const size_t oorder_sz = oorder_enc.nbytes(&oorder);
     const char *oorder_ret = tbl_oorder->insert(
-        txn, (const char *) oorderPK, OOrderPrimaryKeySize,
+        txn, obj_key,
         (const char *) oorder_enc.write(obj_buf, &oorder), oorder_sz);
-    uint8_t oorderCIDPK[OOrderCIDKeySize];
-    OOrderCIDKey(oorderCIDPK, warehouse_id, districtID, customerID, new_order.no_o_id);
+    OOrderCIDKey(WriteBuf(obj_key, OOrderCIDKeySize), warehouse_id, districtID, customerID, new_order.no_o_id);
     INVARIANT(!db->index_has_stable_put_memory() || oorder_ret);
     if (oorder_ret) {
       oorder_c_id_idx_mem rec;
@@ -1208,14 +1397,14 @@ tpcc_worker::txn_new_order()
       rec.o_ptr = (intptr_t) oorder_ret;
       const size_t sz = oorder_c_id_idx_mem_enc.nbytes(&rec);
       tbl_oorder_c_id_idx->insert(
-          txn, (const char *) oorderCIDPK, OOrderCIDKeySize,
+          txn, obj_key,
           (const char *) oorder_c_id_idx_mem_enc.write(obj_buf, &rec), sz);
     } else {
       oorder_c_id_idx_nomem rec;
       rec.o_id = oorder.o_id;
       const size_t sz = oorder_c_id_idx_nomem_enc.nbytes(&rec);
       tbl_oorder_c_id_idx->insert(
-          txn, (const char *) oorderCIDPK, OOrderCIDKeySize,
+          txn, obj_key,
           (const char *) oorder_c_id_idx_nomem_enc.write(obj_buf, &rec), sz);
     }
     ret += oorder_sz;
@@ -1225,19 +1414,17 @@ tpcc_worker::txn_new_order()
       const uint ol_i_id = itemIDs[ol_number - 1];
       const uint ol_quantity = orderQuantities[ol_number - 1];
 
-      uint8_t itemPK[ItemPrimaryKeySize];
-      ItemPrimaryKey(itemPK, ol_i_id);
-      ALWAYS_ASSERT(tbl_item->get(
-            txn, (const char *) itemPK, ItemPrimaryKeySize, obj_v));
+      ItemPrimaryKey(WriteBuf(obj_key, ItemPrimaryKeySize), ol_i_id);
+      ALWAYS_ASSERT(tbl_item->get(txn, obj_key, obj_v));
       item item_temp;
       const item *item = item_enc.read((const uint8_t *) obj_v.data(), &item_temp);
+      checker::SanityCheckItem(item, ol_i_id);
 
-      uint8_t stockPK[StockPrimaryKeySize];
-      StockPrimaryKey(stockPK, warehouse_id, ol_i_id);
-      ALWAYS_ASSERT(tbl_stock->get(
-            txn, (const char *) stockPK, StockPrimaryKeySize, obj_v));
+      StockPrimaryKey(WriteBuf(obj_key, StockPrimaryKeySize), warehouse_id, ol_i_id);
+      ALWAYS_ASSERT(tbl_stock->get(txn, obj_key, obj_v));
       stock stock_temp, stock_new;
       const stock *stock = stock_enc.read((const uint8_t *) obj_v.data(), &stock_temp);
+      checker::SanityCheckStock(stock, warehouse_id, ol_i_id);
       stock_new = *stock;
 
       if (stock_new.s_quantity - ol_quantity >= 10)
@@ -1250,7 +1437,7 @@ tpcc_worker::txn_new_order()
 
       const size_t stock_sz = stock_enc.nbytes(&stock_new);
       tbl_stock->put(
-          txn, (const char *) stockPK, StockPrimaryKeySize,
+          txn, obj_key,
           (const char *) stock_enc.write(obj_buf, &stock_new), stock_sz);
 
       order_line order_line;
@@ -1259,7 +1446,7 @@ tpcc_worker::txn_new_order()
       order_line.ol_o_id = new_order.no_o_id;
       order_line.ol_number = int32_t(ol_number);
       order_line.ol_i_id = int32_t(ol_i_id);
-      order_line.ol_d_id = 0; // not delivered yet
+      order_line.ol_delivery_d = 0; // not delivered yet
       order_line.ol_amount = float(ol_quantity) * item->i_price;
       order_line.ol_supply_w_id = int32_t(ol_supply_w_id);
       order_line.ol_quantity = int8_t(ol_quantity);
@@ -1303,11 +1490,10 @@ tpcc_worker::txn_new_order()
 
       NDB_MEMCPY(&order_line.ol_dist_info, (const char *) ol_dist_info, sizeof(order_line.ol_dist_info));
 
-      uint8_t orderLinePK[OrderLinePrimaryKeySize];
-      OrderLinePrimaryKey(orderLinePK, warehouse_id, districtID, new_order.no_o_id, ol_number);
+      OrderLinePrimaryKey(WriteBuf(obj_key, OrderLinePrimaryKeySize), warehouse_id, districtID, new_order.no_o_id, ol_number);
       const size_t order_line_sz = order_line_enc.nbytes(&order_line);
       tbl_order_line->insert(
-          txn, (const char *) orderLinePK, OrderLinePrimaryKeySize,
+          txn, obj_key,
           (const char *) order_line_enc.write(obj_buf, &order_line), order_line_sz);
       ret += order_line_sz;
     }
@@ -1332,8 +1518,17 @@ public:
       const char *key, size_t key_len,
       const char *value, size_t value_len)
   {
+    INVARIANT(key_len == sizeof(int32_t) * 3);
     value_sz = value_len;
     ptr = new_order_enc.read((const uint8_t *) value, tmp);
+#ifdef CHECK_INVARIANTS
+    const host_endian_trfm<int32_t> t;
+    const int32_t *p = (const int32_t *) key;
+    const int32_t no_w_id = t(*p++);
+    const int32_t no_d_id = t(*p++);
+    const int32_t no_o_id = t(*p++);
+    checker::SanityCheckNewOrder(ptr, no_w_id, no_d_id, no_o_id);
+#endif
     return false;
   }
   inline const new_order *
@@ -1355,89 +1550,89 @@ private:
   encoder<new_order> new_order_enc;
 };
 
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, delivery_probe0_tod, delivery_probe0_cg)
+
 ssize_t
 tpcc_worker::txn_delivery()
 {
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
   uint8_t obj_buf[1024];
-  string obj_v;
+  string obj_key0, obj_key1, obj_v;
 
   void *txn = db->new_txn(txn_flags);
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-      uint8_t lowkey[NewOrderPrimaryKeySize],
-              highkey[NewOrderPrimaryKeySize];
-      NewOrderPrimaryKey(lowkey, warehouse_id, d, last_no_o_ids[d]);
-      NewOrderPrimaryKey(highkey, warehouse_id, d, numeric_limits<int32_t>::max());
+      NewOrderPrimaryKey(WriteBuf(obj_key0, NewOrderPrimaryKeySize), warehouse_id, d, last_no_o_ids[d]);
+      NewOrderPrimaryKey(WriteBuf(obj_key1, NewOrderPrimaryKeySize), warehouse_id, d, numeric_limits<int32_t>::max());
       new_order new_order_tmp;
       new_order_scan_callback new_order_c(&new_order_tmp);
       {
-        //scoped_timer st("NewOrderScan");
-        tbl_new_order->scan(txn, (const char *) lowkey, NewOrderPrimaryKeySize,
-                            (const char *) highkey, NewOrderPrimaryKeySize,
-                            true, new_order_c);
+        ANON_REGION("DeliverNewOrderScan:", &deliver_probe0_cg);
+        tbl_new_order->scan(txn, obj_key0, &obj_key1, new_order_c);
       }
       const new_order *new_order = new_order_c.get();
       last_no_o_ids[d] = new_order->no_o_id + 1;
 
-      uint8_t oorderPK[OOrderPrimaryKeySize];
-      OOrderPrimaryKey(oorderPK, warehouse_id, d, new_order->no_o_id);
-      ALWAYS_ASSERT(tbl_oorder->get(
-            txn, (const char *) oorderPK, OOrderPrimaryKeySize, obj_v));
+      OOrderPrimaryKey(WriteBuf(obj_key0, OOrderPrimaryKeySize), warehouse_id, d, new_order->no_o_id);
+      ALWAYS_ASSERT(tbl_oorder->get(txn, obj_key0, obj_v));
       oorder oorder_temp, oorder_new;
       const oorder *oorder = oorder_enc.read((const uint8_t *) obj_v.data(), &oorder_temp);
+      checker::SanityCheckOOrder(oorder, warehouse_id, d, new_order->no_o_id);
 
       static_limit_callback<15> c; // never more than 15 order_lines per order
-      uint8_t order_line_lowkey[OrderLinePrimaryKeySize],
-              order_line_highkey[OrderLinePrimaryKeySize];
-      OrderLinePrimaryKey(order_line_lowkey, warehouse_id, d,
-                          new_order->no_o_id, 0);
-      OrderLinePrimaryKey(order_line_highkey, warehouse_id, d,
-                          new_order->no_o_id, numeric_limits<int32_t>::max());
+      OrderLinePrimaryKey(WriteBuf(obj_key0, OrderLinePrimaryKeySize),
+                          warehouse_id, d, new_order->no_o_id, 0);
+      OrderLinePrimaryKey(WriteBuf(obj_key1, OrderLinePrimaryKeySize),
+                          warehouse_id, d, new_order->no_o_id, numeric_limits<int32_t>::max());
       // XXX(stephentu): mutable scans would help here
-      tbl_order_line->scan(txn,
-          (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
-          (const char *) order_line_highkey, OrderLinePrimaryKeySize,
-          true, c);
+      tbl_order_line->scan(txn, obj_key0, &obj_key1, c);
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
         order_line order_line_temp, order_line_new;
         const order_line *order_line =
           order_line_enc.read((const uint8_t *) c.values[i].second.data(), &order_line_temp);
+
+#ifdef CHECK_INVARIANTS
+        INVARIANT(c.values[i].first.size() == sizeof(int32_t) * 4);
+        const host_endian_trfm<int32_t> t;
+        const int32_t *p = (const int32_t *) c.values[i].first.data();
+        const int32_t ol_w_id   = t(*p++);
+        const int32_t ol_d_id   = t(*p++);
+        const int32_t ol_o_id   = t(*p++);
+        const int32_t ol_number = t(*p++);
+        checker::SanityCheckOrderLine(order_line, ol_w_id, ol_d_id, ol_o_id, ol_number);
+#endif
+
         sum += order_line->ol_amount;
         order_line_new = *order_line;
         order_line_new.ol_delivery_d = ts;
         const size_t order_line_sz = order_line_enc.nbytes(&order_line_new);
         tbl_order_line->put(
-            txn, c.values[i].first.data(), c.values[i].first.size(),
+            txn, c.values[i].first,
             (const char *) order_line_enc.write(obj_buf, &order_line_new), order_line_sz);
       }
 
       // delete new order
-      uint8_t new_orderPK[NewOrderPrimaryKeySize];
-      NewOrderPrimaryKey(new_orderPK, warehouse_id, d, new_order->no_o_id);
-      tbl_new_order->remove(txn, (const char *) new_orderPK, NewOrderPrimaryKeySize);
+      NewOrderPrimaryKey(WriteBuf(obj_key0, NewOrderPrimaryKeySize), warehouse_id, d, new_order->no_o_id);
+      tbl_new_order->remove(txn, obj_key0);
       ret -= new_order_c.get_value_size();
 
       // update oorder
       oorder_new = *oorder;
       oorder_new.o_carrier_id = o_carrier_id;
       const size_t oorder_sz = oorder_enc.nbytes(&oorder_new);
-      tbl_oorder->put(
-          txn, (const char *) oorderPK, OOrderPrimaryKeySize,
-          (const char *) oorder_enc.write(obj_buf, &oorder_new), oorder_sz);
+      OOrderPrimaryKey(WriteBuf(obj_key0, OOrderPrimaryKeySize), warehouse_id, d, new_order->no_o_id);
+      tbl_oorder->put(txn, obj_key0, (const char *) oorder_enc.write(obj_buf, &oorder_new), oorder_sz);
 
       // update orderlines
       const uint c_id = oorder->o_c_id;
       const float ol_total = sum;
 
       // update customer
-      uint8_t customerPK[CustomerPrimaryKeySize];
-      CustomerPrimaryKey(customerPK, warehouse_id, d, c_id);
-      ALWAYS_ASSERT(tbl_customer->get(
-            txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
+      CustomerPrimaryKey(WriteBuf(obj_key0, CustomerPrimaryKeySize), warehouse_id, d, c_id);
+      ALWAYS_ASSERT(tbl_customer->get(txn, obj_key0, obj_v));
       customer customer_temp, customer_new;
       const customer *customer = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
       customer_new = *customer;
@@ -1445,7 +1640,7 @@ tpcc_worker::txn_delivery()
       const size_t customer_sz = customer_enc.nbytes(&customer_new);
       const char *customer_p =
         tbl_customer->put(
-            txn, (const char *) customerPK, CustomerPrimaryKeySize,
+            txn, obj_key0,
             (const char *) customer_enc.write(obj_buf, &customer_new), customer_sz);
       INVARIANT(!db->index_has_stable_put_memory() || customer_p);
       if (customer_p) {
@@ -1458,7 +1653,7 @@ tpcc_worker::txn_delivery()
         rec.c_ptr = intptr_t(customer_p);
         const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
         tbl_customer_name_idx->put(
-            txn, customerNameKey.data(), customerNameKey.size(),
+            txn, customerNameKey,
             (const char *) customer_name_idx_mem_enc.write(obj_buf, &rec), sz);
       }
     }
@@ -1480,7 +1675,7 @@ tpcc_worker::txn_payment()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   uint8_t obj_buf[1024];
-  string obj_v;
+  string obj_key0, obj_key1, obj_v;
   uint customerDistrictID, customerWarehouseID;
   if (NumWarehouses() == 1 || RandomNumber(r, 1, 100) <= 85) {
     customerDistrictID = districtID;
@@ -1497,34 +1692,30 @@ tpcc_worker::txn_payment()
   void *txn = db->new_txn(txn_flags);
   try {
     ssize_t ret = 0;
-    uint8_t warehousePK[WarehousePrimaryKeySize];
-    WarehousePrimaryKey(warehousePK, warehouse_id);
-    ALWAYS_ASSERT(tbl_warehouse->get(
-          txn, (const char *) warehousePK, WarehousePrimaryKeySize, obj_v));
+    WarehousePrimaryKey(WriteBuf(obj_key0, WarehousePrimaryKeySize), warehouse_id);
+    ALWAYS_ASSERT(tbl_warehouse->get(txn, obj_key0, obj_v));
     warehouse warehouse_temp, warehouse_new;
     const warehouse *warehouse = warehouse_enc.read((const uint8_t *) obj_v.data(), &warehouse_temp);
     warehouse_new = *warehouse;
     warehouse_new.w_ytd += paymentAmount;
     const size_t warehouse_sz = warehouse_enc.nbytes(&warehouse_new);
     tbl_warehouse->put(
-        txn, (const char *) warehousePK, WarehousePrimaryKeySize,
+        txn, obj_key0,
         (const char *) warehouse_enc.write(obj_buf, &warehouse_new), warehouse_sz);
 
-    uint8_t districtPK[DistrictPrimaryKeySize];
-    DistrictPrimaryKey(districtPK, warehouse_id, districtID);
-    ALWAYS_ASSERT(tbl_district->get(
-          txn, (const char *) districtPK, DistrictPrimaryKeySize, obj_v));
+    DistrictPrimaryKey(WriteBuf(obj_key0, DistrictPrimaryKeySize), warehouse_id, districtID);
+    ALWAYS_ASSERT(tbl_district->get(txn, obj_key0, obj_v));
     district district_temp, district_new;
     const district *district = district_enc.read((const uint8_t *) obj_v.data(), &district_temp);
+    checker::SanityCheckDistrict(district, warehouse_id, districtID);
     district_new = *district;
     district_new.d_ytd += paymentAmount;
     const size_t district_sz = district_enc.nbytes(&district_new);
     tbl_district->put(
-        txn, (const char *) districtPK, DistrictPrimaryKeySize,
+        txn, obj_key0,
         (const char *) district_enc.write(obj_buf, &district_new), district_sz);
 
     customer customer;
-    uint8_t customerPK[CustomerPrimaryKeySize];
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
@@ -1532,17 +1723,16 @@ tpcc_worker::txn_payment()
       NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
       GetNonUniformCustomerLastNameRun(lastname_buf, r);
 
-      uint8_t lowkey[CustomerNameIdxKeySize], highkey[CustomerNameIdxKeySize];
       static const string zeros(16, 0);
       static const string ones(16, 255);
-      CustomerNameIdxKey(lowkey, customerWarehouseID, customerDistrictID,
-          lastname_buf, (const uint8_t *) zeros.data());
-      CustomerNameIdxKey(highkey, customerWarehouseID, customerDistrictID,
-          lastname_buf, (const uint8_t *) ones.data());
+      CustomerNameIdxKey(WriteBuf(obj_key0, CustomerNameIdxKeySize),
+          customerWarehouseID, customerDistrictID,
+          (const char *) lastname_buf, zeros.data());
+      CustomerNameIdxKey(WriteBuf(obj_key1, CustomerNameIdxKeySize),
+          customerWarehouseID, customerDistrictID,
+          (const char *) lastname_buf, ones.data());
       static_limit_callback<1024> c; // probably a safe bet for now
-      tbl_customer_name_idx->scan(
-          txn, (const char *) lowkey, CustomerNameIdxKeySize,
-          (const char *) highkey, CustomerNameIdxKeySize, true, c);
+      tbl_customer_name_idx->scan(txn, obj_key0, &obj_key1, c);
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < 1024); // we should detect this
       int index = c.size() / 2;
@@ -1556,27 +1746,31 @@ tpcc_worker::txn_payment()
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_name_idx_mem->c_ptr, &customer_temp);
         customer = *c;
-        CustomerPrimaryKey(customerPK, customerWarehouseID, customerDistrictID, customer.c_id);
+        CustomerPrimaryKey(WriteBuf(obj_key0, CustomerPrimaryKeySize), customerWarehouseID,
+                           customerDistrictID, customer.c_id);
       } else {
         customer_name_idx_nomem customer_name_idx_nomem_temp;
         const customer_name_idx_nomem *customer_name_idx_nomem =
           customer_name_idx_nomem_enc.read(
               (const uint8_t *) c.values[index].second.data(), &customer_name_idx_nomem_temp);
-        CustomerPrimaryKey(customerPK, customerWarehouseID, customerDistrictID, customer_name_idx_nomem->c_id);
-        ALWAYS_ASSERT(tbl_customer->get(
-              txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
+        CustomerPrimaryKey(WriteBuf(obj_key0, CustomerPrimaryKeySize), customerWarehouseID,
+                           customerDistrictID, customer_name_idx_nomem->c_id);
+        ALWAYS_ASSERT(tbl_customer->get(txn, obj_key0, obj_v));
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
+        checker::SanityCheckCustomer(c, customerWarehouseID, customerDistrictID,
+                                     customer_name_idx_nomem->c_id);
         customer = *c;
       }
     } else {
       // cust by ID
       const uint customerID = GetCustomerId(r);
-      CustomerPrimaryKey(customerPK, customerWarehouseID, customerDistrictID, customerID);
-      ALWAYS_ASSERT(tbl_customer->get(
-            txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
+      CustomerPrimaryKey(WriteBuf(obj_key0, CustomerPrimaryKeySize), customerWarehouseID,
+                         customerDistrictID, customerID);
+      ALWAYS_ASSERT(tbl_customer->get(txn, obj_key0, obj_v));
       ::customer customer_temp;
       const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
+      checker::SanityCheckCustomer(c, customerWarehouseID, customerDistrictID, customerID);
       customer = *c;
     }
 
@@ -1610,8 +1804,7 @@ tpcc_worker::txn_payment()
 
     const size_t customer_sz = customer_enc.nbytes(&customer);
     const char *customer_p =
-      tbl_customer->put(
-          txn, (const char *) customerPK, CustomerPrimaryKeySize,
+      tbl_customer->put(txn, obj_key0,
           (const char *) customer_enc.write(obj_buf, &customer), customer_sz);
     ALWAYS_ASSERT(!idx_stable_put_mem || customer_p);
     if (customer_p) {
@@ -1624,8 +1817,8 @@ tpcc_worker::txn_payment()
       rec.c_ptr = intptr_t(customer_p);
       const size_t sz = customer_name_idx_mem_enc.nbytes(&rec);
       tbl_customer_name_idx->put(
-          txn, customerNameKey.data(), customerNameKey.size(),
-            (const char *) customer_name_idx_mem_enc.write(obj_buf, &rec), sz);
+          txn, customerNameKey,
+          (const char *) customer_name_idx_mem_enc.write(obj_buf, &rec), sz);
     }
 
     history history;
@@ -1653,13 +1846,12 @@ tpcc_worker::txn_payment()
                      district->d_name.c_str());
     history.h_data.resize_junk(min(static_cast<size_t>(n), history.h_data.max_size()));
 
-    uint8_t historyPK[HistoryPrimaryKeySize];
-    HistoryPrimaryKey(historyPK, history.h_c_id, history.h_c_d_id, history.h_c_w_id,
+    HistoryPrimaryKey(WriteBuf(obj_key0, HistoryPrimaryKeySize),
+                      history.h_c_id, history.h_c_d_id, history.h_c_w_id,
                       history.h_d_id, history.h_w_id, history.h_date);
     const size_t history_sz = history_enc.nbytes(&history);
     tbl_history->insert(txn,
-        (const char *) historyPK, HistoryPrimaryKeySize,
-        (const char *) history_enc.write(obj_buf, &history), history_sz);
+        obj_key0, (const char *) history_enc.write(obj_buf, &history), history_sz);
     ret += history_sz;
 
     if (db->commit_txn(txn)) {
@@ -1682,13 +1874,25 @@ public:
       const char *key, size_t key_len,
       const char *value, size_t value_len)
   {
+    INVARIANT(key_len == sizeof(int32_t) * 4);
     order_line order_line_temp;
     const order_line *order_line UNUSED =
       order_line_enc.read((const uint8_t *) value, &order_line_temp);
+#ifdef CHECK_INVARIANTS
+    const host_endian_trfm<int32_t> t;
+    const int32_t *p = (const int32_t *) key;
+    const int32_t ol_w_id   = t(*p++);
+    const int32_t ol_d_id   = t(*p++);
+    const int32_t ol_o_id   = t(*p++);
+    const int32_t ol_number = t(*p++);
+    checker::SanityCheckOrderLine(order_line, ol_w_id, ol_d_id, ol_o_id, ol_number);
+#endif
     return true;
   }
   encoder<order_line> order_line_enc;
 };
+
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0)
 
 ssize_t
 tpcc_worker::txn_order_status()
@@ -1696,11 +1900,10 @@ tpcc_worker::txn_order_status()
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const bool idx_stable_put_mem = db->index_has_stable_put_memory();
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-  string obj_v;
+  string obj_key0, obj_key1, obj_v;
   try {
 
     customer customer;
-    uint8_t customerPK[CustomerPrimaryKeySize];
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
@@ -1708,17 +1911,16 @@ tpcc_worker::txn_order_status()
       NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
       GetNonUniformCustomerLastNameRun(lastname_buf, r);
 
-      uint8_t lowkey[CustomerNameIdxKeySize], highkey[CustomerNameIdxKeySize];
       static const string zeros(16, 0);
       static const string ones(16, 255);
-      CustomerNameIdxKey(lowkey, warehouse_id, districtID,
-          lastname_buf, (const uint8_t *) zeros.data());
-      CustomerNameIdxKey(highkey, warehouse_id, districtID,
-          lastname_buf, (const uint8_t *) ones.data());
+      CustomerNameIdxKey(WriteBuf(obj_key0, CustomerNameIdxKeySize),
+          warehouse_id, districtID,
+          (const char *) lastname_buf, zeros.data());
+      CustomerNameIdxKey(WriteBuf(obj_key1, CustomerNameIdxKeySize),
+          warehouse_id, districtID,
+          (const char *) lastname_buf, ones.data());
       static_limit_callback<1024> c;
-      tbl_customer_name_idx->scan(
-          txn, (const char *) lowkey, CustomerNameIdxKeySize,
-          (const char *) highkey, CustomerNameIdxKeySize, true, c);
+      tbl_customer_name_idx->scan(txn, obj_key0, &obj_key1, c);
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < 1024);
       int index = c.size() / 2;
@@ -1732,39 +1934,42 @@ tpcc_worker::txn_order_status()
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) customer_name_idx_mem->c_ptr, &customer_temp);
         customer = *c;
-        CustomerPrimaryKey(customerPK, warehouse_id, districtID, customer.c_id);
       } else {
         customer_name_idx_nomem customer_name_idx_nomem_temp;
         const customer_name_idx_nomem *customer_name_idx_nomem =
           customer_name_idx_nomem_enc.read(
               (const uint8_t *) c.values[index].second.data(), &customer_name_idx_nomem_temp);
-        CustomerPrimaryKey(customerPK, warehouse_id, districtID, customer_name_idx_nomem->c_id);
-        ALWAYS_ASSERT(tbl_customer->get(
-              txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
+        CustomerPrimaryKey(WriteBuf(obj_key0, CustomerPrimaryKeySize),
+                           warehouse_id, districtID, customer_name_idx_nomem->c_id);
+        ALWAYS_ASSERT(tbl_customer->get(txn, obj_key0, obj_v));
         ::customer customer_temp;
         const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
+        checker::SanityCheckCustomer(c, warehouse_id, districtID, customer_name_idx_nomem->c_id);
         customer = *c;
       }
     } else {
       // cust by ID
       const uint customerID = GetCustomerId(r);
-      CustomerPrimaryKey(customerPK, warehouse_id, districtID, customerID);
-      ALWAYS_ASSERT(tbl_customer->get(
-            txn, (const char *) customerPK, CustomerPrimaryKeySize, obj_v));
+      CustomerPrimaryKey(WriteBuf(obj_key0, CustomerPrimaryKeySize), warehouse_id,
+                         districtID, customerID);
+      ALWAYS_ASSERT(tbl_customer->get(txn, obj_key0, obj_v));
       ::customer customer_temp;
       const ::customer *c = customer_enc.read((const uint8_t *) obj_v.data(), &customer_temp);
+      checker::SanityCheckCustomer(c, warehouse_id, districtID, customerID);
       customer = *c;
     }
 
     // XXX: store last value from client so we don't have to scan
     // from the beginning
     limit_callback c_oorder(-1);
-    uint8_t oorder_lowkey[OOrderPrimaryKeySize], oorder_highkey[OOrderPrimaryKeySize];
-    OOrderCIDKey(oorder_lowkey, warehouse_id, districtID, customer.c_id, 0);
-    OOrderCIDKey(oorder_highkey, warehouse_id, districtID, customer.c_id, numeric_limits<int32_t>::max());
-    tbl_oorder_c_id_idx->scan(
-        txn, (const char *) oorder_lowkey, OOrderCIDKeySize,
-        (const char *) oorder_highkey, OOrderCIDKeySize, true, c_oorder);
+    OOrderCIDKey(WriteBuf(obj_key0, OOrderCIDKeySize), warehouse_id,
+                 districtID, customer.c_id, 0);
+    OOrderCIDKey(WriteBuf(obj_key1, OOrderCIDKeySize), warehouse_id,
+                 districtID, customer.c_id, numeric_limits<int32_t>::max());
+    {
+      ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
+      tbl_oorder_c_id_idx->scan(txn, obj_key0, &obj_key1, c_oorder);
+    }
     ALWAYS_ASSERT(!c_oorder.values.empty());
 
     uint o_id;
@@ -1783,12 +1988,11 @@ tpcc_worker::txn_order_status()
     }
 
     order_line_nop_callback c_order_line;
-    uint8_t order_line_lowkey[OrderLinePrimaryKeySize], order_line_highkey[OrderLinePrimaryKeySize];
-    OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, o_id, 0);
-    OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
-    tbl_order_line->scan(
-        txn, (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
-        (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c_order_line);
+    OrderLinePrimaryKey(WriteBuf(obj_key0, OrderLinePrimaryKeySize), warehouse_id,
+                        districtID, o_id, 0);
+    OrderLinePrimaryKey(WriteBuf(obj_key1, OrderLinePrimaryKeySize), warehouse_id,
+                        districtID, o_id, numeric_limits<int32_t>::max());
+    tbl_order_line->scan(txn, obj_key0, &obj_key1, c_order_line);
 
     if (db->commit_txn(txn))
       ntxn_commits++;
@@ -1808,9 +2012,19 @@ public:
       const char *key, size_t key_len,
       const char *value, size_t value_len)
   {
+    INVARIANT(key_len == sizeof(int32_t) * 4);
     order_line order_line_temp;
     const order_line *order_line =
       order_line_enc.read((const uint8_t *) value, &order_line_temp);
+#ifdef CHECK_INVARIANTS
+    const host_endian_trfm<int32_t> t;
+    const int32_t *p = (const int32_t *) key;
+    const int32_t ol_w_id   = t(*p++);
+    const int32_t ol_d_id   = t(*p++);
+    const int32_t ol_o_id   = t(*p++);
+    const int32_t ol_number = t(*p++);
+    checker::SanityCheckOrderLine(order_line, ol_w_id, ol_d_id, ol_o_id, ol_number);
+#endif
     s_i_ids.insert(order_line->ol_i_id);
     n++;
     return true;
@@ -1832,51 +2046,48 @@ tpcc_worker::txn_stock_level()
   const uint threshold UNUSED = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-  string obj_v;
+  string obj_key0, obj_key1, obj_v;
   try {
-    uint8_t districtPK[DistrictPrimaryKeySize];
-    DistrictPrimaryKey(districtPK, warehouse_id, districtID);
-    ALWAYS_ASSERT(tbl_district->get(
-          txn, (const char *) districtPK, DistrictPrimaryKeySize, obj_v));
+    DistrictPrimaryKey(WriteBuf(obj_key0, DistrictPrimaryKeySize), warehouse_id, districtID);
+    ALWAYS_ASSERT(tbl_district->get(txn, obj_key0, obj_v));
     district district_temp;
     const district *district =
       district_enc.read((const uint8_t *) obj_v.data(), &district_temp);
+    checker::SanityCheckDistrict(district, warehouse_id, districtID);
 
     // manual joins are fun!
     order_line_scan_callback c;
-    int32_t lower = district->d_next_o_id >= 20 ? (district->d_next_o_id - 20) : 0;
-    uint8_t order_line_lowkey[OrderLinePrimaryKeySize],
-            order_line_highkey[OrderLinePrimaryKeySize];
-    OrderLinePrimaryKey(order_line_lowkey, warehouse_id, districtID, lower, 0);
-    OrderLinePrimaryKey(order_line_highkey, warehouse_id, districtID, district->d_next_o_id, 0);
+    const int32_t lower = district->d_next_o_id >= 20 ? (district->d_next_o_id - 20) : 0;
+    OrderLinePrimaryKey(WriteBuf(obj_key0, OrderLinePrimaryKeySize), warehouse_id, districtID, lower, 0);
+    OrderLinePrimaryKey(WriteBuf(obj_key1, OrderLinePrimaryKeySize), warehouse_id, districtID, district->d_next_o_id, 0);
     {
       ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
-      tbl_order_line->scan(txn,
-          (const char *) order_line_lowkey, OrderLinePrimaryKeySize,
-          (const char *) order_line_highkey, OrderLinePrimaryKeySize, true, c);
+      tbl_order_line->scan(txn, obj_key0, &obj_key1, c);
     }
     {
       set<uint> s_i_ids_distinct;
       for (set<uint>::iterator it = c.s_i_ids.begin();
            it != c.s_i_ids.end(); ++it) {
         ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
-        uint8_t stockPK[StockPrimaryKeySize];
-        StockPrimaryKey(stockPK, warehouse_id, *it);
+        StockPrimaryKey(WriteBuf(obj_key0, StockPrimaryKeySize), warehouse_id, *it);
         const serializer<int32_t> i32s;
         const serializer<int16_t> i16s;
         const size_t nbytesread = 2 * i32s.max_nbytes() + i16s.max_nbytes();
         {
           ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
-          ALWAYS_ASSERT(tbl_stock->get(
-                txn, (const char *) stockPK, StockPrimaryKeySize, obj_v, nbytesread));
+          ALWAYS_ASSERT(tbl_stock->get(txn, obj_key0, obj_v, nbytesread));
         }
         INVARIANT(obj_v.size() <= nbytesread);
         const uint8_t *ptr = (const uint8_t *) obj_v.data();
         int32_t i32tmp;
         int16_t i16tmp;
         ptr = i32s.read(ptr, &i32tmp);
+        INVARIANT(i32tmp >= 1 && static_cast<size_t>(i32tmp) <= NumWarehouses());
+        INVARIANT(static_cast<size_t>(i32tmp) == warehouse_id);
         ptr = i32s.read(ptr, &i32tmp);
-        i16s.read(ptr, &i16tmp);
+        INVARIANT(i32tmp >= 1 && static_cast<size_t>(i32tmp) <= NumItems());
+        INVARIANT(static_cast<size_t>(i32tmp) == *it);
+        ptr = i16s.read(ptr, &i16tmp);
         if (i16tmp < int(threshold))
           s_i_ids_distinct.insert(i32tmp);
       }
@@ -1939,7 +2150,7 @@ protected:
         new tpcc_worker(
           r.next(), db, open_tables,
           &barrier_a, &barrier_b,
-          (i % tpcc_worker_mixin::NumWarehouses()) + 1));
+          (i % NumWarehouses()) + 1));
     return ret;
   }
 };

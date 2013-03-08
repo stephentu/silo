@@ -117,12 +117,11 @@ ndb_ordered_index::ndb_ordered_index(const string &name, size_t value_size_hint)
 bool
 ndb_ordered_index::get(
     void *txn,
-    const char *key, size_t keylen,
+    const string &key,
     string &value, size_t max_bytes_read)
 {
   try {
-    if (!btr.search(*((transaction *) txn), varkey((const uint8_t *) key, keylen),
-                    value, max_bytes_read))
+    if (!btr.search(*((transaction *) txn), key, value, max_bytes_read))
       return false;
     INVARIANT(!value.empty());
     return true;
@@ -136,13 +135,13 @@ static event_counter evt_rec_inserts("record_inserts");
 const char *
 ndb_ordered_index::put(
     void *txn,
-    const char *key, size_t keylen,
+    const string &key,
     const char *value, size_t valuelen)
 {
   try {
     btr.insert(
         *((transaction *) txn),
-        varkey((const uint8_t *) key, keylen),
+        key,
         (const txn_btree::value_type) value, valuelen);
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
@@ -163,10 +162,10 @@ public:
   virtual bool
   invoke(const txn_btree::string_type &k, const txn_btree::value_type v, txn_btree::size_type sz)
   {
-    const char *key = (const char *) k.data();
+    const char * const key = (const char *) k.data();
     const size_t keylen = k.size();
 
-    const char *value = (const char *) v;
+    const char * const value = (const char *) v;
     const size_t valuelen = sz;
 
     return upcall->invoke(key, keylen, value, valuelen);
@@ -179,36 +178,25 @@ private:
 void
 ndb_ordered_index::scan(
     void *txn,
-    const char *start_key, size_t start_len,
-    const char *end_key, size_t end_len,
-    bool has_end_key,
+    const string &start_key,
+    const string *end_key,
     scan_callback &callback)
 {
   transaction &t = *((transaction *) txn);
-
-  txn_btree::key_type lower((const uint8_t *) start_key, start_len);
-  txn_btree::key_type upper((const uint8_t *) end_key, end_len);
-
   ndb_wrapper_search_range_callback c(callback);
-
   try {
-    if (has_end_key)
-      btr.search_range_call(t, lower, &upper, c);
-    else
-      btr.search_range_call(t, lower, NULL, c);
+    btr.search_range_call(t, start_key, end_key, c);
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
 }
 
 void
-ndb_ordered_index::remove(
-    void *txn,
-    const char *key, size_t keylen)
+ndb_ordered_index::remove(void *txn, const string &key)
 {
   transaction &t = *((transaction *) txn);
   try {
-    btr.remove(t, varkey((const uint8_t *) key, keylen));
+    btr.remove(t, key);
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }

@@ -41,19 +41,19 @@ public:
 
   virtual bool get(
       void *txn,
-      const char *key, size_t keylen,
-      std::string &value, size_t max_bytes_read);
+      const std::string &key,
+      std::string &value,
+      size_t max_bytes_read);
 
   virtual const char * put(
       void *txn,
-      const char *key, size_t keylen,
+      const std::string &key,
       const char *value, size_t valuelen);
 
   virtual void scan(
       void *txn,
-      const char *start_key, size_t start_len,
-      const char *end_key, size_t end_len,
-      bool has_end_key,
+      const std::string &key,
+      const std::string *value,
       scan_callback &callback)
   {
     NDB_UNIMPLEMENTED("scan");

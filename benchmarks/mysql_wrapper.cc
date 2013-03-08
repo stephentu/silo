@@ -167,13 +167,13 @@ my_escape(MYSQL *conn, const char *p, size_t l)
 bool
 mysql_ordered_index::get(
     void *txn,
-    const char *key, size_t keylen,
+    const string &key,
     string &value, size_t max_bytes_read)
 {
   INVARIANT(txn == mysql_wrapper::tl_conn);
-  ALWAYS_ASSERT(keylen <= 256);
+  ALWAYS_ASSERT(key.size() <= 256);
   ostringstream b;
-  b << "SELECT tbl_value FROM " << name << " WHERE tbl_key = '" << my_escape(mysql_wrapper::tl_conn, key, keylen) << "';";
+  b << "SELECT tbl_value FROM " << name << " WHERE tbl_key = '" << my_escape(mysql_wrapper::tl_conn, key.data(), key.size()) << "';";
   string q = b.str();
   check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
   MYSQL_RES *res = mysql_store_result(mysql_wrapper::tl_conn);
@@ -182,7 +182,6 @@ mysql_ordered_index::get(
   bool ret = false;
   if (row) {
     unsigned long *lengths = mysql_fetch_lengths(res);
-    ALWAYS_ASSERT(key);
     value.assign(row[0], min(lengths[0], max_bytes_read));
     ret = true;
   }
@@ -193,13 +192,13 @@ mysql_ordered_index::get(
 const char *
 mysql_ordered_index::put(
     void *txn,
-    const char *key, size_t keylen,
+    const string &key,
     const char *value, size_t valuelen)
 {
   INVARIANT(txn == mysql_wrapper::tl_conn);
-  ALWAYS_ASSERT(keylen <= 256);
+  ALWAYS_ASSERT(key.size() <= 256);
   ALWAYS_ASSERT(valuelen <= 256);
-  string escaped_key = my_escape(mysql_wrapper::tl_conn, key, keylen);
+  string escaped_key = my_escape(mysql_wrapper::tl_conn, key.data(), key.size());
   string escaped_value = my_escape(mysql_wrapper::tl_conn, value, valuelen);
   ostringstream b;
   b << "UPDATE " << name << " SET tbl_value='" << escaped_value << "' WHERE tbl_key='" << escaped_key << "';";
@@ -220,13 +219,13 @@ mysql_ordered_index::put(
 const char *
 mysql_ordered_index::insert(
     void *txn,
-    const char *key, size_t keylen,
+    const string &key,
     const char *value, size_t valuelen)
 {
   INVARIANT(txn == mysql_wrapper::tl_conn);
-  ALWAYS_ASSERT(keylen <= 256);
+  ALWAYS_ASSERT(key.size() <= 256);
   ALWAYS_ASSERT(valuelen <= 256);
-  string escaped_key = my_escape(mysql_wrapper::tl_conn, key, keylen);
+  string escaped_key = my_escape(mysql_wrapper::tl_conn, key.data(), key.size());
   string escaped_value = my_escape(mysql_wrapper::tl_conn, value, valuelen);
   ostringstream b1;
   b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";

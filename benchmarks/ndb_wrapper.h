@@ -66,21 +66,20 @@ public:
   ndb_ordered_index(const std::string &name, size_t value_size_hint);
   virtual bool get(
       void *txn,
-      const char *key, size_t keylen,
+      const std::string &key,
       std::string &value, size_t max_bytes_read);
   virtual const char * put(
       void *txn,
-      const char *key, size_t keylen,
+      const std::string &key,
       const char *value, size_t valuelen);
   virtual void scan(
       void *txn,
-      const char *start_key, size_t start_len,
-      const char *end_key, size_t end_len,
-      bool has_end_key,
+      const std::string &start_key,
+      const std::string *end_key,
       scan_callback &callback);
   virtual void remove(
       void *txn,
-      const char *key, size_t keylen);
+      const std::string &key);
   virtual size_t size() const;
   virtual void clear();
 private:

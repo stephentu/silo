@@ -20,8 +20,9 @@ public:
    */
   virtual bool get(
       void *txn,
-      const char *key, size_t keylen,
-      std::string &value, size_t max_bytes_read = std::string::npos) = 0;
+      const std::string &key,
+      std::string &value,
+      size_t max_bytes_read = std::string::npos) = 0;
 
   class scan_callback {
   public:
@@ -40,9 +41,8 @@ public:
    */
   virtual void scan(
       void *txn,
-      const char *start_key, size_t start_len,
-      const char *end_key, size_t end_len,
-      bool has_end_key,
+      const std::string &start_key,
+      const std::string *end_key,
       scan_callback &callback) = 0;
 
   /**
@@ -61,7 +61,7 @@ public:
    */
   virtual const char *
   put(void *txn,
-      const char *key, size_t keylen,
+      const std::string &key,
       const char *value, size_t valuelen) = 0;
 
   /**
@@ -74,10 +74,10 @@ public:
    */
   virtual const char *
   insert(void *txn,
-         const char *key, size_t keylen,
+         const std::string &key,
          const char *value, size_t valuelen)
   {
-    return put(txn, key, keylen, value, valuelen);
+    return put(txn, key, value, valuelen);
   }
 
   /**
@@ -85,9 +85,9 @@ public:
    */
   virtual void remove(
       void *txn,
-      const char *key, size_t keylen)
+      const std::string &key)
   {
-    put(txn, key, keylen, NULL, 0);
+    put(txn, key, NULL, 0);
   }
 
   /**

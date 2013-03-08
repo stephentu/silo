@@ -37,7 +37,7 @@ public:
     const string k = u64_varkey(r.next() % nkeys).str();
     try {
       string v;
-      ALWAYS_ASSERT(tbl->get(txn, k.data(), k.size(), v));
+      ALWAYS_ASSERT(tbl->get(txn, k, v));
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -60,7 +60,7 @@ public:
     const string k = u64_varkey(r.next() % nkeys).str();
     try {
       const string v(128, 'b');
-      tbl->put(txn, k.data(), k.size(), v.data(), v.size());
+      tbl->put(txn, k, v.data(), v.size());
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -83,9 +83,9 @@ public:
     const string k = u64_varkey(r.next() % nkeys).str();
     try {
       string v;
-      ALWAYS_ASSERT(tbl->get(txn, k.data(), k.size(), v));
+      ALWAYS_ASSERT(tbl->get(txn, k, v));
       const string vnew(128, 'c');
-      tbl->put(txn, k.data(), k.size(), vnew.data(), vnew.size());
+      tbl->put(txn, k, vnew.data(), vnew.size());
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -120,8 +120,7 @@ public:
     const string kend = u64_varkey(kstart + 100).str();
     worker_scan_callback c;
     try {
-      tbl->scan(txn, kbegin.data(), kbegin.size(),
-                kend.data(), kend.size(), true, c);
+      tbl->scan(txn, kbegin, &kend, c);
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -173,21 +172,21 @@ protected:
       if (nbatches == 0) {
         void *txn = db->new_txn(txn_flags);
         for (size_t j = 0; j < nkeys; j++) {
-          string k = u64_varkey(j).str();
-          string v(128, 'a');
-          tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
+          const string k = u64_varkey(j).str();
+          const string v(128, 'a');
+          tbl->insert(txn, k, v.data(), v.size());
         }
         if (verbose)
           cerr << "batch 1/1 done" << endl;
         ALWAYS_ASSERT(db->commit_txn(txn));
       } else {
         for (size_t i = 0; i < nbatches; i++) {
-          size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
+          const size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
           void *txn = db->new_txn(txn_flags);
           for (size_t j = i * batchsize; j < keyend; j++) {
-            string k = u64_varkey(j).str();
-            string v(128, 'a');
-            tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
+            const string k = u64_varkey(j).str();
+            const string v(128, 'a');
+            tbl->insert(txn, k, v.data(), v.size());
           }
           if (verbose)
             cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

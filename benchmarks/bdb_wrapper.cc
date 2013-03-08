@@ -71,10 +71,11 @@ bdb_ordered_index::~bdb_ordered_index()
 bool
 bdb_ordered_index::get(
     void *txn,
-    const char *key, size_t keylen,
-    string &value, size_t max_bytes_read)
+    const string &key,
+    string &value,
+    size_t max_bytes_read)
 {
-  Dbt kdbt((void *) key, keylen);
+  Dbt kdbt((void *) key.data(), key.size());
   Dbt vdbt;
   //vdbt.set_flags(DB_DBT_MALLOC);
   int retno = db->get((DbTxn *) txn, &kdbt, &vdbt, 0);
@@ -87,10 +88,10 @@ bdb_ordered_index::get(
 const char *
 bdb_ordered_index::put(
     void *txn,
-    const char *key, size_t keylen,
+    const string &key,
     const char *value, size_t valuelen)
 {
-  Dbt kdbt((void *) key, keylen);
+  Dbt kdbt((void *) key.data(), key.size());
   Dbt vdbt((void *) value, valuelen);
   ALWAYS_ASSERT(db->put((DbTxn *) txn, &kdbt, &vdbt, 0) == 0);
   return 0;

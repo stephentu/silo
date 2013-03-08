@@ -51,7 +51,7 @@ public:
     void *txn = db->new_txn(txn_flags);
     try {
       const string k = queue_key(id, ctr);
-      tbl->insert(txn, k.data(), k.size(), queue_values.data(), queue_values.size());
+      tbl->insert(txn, k, queue_values.data(), queue_values.size());
       if (db->commit_txn(txn)) {
         ctr++;
         ntxn_commits++;
@@ -80,13 +80,12 @@ public:
       const string lowk = queue_key(id, 0);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
       limit_callback c(1);
-      tbl->scan(txn, lowk.data(), lowk.size(),
-                highk.data(), highk.size(), true, c);
+      tbl->scan(txn, lowk, &highk, c);
       ssize_t ret = 0;
       if (likely(!c.values.empty())) {
         ALWAYS_ASSERT(c.values.size() == 1);
         const string &k = c.values.front().first;
-        tbl->remove(txn, k.data(), k.size());
+        tbl->remove(txn, k);
         ret = -queue_values.size();
       }
       if (db->commit_txn(txn)) {
@@ -116,14 +115,13 @@ public:
       const string lowk = queue_key(id, ctr);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
       limit_callback c(1);
-      tbl->scan(txn, lowk.data(), lowk.size(),
-                highk.data(), highk.size(), true, c);
+      tbl->scan(txn, lowk, &highk, c);
       const bool found = !c.values.empty();
       ssize_t ret = 0;
       if (likely(found)) {
         ALWAYS_ASSERT(c.values.size() == 1);
         const string &k = c.values.front().first;
-        tbl->remove(txn, k.data(), k.size());
+        tbl->remove(txn, k);
         ret = -queue_values.size();
       }
       if (db->commit_txn(txn)) {
@@ -155,8 +153,8 @@ public:
       string v;
       bool found = false;
       ssize_t ret = 0;
-      if (likely((found = tbl->get(txn, k.data(), k.size(), v)))) {
-        tbl->remove(txn, k.data(), k.size());
+      if (likely((found = tbl->get(txn, k, v)))) {
+        tbl->remove(txn, k);
         ret = -queue_values.size();
       }
       if (db->commit_txn(txn)) {
@@ -224,7 +222,7 @@ protected:
           for (size_t j = 0; j < nkeys; j++) {
             const string k = queue_key(id, j);
             const string &v = queue_values;
-            tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
+            tbl->insert(txn, k, v.data(), v.size());
           }
           if (verbose)
             cerr << "batch 1/1 done" << endl;
@@ -236,7 +234,7 @@ protected:
             for (size_t j = i * batchsize; j < keyend; j++) {
               const string k = queue_key(id, j);
               const string &v = queue_values;
-              tbl->insert(txn, k.data(), k.size(), v.data(), v.size());
+              tbl->insert(txn, k, v.data(), v.size());
             }
             if (verbose)
               cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
