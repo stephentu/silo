@@ -1569,7 +1569,7 @@ tpcc_worker::txn_delivery()
       new_order new_order_tmp;
       new_order_scan_callback new_order_c(&new_order_tmp);
       {
-        ANON_REGION("DeliverNewOrderScan:", &deliver_probe0_cg);
+        ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
         tbl_new_order->scan(txn, obj_key0, &obj_key1, new_order_c);
       }
       const new_order *new_order = new_order_c.get();
@@ -1892,7 +1892,7 @@ public:
   encoder<order_line> order_line_enc;
 };
 
-STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0)
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0_cg)
 
 ssize_t
 tpcc_worker::txn_order_status()
