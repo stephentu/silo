@@ -791,11 +791,12 @@ protected:
   operator<<(std::ostream &o, const read_record_t &r);
 
 #ifdef USE_SMALL_CONTAINER_OPT
+  // XXX(stephentu): these numbers are somewhat tuned for TPC-C
   typedef small_unordered_map<const logical_node *, read_record_t> read_set_map;
-  typedef small_unordered_map<string_type, bool> absent_set_map;
+  typedef small_unordered_map<string_type, bool, EXTRA_SMALL_SIZE_MAP> absent_set_map;
   typedef small_unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
-  typedef small_unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+  typedef small_unordered_map<const btree::node_opaque_t *, uint64_t, EXTRA_SMALL_SIZE_MAP> node_scan_map;
 #else
   typedef std::tr1::unordered_map<const logical_node *, read_record_t> read_set_map;
   typedef std::tr1::unordered_map<string_type, bool> absent_set_map;

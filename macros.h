@@ -56,8 +56,10 @@
 // XXX: would be nice if we checked these during single threaded execution
 #define SINGLE_THREADED_INVARIANT(expr) ((void)0)
 
-#define SMALL_SIZE_VEC 128
-#define SMALL_SIZE_MAP 64
+// tune away
+#define SMALL_SIZE_VEC       128
+#define SMALL_SIZE_MAP       64
+#define EXTRA_SMALL_SIZE_MAP 8
 
 #define always_prefetch(n) \
   do { \
