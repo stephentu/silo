@@ -396,7 +396,7 @@ struct std_pair_first_cmp {
 };
 
 // deal with small container opt vectors correctly
-template <typename T, size_t SmallSize = 123>
+template <typename T, size_t SmallSize = SMALL_SIZE_VEC>
 struct vec {
 #ifdef USE_SMALL_CONTAINER_OPT
   typedef small_vector<T, SmallSize> type;

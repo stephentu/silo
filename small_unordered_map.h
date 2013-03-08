@@ -15,7 +15,7 @@
  */
 template <typename Key,
           typename T,
-          size_t SmallSize = 128,
+          size_t SmallSize = SMALL_SIZE_MAP,
           typename Hash = std::tr1::hash<Key> >
 class small_unordered_map {
 public:
@@ -31,28 +31,28 @@ private:
   typedef std::pair<key_type, mapped_type> bucket_value_type;
 
   struct bucket {
-    bucket() : mapped(false) {}
+    inline bucket() : mapped(false) {}
     bool mapped;
 
-    bucket_value_type *
+    inline ALWAYS_INLINE bucket_value_type *
     ptr()
     {
       return reinterpret_cast<bucket_value_type *>(&buf[0]);
     }
 
-    const bucket_value_type *
+    inline ALWAYS_INLINE const bucket_value_type *
     ptr() const
     {
       return reinterpret_cast<const bucket_value_type *>(&buf[0]);
     }
 
-    bucket_value_type &
+    inline ALWAYS_INLINE bucket_value_type &
     ref()
     {
       return *ptr();
     }
 
-    const bucket_value_type &
+    inline ALWAYS_INLINE const bucket_value_type &
     ref() const
     {
       return *ptr();
@@ -153,7 +153,7 @@ private:
     return 0;
   }
 
-  const bucket *
+  inline ALWAYS_INLINE const bucket *
   find_bucket(const key_type &k) const
   {
     return const_cast<small_unordered_map *>(this)->find_bucket(k);
@@ -188,7 +188,7 @@ public:
     return large_elems->operator[](k);
   }
 
-  size_t
+  inline size_t
   size() const
   {
     if (unlikely(large_elems))
@@ -196,7 +196,7 @@ public:
     return n;
   }
 
-  bool
+  inline bool
   empty() const
   {
     return size() == 0;
@@ -210,14 +210,14 @@ private:
   class iterator_ : public std::iterator<std::forward_iterator_tag, ValueType> {
     friend class small_unordered_map;
   public:
-    iterator_() : large(false), b(0), bend(0) {}
+    inline iterator_() : large(false), b(0), bend(0) {}
 
     template <typename S, typename L, typename V>
-    iterator_(const iterator_<S, L, V> &other)
+    inline iterator_(const iterator_<S, L, V> &other)
       : large(other.large), b(other.b), bend(other.bend)
     {}
 
-    ValueType &
+    inline ValueType &
     operator*() const
     {
       if (unlikely(large))
@@ -227,7 +227,7 @@ private:
       return reinterpret_cast<ValueType &>(b->ref());
     }
 
-    ValueType *
+    inline ValueType *
     operator->() const
     {
       if (unlikely(large))
@@ -237,7 +237,7 @@ private:
       return reinterpret_cast<ValueType *>(b->ptr());
     }
 
-    bool
+    inline bool
     operator==(const iterator_ &o) const
     {
       if (unlikely(large && o.large))
@@ -247,13 +247,13 @@ private:
       return false;
     }
 
-    bool
+    inline bool
     operator!=(const iterator_ &o) const
     {
       return !operator==(o);
     }
 
-    iterator_ &
+    inline iterator_ &
     operator++()
     {
       if (unlikely(large)) {
@@ -267,7 +267,7 @@ private:
       return *this;
     }
 
-    iterator_
+    inline iterator_
     operator++(int)
     {
       iterator_ cur = *this;
@@ -276,12 +276,12 @@ private:
     }
 
   protected:
-    iterator_(SmallIterType *b, SmallIterType *bend)
+    inline iterator_(SmallIterType *b, SmallIterType *bend)
       : large(false), b(b), bend(bend)
     {
       INVARIANT(b == bend || b->mapped);
     }
-    iterator_(LargeIterType large_it)
+    inline iterator_(LargeIterType large_it)
       : large(true), large_it(large_it) {}
 
   private:
@@ -330,7 +330,7 @@ public:
     return const_iterator(b, bend);
   }
 
-  iterator
+  inline iterator
   end()
   {
     if (unlikely(large_elems))
@@ -338,7 +338,7 @@ public:
     return iterator(&small_elems[SmallSize], &small_elems[SmallSize]);
   }
 
-  const_iterator
+  inline const_iterator
   end() const
   {
     if (unlikely(large_elems))

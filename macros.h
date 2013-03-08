@@ -12,7 +12,7 @@
 //#define CHECK_INVARIANTS
 #define USE_SMALL_CONTAINER_OPT
 #define BTREE_NODE_ALLOC_CACHE_ALIGNED
-#define TXN_BTREE_DUMP_PURGE_STATS
+//#define TXN_BTREE_DUMP_PURGE_STATS
 #define USE_VARINT_ENCODING
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
@@ -55,6 +55,9 @@
 
 // XXX: would be nice if we checked these during single threaded execution
 #define SINGLE_THREADED_INVARIANT(expr) ((void)0)
+
+#define SMALL_SIZE_VEC 128
+#define SMALL_SIZE_MAP 64
 
 #define always_prefetch(n) \
   do { \
