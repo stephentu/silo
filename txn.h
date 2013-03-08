@@ -918,7 +918,7 @@ protected:
   const uint64_t flags;
 
 #ifdef USE_SMALL_CONTAINER_OPT
-  typedef small_unordered_map<txn_btree *, txn_context> ctx_map_type;
+  typedef small_unordered_map<txn_btree *, txn_context, EXTRA_SMALL_SIZE_MAP> ctx_map_type;
 #else
   typedef std::tr1::unordered_map<txn_btree *, txn_context> ctx_map_type;
 #endif
