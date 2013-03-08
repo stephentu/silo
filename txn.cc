@@ -613,7 +613,7 @@ transaction::txn_context::local_search_str(
 {
   ++evt_local_search_lookups;
 
-  {
+  if (!write_set.empty()) {
     transaction::write_set_map::const_iterator it = write_set.find(k);
     if (it != write_set.end()) {
       VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in write set"  << endl);
@@ -624,7 +624,7 @@ transaction::txn_context::local_search_str(
     }
   }
 
-  {
+  if (!absent_set.empty()) {
     transaction::absent_set_map::const_iterator it = absent_set.find(k);
     if (it != absent_set.end()) {
       VERBOSE(cerr << "local_search_str: key " << hexify(k) << " found in absent set"  << endl);
