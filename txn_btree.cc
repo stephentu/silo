@@ -6,13 +6,22 @@
 #include "util.h"
 #include "macros.h"
 
+#include "scopedperf.hh"
+
 using namespace std;
 using namespace util;
+
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe0_tsc, txn_btree_search_probe0_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe1_tsc, txn_btree_search_probe1_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe2_tsc, txn_btree_search_probe2_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe3_tsc, txn_btree_search_probe3_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe4_tsc, txn_btree_search_probe4_cg);
 
 bool
 txn_btree::search(transaction &t, const string_type &k, string_type &v,
                   size_t max_bytes_read)
 {
+  ANON_REGION("txn_btree::search:", &txn_btree_search_probe0_cg);
   INVARIANT(max_bytes_read > 0);
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
@@ -25,10 +34,13 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v,
   //
   // note (1)-(3) are served by transaction::local_search()
 
-  if (ctx.local_search_str(t, k, v)) {
-    if (v.size() > max_bytes_read)
-      v.resize(max_bytes_read);
-    return !v.empty();
+  {
+    ANON_REGION("txn_btree::search:local_search:", &txn_btree_search_probe1_cg);
+    if (ctx.local_search_str(t, k, v)) {
+      if (v.size() > max_bytes_read)
+        v.resize(max_bytes_read);
+      return !v.empty();
+    }
   }
 
   btree::value_type underlying_v;
@@ -38,6 +50,7 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v,
     ctx.absent_set[k] = false;
     return false;
   } else {
+    ANON_REGION("txn_btree::search:process:", &txn_btree_search_probe2_cg);
     const transaction::logical_node * const ln =
       (const transaction::logical_node *) underlying_v;
     INVARIANT(ln);
@@ -49,11 +62,14 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v,
     const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
       snapshot_tid_t.second : transaction::MAX_TID;
 
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, v, max_bytes_read))) {
-      const transaction::abort_reason r =
-        transaction::ABORT_REASON_UNSTABLE_READ;
-      t.abort_impl(r);
-      throw transaction_abort_exception(r);
+    {
+      ANON_REGION("txn_btree::search:process:extract:", &txn_btree_search_probe3_cg);
+      if (unlikely(!ln->stable_read(snapshot_tid, start_t, v, max_bytes_read))) {
+        const transaction::abort_reason r =
+          transaction::ABORT_REASON_UNSTABLE_READ;
+        t.abort_impl(r);
+        throw transaction_abort_exception(r);
+      }
     }
 
     if (unlikely(!t.can_read_tid(start_t))) {
@@ -63,19 +79,21 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v,
       throw transaction_abort_exception(r);
     }
 
-    if (v.empty())
+    const bool v_empty = v.empty();
+    if (v_empty)
       ++transaction::g_evt_read_logical_deleted_node_search;
-    transaction::read_record_t * const read_rec = &ctx.read_set[ln];
-    if (!read_rec->t) {
+    ANON_REGION("txn_btree::search:process:readset:", &txn_btree_search_probe4_cg);
+    transaction::read_record_t &read_rec = ctx.read_set[ln];
+    if (!read_rec.t) {
       // XXX(stephentu): this doesn't work if we allow wrap around
-      read_rec->t = start_t;
-    } else if (unlikely(read_rec->t != start_t)) {
+      read_rec.t = start_t;
+    } else if (unlikely(read_rec.t != start_t)) {
       const transaction::abort_reason r =
         transaction::ABORT_REASON_READ_NODE_INTEREFERENCE;
       t.abort_impl(r);
       throw transaction_abort_exception(r);
     }
-    return !v.empty();
+    return !v_empty;
   }
 }
 

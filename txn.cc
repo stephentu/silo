@@ -613,6 +613,9 @@ transaction::txn_context::local_search_str(
 {
   ++evt_local_search_lookups;
 
+  // XXX(stephentu): we should merge the write_set and the absent_set, so we
+  // can only need to do a hash table lookup once
+
   if (!write_set.empty()) {
     transaction::write_set_map::const_iterator it = write_set.find(k);
     if (it != write_set.end()) {

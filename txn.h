@@ -791,7 +791,7 @@ protected:
   operator<<(std::ostream &o, const read_record_t &r);
 
 #ifdef USE_SMALL_CONTAINER_OPT
-  typedef small_unordered_map<const logical_node *, read_record_t> read_set_map;
+  typedef small_unordered_map<const logical_node *, read_record_t, 1024> read_set_map;
   typedef small_unordered_map<string_type, bool> absent_set_map;
   typedef small_unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans

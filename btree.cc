@@ -260,7 +260,7 @@ btree::recursive_delete(node *n)
   }
 }
 
-STATIC_COUNTER_DECL(scopedperf::tod_ctr, btree_search_impl_tod, btree_search_impl_perf_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, btree_search_impl_tsc, btree_search_impl_perf_cg);
 
 bool
 btree::search_impl(const key_type &k, value_type &v,
