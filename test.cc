@@ -11,6 +11,16 @@
 #include "small_vector.h"
 #include "small_unordered_map.h"
 
+#include "record/encoder.h"
+
+#define MYREC_KEY_FIELDS(x, y) \
+  x(int32_t,k0) \
+  y(int32_t,k1)
+#define MYREC_VALUE_FIELDS(x, y) \
+  x(int32_t,v0) \
+  y(int16_t,v1)
+DO_STRUCT(myrec, MYREC_KEY_FIELDS, MYREC_VALUE_FIELDS)
+
 using namespace std;
 using namespace tr1;
 using namespace util;
@@ -457,6 +467,87 @@ Test()
 }
 }
 
+namespace recordtest {
+
+ostream &
+operator<<(ostream &o, const myrec::key &k)
+{
+  o << "[k0=" << k.k0 << ", k1=" << k.k1 << "]" << endl;
+  return o;
+}
+
+ostream &
+operator<<(ostream &o, const myrec::value &v)
+{
+  o << "[v0=" << v.v0 << ", v1=" << v.v1 << "]" << endl;
+  return o;
+}
+
+void
+Test()
+{
+  const myrec::key k0(123, 456);
+  const myrec::key k1(999, 123);
+  const myrec::key k2(123, 457);
+  myrec::key k0_temp, k1_temp, k2_temp;
+
+  ALWAYS_ASSERT(Size(k0) == sizeof(k0));
+  ALWAYS_ASSERT(Size(k1) == sizeof(k1));
+  ALWAYS_ASSERT(Size(k2) == sizeof(k2));
+
+  {
+    const string s0 = Encode(k0);
+    const string s1 = Encode(k1);
+    const string s2 = Encode(k2);
+    ALWAYS_ASSERT(s0 < s1);
+    ALWAYS_ASSERT(s0 < s2);
+    Decode(s0, k0_temp);
+    Decode(s1, k1_temp);
+    Decode(s2, k2_temp);
+    ALWAYS_ASSERT(k0 == k0_temp);
+    ALWAYS_ASSERT(k1 == k1_temp);
+    ALWAYS_ASSERT(k2 == k2_temp);
+
+    string t0, t1, t2;
+    const myrec::key *p0 = Decode(Encode(k0), k0_temp);
+    const myrec::key *p1 = Decode(Encode(k1), k1_temp);
+    const myrec::key *p2 = Decode(Encode(k2), k2_temp);
+    ALWAYS_ASSERT(*p0 == k0);
+    ALWAYS_ASSERT(*p1 == k1);
+    ALWAYS_ASSERT(*p2 == k2);
+  }
+
+  const myrec::value v0(859435, 2834);
+  const myrec::value v1(0, 73);
+  const myrec::value v2(654, 8);
+  myrec::value v0_temp, v1_temp, v2_temp;
+
+  {
+    const size_t sz0 = Size(v0);
+    const size_t sz1 = Size(v1);
+    const size_t sz2 = Size(v2);
+    uint8_t buf0[sz0], buf1[sz1], buf2[sz2];
+    Encode(buf0, v0);
+    Encode(buf1, v1);
+    Encode(buf2, v2);
+
+    const string s0((const char *) buf0, sz0);
+    const string s1((const char *) buf1, sz1);
+    const string s2((const char *) buf2, sz2);
+
+    Decode(s0, v0_temp);
+    Decode(s1, v1_temp);
+    Decode(s2, v2_temp);
+    ALWAYS_ASSERT(v0 == v0_temp);
+    ALWAYS_ASSERT(v1 == v1_temp);
+    ALWAYS_ASSERT(v2 == v2_temp);
+  }
+
+  cout << "encoder test passed" << endl;
+}
+
+}
+
 class main_thread : public ndb_thread {
 public:
   main_thread(int argc, char **argv)
@@ -474,6 +565,7 @@ public:
     varint::Test();
     small_vector_ns::Test();
     small_map_ns::Test();
+    recordtest::Test();
     //transaction::Test();
     btree::TestFast();
     //btree::TestSlow();

@@ -5,13 +5,13 @@
 #include "../macros.h"
 #include "../varint.h"
 
-template <typename T>
+template <typename T, bool Compress>
 struct serializer {
   inline uint8_t *
-  write(uint8_t *buf, const T *obj) const
+  write(uint8_t *buf, const T &obj) const
   {
     T *p = (T *) buf;
-    *p = *obj;
+    *p = obj;
     return (uint8_t *) (p + 1);
   }
 
@@ -36,13 +36,13 @@ struct serializer {
   }
 };
 
-// serializer<T> specializations
+// serializer<T, True> specializations
 template <>
-struct serializer<uint32_t> {
+struct serializer<uint32_t, true> {
   inline uint8_t *
-  write(uint8_t *buf, const uint32_t *obj) const
+  write(uint8_t *buf, uint32_t obj) const
   {
-    return write_uvint32(buf, *obj);
+    return write_uvint32(buf, obj);
   }
 
   const uint8_t *
@@ -65,19 +65,19 @@ struct serializer<uint32_t> {
 };
 
 template <>
-struct serializer<int32_t> {
+struct serializer<int32_t, true> {
   inline uint8_t *
-  write(uint8_t *buf, const int32_t *obj) const
+  write(uint8_t *buf, int32_t obj) const
   {
-    serializer<uint32_t> s;
-    const uint32_t v = encode(*obj);
-    return s.write(buf, &v);
+    serializer<uint32_t, true> s;
+    const uint32_t v = encode(obj);
+    return s.write(buf, v);
   }
 
   const uint8_t *
   read(const uint8_t *buf, int32_t *obj) const
   {
-    serializer<uint32_t> s;
+    serializer<uint32_t, true> s;
     uint32_t v;
     buf = s.read(buf, &v);
     *obj = decode(v);
@@ -87,7 +87,7 @@ struct serializer<int32_t> {
   size_t
   nbytes(const int32_t *obj) const
   {
-    serializer<uint32_t> s;
+    serializer<uint32_t, true> s;
     const uint32_t v = encode(*obj);
     return s.nbytes(&v);
   }

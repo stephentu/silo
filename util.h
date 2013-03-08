@@ -34,7 +34,7 @@ typedef aligned_padded_elem<uint64_t> aligned_padded_u64;
 
 template <typename T>
 struct host_endian_trfm {
-  inline ALWAYS_INLINE T operator()(T t) const { return t; }
+  inline ALWAYS_INLINE T operator()(const T &t) const { return t; }
 };
 
 template <>
@@ -69,7 +69,7 @@ struct host_endian_trfm<uint64_t> {
 
 template <typename T>
 struct big_endian_trfm {
-  inline ALWAYS_INLINE T operator()(T t) const { return t; }
+  inline ALWAYS_INLINE T operator()(const T &t) const { return t; }
 };
 
 template <>

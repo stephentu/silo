@@ -14,8 +14,8 @@ USE_PERF_CTRS=0
 
 ifeq ($(USE_MALLOC_MODE),1)
         CXXFLAGS+=-DUSE_JEMALLOC
-        LDFLAGS+=-ljemalloc 
-        #LDFLAGS+=-L$(HOME)/jemalloc-bin/lib -ljemalloc 
+        LDFLAGS+=-ljemalloc
+        #LDFLAGS+=-L$(HOME)/jemalloc-bin/lib -ljemalloc
 else
 ifeq ($(USE_MALLOC_MODE),2)
         CXXFLAGS+=-DUSE_TCMALLOC
@@ -29,7 +29,8 @@ endif
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h counter.h core.h imstring.h lockguard.h spinlock.h hash_bytes.h \
-	  xbuf.h small_vector.h small_unordered_map.h scopedperf.hh
+	  xbuf.h small_vector.h small_unordered_map.h scopedperf.hh \
+	  record/encoder.h record/serializer.h
 SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc \
 	txn_btree.cc varint.cc memory.cc hash_bytes.cc
 OBJFILES = $(SRCFILES:.cc=.o)
@@ -44,8 +45,6 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/abstract_ordered_index.h \
 	benchmarks/bench.h \
 	benchmarks/inline_str.h \
-	benchmarks/encoder.h \
-	benchmarks/serializer.h \
 	benchmarks/bdb_wrapper.h \
 	benchmarks/ndb_wrapper.h \
 	benchmarks/mysql_wrapper.h \

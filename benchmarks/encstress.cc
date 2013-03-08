@@ -13,7 +13,7 @@
 #include "../util.h"
 #include "../spinbarrier.h"
 
-#include "encoder.h"
+#include "../record/encoder.h"
 #include "bench.h"
 
 using namespace std;
@@ -21,16 +21,18 @@ using namespace util;
 
 static size_t nkeys;
 
-#define ENCSTRESS_REC_FIELDS(x) \
+#define ENCSTRESS_REC_KEY_FIELDS(x, y) \
+  x(int32_t,k0)
+#define ENCSTRESS_REC_VALUE_FIELDS(x, y) \
   x(int32_t,f0) \
-  x(int32_t,f1) \
-  x(int32_t,f2) \
-  x(int32_t,f3) \
-  x(int32_t,f4) \
-  x(int32_t,f5) \
-  x(int32_t,f6) \
-  x(int32_t,f7)
-DO_STRUCT(encstress_rec, ENCSTRESS_REC_FIELDS)
+  y(int32_t,f1) \
+  y(int32_t,f2) \
+  y(int32_t,f3) \
+  y(int32_t,f4) \
+  y(int32_t,f5) \
+  y(int32_t,f6) \
+  y(int32_t,f7)
+DO_STRUCT(encstress_rec, ENCSTRESS_REC_KEY_FIELDS, ENCSTRESS_REC_VALUE_FIELDS)
 
 class encstress_worker : public bench_worker {
 public:
@@ -89,7 +91,6 @@ protected:
   virtual void
   load()
   {
-    encoder<encstress_rec> enc;
     abstract_ordered_index *tbl = open_tables.at("table");
     try {
       // load
@@ -100,13 +101,13 @@ protected:
       if (nbatches == 0) {
         void *txn = db->new_txn(txn_flags);
         for (size_t j = 0; j < nkeys; j++) {
-          const string k = u64_varkey(j).str();
-          encstress_rec rec;
+          const encstress_rec::key key(j);
+          encstress_rec::value rec;
           rec.f0 = 1; rec.f1 = 1; rec.f2 = 1; rec.f3 = 1;
           rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
-          const size_t sz = enc.nbytes(&rec);
+          const size_t sz = Size(rec);
           uint8_t buf[sz];
-          tbl->insert(txn, k, (const char *) enc.write(buf, &rec), sz);
+          tbl->insert(txn, Encode(key), Encode(buf, rec), sz);
         }
         if (verbose)
           cerr << "batch 1/1 done" << endl;
@@ -116,13 +117,13 @@ protected:
           size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
           void *txn = db->new_txn(txn_flags);
           for (size_t j = i * batchsize; j < keyend; j++) {
-            const string k = u64_varkey(j).str();
-            encstress_rec rec;
+            const encstress_rec::key key(j);
+            encstress_rec::value rec;
             rec.f0 = 1; rec.f1 = 1; rec.f2 = 1; rec.f3 = 1;
             rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
-            const size_t sz = enc.nbytes(&rec);
+            const size_t sz = Size(rec);
             uint8_t buf[sz];
-            tbl->insert(txn, k, (const char *) enc.write(buf, &rec), sz);
+            tbl->insert(txn, Encode(key), Encode(buf, rec), sz);
           }
           if (verbose)
             cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
