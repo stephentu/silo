@@ -4,8 +4,29 @@
 #include <algorithm>
 #include <iterator>
 #include <tr1/unordered_map>
+#include <stdint.h>
 
 #include "macros.h"
+
+namespace private_ {
+
+  template <typename T>
+  struct is_eq_expensive { static const bool value = true; };
+
+  struct cheap_eq { static const bool value = false; };
+
+  // equals is cheap for integer types
+  template <> struct is_eq_expensive<bool>     : public cheap_eq {};
+  template <> struct is_eq_expensive<uint8_t>  : public cheap_eq {};
+  template <> struct is_eq_expensive<int8_t>   : public cheap_eq {};
+  template <> struct is_eq_expensive<uint16_t> : public cheap_eq {};
+  template <> struct is_eq_expensive<int16_t>  : public cheap_eq {};
+  template <> struct is_eq_expensive<uint32_t> : public cheap_eq {};
+  template <> struct is_eq_expensive<int32_t>  : public cheap_eq {};
+  template <> struct is_eq_expensive<uint64_t> : public cheap_eq {};
+  template <> struct is_eq_expensive<int64_t>  : public cheap_eq {};
+
+}
 
 /**
  * For under SmallSize, uses linear probing on a fixed size array. Otherwise,
@@ -32,7 +53,6 @@ private:
 
   struct bucket {
     inline bucket() : mapped(false) {}
-    bool mapped;
 
     inline ALWAYS_INLINE bucket_value_type *
     ptr()
@@ -59,7 +79,7 @@ private:
     }
 
     void
-    construct(const key_type &k, const mapped_type &v)
+    construct(size_t hash, const key_type &k, const mapped_type &v)
     {
       INVARIANT(!mapped);
       // directly construct into pair (is safe for pair), bypassing
@@ -67,6 +87,7 @@ private:
       new (&ref().first)  key_type(k);
       new (&ref().second) mapped_type(v);
       mapped = true;
+      h = hash;
     }
 
     void
@@ -77,6 +98,8 @@ private:
       mapped = false;
     }
 
+    bool mapped;
+    size_t h;
     char buf[sizeof(value_type)];
   };
 
@@ -104,7 +127,8 @@ public:
         bucket *const this_b = &small_elems[i];
         const bucket *const that_b = &other.small_elems[i];
         if (that_b->mapped)
-          this_b->construct(that_b->ref().first,
+          this_b->construct(that_b->h,
+                            that_b->ref().first,
                             that_b->ref().second);
       }
     }
@@ -127,7 +151,8 @@ public:
         bucket *const this_b = &small_elems[i];
         const bucket *const that_b = &other.small_elems[i];
         if (that_b->mapped)
-          this_b->construct(that_b->ref().first,
+          this_b->construct(that_b->h,
+                            that_b->ref().first,
                             that_b->ref().second);
       }
     }
@@ -136,17 +161,29 @@ public:
 
 private:
   bucket *
-  find_bucket(const key_type &k)
+  find_bucket(const key_type &k, size_t *hash_value)
   {
     INVARIANT(!large_elems);
-    size_t i = Hash()(k) % SmallSize;
+    const size_t h = Hash()(k);
+    if (hash_value)
+      *hash_value = h;
+    size_t i = h % SmallSize;
     size_t n = 0;
     while (n++ < SmallSize) {
       bucket &b = small_elems[i];
-      if ((b.mapped && b.ref().first == k) ||
-          !b.mapped) {
-        // found bucket
-        return &b;
+      const bool check_hash = private_::is_eq_expensive<key_type>::value;
+      if (check_hash) {
+        if ((b.mapped && b.h == h && b.ref().first == k) ||
+            !b.mapped) {
+          // found bucket
+          return &b;
+        }
+      } else {
+        if ((b.mapped && b.ref().first == k) ||
+            !b.mapped) {
+          // found bucket
+          return &b;
+        }
       }
       i = (i + 1) % SmallSize;
     }
@@ -154,9 +191,9 @@ private:
   }
 
   inline ALWAYS_INLINE const bucket *
-  find_bucket(const key_type &k) const
+  find_bucket(const key_type &k, size_t *hash_value) const
   {
-    return const_cast<small_unordered_map *>(this)->find_bucket(k);
+    return const_cast<small_unordered_map *>(this)->find_bucket(k, hash_value);
   }
 
 public:
@@ -166,11 +203,12 @@ public:
   {
     if (unlikely(large_elems))
       return large_elems->operator[](k);
-    bucket *b = find_bucket(k);
+    size_t h;
+    bucket *b = find_bucket(k, &h);
     if (likely(b)) {
       if (!b->mapped) {
         n++;
-        b->construct(k, mapped_type());
+        b->construct(h, k, mapped_type());
       }
       return b->ref().second;
     }
@@ -351,7 +389,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->find(k));
-    bucket *b = find_bucket(k);
+    bucket *b = find_bucket(k, 0);
     if (likely(b) && b->mapped)
       return iterator(b, &small_elems[SmallSize]);
     return end();
@@ -362,7 +400,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->find(k));
-    const bucket *b = find_bucket(k);
+    const bucket *b = find_bucket(k, 0);
     if (likely(b) && b->mapped)
       return const_iterator(b, &small_elems[SmallSize]);
     return end();

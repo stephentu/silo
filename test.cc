@@ -463,6 +463,19 @@ Test()
     ALWAYS_ASSERT(m.size() == 5);
   }
 
+  { // check primitive key type maps
+    small_unordered_map<int, int> m;
+    m[0] = 1;
+    m[1] = 2;
+    m[2] = 3;
+    ALWAYS_ASSERT(m.find(0) != m.end());
+    ALWAYS_ASSERT(m.find(1) != m.end());
+    ALWAYS_ASSERT(m.find(2) != m.end());
+    ALWAYS_ASSERT(m.find(0)->first == 0 && m.find(0)->second == 1);
+    ALWAYS_ASSERT(m.find(1)->first == 1 && m.find(1)->second == 2);
+    ALWAYS_ASSERT(m.find(2)->first == 2 && m.find(2)->second == 3);
+  }
+
   cout << "map test passed" << endl;
 }
 }
