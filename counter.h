@@ -52,8 +52,10 @@ public:
   inline ALWAYS_INLINE void
   inc(uint64_t i = 1)
   {
+#ifdef ENABLE_EVENT_COUNTERS
     const size_t id = coreid::core_id();
     ctx->tl_counts[id].elem += i;
+#endif
   }
 
   inline ALWAYS_INLINE event_counter &
@@ -70,14 +72,15 @@ public:
     return *this;
   }
 
-
   // WARNING: an expensive operation!
   static std::map<std::string, double> get_all_counters();
   // WARNING: an expensive operation!
   static void reset_all_counters();
 
 private:
+#ifdef ENABLE_EVENT_COUNTERS
   private_::event_ctx *const ctx;
+#endif
 };
 
 class event_avg_counter : private util::noncopyable {
@@ -87,12 +90,17 @@ public:
   inline ALWAYS_INLINE void
   offer(uint64_t value)
   {
+#ifdef ENABLE_EVENT_COUNTERS
     const size_t id = coreid::core_id();
     ctx->tl_counts[id].elem += value;
     ctx->tl_invokes[id].elem++;
+#endif
   }
+
 private:
+#ifdef ENABLE_EVENT_COUNTERS
   private_::event_ctx_avg *const ctx;
+#endif
 };
 
 #endif /* _COUNTER_H_ */

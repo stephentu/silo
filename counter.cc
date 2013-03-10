@@ -61,6 +61,7 @@ event_counter::reset_all_counters()
     }
 }
 
+#ifdef ENABLE_EVENT_COUNTERS
 event_counter::event_counter(const string &name)
   : ctx(new event_ctx(name, false))
 {
@@ -78,3 +79,12 @@ event_avg_counter::event_avg_counter(const string &name)
   lock_guard<spinlock> sl(l);
   evts.push_back(ctx);
 }
+#else
+event_counter::event_counter(const string &name)
+{
+}
+
+event_avg_counter::event_avg_counter(const string &name)
+{
+}
+#endif
