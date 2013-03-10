@@ -1337,6 +1337,7 @@ tpcc_worker::txn_payment()
 
 class order_line_nop_callback : public abstract_ordered_index::scan_callback {
 public:
+  order_line_nop_callback() : n(0) {}
   virtual bool invoke(
       const char *key, size_t key_len,
       const char *value, size_t value_len)
@@ -1349,8 +1350,10 @@ public:
     const order_line::key *k_ol = Decode(key, k_ol_temp);
     checker::SanityCheckOrderLine(k_ol, v_ol);
 #endif
+    ++n;
     return true;
   }
+  size_t n;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0_cg)
@@ -1434,6 +1437,7 @@ tpcc_worker::txn_order_status()
     const order_line::key k_ol_0(warehouse_id, districtID, o_id, 0);
     const order_line::key k_ol_1(warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
     tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line);
+    INVARIANT(c_order_line.n >= 5 && c_order_line.n <= 15);
 
     if (db->commit_txn(txn))
       ntxn_commits++;
