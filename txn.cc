@@ -897,6 +897,11 @@ transaction_proto2::gen_commit_tid(const typename vec<lnode_pair>::type &write_n
   INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);
 
   tid_t ret = l_last_commit_tid;
+
+  // XXX(stephentu): I believe this is correct, but not 100% sure
+  //const size_t my_core_id = 0;
+  //tid_t ret = 0;
+
   for (ctx_map_type::const_iterator outer_it = ctx_map.begin();
        outer_it != ctx_map.end(); ++outer_it)
     for (read_set_map::const_iterator it = outer_it->second.read_set.begin();
