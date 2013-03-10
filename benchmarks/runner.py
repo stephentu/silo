@@ -6,17 +6,20 @@ import subprocess
 import sys
 
 #DBS = ('mysql', 'bdb', 'ndb-proto1', 'ndb-proto2')
-DBS = ('ndb-proto1', 'ndb-proto2')
-#DBS = ('ndb-proto2',)
+#DBS = ('ndb-proto1', 'ndb-proto2')
+DBS = ('ndb-proto2',)
 
 # config for tom
-THREADS = (1, 2, 4, 8, 12, 18, 24, 30, 36, 42, 48)
+#THREADS = (1, 2, 4, 8, 12, 18, 24, 30, 36, 42, 48)
 #THREADS = (1,)
+
+# config for ben
+THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80)
 
 #TXN_FLAGS = (0x0, 0x1)
 TXN_FLAGS = (0x1,)
 
-SCALE_FACTORS = (10,)
+#SCALE_FACTORS = (10,)
 
 #BENCHMARKS = ('ycsb', 'tpcc')
 BENCHMARKS = ('tpcc',)
@@ -41,7 +44,7 @@ def run_configuration(basedir, dbtype, bench, scale_factor, txn_flags, nthreads)
       '--num-threads', str(nthreads),
       '--scale-factor', str(scale_factor),
       '--txn-flags', '%d' % (txn_flags),
-      '--runtime', '60',
+      '--runtime', '180',
   ]
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
