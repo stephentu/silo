@@ -1090,7 +1090,6 @@ public:
   inline const new_order::key *
   get_key() const
   {
-    INVARIANT(k_no);
     return k_no;
   }
 private:
@@ -1121,6 +1120,8 @@ tpcc_worker::txn_delivery()
       }
 
       const new_order::key *k_no = new_order_c.get_key();
+      if (unlikely(!k_no))
+        continue;
       last_no_o_ids[d] = k_no->no_o_id + 1; // XXX: update last seen
 
       const oorder::key k_oo(warehouse_id, d, k_no->no_o_id);
