@@ -213,19 +213,26 @@ rcu::gc_thread_loop(void *p)
     // from the previous epoch, and advance it forward to the global epoch
     {
       lock_guard<spinlock> l(rcu_mutex()); // prevents new threads from joining
+
+      // force all threads to advance to new epoch
       for (map<pthread_t, sync *>::iterator it = sync_map.begin();
            it != sync_map.end(); ++it) {
-        sync *s = it->second;
+        sync * const s = it->second;
         const epoch_t local_epoch = s->local_epoch;
         if (local_epoch != global_epoch) {
           INVARIANT(local_epoch == cleaning_epoch);
           lock_guard<spinlock> l0(s->local_critical_mutex);
           s->local_epoch = global_epoch;
         }
+      }
 
-        // now the next time the thread enters a critical section, it
-        // *must* get the new global_epoch, so we can now claim its
-        // deleted pointers from global_epoch - 1
+      // claim deleted pointers
+      for (map<pthread_t, sync *>::iterator it = sync_map.begin();
+           it != sync_map.end(); ++it) {
+        sync * const s = it->second;
+        INVARIANT(s->local_epoch == global_epoch);
+
+        // so we can now claim its deleted pointers from global_epoch - 1
         delete_queue &local_queue = s->local_queues[cleaning_epoch % 2];
         evt_avg_rcu_delete_queue_len.offer(local_queue.size());
 
