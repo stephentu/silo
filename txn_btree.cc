@@ -1050,11 +1050,13 @@ mp_test2()
     reader_worker<TxnType> w2(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
 
     running = true;
+    __sync_synchronize();
     w0.start();
     w1.start();
     w2.start();
     sleep(10);
     running = false;
+    __sync_synchronize();
     w0.join();
     w1.join();
     w2.join();
@@ -1229,6 +1231,152 @@ mp_test3()
   }
 }
 
+namespace mp_test_simple_write_skew_ns {
+  static const size_t NDoctors = 16;
+
+  volatile bool running = true;
+
+  template <typename TxnType>
+  class get_worker : public txn_btree_worker {
+  public:
+    get_worker(unsigned int d, txn_btree &btr, uint64_t txn_flags)
+      : txn_btree_worker(btr, txn_flags), n(0), d(d) {}
+    virtual void run()
+    {
+      while (running) {
+        try {
+          TxnType t(txn_flags);
+          if ((n % 2) == 0) {
+            // try to take this doctor off call
+            unsigned int ctr = 0;
+            for (unsigned int i = 0; i < NDoctors && ctr < 2; i++) {
+              txn_btree::string_type v;
+              ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(i), v));
+              INVARIANT(v.size() == sizeof(rec));
+              const rec *r = (const rec *) v.data();
+              if (r->v)
+                ctr++;
+            }
+            if (ctr == 2)
+              btr->insert_object(t, u64_varkey(d), rec(0));
+            t.commit(true);
+            ALWAYS_ASSERT_COND_IN_TXN(t, ctr >= 1);
+          } else {
+            // place this doctor on call
+            btr->insert_object(t, u64_varkey(d), rec(1));
+            t.commit(true);
+          }
+          n++;
+        } catch (transaction_abort_exception &e) {
+          // no-op
+        }
+      }
+    }
+    uint64_t n;
+  private:
+    unsigned int d;
+  };
+
+  template <typename TxnType>
+  class scan_worker : public txn_btree_worker,
+                      public txn_btree::search_range_callback {
+  public:
+    scan_worker(unsigned int d, txn_btree &btr, uint64_t txn_flags)
+      : txn_btree_worker(btr, txn_flags), n(0), d(d), ctr(0) {}
+    virtual void run()
+    {
+      while (running) {
+        try {
+          TxnType t(txn_flags);
+          if ((n % 2) == 0) {
+            ctr = 0;
+            btr->search_range_call(t, u64_varkey(0), NULL, *this);
+            if (ctr == 2)
+              btr->insert_object(t, u64_varkey(d), rec(0));
+            t.commit(true);
+            ALWAYS_ASSERT_COND_IN_TXN(t, ctr >= 1);
+          } else {
+            btr->insert_object(t, u64_varkey(d), rec(1));
+            t.commit(true);
+          }
+          n++;
+        } catch (transaction_abort_exception &e) {
+          // no-op
+        }
+      }
+    }
+    virtual bool invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+    {
+      INVARIANT(sz == sizeof(rec));
+      const rec *r = (const rec *) v;
+      if (r->v)
+        ctr++;
+      return ctr < 2;
+    }
+    uint64_t n;
+  private:
+    unsigned int d;
+    unsigned int ctr;
+  };
+}
+
+template <typename TxnType>
+static void
+mp_test_simple_write_skew()
+{
+  using namespace mp_test_simple_write_skew_ns;
+
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
+
+    txn_btree btr;
+    {
+      TxnType t(txn_flags);
+      _static_assert(NDoctors >= 2);
+      for (uint64_t i = 0; i < NDoctors; i++)
+        btr.insert_object(t, u64_varkey(i), rec(i < 2 ? 1 : 0));
+      AssertSuccessfulCommit(t);
+    }
+
+    txn_epoch_sync<TxnType>::sync();
+
+    running = true;
+    __sync_synchronize();
+    vector<txn_btree_worker *> workers;
+    for (size_t i = 0; i < NDoctors / 2; i++)
+      workers.push_back(new get_worker<TxnType>(i, btr, txn_flags));
+    for (size_t i = NDoctors / 2; i < NDoctors; i++)
+      workers.push_back(new scan_worker<TxnType>(i, btr, txn_flags));
+    for (size_t i = 0; i < NDoctors; i++)
+      workers[i]->start();
+    sleep(10);
+    running = false;
+    __sync_synchronize();
+
+
+    size_t n_get_succ = 0, n_scan_succ = 0;
+    for (size_t i = 0; i < NDoctors; i++) {
+      workers[i]->join();
+      if (get_worker<TxnType> *w = dynamic_cast<get_worker<TxnType> *>(workers[i]))
+        n_get_succ += w->n;
+      else if (scan_worker<TxnType> *w = dynamic_cast<scan_worker<TxnType> *>(workers[i]))
+        n_scan_succ += w->n;
+      else
+        ALWAYS_ASSERT(false);
+      delete workers[i];
+    }
+    workers.clear();
+
+    cerr << "get_worker  txns: " << n_get_succ << endl;
+    cerr << "scan_worker txns: " << n_scan_succ << endl;
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
+  }
+}
+
 namespace read_only_perf_ns {
   const size_t nkeys = 140000000; // 140M
   //const size_t nkeys = 100000; // 100K
@@ -1347,6 +1495,7 @@ txn_btree::Test()
   //cerr << "Test proto1" << endl;
   //test1<transaction_proto1>();
   //test2<transaction_proto1>();
+  //test_absent_key_race<transaction_proto1>();
   //test_inc_value_size<transaction_proto1>();
   //test_multi_btree<transaction_proto1>();
   //test_read_only_snapshot<transaction_proto1>();
@@ -1355,6 +1504,7 @@ txn_btree::Test()
   //mp_test1<transaction_proto1>();
   //mp_test2<transaction_proto1>();
   //mp_test3<transaction_proto1>();
+  //mp_test_simple_write_skew<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();
@@ -1368,6 +1518,7 @@ txn_btree::Test()
   mp_test1<transaction_proto2>();
   mp_test2<transaction_proto2>();
   mp_test3<transaction_proto2>();
+  mp_test_simple_write_skew<transaction_proto2>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();
