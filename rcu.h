@@ -37,18 +37,23 @@ public:
   // XXX(stephentu): tune?
   static const size_t SyncDeleteQueueBufSize = 16384;
   static const size_t NGCReapers = 4;
+  static const bool EnableThreadLocalCleanup = true;
 
   // all RCU threads interact w/ the RCU subsystem via
   // a sync struct
   struct sync {
-    volatile epoch_t local_epoch;
-    delete_queue local_queues[2];
+    volatile epoch_t local_epoch CACHE_ALIGNED;
     spinlock local_critical_mutex;
+
+    delete_queue local_queues[2] CACHE_ALIGNED;
+    delete_queue scratch_queue; // for cleanup
+
     sync(epoch_t local_epoch)
       : local_epoch(local_epoch)
     {
       local_queues[0].reserve(SyncDeleteQueueBufSize);
       local_queues[1].reserve(SyncDeleteQueueBufSize);
+      scratch_queue.reserve(SyncDeleteQueueBufSize);
     }
   };
 
@@ -56,7 +61,7 @@ public:
    * precondition: p must not already be registered - caller is
    * responsible for managing memory of s
    */
-  static void register_sync(pthread_t p, sync *s);
+  static sync *register_sync(pthread_t p);
 
   static sync *unregister_sync(pthread_t p);
 
@@ -88,10 +93,11 @@ private:
   static void *gc_thread_loop(void *p);
   static spinlock &rcu_mutex();
 
-  static volatile epoch_t global_epoch;
+  static volatile epoch_t global_epoch CACHE_ALIGNED;
+  static volatile epoch_t cleaning_epoch;
   static delete_queue global_queues[2];
 
-  static volatile bool gc_thread_started;
+  static volatile bool gc_thread_started CACHE_ALIGNED;
   static pthread_t gc_thread_p;
 
   static std::map<pthread_t, sync *> sync_map; // protected by rcu_mutex
