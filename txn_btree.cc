@@ -1377,6 +1377,196 @@ mp_test_simple_write_skew()
   }
 }
 
+namespace mp_test_batch_processing_ns {
+
+  volatile bool running = true;
+
+  static inline string
+  MakeKey(uint32_t batch_id, uint32_t receipt_id)
+  {
+    const big_endian_trfm<int32_t> t;
+    string buf(8, 0);
+    uint32_t *p = (uint32_t *) &buf[0];
+    *p++ = t(batch_id);
+    *p++ = t(receipt_id);
+    return buf;
+  }
+
+  template <typename TxnType>
+  class report_worker : public ndb_thread,
+                        public txn_btree::search_range_callback {
+  public:
+    report_worker(txn_btree &ctrl, txn_btree &receipts, uint64_t txn_flags)
+      : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags), n(0), m(0), sum(0) {}
+    virtual void run()
+    {
+      while (running) {
+        try {
+          TxnType t(txn_flags);
+          txn_btree::string_type v;
+          ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
+          ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
+          const rec * const r = (const rec *) v.data();
+          const uint32_t prev_bid = r->v - 1; // prev batch
+          sum = 0;
+          const string endkey = MakeKey(prev_bid, numeric_limits<uint32_t>::max());
+          receipts->search_range_call(t, MakeKey(prev_bid, 0), &endkey, *this);
+          t.commit(true);
+          map<uint32_t, uint32_t>::iterator it = reports.find(prev_bid);
+          if (it != reports.end()) {
+            ALWAYS_ASSERT_COND_IN_TXN(t, sum == it->second);
+            m++;
+          } else {
+            reports[prev_bid] = sum;
+          }
+          n++;
+        } catch (transaction_abort_exception &e) {
+          // no-op
+        }
+      }
+    }
+    virtual bool invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+    {
+      INVARIANT(sz == sizeof(rec));
+      const rec * const r = (const rec *) v;
+      sum += r->v;
+      return true;
+    }
+  private:
+    txn_btree *ctrl;
+    txn_btree *receipts;
+    uint64_t txn_flags;
+
+  public:
+    uint64_t n;
+    uint64_t m;
+
+  private:
+    map<uint32_t, uint32_t> reports;
+    unsigned int sum;
+  };
+
+  template <typename TxnType>
+  class new_receipt_worker : public ndb_thread {
+  public:
+    new_receipt_worker(txn_btree &ctrl, txn_btree &receipts, uint64_t txn_flags)
+      : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags),
+        n(0), last_bid(0), last_rid(0) {}
+    virtual void run()
+    {
+      while (running) {
+        try {
+          TxnType t(txn_flags);
+          txn_btree::string_type v;
+          ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
+          ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
+          const rec * const r = (const rec *) v.data();
+          const uint32_t cur_bid = r->v;
+          const uint32_t cur_rid = (cur_bid != last_bid) ? 0 : last_rid + 1;
+          const string rkey = MakeKey(cur_bid, cur_rid);
+          receipts->insert_object(t, rkey, rec(1));
+          t.commit(true);
+          last_bid = cur_bid;
+          last_rid = cur_rid;
+          n++;
+        } catch (transaction_abort_exception &e) {
+          // no-op
+        }
+      }
+    }
+
+  private:
+    txn_btree *ctrl;
+    txn_btree *receipts;
+    uint64_t txn_flags;
+
+  public:
+    uint64_t n;
+
+  private:
+    uint32_t last_bid;
+    uint32_t last_rid;
+  };
+
+  template <typename TxnType>
+  class incr_worker : public ndb_thread {
+  public:
+    incr_worker(txn_btree &ctrl, txn_btree &receipts, uint64_t txn_flags)
+      : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags), n(0) {}
+    virtual void run()
+    {
+      struct timespec t;
+      NDB_MEMSET(&t, 0, sizeof(t));
+      t.tv_nsec = 1000; // 1 us
+      while (running) {
+        try {
+          TxnType t(txn_flags);
+          txn_btree::string_type v;
+          ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
+          ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
+          const rec * const r = (const rec *) v.data();
+          ctrl->insert_object(t, u64_varkey(0), rec(r->v + 1));
+          t.commit(true);
+          n++;
+        } catch (transaction_abort_exception &e) {
+          // no-op
+        }
+        nanosleep(&t, NULL);
+      }
+    }
+  private:
+    txn_btree *ctrl;
+    txn_btree *receipts;
+    uint64_t txn_flags;
+
+  public:
+    uint64_t n;
+  };
+}
+
+template <typename TxnType>
+static void
+mp_test_batch_processing()
+{
+  using namespace mp_test_batch_processing_ns;
+
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
+
+    txn_btree ctrl;
+    txn_btree receipts;
+    {
+      TxnType t(txn_flags);
+      ctrl.insert_object(t, u64_varkey(0), rec(1));
+      AssertSuccessfulCommit(t);
+    }
+
+    txn_epoch_sync<TxnType>::sync();
+
+    report_worker<TxnType> w0(ctrl, receipts, txn_flags);
+    new_receipt_worker<TxnType> w1(ctrl, receipts, txn_flags);
+    incr_worker<TxnType> w2(ctrl, receipts, txn_flags);
+    running = true;
+    __sync_synchronize();
+    w0.start(); w1.start(); w2.start();
+    sleep(10);
+    running = false;
+    __sync_synchronize();
+    w0.join(); w1.join(); w2.join();
+
+
+    cerr << "report_worker      txns       : " << w0.n << endl;
+    cerr << "report_worker      validations: " << w0.m << endl;
+    cerr << "new_receipt_worker txns       : " << w1.n << endl;
+    cerr << "incr_worker        txns       : " << w2.n << endl;
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
+  }
+}
+
 namespace read_only_perf_ns {
   const size_t nkeys = 140000000; // 140M
   //const size_t nkeys = 100000; // 100K
@@ -1505,6 +1695,7 @@ txn_btree::Test()
   //mp_test2<transaction_proto1>();
   //mp_test3<transaction_proto1>();
   //mp_test_simple_write_skew<transaction_proto1>();
+  //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
   test1<transaction_proto2>();
@@ -1519,6 +1710,7 @@ txn_btree::Test()
   mp_test2<transaction_proto2>();
   mp_test3<transaction_proto2>();
   mp_test_simple_write_skew<transaction_proto2>();
+  mp_test_batch_processing<transaction_proto2>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();
