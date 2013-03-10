@@ -1,4 +1,4 @@
-CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops
+CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer
 #CXXFLAGS := -Wall -g
 
 LDFLAGS := -lpthread
