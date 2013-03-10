@@ -310,6 +310,8 @@ string tpcc_worker_mixin::NameTokens[] =
     string("EING"),
   };
 
+STATIC_COUNTER_DECL(scopedperf::tod_ctr, tpcc_txn_tod, tpcc_txn_cg)
+
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
   tpcc_worker(unsigned long seed, abstract_db *db,
@@ -330,6 +332,7 @@ public:
   static ssize_t
   TxnNewOrder(bench_worker *w)
   {
+    ANON_REGION("TxnNewOrder:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_new_order();
   }
 
@@ -338,6 +341,7 @@ public:
   static ssize_t
   TxnDelivery(bench_worker *w)
   {
+    ANON_REGION("TxnDelivery:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_delivery();
   }
 
@@ -346,6 +350,7 @@ public:
   static ssize_t
   TxnPayment(bench_worker *w)
   {
+    ANON_REGION("TxnPayment:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_payment();
   }
 
@@ -354,6 +359,7 @@ public:
   static ssize_t
   TxnOrderStatus(bench_worker *w)
   {
+    ANON_REGION("TxnOrderStatus:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_order_status();
   }
 
@@ -362,6 +368,7 @@ public:
   static ssize_t
   TxnStockLevel(bench_worker *w)
   {
+    ANON_REGION("TxnStockLevel:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_stock_level();
   }
 
