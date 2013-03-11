@@ -59,11 +59,11 @@ rcu::unregister_sync(pthread_t p)
     return NULL;
   sync * const s = it->second;
 
-  const epoch_t my_cleaning_epoch = cleaning_epoch;
   const epoch_t local_epoch = s->local_epoch;
   const epoch_t local_cleaning_epoch = s->local_epoch - 1;
 
 #ifdef CHECK_INVARIANTS
+  const epoch_t my_cleaning_epoch = cleaning_epoch;
   const epoch_t my_global_epoch = global_epoch;
   INVARIANT(my_global_epoch == local_epoch ||
             my_global_epoch == (local_epoch + 1));
@@ -76,11 +76,11 @@ rcu::unregister_sync(pthread_t p)
     cerr << "local_cleaning_epoch: " << local_cleaning_epoch << endl;
     cerr << "my_global_epoch: " << my_global_epoch << endl;
   }
-#endif
-
   INVARIANT(cleaning_epoch == my_cleaning_epoch);
   INVARIANT(EnableThreadLocalCleanup ||
             global_queues[local_cleaning_epoch % 2].empty());
+#endif
+
   if (EnableThreadLocalCleanup) {
     global_queues[local_cleaning_epoch % 2].insert(
         global_queues[local_cleaning_epoch % 2].end(),
@@ -165,9 +165,11 @@ rcu::region_end()
   INVARIANT(tl_crit_section_depth);
   INVARIANT(gc_thread_started);
   if (!--tl_crit_section_depth) {
+#ifdef CHECK_INVARIANTS
     const epoch_t my_global_epoch = global_epoch;
     INVARIANT(tl_sync->local_epoch == my_global_epoch ||
               tl_sync->local_epoch == (my_global_epoch - 1));
+#endif
     if (EnableThreadLocalCleanup) {
       const epoch_t local_cleaning_epoch  = tl_sync->local_epoch - 1;
       const epoch_t global_cleaning_epoch = cleaning_epoch;
