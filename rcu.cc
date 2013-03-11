@@ -58,10 +58,21 @@ rcu::unregister_sync(pthread_t p)
   if (it == sync_map.end())
     return NULL;
   sync * const s = it->second;
+
+  const epoch_t my_cleaning_epoch = cleaning_epoch;
   const epoch_t local_epoch = s->local_epoch;
   const epoch_t local_cleaning_epoch = s->local_epoch - 1;
-  INVARIANT(global_epoch == local_epoch || global_epoch == (local_epoch + 1));
-  INVARIANT(local_cleaning_epoch == cleaning_epoch); // b/c we are out of RCU loop
+
+#ifdef CHECK_INVARIANTS
+  const epoch_t my_global_epoch = global_epoch;
+  INVARIANT(my_global_epoch == local_epoch ||
+            my_global_epoch == (local_epoch + 1));
+  INVARIANT(my_global_epoch == (my_cleaning_epoch + 1) ||
+            my_global_epoch == (my_cleaning_epoch + 2));
+  INVARIANT(my_cleaning_epoch != local_epoch);
+#endif
+
+  INVARIANT(local_cleaning_epoch == my_cleaning_epoch); // b/c we are out of RCU loop
   INVARIANT(EnableThreadLocalCleanup ||
             global_queues[local_cleaning_epoch % 2].empty());
   if (EnableThreadLocalCleanup) {
@@ -77,6 +88,8 @@ rcu::unregister_sync(pthread_t p)
   s->local_queues[0].clear();
   s->local_queues[1].clear();
   sync_map.erase(it);
+
+  INVARIANT(cleaning_epoch == my_cleaning_epoch); // shouldn't change b/c we hold rcu_mutex()
   return s;
 }
 
