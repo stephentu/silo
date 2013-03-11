@@ -14,6 +14,7 @@
 #include "../thread.h"
 #include "../util.h"
 #include "../spinbarrier.h"
+#include "../rcu.h"
 
 extern void ycsb_do_test(abstract_db *db);
 extern void tpcc_do_test(abstract_db *db);
@@ -65,11 +66,23 @@ class bench_loader : public ndb_thread {
 public:
   bench_loader(unsigned long seed, abstract_db *db,
                const std::map<std::string, abstract_ordered_index *> &open_tables)
-    : r(seed), db(db), open_tables(open_tables)
+    : r(seed), db(db), open_tables(open_tables), b(0)
   {}
+  inline void
+  set_barrier(spin_barrier &b)
+  {
+    ALWAYS_ASSERT(!this->b);
+    this->b = &b;
+  }
   virtual void
   run()
   {
+    { // XXX(stephentu): this is a hack
+      scoped_rcu_region r; // register this thread in rcu region
+    }
+    ALWAYS_ASSERT(b);
+    b->count_down();
+    b->wait_for();
     scoped_db_thread_ctx ctx(db);
     load();
   }
@@ -79,6 +92,7 @@ protected:
   util::fast_random r;
   abstract_db *const db;
   std::map<std::string, abstract_ordered_index *> open_tables;
+  spin_barrier *b;
 };
 
 class bench_worker : public ndb_thread {

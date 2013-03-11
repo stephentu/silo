@@ -102,12 +102,15 @@ bench_runner::run()
   // load data
   const vector<bench_loader *> loaders = make_loaders();
   {
+    spin_barrier b(loaders.size());
     const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
     {
       scoped_timer t("dataloading", verbose);
       for (vector<bench_loader *>::const_iterator it = loaders.begin();
-          it != loaders.end(); ++it)
+          it != loaders.end(); ++it) {
+        (*it)->set_barrier(b);
         (*it)->start();
+      }
       for (vector<bench_loader *>::const_iterator it = loaders.begin();
           it != loaders.end(); ++it)
         (*it)->join();

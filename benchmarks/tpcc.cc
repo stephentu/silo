@@ -530,73 +530,101 @@ class tpcc_stock_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_stock_loader(unsigned long seed,
                     abstract_db *db,
-                    const map<string, abstract_ordered_index *> &open_tables)
+                    const map<string, abstract_ordered_index *> &open_tables,
+                    ssize_t warehouse_id)
     : bench_loader(seed, db, open_tables),
-      tpcc_worker_mixin(open_tables)
-  {}
+      tpcc_worker_mixin(open_tables),
+      warehouse_id(warehouse_id)
+  {
+    ALWAYS_ASSERT(warehouse_id == -1 ||
+                  (warehouse_id >= 1 &&
+                   static_cast<size_t>(warehouse_id) <= NumWarehouses()));
+  }
 
 protected:
   virtual void
   load()
   {
-    const ssize_t bsize = db->txn_max_batch_size();
-    void *txn = db->new_txn(txn_flags);
+
     uint64_t stock_total_sz = 0, n_stocks = 0;
-    try {
-      uint cnt = 0;
-      for (uint i = 1; i <= NumItems(); i++) {
-        for (uint w = 1; w <= NumWarehouses(); w++, cnt++) {
-          const stock::key k(w, i);
+    const uint w_start = (warehouse_id == -1) ?
+      1 : static_cast<uint>(warehouse_id);
+    const uint w_end   = (warehouse_id == -1) ?
+      NumWarehouses() : static_cast<uint>(warehouse_id);
 
-          stock::value v;
-          v.s_quantity = RandomNumber(r, 10, 100);
-          v.s_ytd = 0;
-          v.s_order_cnt = 0;
-          v.s_remote_cnt = 0;
-          const int len = RandomNumber(r, 26, 50);
-          if (RandomNumber(r, 1, 100) > 10) {
-            const string s_data = RandomStr(r, len);
-            v.s_data.assign(s_data);
+    for (uint w = w_start; w <= w_end; w++) {
+      const size_t NBatches = 1000;
+
+      // laziness-
+      // want to _static_assert() these, but we don't have
+      // constexpr (not C++11 yet)
+      ALWAYS_ASSERT(NumItems() % NBatches == 0);
+      ALWAYS_ASSERT(NumItems() >= NBatches);
+
+      const size_t NItemsPerBatch = NumItems();
+      for (uint b = 0; b < NItemsPerBatch;) {
+        void * const txn = db->new_txn(txn_flags);
+        try {
+          for (uint i = (b * NItemsPerBatch + 1); i <= NItemsPerBatch; i++) {
+            const stock::key k(w, i);
+
+            stock::value v;
+            v.s_quantity = RandomNumber(r, 10, 100);
+            v.s_ytd = 0;
+            v.s_order_cnt = 0;
+            v.s_remote_cnt = 0;
+            const int len = RandomNumber(r, 26, 50);
+            if (RandomNumber(r, 1, 100) > 10) {
+              const string s_data = RandomStr(r, len);
+              v.s_data.assign(s_data);
+            } else {
+              const int startOriginal = RandomNumber(r, 2, (len - 8));
+              const string s_data = RandomStr(r, startOriginal + 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 7);
+              v.s_data.assign(s_data);
+            }
+            v.s_dist_01.assign(RandomStr(r, 24));
+            v.s_dist_02.assign(RandomStr(r, 24));
+            v.s_dist_03.assign(RandomStr(r, 24));
+            v.s_dist_04.assign(RandomStr(r, 24));
+            v.s_dist_05.assign(RandomStr(r, 24));
+            v.s_dist_06.assign(RandomStr(r, 24));
+            v.s_dist_07.assign(RandomStr(r, 24));
+            v.s_dist_08.assign(RandomStr(r, 24));
+            v.s_dist_09.assign(RandomStr(r, 24));
+            v.s_dist_10.assign(RandomStr(r, 24));
+
+            checker::SanityCheckStock(&k, &v);
+            const size_t sz = Size(v);
+            stock_total_sz += sz;
+            n_stocks++;
+            uint8_t buf[sz];
+            tbl_stock->insert(txn, Encode(k), Encode(buf, v), sz);
+          }
+          if (db->commit_txn(txn)) {
+            b++;
           } else {
-            const int startOriginal = RandomNumber(r, 2, (len - 8));
-            const string s_data = RandomStr(r, startOriginal + 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 7);
-            v.s_data.assign(s_data);
+            db->abort_txn(txn);
           }
-          v.s_dist_01.assign(RandomStr(r, 24));
-          v.s_dist_02.assign(RandomStr(r, 24));
-          v.s_dist_03.assign(RandomStr(r, 24));
-          v.s_dist_04.assign(RandomStr(r, 24));
-          v.s_dist_05.assign(RandomStr(r, 24));
-          v.s_dist_06.assign(RandomStr(r, 24));
-          v.s_dist_07.assign(RandomStr(r, 24));
-          v.s_dist_08.assign(RandomStr(r, 24));
-          v.s_dist_09.assign(RandomStr(r, 24));
-          v.s_dist_10.assign(RandomStr(r, 24));
-
-          checker::SanityCheckStock(&k, &v);
-          const size_t sz = Size(v);
-          stock_total_sz += sz;
-          n_stocks++;
-          uint8_t buf[sz];
-          tbl_stock->insert(txn, Encode(k), Encode(buf, v), sz);
-
-          if (bsize != -1 && !((cnt + 1) % bsize)) {
-            ALWAYS_ASSERT(db->commit_txn(txn));
-            txn = db->new_txn(txn_flags);
-          }
+        } catch (abstract_db::abstract_abort_exception &ex) {
+          db->abort_txn(txn);
+          ALWAYS_ASSERT(warehouse_id != -1);
         }
       }
-      ALWAYS_ASSERT(db->commit_txn(txn));
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      // shouldn't abort on loading!
-      ALWAYS_ASSERT(false);
     }
+
     if (verbose) {
-      cerr << "[INFO] finished loading stock" << endl;
-      cerr << "[INFO]   * average stock record length: "
-           << (double(stock_total_sz)/double(n_stocks)) << " bytes" << endl;
+      if (warehouse_id == -1) {
+        cerr << "[INFO] finished loading stock" << endl;
+        cerr << "[INFO]   * average stock record length: "
+             << (double(stock_total_sz)/double(n_stocks)) << " bytes" << endl;
+      } else {
+        cerr << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
+      }
     }
   }
+
+private:
+  ssize_t warehouse_id;
 };
 
 class tpcc_district_loader : public bench_loader, public tpcc_worker_mixin {
@@ -662,22 +690,32 @@ class tpcc_customer_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_customer_loader(unsigned long seed,
                        abstract_db *db,
-                       const map<string, abstract_ordered_index *> &open_tables)
+                       const map<string, abstract_ordered_index *> &open_tables,
+                       ssize_t warehouse_id)
     : bench_loader(seed, db, open_tables),
-      tpcc_worker_mixin(open_tables)
-  {}
+      tpcc_worker_mixin(open_tables),
+      warehouse_id(warehouse_id)
+  {
+    ALWAYS_ASSERT(warehouse_id == -1 ||
+                  (warehouse_id >= 1 &&
+                   static_cast<size_t>(warehouse_id) <= NumWarehouses()));
+  }
 
 protected:
   virtual void
   load()
   {
-    const ssize_t bsize = db->txn_max_batch_size();
-    void *txn = db->new_txn(txn_flags);
+    const uint w_start = (warehouse_id == -1) ?
+      1 : static_cast<uint>(warehouse_id);
+    const uint w_end   = (warehouse_id == -1) ?
+      NumWarehouses() : static_cast<uint>(warehouse_id);
+
     uint64_t total_sz = 0;
-    try {
-      uint ctr = 0;
-      for (uint w = 1; w <= NumWarehouses(); w++) {
-        for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+
+    for (uint w = w_start; w <= w_end; w++) {
+      for (uint d = 1; d <= NumDistrictsPerWarehouse();) {
+        void * const txn = db->new_txn(txn_flags);
+        try {
           for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
             const customer::key k(w, d, c);
 
@@ -717,11 +755,6 @@ protected:
             total_sz += sz;
             tbl_customer->insert(txn, Encode(k), Encode(buf, v), sz);
 
-            if (bsize != -1 && !((++ctr) % bsize)) {
-              ALWAYS_ASSERT(db->commit_txn(txn));
-              txn = db->new_txn(txn_flags);
-            }
-
             // customer name index
             const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
             const customer_name_idx::value v_idx(k.c_id);
@@ -732,11 +765,6 @@ protected:
             const size_t sz_idx = Size(v_idx);
             uint8_t buf_idx[sz_idx];
             tbl_customer_name_idx->insert(txn, Encode(k_idx), Encode(buf_idx, v_idx), sz_idx);
-
-            if (bsize != -1 && !((++ctr) % bsize)) {
-              ALWAYS_ASSERT(db->commit_txn(txn));
-              txn = db->new_txn(txn_flags);
-            }
 
             history::key k_hist;
             k_hist.h_c_id = c;
@@ -753,55 +781,74 @@ protected:
             const size_t history_sz = Size(v_hist);
             uint8_t history_buf[history_sz];
             tbl_history->insert(txn, Encode(k_hist), Encode(history_buf, v_hist), history_sz);
-
-            if (bsize != -1 && !((++ctr) % bsize)) {
-              ALWAYS_ASSERT(db->commit_txn(txn));
-              txn = db->new_txn(txn_flags);
-            }
           }
+
+          if (db->commit_txn(txn)) {
+            d++;
+          } else {
+            db->abort_txn(txn);
+            ALWAYS_ASSERT(warehouse_id == -1);
+          }
+        } catch (abstract_db::abstract_abort_exception &ex) {
+          db->abort_txn(txn);
+          ALWAYS_ASSERT(warehouse_id == -1);
         }
       }
-      ALWAYS_ASSERT(db->commit_txn(txn));
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      // shouldn't abort on loading!
-      ALWAYS_ASSERT(false);
     }
+
     if (verbose) {
-      cerr << "[INFO] finished loading customer" << endl;
-      cerr << "[INFO]   * average customer record length: "
-           << (double(total_sz)/double(NumWarehouses()*NumDistrictsPerWarehouse()*NumCustomersPerDistrict()))
-           << " bytes " << endl;
+      if (warehouse_id == -1) {
+        cerr << "[INFO] finished loading customer" << endl;
+        cerr << "[INFO]   * average customer record length: "
+             << (double(total_sz)/double(NumWarehouses()*NumDistrictsPerWarehouse()*NumCustomersPerDistrict()))
+             << " bytes " << endl;
+      } else {
+        cerr << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
+      }
     }
   }
+
+private:
+  ssize_t warehouse_id;
 };
 
 class tpcc_order_loader : public bench_loader, public tpcc_worker_mixin {
 public:
   tpcc_order_loader(unsigned long seed,
                     abstract_db *db,
-                    const map<string, abstract_ordered_index *> &open_tables)
+                    const map<string, abstract_ordered_index *> &open_tables,
+                    ssize_t warehouse_id)
     : bench_loader(seed, db, open_tables),
-      tpcc_worker_mixin(open_tables)
-  {}
+      tpcc_worker_mixin(open_tables),
+      warehouse_id(warehouse_id)
+  {
+    ALWAYS_ASSERT(warehouse_id == -1 ||
+                  (warehouse_id >= 1 &&
+                   static_cast<size_t>(warehouse_id) <= NumWarehouses()));
+  }
 
 protected:
   virtual void
   load()
   {
-    const ssize_t bsize = db->txn_max_batch_size();
-    void *txn = db->new_txn(txn_flags);
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
     uint64_t oorder_total_sz = 0, n_oorders = 0;
     uint64_t new_order_total_sz = 0, n_new_orders = 0;
-    try {
-      uint ctr = 0;
-      for (uint w = 1; w <= NumWarehouses(); w++) {
-        for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-          set<uint> c_ids_s;
-          while (c_ids_s.size() != NumCustomersPerDistrict())
-            c_ids_s.insert((r.next() % NumCustomersPerDistrict()) + 1);
-          const vector<uint> c_ids(c_ids_s.begin(), c_ids_s.end());
-          for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
+
+    const uint w_start = (warehouse_id == -1) ?
+      1 : static_cast<uint>(warehouse_id);
+    const uint w_end   = (warehouse_id == -1) ?
+      NumWarehouses() : static_cast<uint>(warehouse_id);
+
+    for (uint w = w_start; w <= w_end; w++) {
+      for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+        set<uint> c_ids_s;
+        while (c_ids_s.size() != NumCustomersPerDistrict())
+          c_ids_s.insert((r.next() % NumCustomersPerDistrict()) + 1);
+        const vector<uint> c_ids(c_ids_s.begin(), c_ids_s.end());
+        for (uint c = 1; c <= NumCustomersPerDistrict();) {
+          void * const txn = db->new_txn(txn_flags);
+          try {
             const oorder::key k_oo(w, d, c);
 
             oorder::value v_oo;
@@ -828,11 +875,6 @@ protected:
             uint8_t buf_idx[sz_idx];
             tbl_oorder_c_id_idx->insert(txn, Encode(k_oo_idx), Encode(buf_idx, v_oo_idx), sz_idx);
 
-            if (bsize != -1 && !((++ctr) % bsize)) {
-              ALWAYS_ASSERT(db->commit_txn(txn));
-              txn = db->new_txn(txn_flags);
-            }
-
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
               const new_order::value v_no(0);
@@ -843,11 +885,6 @@ protected:
               n_new_orders++;
               uint8_t buf[sz];
               tbl_new_order->insert(txn, Encode(k_no), Encode(buf, v_no), sz);
-
-              if (bsize != -1 && !((++ctr) % bsize)) {
-                ALWAYS_ASSERT(db->commit_txn(txn));
-                txn = db->new_txn(txn_flags);
-              }
             }
 
             for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -874,30 +911,38 @@ protected:
               n_order_lines++;
               uint8_t buf[sz];
               tbl_order_line->insert(txn, Encode(k_ol), Encode(buf, v_ol), sz);
-
-              if (bsize != -1 && !((++ctr) % bsize)) {
-                ALWAYS_ASSERT(db->commit_txn(txn));
-                txn = db->new_txn(txn_flags);
-              }
             }
+            if (db->commit_txn(txn)) {
+              c++;
+            } else {
+              db->abort_txn(txn);
+              ALWAYS_ASSERT(warehouse_id != -1);
+            }
+          } catch (abstract_db::abstract_abort_exception &ex) {
+            db->abort_txn(txn);
+            ALWAYS_ASSERT(warehouse_id != -1);
           }
         }
       }
-      ALWAYS_ASSERT(db->commit_txn(txn));
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      // shouldn't abort on loading!
-      ALWAYS_ASSERT(false);
     }
+
     if (verbose) {
-      cerr << "[INFO] finished loading order" << endl;
-      cerr << "[INFO]   * average order_line record length: "
-           << (double(order_line_total_sz)/double(n_order_lines)) << " bytes" << endl;
-      cerr << "[INFO]   * average oorder record length: "
-           << (double(oorder_total_sz)/double(n_oorders)) << " bytes" << endl;
-      cerr << "[INFO]   * average new_order record length: "
-           << (double(new_order_total_sz)/double(n_new_orders)) << " bytes" << endl;
+      if (warehouse_id == -1) {
+        cerr << "[INFO] finished loading order" << endl;
+        cerr << "[INFO]   * average order_line record length: "
+             << (double(order_line_total_sz)/double(n_order_lines)) << " bytes" << endl;
+        cerr << "[INFO]   * average oorder record length: "
+             << (double(oorder_total_sz)/double(n_oorders)) << " bytes" << endl;
+        cerr << "[INFO]   * average new_order record length: "
+             << (double(new_order_total_sz)/double(n_new_orders)) << " bytes" << endl;
+      } else {
+        cerr << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
+      }
     }
   }
+
+private:
+  ssize_t warehouse_id;
 };
 
 ssize_t
@@ -1559,6 +1604,8 @@ public:
     open_tables["warehouse"]         = db->open_index("warehouse", sizeof(warehouse));
   }
 
+  static const bool EnableParallelLoading = true;
+
 protected:
   virtual vector<bench_loader *>
   make_loaders()
@@ -1566,10 +1613,28 @@ protected:
     vector<bench_loader *> ret;
     ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables));
     ret.push_back(new tpcc_item_loader(235443, db, open_tables));
-    ret.push_back(new tpcc_stock_loader(89785943, db, open_tables));
+    if (EnableParallelLoading) {
+      fast_random r(89785943);
+      for (uint i = 1; i <= NumWarehouses(); i++)
+        ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, i));
+    } else {
+      ret.push_back(new tpcc_stock_loader(89785943, db, open_tables, -1));
+    }
     ret.push_back(new tpcc_district_loader(129856349, db, open_tables));
-    ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables));
-    ret.push_back(new tpcc_order_loader(2343352, db, open_tables));
+    if (EnableParallelLoading) {
+      fast_random r(923587856425);
+      for (uint i = 1; i <= NumWarehouses(); i++)
+        ret.push_back(new tpcc_customer_loader(r.next(), db, open_tables, i));
+    } else {
+      ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables, -1));
+    }
+    if (EnableParallelLoading) {
+      fast_random r(2343352);
+      for (uint i = 1; i <= NumWarehouses(); i++)
+        ret.push_back(new tpcc_order_loader(r.next(), db, open_tables, i));
+    } else {
+      ret.push_back(new tpcc_order_loader(2343352, db, open_tables, -1));
+    }
     return ret;
   }
 
