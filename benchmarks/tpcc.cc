@@ -394,6 +394,11 @@ public:
 private:
   const uint warehouse_id;
   int32_t last_no_o_ids[10]; // XXX(stephentu): hack
+
+  // some scratch buffer space
+  string obj_key0;
+  string obj_key1;
+  string obj_v;
 };
 
 class tpcc_warehouse_loader : public bench_loader, public tpcc_worker_mixin {
@@ -965,7 +970,6 @@ tpcc_worker::txn_new_order()
   const uint numItems = RandomNumber(r, 5, 15);
   uint itemIDs[15], supplierWarehouseIDs[15], orderQuantities[15];
   uint8_t obj_buf[1024];
-  string obj_key, obj_v;
   bool allLocal = true;
   for (uint i = 0; i < numItems; i++) {
     itemIDs[i] = GetItemId(r);
@@ -985,19 +989,19 @@ tpcc_worker::txn_new_order()
   try {
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
-    ALWAYS_ASSERT(tbl_customer->get(txn, Encode(obj_key, k_c), obj_v));
+    ALWAYS_ASSERT(tbl_customer->get(txn, Encode(obj_key0, k_c), obj_v));
     customer::value v_c_temp;
     const customer::value *v_c = Decode(obj_v, v_c_temp);
     checker::SanityCheckCustomer(&k_c, v_c);
 
     const warehouse::key k_w(warehouse_id);
-    ALWAYS_ASSERT(tbl_warehouse->get(txn, Encode(obj_key, k_w), obj_v));
+    ALWAYS_ASSERT(tbl_warehouse->get(txn, Encode(obj_key0, k_w), obj_v));
     warehouse::value v_w_temp;
     const warehouse::value *v_w = Decode(obj_v, v_w_temp);
     checker::SanityCheckWarehouse(&k_w, v_w);
 
     const district::key k_d(warehouse_id, districtID);
-    ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key, k_d), obj_v));
+    ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key0, k_d), obj_v));
     district::value v_d_temp;
     const district::value *v_d = Decode(obj_v, v_d_temp);
     checker::SanityCheckDistrict(&k_d, v_d);
@@ -1005,14 +1009,14 @@ tpcc_worker::txn_new_order()
     const new_order::key k_no(warehouse_id, districtID, v_d->d_next_o_id);
     const new_order::value v_no(0);
     const size_t new_order_sz = Size(v_no);
-    tbl_new_order->insert(txn, Encode(obj_key, k_no), Encode(obj_buf, v_no), new_order_sz);
+    tbl_new_order->insert(txn, Encode(obj_key0, k_no), Encode(obj_buf, v_no), new_order_sz);
     ret += new_order_sz;
 
     district::value v_d_new(*v_d);
     v_d_new.d_next_o_id++;
 
     const size_t district_sz = Size(v_d_new);
-    tbl_district->put(txn, Encode(obj_key, k_d), Encode(obj_buf, v_d_new), district_sz);
+    tbl_district->put(txn, Encode(obj_key0, k_d), Encode(obj_buf, v_d_new), district_sz);
 
     const oorder::key k_oo(warehouse_id, districtID, k_no.no_o_id);
     oorder::value v_oo;
@@ -1023,7 +1027,7 @@ tpcc_worker::txn_new_order()
     v_oo.o_entry_d = GetCurrentTimeMillis();
 
     const size_t oorder_sz = Size(v_oo);
-    tbl_oorder->insert(txn, Encode(obj_key, k_oo), Encode(obj_buf, v_oo), oorder_sz);
+    tbl_oorder->insert(txn, Encode(obj_key0, k_oo), Encode(obj_buf, v_oo), oorder_sz);
     ret += oorder_sz;
 
     const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
@@ -1031,7 +1035,7 @@ tpcc_worker::txn_new_order()
 
     const size_t oorder_idx_sz = Size(v_oo_idx);
     tbl_oorder_c_id_idx->insert(
-        txn, Encode(obj_key, k_oo_idx),
+        txn, Encode(obj_key0, k_oo_idx),
         Encode(obj_buf, v_oo_idx), oorder_idx_sz);
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
@@ -1040,13 +1044,13 @@ tpcc_worker::txn_new_order()
       const uint ol_quantity = orderQuantities[ol_number - 1];
 
       const item::key k_i(ol_i_id);
-      ALWAYS_ASSERT(tbl_item->get(txn, Encode(obj_key, k_i), obj_v));
+      ALWAYS_ASSERT(tbl_item->get(txn, Encode(obj_key0, k_i), obj_v));
       item::value v_i_temp;
       const item::value *v_i = Decode(obj_v, v_i_temp);
       checker::SanityCheckItem(&k_i, v_i);
 
       const stock::key k_s(warehouse_id, ol_i_id);
-      ALWAYS_ASSERT(tbl_stock->get(txn, Encode(obj_key, k_s), obj_v));
+      ALWAYS_ASSERT(tbl_stock->get(txn, Encode(obj_key0, k_s), obj_v));
       stock::value v_s_temp;
       const stock::value *v_s = Decode(obj_v, v_s_temp);
       checker::SanityCheckStock(&k_s, v_s);
@@ -1060,7 +1064,7 @@ tpcc_worker::txn_new_order()
       v_s_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
 
       const size_t stock_sz = Size(v_s_new);
-      tbl_stock->put(txn, Encode(obj_key, k_s), Encode(obj_buf, v_s_new), stock_sz);
+      tbl_stock->put(txn, Encode(obj_key0, k_s), Encode(obj_buf, v_s_new), stock_sz);
 
       const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
       order_line::value v_ol;
@@ -1110,7 +1114,7 @@ tpcc_worker::txn_new_order()
       NDB_MEMCPY(&v_ol.ol_dist_info, (const char *) ol_dist_info, sizeof(v_ol.ol_dist_info));
 
       const size_t order_line_sz = Size(v_ol);
-      tbl_order_line->insert(txn, Encode(obj_key, k_ol), Encode(obj_buf, v_ol), order_line_sz);
+      tbl_order_line->insert(txn, Encode(obj_key0, k_ol), Encode(obj_buf, v_ol), order_line_sz);
       ret += order_line_sz;
     }
 
@@ -1162,7 +1166,6 @@ tpcc_worker::txn_delivery()
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
   uint8_t obj_buf[1024];
-  string obj_key0, obj_key1, obj_v;
 
   void *txn = db->new_txn(txn_flags);
   try {
@@ -1253,7 +1256,6 @@ tpcc_worker::txn_payment()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   uint8_t obj_buf[1024];
-  string obj_key0, obj_key1, obj_v;
   uint customerDistrictID, customerWarehouseID;
   if (NumWarehouses() == 1 || RandomNumber(r, 1, 100) <= 85) {
     customerDistrictID = districtID;
@@ -1421,7 +1423,6 @@ tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-  string obj_key0, obj_key1, obj_v;
   try {
 
     customer::key k_c;
@@ -1545,7 +1546,6 @@ tpcc_worker::txn_stock_level()
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-  string obj_key0, obj_key1, obj_v;
   try {
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key0, k_d), obj_v));
