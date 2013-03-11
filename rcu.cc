@@ -110,8 +110,8 @@ rcu::region_begin()
   INVARIANT(tl_sync);
   INVARIANT(gc_thread_started);
   if (!tl_crit_section_depth++) {
-    tl_sync->local_epoch = global_epoch;
     tl_sync->local_critical_mutex.lock();
+    tl_sync->local_epoch = global_epoch;
   }
 }
 
@@ -143,6 +143,7 @@ rcu::region_end()
         cerr << "my_global_epoch      : " << my_global_epoch << endl;
         cerr << "local_cleaning_epoch : " << local_cleaning_epoch << endl;
         cerr << "global_cleaning_epoch: " << global_cleaning_epoch << endl;
+        cerr << "cur_global_epoch     : " << global_epoch << endl;
         INVARIANT(false);
       }
       INVARIANT(tl_sync->scratch_queue.empty());
@@ -280,6 +281,11 @@ rcu::gc_thread_loop(void *p)
         if (local_epoch != global_epoch) {
           INVARIANT(local_epoch == new_cleaning_epoch);
           lock_guard<spinlock> l0(s->local_critical_mutex);
+          if (s->local_epoch == global_epoch)
+            // has moved on, so we cannot safely reap
+            // like we do below
+            continue;
+          INVARIANT(s->local_epoch == new_cleaning_epoch);
           if (EnableThreadLocalCleanup) {
             // if we haven't completely finished thread-local
             // cleanup, then we move the pointers into the
