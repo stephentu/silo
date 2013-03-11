@@ -70,9 +70,15 @@ rcu::unregister_sync(pthread_t p)
   INVARIANT(my_global_epoch == (my_cleaning_epoch + 1) ||
             my_global_epoch == (my_cleaning_epoch + 2));
   INVARIANT(my_cleaning_epoch != local_epoch);
+  if (local_cleaning_epoch != my_cleaning_epoch) {
+    cerr << "my_cleaning_epoch: " << my_cleaning_epoch << endl;
+    cerr << "local_epoch: " << local_epoch << endl;
+    cerr << "local_cleaning_epoch: " << local_cleaning_epoch << endl;
+    cerr << "my_global_epoch: " << my_global_epoch << endl;
+  }
 #endif
 
-  INVARIANT(local_cleaning_epoch == my_cleaning_epoch); // b/c we are out of RCU loop
+  INVARIANT(cleaning_epoch == my_cleaning_epoch);
   INVARIANT(EnableThreadLocalCleanup ||
             global_queues[local_cleaning_epoch % 2].empty());
   if (EnableThreadLocalCleanup) {
@@ -125,6 +131,7 @@ rcu::region_begin()
   if (!tl_crit_section_depth++) {
     tl_sync->local_critical_mutex.lock();
     tl_sync->local_epoch = global_epoch;
+    INVARIANT(tl_sync->local_epoch != cleaning_epoch);
   }
 }
 
@@ -136,6 +143,19 @@ rcu::free_with_fn(void *p, deleter_t fn)
   INVARIANT(gc_thread_started);
   tl_sync->local_queues[tl_sync->local_epoch % 2].push_back(delete_entry(p, fn));
   ++evt_rcu_frees;
+#ifdef CHECK_INVARIANTS
+  const epoch_t my_global_epoch = global_epoch;
+  const epoch_t global_cleaning_epoch = cleaning_epoch;
+  const epoch_t local_cleaning_epoch  = tl_sync->local_epoch - 1;
+  if (!(local_cleaning_epoch == global_cleaning_epoch ||
+        local_cleaning_epoch == (global_cleaning_epoch + 1))) {
+    cerr << "my_global_epoch      : " << my_global_epoch << endl;
+    cerr << "local_cleaning_epoch : " << local_cleaning_epoch << endl;
+    cerr << "global_cleaning_epoch: " << global_cleaning_epoch << endl;
+    cerr << "cur_global_epoch     : " << global_epoch << endl;
+    INVARIANT(false);
+  }
+#endif
 }
 
 void
@@ -151,14 +171,17 @@ rcu::region_end()
     if (EnableThreadLocalCleanup) {
       const epoch_t local_cleaning_epoch  = tl_sync->local_epoch - 1;
       const epoch_t global_cleaning_epoch = cleaning_epoch;
+#ifdef CHECK_INVARIANTS
+      INVARIANT(tl_sync->local_epoch != global_cleaning_epoch);
       if (!(local_cleaning_epoch == global_cleaning_epoch ||
-            local_cleaning_epoch == global_cleaning_epoch + 1)) {
+            local_cleaning_epoch == (global_cleaning_epoch + 1))) {
         cerr << "my_global_epoch      : " << my_global_epoch << endl;
         cerr << "local_cleaning_epoch : " << local_cleaning_epoch << endl;
         cerr << "global_cleaning_epoch: " << global_cleaning_epoch << endl;
         cerr << "cur_global_epoch     : " << global_epoch << endl;
         INVARIANT(false);
       }
+#endif
       INVARIANT(tl_sync->scratch_queue.empty());
       if (local_cleaning_epoch == global_cleaning_epoch &&
           !tl_sync->local_queues[local_cleaning_epoch % 2].empty()) {
