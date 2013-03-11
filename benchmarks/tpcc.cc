@@ -604,10 +604,14 @@ protected:
             b++;
           } else {
             db->abort_txn(txn);
+            if (verbose)
+              cerr << "[WARNING] stock loader loading abort" << endl;
           }
         } catch (abstract_db::abstract_abort_exception &ex) {
           db->abort_txn(txn);
           ALWAYS_ASSERT(warehouse_id != -1);
+          if (verbose)
+            cerr << "[WARNING] stock loader loading abort" << endl;
         }
       }
     }
@@ -788,10 +792,14 @@ protected:
           } else {
             db->abort_txn(txn);
             ALWAYS_ASSERT(warehouse_id == -1);
+            if (verbose)
+              cerr << "[WARNING] customer loader loading abort" << endl;
           }
         } catch (abstract_db::abstract_abort_exception &ex) {
           db->abort_txn(txn);
           ALWAYS_ASSERT(warehouse_id == -1);
+          if (verbose)
+            cerr << "[WARNING] customer loader loading abort" << endl;
         }
       }
     }
@@ -917,10 +925,14 @@ protected:
             } else {
               db->abort_txn(txn);
               ALWAYS_ASSERT(warehouse_id != -1);
+              if (verbose)
+                cerr << "[WARNING] order loader loading abort" << endl;
             }
           } catch (abstract_db::abstract_abort_exception &ex) {
             db->abort_txn(txn);
             ALWAYS_ASSERT(warehouse_id != -1);
+            if (verbose)
+              cerr << "[WARNING] order loader loading abort" << endl;
           }
         }
       }
