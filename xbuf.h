@@ -4,7 +4,7 @@
 #include <algorithm> // for std::swap
 #include <iostream>
 #include <string>
-#include <tr1/functional> // for std::tr1::hash
+#include <functional> // for std::hash
 
 #include <stdint.h>
 #include <string.h>
@@ -266,7 +266,6 @@ operator<<(std::ostream &o, const xbuf &s)
 }
 
 namespace std {
-namespace tr1 {
 template <>
 struct hash<xbuf> {
   inline size_t
@@ -275,7 +274,6 @@ struct hash<xbuf> {
     return s.hash();
   }
 };
-}
 }
 
 #endif /* _XBUF_H_ */

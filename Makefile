@@ -1,4 +1,4 @@
-CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer
+CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 #CXXFLAGS := -Wall -g
 
 LDFLAGS := -lpthread
@@ -24,7 +24,7 @@ endif
 endif
 
 ifeq ($(USE_PERF_CTRS),1)
-	CXXFLAGS+=-DUSE_PERF_CTRS --std=c++0x
+	CXXFLAGS+=-DUSE_PERF_CTRS
 endif
 
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \

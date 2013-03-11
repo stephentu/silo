@@ -14,7 +14,7 @@
 #include <stdexcept>
 #include <limits>
 
-#include <tr1/unordered_map>
+#include <unordered_map>
 
 #include "amd64.h"
 #include "btree.h"
@@ -798,11 +798,11 @@ protected:
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef small_unordered_map<const btree::node_opaque_t *, uint64_t, EXTRA_SMALL_SIZE_MAP> node_scan_map;
 #else
-  typedef std::tr1::unordered_map<const logical_node *, read_record_t> read_set_map;
-  typedef std::tr1::unordered_map<string_type, bool> absent_set_map;
-  typedef std::tr1::unordered_map<string_type, string_type> write_set_map;
+  typedef std::unordered_map<const logical_node *, read_record_t> read_set_map;
+  typedef std::unordered_map<string_type, bool> absent_set_map;
+  typedef std::unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
-  typedef std::tr1::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+  typedef std::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 #endif
 
   struct txn_context {
@@ -920,7 +920,7 @@ protected:
 #ifdef USE_SMALL_CONTAINER_OPT
   typedef small_unordered_map<txn_btree *, txn_context, EXTRA_SMALL_SIZE_MAP> ctx_map_type;
 #else
-  typedef std::tr1::unordered_map<txn_btree *, txn_context> ctx_map_type;
+  typedef std::unordered_map<txn_btree *, txn_context> ctx_map_type;
 #endif
   ctx_map_type ctx_map;
 };

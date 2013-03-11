@@ -3,8 +3,9 @@
 
 #include <algorithm>
 #include <iterator>
-#include <tr1/unordered_map>
 #include <stdint.h>
+#include <unordered_map>
+#include <tr1/unordered_map>
 
 #include "macros.h"
 
@@ -37,7 +38,7 @@ namespace private_ {
 template <typename Key,
           typename T,
           size_t SmallSize = SMALL_SIZE_MAP,
-          typename Hash = std::tr1::hash<Key> >
+          typename Hash = std::hash<Key> >
 class small_unordered_map {
 public:
   typedef Key key_type;
@@ -48,7 +49,7 @@ public:
   typedef const T & const_reference;
 
 private:
-  typedef std::tr1::unordered_map<Key, T, Hash> large_table_type;
+  typedef std::unordered_map<Key, T, Hash> large_table_type;
   typedef std::pair<key_type, mapped_type> bucket_value_type;
 
   struct bucket {

@@ -1,6 +1,6 @@
 #include <iostream>
-#include <tr1/functional>
-#include <tr1/unordered_map>
+#include <functional>
+#include <unordered_map>
 
 #include "thread.h"
 #include "txn.h"
@@ -22,7 +22,6 @@
 DO_STRUCT(myrec, MYREC_KEY_FIELDS, MYREC_VALUE_FIELDS)
 
 using namespace std;
-using namespace tr1;
 using namespace util;
 
 void
