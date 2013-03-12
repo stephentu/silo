@@ -182,10 +182,9 @@ transaction::commit(bool doThrow)
       btree::value_type v = 0;
       if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
         VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
-        logical_nodes.push_back(
-            make_pair(
-              (logical_node *) v,
-              lnode_info(outer_it->first, it->first, false, it->second)));
+        logical_nodes.emplace_back(
+            (logical_node *) v,
+            lnode_info(outer_it->first, it->first, false, it->second));
         // mark that we hold lock in read set
         read_set_map::iterator read_it =
           outer_it->second.read_set.find((const logical_node *) v);
@@ -228,9 +227,8 @@ transaction::commit(bool doThrow)
             SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
           }
         }
-        logical_nodes.push_back(
-            make_pair(
-              ln, lnode_info(outer_it->first, it->first, false, it->second)));
+        logical_nodes.emplace_back(
+            ln, lnode_info(outer_it->first, it->first, false, it->second));
         // mark that we hold lock in read set
         read_set_map::iterator read_it =
           outer_it->second.read_set.find(ln);
@@ -951,8 +949,9 @@ transaction_proto2::on_logical_node_spill(
     // already being taken care of by another queue
     return;
   ln->set_enqueued(true, logical_node::QUEUE_TYPE_LOCAL);
-  local_cleanup_nodes().push_back(
-    local_work_t(logical_node_context(btr, key, ln), try_logical_node_cleanup));
+  local_cleanup_nodes().emplace_back(
+    logical_node_context(btr, key, ln),
+    try_logical_node_cleanup);
 }
 
 void
@@ -978,8 +977,9 @@ transaction_proto2::on_logical_delete_impl(
                << " at current_epoch=" << current_epoch
                << ", latest_version_epoch=" << EpochId(ln->version) << endl
                << "  ln=" << *ln << endl);
-  local_cleanup_nodes().push_back(
-      local_work_t(logical_node_context(btr, key, ln), try_logical_node_cleanup));
+  local_cleanup_nodes().emplace_back(
+    logical_node_context(btr, key, ln),
+    try_logical_node_cleanup);
 }
 
 void
@@ -988,7 +988,7 @@ transaction_proto2::enqueue_work_after_epoch(
 {
   const size_t id = coreid::core_id();
   // XXX(stephentu): optimize by running work when we know epoch is over
-  g_work_queues[id].elem->push_back(work_record_t(epoch, work, p));
+  g_work_queues[id].elem->emplace_back(epoch, work, p);
 }
 
 static event_counter evt_local_cleanup_reschedules("local_cleanup_reschedules");
@@ -1213,7 +1213,7 @@ transaction_proto2::process_local_cleanup_nodes()
     // XXX(stephentu): try-catch block
     if (it->second(it->first))
       // keep around
-      tl_cleanup_nodes_buf->push_back(*it);
+      tl_cleanup_nodes_buf->emplace_back(move(*it));
   }
   swap(*tl_cleanup_nodes, *tl_cleanup_nodes_buf);
   tl_cleanup_nodes_buf->clear();
