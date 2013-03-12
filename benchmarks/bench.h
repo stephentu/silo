@@ -29,24 +29,6 @@ extern uint64_t txn_flags;
 extern double scale_factor;
 extern uint64_t runtime;
 
-class scoped_memory_manager : private util::noncopyable {
-public:
-  scoped_memory_manager() {}
-  ~scoped_memory_manager()
-  {
-    for (std::vector<char *>::iterator it = ptrs.begin();
-         it != ptrs.end(); ++it)
-      free(*it);
-  }
-  inline void
-  manage(char *p)
-  {
-    ptrs.push_back(p);
-  }
-private:
-  std::vector<char *> ptrs;
-};
-
 class scoped_db_thread_ctx : private util::noncopyable {
 public:
   scoped_db_thread_ctx(abstract_db *db)
