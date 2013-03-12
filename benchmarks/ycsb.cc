@@ -57,10 +57,10 @@ public:
   txn_write()
   {
     void *txn = db->new_txn(txn_flags);
-    const string k = u64_varkey(r.next() % nkeys).str();
+    string k = u64_varkey(r.next() % nkeys).str();
     try {
-      const string v(128, 'b');
-      tbl->put(txn, k, v.data(), v.size());
+      string v(128, 'b');
+      tbl->put(txn, move(k), move(v));
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -80,12 +80,12 @@ public:
   txn_rmw()
   {
     void *txn = db->new_txn(txn_flags);
-    const string k = u64_varkey(r.next() % nkeys).str();
+    string k = u64_varkey(r.next() % nkeys).str();
     try {
       string v;
       ALWAYS_ASSERT(tbl->get(txn, k, v));
-      const string vnew(128, 'c');
-      tbl->put(txn, k, vnew.data(), vnew.size());
+      string vnew(128, 'c');
+      tbl->put(txn, move(k), move(vnew));
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -172,9 +172,9 @@ protected:
       if (nbatches == 0) {
         void *txn = db->new_txn(txn_flags);
         for (size_t j = 0; j < nkeys; j++) {
-          const string k = u64_varkey(j).str();
-          const string v(128, 'a');
-          tbl->insert(txn, k, v.data(), v.size());
+          string k = u64_varkey(j).str();
+          string v(128, 'a');
+          tbl->insert(txn, move(k), move(v));
         }
         if (verbose)
           cerr << "batch 1/1 done" << endl;
@@ -184,9 +184,9 @@ protected:
           const size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
           void *txn = db->new_txn(txn_flags);
           for (size_t j = i * batchsize; j < keyend; j++) {
-            const string k = u64_varkey(j).str();
-            const string v(128, 'a');
-            tbl->insert(txn, k, v.data(), v.size());
+            string k = u64_varkey(j).str();
+            string v(128, 'a');
+            tbl->insert(txn, move(k), move(v));
           }
           if (verbose)
             cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

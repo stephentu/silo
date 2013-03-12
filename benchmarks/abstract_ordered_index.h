@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 #include <string>
+#include <utility>
+
+#include "../macros.h"
 
 /**
  * The underlying index manages memory for keys/values, but
@@ -62,7 +65,15 @@ public:
   virtual const char *
   put(void *txn,
       const std::string &key,
-      const char *value, size_t valuelen) = 0;
+      const std::string &value) = 0;
+
+  virtual const char *
+  put(void *txn,
+      std::string &&key,
+      std::string &&value)
+  {
+    NDB_UNIMPLEMENTED("put rvalue refs");
+  }
 
   /**
    * Insert a key of length keylen.
@@ -75,9 +86,17 @@ public:
   virtual const char *
   insert(void *txn,
          const std::string &key,
-         const char *value, size_t valuelen)
+         const std::string &value)
   {
-    return put(txn, key, value, valuelen);
+    return put(txn, key, value);
+  }
+
+  virtual const char *
+  insert(void *txn,
+         std::string &&key,
+         std::string &&value)
+  {
+    return put(txn, std::move(key), std::move(value));
   }
 
   /**
@@ -87,7 +106,14 @@ public:
       void *txn,
       const std::string &key)
   {
-    put(txn, key, NULL, 0);
+    put(txn, key, "");
+  }
+
+  virtual void remove(
+      void *txn,
+      std::string &&key)
+  {
+    put(txn, std::move(key), "");
   }
 
   /**

@@ -398,7 +398,12 @@ private:
   // some scratch buffer space
   string obj_key0;
   string obj_key1;
+
+  string obj_put_key0;
+  string obj_put_key1;
+
   string obj_v;
+  string obj_buf;
 };
 
 class tpcc_warehouse_loader : public bench_loader, public tpcc_worker_mixin {
@@ -414,6 +419,7 @@ protected:
   virtual void
   load()
   {
+    string obj_buf;
     void *txn = db->new_txn(txn_flags);
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
@@ -442,8 +448,7 @@ protected:
         const size_t sz = Size(v);
         warehouse_total_sz += sz;
         n_warehouses++;
-        uint8_t buf[sz];
-        tbl_warehouse->insert(txn, Encode(k), Encode(buf, v), sz);
+        tbl_warehouse->insert(txn, Encode(k), Encode(obj_buf, v));
 
         warehouses.push_back(v);
       }
@@ -485,6 +490,7 @@ protected:
   virtual void
   load()
   {
+    string obj_buf;
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
     uint64_t total_sz = 0;
@@ -510,8 +516,7 @@ protected:
         checker::SanityCheckItem(&k, &v);
         const size_t sz = Size(v);
         total_sz += sz;
-        uint8_t buf[sz];
-        tbl_item->insert(txn, Encode(k), Encode(buf, v), sz);
+        tbl_item->insert(txn, Encode(k), Encode(obj_buf, v));
 
         if (bsize != -1 && !(i % bsize)) {
           ALWAYS_ASSERT(db->commit_txn(txn));
@@ -550,6 +555,7 @@ protected:
   virtual void
   load()
   {
+    string obj_buf;
 
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ?
@@ -602,8 +608,7 @@ protected:
             const size_t sz = Size(v);
             stock_total_sz += sz;
             n_stocks++;
-            uint8_t buf[sz];
-            tbl_stock->insert(txn, Encode(k), Encode(buf, v), sz);
+            tbl_stock->insert(txn, Encode(k), Encode(obj_buf, v));
           }
           if (db->commit_txn(txn)) {
             b++;
@@ -649,6 +654,8 @@ protected:
   virtual void
   load()
   {
+    string obj_buf;
+
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags);
     uint64_t district_total_sz = 0, n_districts = 0;
@@ -673,8 +680,7 @@ protected:
           const size_t sz = Size(v);
           district_total_sz += sz;
           n_districts++;
-          uint8_t buf[sz];
-          tbl_district->insert(txn, Encode(k), Encode(buf, v), sz);
+          tbl_district->insert(txn, Encode(k), Encode(obj_buf, v));
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
             ALWAYS_ASSERT(db->commit_txn(txn));
@@ -714,6 +720,8 @@ protected:
   virtual void
   load()
   {
+    string obj_buf;
+
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
     const uint w_end   = (warehouse_id == -1) ?
@@ -760,9 +768,8 @@ protected:
 
             checker::SanityCheckCustomer(&k, &v);
             const size_t sz = Size(v);
-            uint8_t buf[sz];
             total_sz += sz;
-            tbl_customer->insert(txn, Encode(k), Encode(buf, v), sz);
+            tbl_customer->insert(txn, Encode(k), Encode(obj_buf, v));
 
             // customer name index
             const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -771,9 +778,7 @@ protected:
             // index structure is:
             // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-            const size_t sz_idx = Size(v_idx);
-            uint8_t buf_idx[sz_idx];
-            tbl_customer_name_idx->insert(txn, Encode(k_idx), Encode(buf_idx, v_idx), sz_idx);
+            tbl_customer_name_idx->insert(txn, Encode(k_idx), Encode(obj_buf, v_idx));
 
             history::key k_hist;
             k_hist.h_c_id = c;
@@ -787,9 +792,7 @@ protected:
             v_hist.h_amount = 10;
             v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
 
-            const size_t history_sz = Size(v_hist);
-            uint8_t history_buf[history_sz];
-            tbl_history->insert(txn, Encode(k_hist), Encode(history_buf, v_hist), history_sz);
+            tbl_history->insert(txn, Encode(k_hist), Encode(obj_buf, v_hist));
           }
 
           if (db->commit_txn(txn)) {
@@ -844,6 +847,8 @@ protected:
   virtual void
   load()
   {
+    string obj_buf;
+
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
     uint64_t oorder_total_sz = 0, n_oorders = 0;
     uint64_t new_order_total_sz = 0, n_new_orders = 0;
@@ -878,15 +883,12 @@ protected:
             const size_t sz = Size(v_oo);
             oorder_total_sz += sz;
             n_oorders++;
-            uint8_t buf[sz];
-            tbl_oorder->insert(txn, Encode(k_oo), Encode(buf, v_oo), sz);
+            tbl_oorder->insert(txn, Encode(k_oo), Encode(obj_buf, v_oo));
 
             const oorder_c_id_idx::key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
             const oorder_c_id_idx::value v_oo_idx(0);
 
-            const size_t sz_idx = Size(v_oo_idx);
-            uint8_t buf_idx[sz_idx];
-            tbl_oorder_c_id_idx->insert(txn, Encode(k_oo_idx), Encode(buf_idx, v_oo_idx), sz_idx);
+            tbl_oorder_c_id_idx->insert(txn, Encode(k_oo_idx), Encode(obj_buf, v_oo_idx));
 
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
@@ -896,8 +898,7 @@ protected:
               const size_t sz = Size(v_no);
               new_order_total_sz += sz;
               n_new_orders++;
-              uint8_t buf[sz];
-              tbl_new_order->insert(txn, Encode(k_no), Encode(buf, v_no), sz);
+              tbl_new_order->insert(txn, Encode(k_no), Encode(obj_buf, v_no));
             }
 
             for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -922,8 +923,7 @@ protected:
               const size_t sz = Size(v_ol);
               order_line_total_sz += sz;
               n_order_lines++;
-              uint8_t buf[sz];
-              tbl_order_line->insert(txn, Encode(k_ol), Encode(buf, v_ol), sz);
+              tbl_order_line->insert(txn, Encode(k_ol), Encode(obj_buf, v_ol));
             }
             if (db->commit_txn(txn)) {
               c++;
@@ -969,7 +969,6 @@ tpcc_worker::txn_new_order()
   const uint customerID = GetCustomerId(r);
   const uint numItems = RandomNumber(r, 5, 15);
   uint itemIDs[15], supplierWarehouseIDs[15], orderQuantities[15];
-  uint8_t obj_buf[1024];
   bool allLocal = true;
   for (uint i = 0; i < numItems; i++) {
     itemIDs[i] = GetItemId(r);
@@ -1009,14 +1008,13 @@ tpcc_worker::txn_new_order()
     const new_order::key k_no(warehouse_id, districtID, v_d->d_next_o_id);
     const new_order::value v_no(0);
     const size_t new_order_sz = Size(v_no);
-    tbl_new_order->insert(txn, Encode(obj_key0, k_no), Encode(obj_buf, v_no), new_order_sz);
+    tbl_new_order->insert(txn, move(Encode(obj_put_key0, k_no)), move(Encode(obj_buf, v_no)));
     ret += new_order_sz;
 
     district::value v_d_new(*v_d);
     v_d_new.d_next_o_id++;
 
-    const size_t district_sz = Size(v_d_new);
-    tbl_district->put(txn, Encode(obj_key0, k_d), Encode(obj_buf, v_d_new), district_sz);
+    tbl_district->put(txn, move(Encode(obj_put_key0, k_d)), move(Encode(obj_buf, v_d_new)));
 
     const oorder::key k_oo(warehouse_id, districtID, k_no.no_o_id);
     oorder::value v_oo;
@@ -1027,16 +1025,15 @@ tpcc_worker::txn_new_order()
     v_oo.o_entry_d = GetCurrentTimeMillis();
 
     const size_t oorder_sz = Size(v_oo);
-    tbl_oorder->insert(txn, Encode(obj_key0, k_oo), Encode(obj_buf, v_oo), oorder_sz);
+    tbl_oorder->insert(txn, move(Encode(obj_put_key0, k_oo)), move(Encode(obj_buf, v_oo)));
     ret += oorder_sz;
 
     const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
     const oorder_c_id_idx::value v_oo_idx(0);
 
-    const size_t oorder_idx_sz = Size(v_oo_idx);
     tbl_oorder_c_id_idx->insert(
-        txn, Encode(obj_key0, k_oo_idx),
-        Encode(obj_buf, v_oo_idx), oorder_idx_sz);
+        txn, move(Encode(obj_put_key0, k_oo_idx)),
+        move(Encode(obj_buf, v_oo_idx)));
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
       const uint ol_supply_w_id = supplierWarehouseIDs[ol_number - 1];
@@ -1063,8 +1060,7 @@ tpcc_worker::txn_new_order()
       v_s_new.s_ytd += ol_quantity;
       v_s_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
 
-      const size_t stock_sz = Size(v_s_new);
-      tbl_stock->put(txn, Encode(obj_key0, k_s), Encode(obj_buf, v_s_new), stock_sz);
+      tbl_stock->put(txn, move(Encode(obj_put_key0, k_s)), move(Encode(obj_buf, v_s_new)));
 
       const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
       order_line::value v_ol;
@@ -1114,7 +1110,7 @@ tpcc_worker::txn_new_order()
       NDB_MEMCPY(&v_ol.ol_dist_info, (const char *) ol_dist_info, sizeof(v_ol.ol_dist_info));
 
       const size_t order_line_sz = Size(v_ol);
-      tbl_order_line->insert(txn, Encode(obj_key0, k_ol), Encode(obj_buf, v_ol), order_line_sz);
+      tbl_order_line->insert(txn, move(Encode(obj_put_key0, k_ol)), move(Encode(obj_buf, v_ol)));
       ret += order_line_sz;
     }
 
@@ -1165,7 +1161,6 @@ tpcc_worker::txn_delivery()
 {
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
-  uint8_t obj_buf[1024];
 
   void *txn = db->new_txn(txn_flags);
   try {
@@ -1210,8 +1205,7 @@ tpcc_worker::txn_delivery()
         sum += v_ol->ol_amount;
         order_line::value v_ol_new(*v_ol);
         v_ol_new.ol_delivery_d = ts;
-        const size_t order_line_sz = Size(v_ol_new);
-        tbl_order_line->put(txn, c.values[i].first, Encode(obj_buf, v_ol_new), order_line_sz);
+        tbl_order_line->put(txn, c.values[i].first, move(Encode(obj_buf, v_ol_new)));
       }
 
       // delete new order
@@ -1221,8 +1215,7 @@ tpcc_worker::txn_delivery()
       // update oorder
       oorder::value v_oo_new(*v_oo);
       v_oo_new.o_carrier_id = o_carrier_id;
-      const size_t oorder_sz = Size(v_oo_new);
-      tbl_oorder->put(txn, Encode(obj_key0, k_oo), Encode(obj_buf, v_oo_new), oorder_sz);
+      tbl_oorder->put(txn, move(Encode(obj_put_key0, k_oo)), move(Encode(obj_buf, v_oo_new)));
 
       const uint c_id = v_oo->o_c_id;
       const float ol_total = sum;
@@ -1235,8 +1228,7 @@ tpcc_worker::txn_delivery()
       const customer::value *v_c = Decode(obj_v, v_c_temp);
       customer::value v_c_new(*v_c);
       v_c_new.c_balance += ol_total;
-      const size_t customer_sz = Size(v_c_new);
-      tbl_customer->put(txn, Encode(obj_key0, k_c), Encode(obj_buf, v_c_new), customer_sz);
+      tbl_customer->put(txn, move(Encode(obj_put_key0, k_c)), move(Encode(obj_buf, v_c_new)));
     }
     if (db->commit_txn(txn)) {
       ntxn_commits++;
@@ -1255,7 +1247,6 @@ ssize_t
 tpcc_worker::txn_payment()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  uint8_t obj_buf[1024];
   uint customerDistrictID, customerWarehouseID;
   if (NumWarehouses() == 1 || RandomNumber(r, 1, 100) <= 85) {
     customerDistrictID = districtID;
@@ -1280,8 +1271,7 @@ tpcc_worker::txn_payment()
 
     warehouse::value v_w_new(*v_w);
     v_w_new.w_ytd += paymentAmount;
-    const size_t warehouse_sz = Size(v_w_new);
-    tbl_warehouse->put(txn, Encode(obj_key0, k_w), Encode(obj_buf, v_w_new), warehouse_sz);
+    tbl_warehouse->put(txn, move(Encode(obj_put_key0, k_w)), move(Encode(obj_buf, v_w_new)));
 
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key0, k_d), obj_v));
@@ -1291,8 +1281,7 @@ tpcc_worker::txn_payment()
 
     district::value v_d_new(*v_d);
     v_d_new.d_ytd += paymentAmount;
-    const size_t district_sz = Size(v_d_new);
-    tbl_district->put(txn, Encode(obj_key0, k_d), Encode(obj_buf, v_d_new), district_sz);
+    tbl_district->put(txn, move(Encode(obj_put_key0, k_d)), move(Encode(obj_buf, v_d_new)));
 
     customer::key k_c;
     customer::value v_c;
@@ -1365,8 +1354,7 @@ tpcc_worker::txn_payment()
       NDB_MEMCPY((void *) v_c_new.c_data.data(), &buf[0], v_c_new.c_data.size());
     }
 
-    const size_t customer_sz = Size(v_c_new);
-    tbl_customer->put(txn, Encode(obj_key0, k_c), Encode(obj_buf, v_c_new), customer_sz);
+    tbl_customer->put(txn, move(Encode(obj_put_key0, k_c)), move(Encode(obj_buf, v_c_new)));
 
     const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
     history::value v_h;
@@ -1379,7 +1367,7 @@ tpcc_worker::txn_payment()
     v_h.h_data.resize_junk(min(static_cast<size_t>(n), v_h.h_data.max_size()));
 
     const size_t history_sz = Size(v_h);
-    tbl_history->insert(txn, Encode(obj_key0, k_h), Encode(obj_buf, v_h), history_sz);
+    tbl_history->insert(txn, move(Encode(obj_put_key0, k_h)), move(Encode(obj_buf, v_h)));
     ret += history_sz;
 
     if (db->commit_txn(txn)) {

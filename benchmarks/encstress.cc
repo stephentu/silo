@@ -105,9 +105,8 @@ protected:
           encstress_rec::value rec;
           rec.f0 = 1; rec.f1 = 1; rec.f2 = 1; rec.f3 = 1;
           rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
-          const size_t sz = Size(rec);
-          uint8_t buf[sz];
-          tbl->insert(txn, Encode(key), Encode(buf, rec), sz);
+          string buf;
+          tbl->insert(txn, Encode(key), Encode(buf, rec));
         }
         if (verbose)
           cerr << "batch 1/1 done" << endl;
@@ -121,9 +120,8 @@ protected:
             encstress_rec::value rec;
             rec.f0 = 1; rec.f1 = 1; rec.f2 = 1; rec.f3 = 1;
             rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
-            const size_t sz = Size(rec);
-            uint8_t buf[sz];
-            tbl->insert(txn, Encode(key), Encode(buf, rec), sz);
+            string buf;
+            tbl->insert(txn, Encode(key), Encode(buf, rec));
           }
           if (verbose)
             cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

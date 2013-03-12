@@ -89,10 +89,10 @@ const char *
 bdb_ordered_index::put(
     void *txn,
     const string &key,
-    const char *value, size_t valuelen)
+    const string &value)
 {
   Dbt kdbt((void *) key.data(), key.size());
-  Dbt vdbt((void *) value, valuelen);
+  Dbt vdbt((void *) value.data(), value.size());
   ALWAYS_ASSERT(db->put((DbTxn *) txn, &kdbt, &vdbt, 0) == 0);
   return 0;
 }

@@ -121,23 +121,35 @@ public:
   }
 
   inline void
+  insert(transaction &t, const string_type &k, const string_type &v)
+  {
+    INVARIANT(!v.empty());
+    insert_impl(t, k, v);
+  }
+
+  inline void
+  insert(transaction &t, string_type &&k, string_type &&v)
+  {
+    INVARIANT(!v.empty());
+    insert_impl(t, std::move(k), std::move(v));
+  }
+
+  // insert() methods below are for legacy use
+
+  inline void
   insert(transaction &t, const string_type &k, value_type v, size_type sz)
   {
     INVARIANT(v);
     INVARIANT(sz);
-    insert_impl(t, k, v, sz);
+    insert_impl(t, k, string_type((const char *) v, sz));
   }
 
-  // memory:
-  // v - assumed to point to valid memory of length sz. the txn_btree does
-  //     *not* take ownership of v- as soon as insert() returns it is ok for
-  //     v to be invalidated
   inline void
   insert(transaction &t, const key_type &k, value_type v, size_type sz)
   {
     INVARIANT(v);
     INVARIANT(sz);
-    insert_impl(t, to_string_type(k), v, sz);
+    insert_impl(t, to_string_type(k), string_type((const char *) v, sz));
   }
 
   template <typename T>
@@ -157,13 +169,19 @@ public:
   inline void
   remove(transaction &t, const string_type &k)
   {
-    insert_impl(t, k, NULL, 0);
+    insert_impl(t, k, "");
+  }
+
+  inline void
+  remove(transaction &t, string_type &&k)
+  {
+    insert_impl(t, std::move(k), "");
   }
 
   inline void
   remove(transaction &t, const key_type &k)
   {
-    insert_impl(t, to_string_type(k), NULL, 0);
+    insert_impl(t, to_string_type(k), "");
   }
 
   inline size_t
@@ -244,7 +262,8 @@ private:
   };
 
   // remove() is just insert_impl() with NULL value
-  void insert_impl(transaction &t, const string_type &k, value_type v, size_type sz);
+  void insert_impl(transaction &t, const string_type &k, const string_type &v);
+  void insert_impl(transaction &t, string_type &&k, string_type &&v);
 
   btree underlying_btree;
   size_type value_size_hint;

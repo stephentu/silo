@@ -51,7 +51,7 @@ public:
     void *txn = db->new_txn(txn_flags);
     try {
       const string k = queue_key(id, ctr);
-      tbl->insert(txn, k, queue_values.data(), queue_values.size());
+      tbl->insert(txn, k, queue_values);
       if (db->commit_txn(txn)) {
         ctr++;
         ntxn_commits++;
@@ -222,7 +222,7 @@ protected:
           for (size_t j = 0; j < nkeys; j++) {
             const string k = queue_key(id, j);
             const string &v = queue_values;
-            tbl->insert(txn, k, v.data(), v.size());
+            tbl->insert(txn, k, v);
           }
           if (verbose)
             cerr << "batch 1/1 done" << endl;
@@ -234,7 +234,7 @@ protected:
             for (size_t j = i * batchsize; j < keyend; j++) {
               const string k = queue_key(id, j);
               const string &v = queue_values;
-              tbl->insert(txn, k, v.data(), v.size());
+              tbl->insert(txn, k, v);
             }
             if (verbose)
               cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

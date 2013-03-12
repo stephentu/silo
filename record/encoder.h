@@ -27,7 +27,7 @@ Encode(uint8_t *buf, const T &t)
 }
 
 template <typename T>
-static inline const std::string &
+static inline std::string &
 Encode(std::string &buf, const T &t)
 {
   const encoder<T> enc;
@@ -151,7 +151,7 @@ namespace private_ {
 // Write the encoded version of obj into buf, returning a const reference
 // to buf. Makes no assumptions about buf
 //
-// const std::string &
+// std::string &
 // write(std::string &buf, const T *obj)
 
 // Read a serialized, encoded version from buf into obj, returning
@@ -207,7 +207,7 @@ namespace private_ {
   }
 
 #define DO_STRUCT_COMMON(name) \
-  inline const std::string & \
+  inline std::string & \
   write(std::string &buf, const struct name *obj) const \
   { \
     buf.clear(); \

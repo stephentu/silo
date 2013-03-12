@@ -257,9 +257,8 @@ txn_btree::search_range_call(transaction &t,
 }
 
 void
-txn_btree::insert_impl(transaction &t, const string_type &k, const value_type v, size_type sz)
+txn_btree::insert_impl(transaction &t, const string_type &k, const string_type &v)
 {
-  INVARIANT(!v == !sz);
   t.ensure_active();
   transaction::txn_context &ctx = t.ctx_map[this];
   if (unlikely(t.get_flags() & transaction::TXN_FLAG_READ_ONLY)) {
@@ -267,7 +266,20 @@ txn_btree::insert_impl(transaction &t, const string_type &k, const value_type v,
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  ctx.write_set[k].assign((const char *) v, sz);
+  ctx.write_set.emplace(k, v);
+}
+
+void
+txn_btree::insert_impl(transaction &t, string_type &&k, string_type &&v)
+{
+  t.ensure_active();
+  transaction::txn_context &ctx = t.ctx_map[this];
+  if (unlikely(t.get_flags() & transaction::TXN_FLAG_READ_ONLY)) {
+    transaction::abort_reason r = transaction::ABORT_REASON_USER;
+    t.abort_impl(r);
+    throw transaction_abort_exception(r);
+  }
+  ctx.write_set.emplace(std::move(k), std::move(v));
 }
 
 void

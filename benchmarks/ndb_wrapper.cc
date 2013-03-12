@@ -136,13 +136,29 @@ const char *
 ndb_ordered_index::put(
     void *txn,
     const string &key,
-    const char *value, size_t valuelen)
+    const string &value)
 {
   try {
-    btr.insert(
-        *((transaction *) txn),
-        key,
-        (const txn_btree::value_type) value, valuelen);
+    btr.insert(*((transaction *) txn), key, value);
+  } catch (transaction_abort_exception &ex) {
+    throw abstract_db::abstract_abort_exception();
+  }
+  ++evt_rec_inserts;
+  // XXX(stephentu): we currently can't return a stable pointer because we
+  // don't even know if the txn will commit (and even if it does, the value
+  // could get overwritten).  So that means our secondary index performance
+  // will suffer for now
+  return 0;
+}
+
+const char *
+ndb_ordered_index::put(
+    void *txn,
+    string &&key,
+    string &&value)
+{
+  try {
+    btr.insert(*((transaction *) txn), move(key), move(value));
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
@@ -197,6 +213,17 @@ ndb_ordered_index::remove(void *txn, const string &key)
   transaction &t = *((transaction *) txn);
   try {
     btr.remove(t, key);
+  } catch (transaction_abort_exception &ex) {
+    throw abstract_db::abstract_abort_exception();
+  }
+}
+
+void
+ndb_ordered_index::remove(void *txn, string &&key)
+{
+  transaction &t = *((transaction *) txn);
+  try {
+    btr.remove(t, move(key));
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }

@@ -48,7 +48,7 @@ public:
   virtual const char * put(
       void *txn,
       const std::string &key,
-      const char *value, size_t valuelen);
+      const std::string &value);
 
   virtual void scan(
       void *txn,

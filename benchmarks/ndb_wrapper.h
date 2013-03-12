@@ -71,7 +71,11 @@ public:
   virtual const char * put(
       void *txn,
       const std::string &key,
-      const char *value, size_t valuelen);
+      const std::string &value);
+  virtual const char * put(
+      void *txn,
+      std::string &&key,
+      std::string &&value);
   virtual void scan(
       void *txn,
       const std::string &start_key,
@@ -80,6 +84,9 @@ public:
   virtual void remove(
       void *txn,
       const std::string &key);
+  virtual void remove(
+      void *txn,
+      std::string &&key);
   virtual size_t size() const;
   virtual void clear();
 private:
