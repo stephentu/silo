@@ -37,7 +37,7 @@ grids = reversed([mk_grid(n) for n in THREADS])
 
 def run_configuration(basedir, dbtype, bench, scale_factor, txn_flags, nthreads):
   args = [
-      './bench',
+      './dbtest',
       '--bench', bench,
       '--basedir', basedir,
       '--db-type', dbtype,
