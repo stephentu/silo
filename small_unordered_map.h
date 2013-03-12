@@ -52,6 +52,9 @@ private:
   typedef std::unordered_map<Key, T, Hash> large_table_type;
   typedef std::pair<key_type, mapped_type> bucket_value_type;
 
+  typedef typename large_table_type::iterator large_table_iterator;
+  typedef typename large_table_type::const_iterator large_table_const_iterator;
+
   struct bucket {
     inline bucket() : mapped(false) {}
 
@@ -79,14 +82,12 @@ private:
       return *ptr();
     }
 
+    template <class... Args>
     void
-    construct(size_t hash, const key_type &k, const mapped_type &v)
+    construct(size_t hash, Args &&... args)
     {
       INVARIANT(!mapped);
-      // directly construct into pair (is safe for pair), bypassing
-      // pair ctor
-      new (&ref().first)  key_type(k);
-      new (&ref().second) mapped_type(v);
+      new (&ref()) bucket_value_type(std::forward<Args>(args)...);
       mapped = true;
       h = hash;
     }
@@ -104,7 +105,109 @@ private:
     char buf[sizeof(value_type)];
   };
 
+  // iterators are not stable across mutation
+  template <typename SmallIterType,
+            typename LargeIterType,
+            typename ValueType>
+  class iterator_ : public std::iterator<std::forward_iterator_tag, ValueType> {
+    friend class small_unordered_map;
+  public:
+    inline iterator_() : large(false), b(0), bend(0) {}
+
+    template <typename S, typename L, typename V>
+    inline iterator_(const iterator_<S, L, V> &other)
+      : large(other.large), b(other.b), bend(other.bend)
+    {}
+
+    inline ValueType &
+    operator*() const
+    {
+      if (unlikely(large))
+        return *large_it;
+      INVARIANT(b != bend);
+      INVARIANT(b->mapped);
+      return reinterpret_cast<ValueType &>(b->ref());
+    }
+
+    inline ValueType *
+    operator->() const
+    {
+      if (unlikely(large))
+        return &(*large_it);
+      INVARIANT(b != bend);
+      INVARIANT(b->mapped);
+      return reinterpret_cast<ValueType *>(b->ptr());
+    }
+
+    inline bool
+    operator==(const iterator_ &o) const
+    {
+      if (unlikely(large && o.large))
+        return large_it == o.large_it;
+      if (!large && !o.large)
+        return b == o.b;
+      return false;
+    }
+
+    inline bool
+    operator!=(const iterator_ &o) const
+    {
+      return !operator==(o);
+    }
+
+    inline iterator_ &
+    operator++()
+    {
+      if (unlikely(large)) {
+        ++large_it;
+        return *this;
+      }
+      INVARIANT(b < bend);
+      do {
+        b++;
+      } while (b != bend && !b->mapped);
+      return *this;
+    }
+
+    inline iterator_
+    operator++(int)
+    {
+      iterator_ cur = *this;
+      ++(*this);
+      return cur;
+    }
+
+  protected:
+    inline iterator_(SmallIterType *b, SmallIterType *bend)
+      : large(false), b(b), bend(bend)
+    {
+      INVARIANT(b == bend || b->mapped);
+    }
+    inline iterator_(LargeIterType large_it)
+      : large(true), large_it(large_it) {}
+
+  private:
+    bool large;
+    SmallIterType *b;
+    SmallIterType *bend;
+    LargeIterType large_it;
+  };
+
 public:
+
+  typedef
+    iterator_<
+      bucket,
+      large_table_iterator,
+      value_type>
+    iterator;
+
+  typedef
+    iterator_<
+      const bucket,
+      large_table_const_iterator,
+      const value_type>
+    const_iterator;
 
   small_unordered_map()
     : n(0), large_elems(0)
@@ -202,16 +305,38 @@ public:
   mapped_type &
   operator[](const key_type &k)
   {
-    if (unlikely(large_elems))
-      return large_elems->operator[](k);
+    std::pair<iterator, bool> ret = emplace(k, std::move(mapped_type()));
+    return ret.first->second;
+  }
+
+  mapped_type &
+  operator[](key_type &&k)
+  {
+    std::pair<iterator, bool> ret = emplace(std::move(k), std::move(mapped_type()));
+    return ret.first->second;
+  }
+
+  // C++11 goodness
+  template <class... Args>
+  std::pair<iterator, bool>
+  emplace(Args &&... args)
+  {
+    if (unlikely(large_elems)) {
+      std::pair<large_table_iterator, bool> ret =
+        large_elems->emplace(std::forward<Args>(args)...);
+      return std::make_pair(iterator(ret.first), ret.second);
+    }
+    bucket_value_type tpe(std::forward<Args>(args)...);
     size_t h;
-    bucket *b = find_bucket(k, &h);
+    bucket * const b = find_bucket(tpe.first, &h);
+    bucket * const bend = &small_elems[SmallSize];
     if (likely(b)) {
       if (!b->mapped) {
         n++;
-        b->construct(h, k, mapped_type());
+        b->construct(h, std::move(tpe));
+        return std::make_pair(iterator(b, bend), true);
       }
-      return b->ref().second;
+      return std::make_pair(iterator(b, bend), false);
     }
     INVARIANT(n == SmallSize);
     // small_elems is full, so spill over to large_elems
@@ -220,11 +345,12 @@ public:
     for (size_t idx = 0; idx < SmallSize; idx++) {
       bucket &b = small_elems[idx];
       INVARIANT(b.mapped);
-      T &ref = large_elems->operator[](b.ref().first);
-      std::swap(ref, b.ref().second);
+      large_elems->emplace(std::move(b.ref()));
       b.destroy();
     }
-    return large_elems->operator[](k);
+    std::pair<large_table_iterator, bool> ret =
+      large_elems->emplace(std::move(tpe));
+    return std::make_pair(iterator(ret.first), ret.second);
   }
 
   inline size_t
@@ -240,110 +366,6 @@ public:
   {
     return size() == 0;
   }
-
-private:
-  // iterators are not stable across mutation
-  template <typename SmallIterType,
-            typename LargeIterType,
-            typename ValueType>
-  class iterator_ : public std::iterator<std::forward_iterator_tag, ValueType> {
-    friend class small_unordered_map;
-  public:
-    inline iterator_() : large(false), b(0), bend(0) {}
-
-    template <typename S, typename L, typename V>
-    inline iterator_(const iterator_<S, L, V> &other)
-      : large(other.large), b(other.b), bend(other.bend)
-    {}
-
-    inline ValueType &
-    operator*() const
-    {
-      if (unlikely(large))
-        return *large_it;
-      INVARIANT(b != bend);
-      INVARIANT(b->mapped);
-      return reinterpret_cast<ValueType &>(b->ref());
-    }
-
-    inline ValueType *
-    operator->() const
-    {
-      if (unlikely(large))
-        return &(*large_it);
-      INVARIANT(b != bend);
-      INVARIANT(b->mapped);
-      return reinterpret_cast<ValueType *>(b->ptr());
-    }
-
-    inline bool
-    operator==(const iterator_ &o) const
-    {
-      if (unlikely(large && o.large))
-        return large_it == o.large_it;
-      if (!large && !o.large)
-        return b == o.b;
-      return false;
-    }
-
-    inline bool
-    operator!=(const iterator_ &o) const
-    {
-      return !operator==(o);
-    }
-
-    inline iterator_ &
-    operator++()
-    {
-      if (unlikely(large)) {
-        ++large_it;
-        return *this;
-      }
-      INVARIANT(b < bend);
-      do {
-        b++;
-      } while (b != bend && !b->mapped);
-      return *this;
-    }
-
-    inline iterator_
-    operator++(int)
-    {
-      iterator_ cur = *this;
-      ++(*this);
-      return cur;
-    }
-
-  protected:
-    inline iterator_(SmallIterType *b, SmallIterType *bend)
-      : large(false), b(b), bend(bend)
-    {
-      INVARIANT(b == bend || b->mapped);
-    }
-    inline iterator_(LargeIterType large_it)
-      : large(true), large_it(large_it) {}
-
-  private:
-    bool large;
-    SmallIterType *b;
-    SmallIterType *bend;
-    LargeIterType large_it;
-  };
-
-public:
-  typedef
-    iterator_<
-      bucket,
-      typename large_table_type::iterator,
-      value_type>
-    iterator;
-
-  typedef
-    iterator_<
-      const bucket,
-      typename large_table_type::const_iterator,
-      const value_type>
-    const_iterator;
 
   iterator
   begin()

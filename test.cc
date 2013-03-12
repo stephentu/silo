@@ -1,6 +1,7 @@
 #include <iostream>
 #include <functional>
 #include <unordered_map>
+#include <tuple>
 
 #include "thread.h"
 #include "txn.h"
@@ -287,6 +288,18 @@ Test()
       ALWAYS_ASSERT(v[i].first + 1 == v[i].second);
   }
 
+  {
+    // test C++11 features
+    small_vector<string, 4> v;
+    v.emplace_back("hello");
+    string world = "world";
+    v.push_back(move(world));
+    //ALWAYS_ASSERT(world.empty());
+    ALWAYS_ASSERT(v.size() == 2);
+    ALWAYS_ASSERT(v[0] == "hello");
+    ALWAYS_ASSERT(v[1] == "world");
+  }
+
   cout << "vec test passed" << endl;
 }
 
@@ -473,6 +486,35 @@ Test()
     ALWAYS_ASSERT(m.find(0)->first == 0 && m.find(0)->second == 1);
     ALWAYS_ASSERT(m.find(1)->first == 1 && m.find(1)->second == 2);
     ALWAYS_ASSERT(m.find(2)->first == 2 && m.find(2)->second == 3);
+  }
+
+  { // C++11 goodness
+
+    small_unordered_map<string, string> m;
+    auto ret = m.emplace("hello", "world");
+    ALWAYS_ASSERT(ret.second);
+    ALWAYS_ASSERT(ret.first->first == "hello");
+    ALWAYS_ASSERT(ret.first->second == "world");
+
+    string k = "foo";
+    string v = "bar";
+    auto ret1 = m.emplace(move(k), move(v));
+    ALWAYS_ASSERT(ret1.second);
+    ALWAYS_ASSERT(ret1.first->first == "foo");
+    ALWAYS_ASSERT(ret1.first->second == "bar");
+    ALWAYS_ASSERT(k.empty());
+    ALWAYS_ASSERT(v.empty());
+
+    m.emplace(piecewise_construct, make_tuple("abc"), make_tuple("def"));
+    ALWAYS_ASSERT(m.size() == 3);
+    ALWAYS_ASSERT(m["hello"] == "world");
+    ALWAYS_ASSERT(m["foo"] == "bar");
+    ALWAYS_ASSERT(m["abc"] == "def");
+
+    small_unordered_map<string, string>::iterator it = m.find("foo");
+    ALWAYS_ASSERT(it != m.end());
+    it->second = "baz";
+    ALWAYS_ASSERT(m["foo"] == "baz");
   }
 
   cout << "map test passed" << endl;

@@ -99,19 +99,34 @@ public:
   inline void
   push_back(const T &obj)
   {
+    emplace_back(obj);
+  }
+
+  inline void
+  public_back(T &&obj)
+  {
+    emplace_back(std::move(obj));
+  }
+
+  // C++11 goodness- a strange syntax this is
+
+  template <class... Args>
+  inline void
+  emplace_back(Args &&... args)
+  {
     if (unlikely(large_elems)) {
       INVARIANT(!n);
-      large_elems->push_back(obj);
+      large_elems->emplace_back(std::forward<Args>(args)...);
       return;
     }
     if (unlikely(n == SmallSize)) {
       large_elems = new large_vector_type(ptr(), ptr() + n);
-      large_elems->push_back(obj);
+      large_elems->emplace_back(std::forward<Args>(args)...);
       n = 0;
       return;
     }
     INVARIANT(n < SmallSize);
-    new (&(ptr()[n++])) T(obj);
+    new (&(ptr()[n++])) T(std::forward<Args>(args)...);
   }
 
   inline reference
@@ -368,6 +383,7 @@ public:
       return const_iterator(large_elems->end());
     return const_iterator(ptr() + n);
   }
+
 
 private:
   void
