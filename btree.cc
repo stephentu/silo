@@ -290,7 +290,7 @@ retry:
 
     // each iteration of this while loop tries to descend
     // down node "cur", looking for key kcur
-    prefetch_node(cur);
+    cur->prefetch();
 
     // use the process label to skip node prefetch
 process:
@@ -347,7 +347,7 @@ process:
         leaf_node *right_sibling = leaf->next;
         if (unlikely(!leaf->check_version(version)))
           goto process;
-        prefetch_node(right_sibling);
+        right_sibling->prefetch();
         if (unlikely(!right_sibling)) {
           leaf_nodes.push_back(leaf);
           return false;
@@ -452,7 +452,7 @@ btree::search_range_at_layer(
   const uint64_t upper_slice = upper ? upper->slice() : 0;
   string_restore restorer(prefix, prefix_size);
   while (!upper || next_key <= upper_slice) {
-    prefetch_node(leaf);
+    leaf->prefetch();
 
     typename vec<leaf_kvinfo>::type buf;
     const uint64_t version = leaf->stable_version();
@@ -732,11 +732,11 @@ btree::tree_walk(tree_walk_callback &callback) const
   while (!q.empty()) {
     node *cur = q.back();
     q.pop_back();
-    prefetch_node(cur);
+    cur->prefetch();
     leaf_node *leaf = leftmost_descend_layer(cur);
     INVARIANT(leaf);
     while (leaf) {
-      prefetch_node(leaf);
+      leaf->prefetch();
     process:
       const uint64_t version = leaf->stable_version();
       const size_t n = leaf->key_slots_used();
@@ -798,7 +798,7 @@ btree::insert0(node *np,
   uint64_t kslice = k.slice();
   size_t kslicelen = min(k.size(), size_t(9));
 
-  prefetch_node(np);
+  np->prefetch();
   if (leaf_node *leaf = AsLeafCheck(np)) {
     // locked nodes are acquired bottom to top
     INVARIANT(locked_nodes.empty());
@@ -991,7 +991,7 @@ btree::insert0(node *np,
       leaf->mark_modifying();
 
       leaf_node *new_leaf = leaf_node::alloc();
-      prefetch_node(new_leaf);
+      new_leaf->prefetch();
 
 #ifdef CHECK_INVARIANTS
       new_leaf->lock();
@@ -1197,7 +1197,7 @@ btree::insert0(node *np,
       INVARIANT(ret == internal->key_lower_bound_search(mk).first);
 
       internal_node *new_internal = internal_node::alloc();
-      prefetch_node(new_internal);
+      new_internal->prefetch();
 #ifdef CHECK_INVARIANTS
       new_internal->lock();
       new_internal->mark_modifying();
@@ -1278,7 +1278,7 @@ btree::remove0(node *np,
   uint64_t kslice = k.slice();
   size_t kslicelen = min(k.size(), size_t(9));
 
-  prefetch_node(np);
+  np->prefetch();
   if (leaf_node *leaf = AsLeafCheck(np)) {
 
     INVARIANT(locked_nodes.empty());

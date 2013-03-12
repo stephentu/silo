@@ -5,7 +5,7 @@
 #include <stdexcept>
 
 /** options */
-//#define NODE_PREFETCH
+#define NODE_PREFETCH
 //#define DIE_ON_ABORT
 //#define TRAP_LARGE_ALLOOCATIONS
 #define USE_BUILTIN_MEMFUNCS
@@ -61,20 +61,6 @@
 #define SMALL_SIZE_VEC       128
 #define SMALL_SIZE_MAP       64
 #define EXTRA_SMALL_SIZE_MAP 8
-
-#define always_prefetch(n) \
-  do { \
-    __builtin_prefetch(((uint8_t *)n)); \
-    __builtin_prefetch(((uint8_t *)n) + 1 * CACHELINE_SIZE); \
-    __builtin_prefetch(((uint8_t *)n) + 2 * CACHELINE_SIZE); \
-    __builtin_prefetch(((uint8_t *)n) + 3 * CACHELINE_SIZE); \
-  } while (0)
-
-#ifdef NODE_PREFETCH
-  #define prefetch_node(n) always_prefetch(n)
-#else
-  #define prefetch_node(n) ((void)0)
-#endif /* NODE_PREFETCH */
 
 // throw exception after the assert(), so that GCC knows
 // we'll never return

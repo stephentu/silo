@@ -54,7 +54,7 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v,
     const transaction::logical_node * const ln =
       (const transaction::logical_node *) underlying_v;
     INVARIANT(ln);
-    prefetch_node(ln);
+    //prefetch_node(ln);
     transaction::tid_t start_t = 0;
 
     const pair<bool, transaction::tid_t> snapshot_tid_t =
@@ -149,7 +149,7 @@ txn_btree::txn_search_range_callback::invoke(
   const transaction::logical_node * const ln = (transaction::logical_node *) v;
   if (ctx->read_set.find(ln) == ctx->read_set.end()) {
     INVARIANT(ln);
-    prefetch_node(ln);
+    //prefetch_node(ln);
     transaction::tid_t start_t = 0;
     string_type r;
     const pair<bool, transaction::tid_t> snapshot_tid_t =

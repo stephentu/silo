@@ -16,6 +16,7 @@
 #include "varkey.h"
 #include "counter.h"
 #include "macros.h"
+#include "prefetch.h"
 #include "amd64.h"
 #include "rcu.h"
 #include "static_assert.h"
@@ -366,6 +367,9 @@ private:
                       const node *left_sibling,
                       const node *right_sibling,
                       bool is_root) const;
+
+    /** another manually simulated virtual function */
+    inline void prefetch() const;
   };
 
   struct leaf_node : public node {
@@ -421,6 +425,12 @@ private:
 
     static const uint64_t LEN_TYPE_SHIFT = 4;
     static const uint64_t LEN_TYPE_MASK = 0x1 << LEN_TYPE_SHIFT;
+
+    inline void
+    prefetch() const
+    {
+      prefetch_object(this);
+    }
 
     inline size_t
     keyslice_length(size_t n) const
@@ -560,6 +570,12 @@ private:
 
     internal_node();
     ~internal_node();
+
+    inline void
+    prefetch() const
+    {
+      prefetch_object(this);
+    }
 
     /**
      * keys[key_search(k).first] == k if key_search(k).first != -1
@@ -1251,5 +1267,14 @@ private:
           std::vector<remove_parent_entry> &parents,
           typename util::vec<node *>::type &locked_nodes);
 };
+
+inline void
+btree::node::prefetch() const
+{
+  if (is_leaf_node())
+    AsLeaf(this)->prefetch();
+  else
+    AsInternal(this)->prefetch();
+}
 
 #endif /* _NDB_BTREE_H_ */
