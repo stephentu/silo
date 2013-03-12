@@ -56,7 +56,7 @@ public:
   // public to assist in testing
   // WARNING: if you want to increase NKeysPerNode beyond 15, must also
   // increase the # of size bits in the header
-  static const unsigned int NKeysPerNode = 14;
+  static const unsigned int NKeysPerNode = 15;
   static const unsigned int NMinKeysPerNode = NKeysPerNode / 2;
 
 private:
