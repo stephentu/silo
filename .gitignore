@@ -4,4 +4,5 @@
 core
 tags
 test
-benchmarks/bench
+benchmarks/dbtest
+benchmarks/masstree/kvtest
