@@ -302,18 +302,60 @@ private:
 
 public:
 
+  // XXX(stephentu): can we avoid this code duplication?
+
   mapped_type &
   operator[](const key_type &k)
   {
-    std::pair<iterator, bool> ret = emplace(k, std::move(mapped_type()));
-    return ret.first->second;
+    if (unlikely(large_elems))
+      return large_elems->operator[](k);
+    size_t h;
+    bucket * const b = find_bucket(k, &h);
+    if (likely(b)) {
+      if (!b->mapped) {
+        n++;
+        b->construct(h, k, mapped_type());
+      }
+      return b->ref().second;
+    }
+    INVARIANT(n == SmallSize);
+    // small_elems is full, so spill over to large_elems
+    n = 0;
+    large_elems = new large_table_type;
+    for (size_t idx = 0; idx < SmallSize; idx++) {
+      bucket &b = small_elems[idx];
+      INVARIANT(b.mapped);
+      large_elems->emplace(std::move(b.ref()));
+      b.destroy();
+    }
+    return large_elems->operator[](k);
   }
 
   mapped_type &
   operator[](key_type &&k)
   {
-    std::pair<iterator, bool> ret = emplace(std::move(k), std::move(mapped_type()));
-    return ret.first->second;
+    if (unlikely(large_elems))
+      return large_elems->operator[](std::move(k));
+    size_t h;
+    bucket * const b = find_bucket(k, &h);
+    if (likely(b)) {
+      if (!b->mapped) {
+        n++;
+        b->construct(h, std::move(k), mapped_type());
+      }
+      return b->ref().second;
+    }
+    INVARIANT(n == SmallSize);
+    // small_elems is full, so spill over to large_elems
+    n = 0;
+    large_elems = new large_table_type;
+    for (size_t idx = 0; idx < SmallSize; idx++) {
+      bucket &b = small_elems[idx];
+      INVARIANT(b.mapped);
+      large_elems->emplace(std::move(b.ref()));
+      b.destroy();
+    }
+    return large_elems->operator[](std::move(k));
   }
 
   // C++11 goodness

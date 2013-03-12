@@ -266,7 +266,8 @@ txn_btree::insert_impl(transaction &t, const string_type &k, const string_type &
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  ctx.write_set.emplace(k, v);
+  //ctx.write_set.emplace(k, v);
+  ctx.write_set[k] = v;
 }
 
 void
@@ -279,7 +280,8 @@ txn_btree::insert_impl(transaction &t, string_type &&k, string_type &&v)
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  ctx.write_set.emplace(std::move(k), std::move(v));
+  //ctx.write_set.emplace(std::move(k), std::move(v));
+  swap(ctx.write_set[move(k)], v);
 }
 
 void
