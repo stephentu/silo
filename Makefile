@@ -6,6 +6,7 @@ LDFLAGS := -lpthread
 # 0 = libc malloc
 # 1 = jemalloc
 # 2 = tcmalloc
+# 3 = flow
 USE_MALLOC_MODE=1
 
 # 0 = disable perf counters
@@ -20,6 +21,11 @@ else
 ifeq ($(USE_MALLOC_MODE),2)
         CXXFLAGS+=-DUSE_TCMALLOC
         LDFLAGS+=-ltcmalloc
+else
+ifeq ($(USE_MALLOC_MODE),3)
+        CXXFLAGS+=-DUSE_FLOW
+        LDFLAGS+=-lflow
+endif
 endif
 endif
 

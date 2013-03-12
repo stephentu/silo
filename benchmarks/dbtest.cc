@@ -142,6 +142,8 @@ main(int argc, char **argv)
     cerr << "  allocator   : jemalloc"              << endl;
 #elif defined USE_TCMALLOC
     cerr << "  allocator   : tcmalloc"              << endl;
+#elif defined USE_FLOW
+    cerr << "  allocator   : flow"                  << endl;
 #else
     cerr << "  allocator   : libc"                  << endl;
 #endif
