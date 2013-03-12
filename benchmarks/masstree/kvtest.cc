@@ -1,6 +1,8 @@
 #include <iostream>
 #include <vector>
 
+#include <unistd.h>
+
 #include "../../btree.h"
 #include "../../thread.h"
 #include "../../spinbarrier.h"
