@@ -218,10 +218,11 @@ private:
   size_t n;
 };
 
-template <size_t N>
+template <size_t N, typename StrAllocator>
 class static_limit_callback : public abstract_ordered_index::scan_callback {
 public:
-  static_limit_callback() : n(0)
+  static_limit_callback(StrAllocator alloc)
+    : n(0), alloc(alloc)
   {
     _static_assert(N > 0);
   }
@@ -231,9 +232,11 @@ public:
       const char *value, size_t value_len)
   {
     INVARIANT(n < N);
-    values.push_back(
-        std::make_pair(
-          std::string(key, key_len), std::string(value, value_len)));
+    std::string &k = alloc();
+    std::string &v = alloc();
+    k.assign(key, key_len);
+    v.assign(value, value_len);
+    values.emplace_back(k, v);
     return ++n < N;
   }
 
@@ -248,6 +251,7 @@ public:
 
 private:
   size_t n;
+  StrAllocator alloc;
 };
 
 #endif /* _NDB_BENCH_H_ */

@@ -328,6 +328,9 @@ public:
     NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
   }
 
+  // XXX(stephentu): tune this
+  static const size_t NMaxCustomerIdxScanElems = 512;
+
   ssize_t txn_new_order();
 
   static ssize_t
@@ -392,6 +395,18 @@ public:
     return w;
   }
 
+  struct str_allocator {
+    str_allocator(tpcc_worker *w) : w(w) {}
+    inline string & operator()() const { return w->str(); }
+    tpcc_worker *w;
+  };
+
+  inline str_allocator
+  get_str_allocator()
+  {
+    return str_allocator(this);
+  }
+
 protected:
 
   inline ALWAYS_INLINE string &
@@ -409,7 +424,7 @@ private:
   string obj_key1;
   string obj_v;
 
-  string obj_put_strs[256];
+  string obj_put_strs[512];
   unsigned obj_put_strs_n;
 };
 
@@ -1190,7 +1205,7 @@ tpcc_worker::txn_delivery()
       const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
       checker::SanityCheckOOrder(&k_oo, v_oo);
 
-      static_limit_callback<15> c; // never more than 15 order_lines per order
+      static_limit_callback<15, str_allocator> c(get_str_allocator()); // never more than 15 order_lines per order
       const order_line::key k_oo_0(warehouse_id, d, k_no->no_o_id, 0);
       const order_line::key k_oo_1(warehouse_id, d, k_no->no_o_id, numeric_limits<int32_t>::max());
 
@@ -1312,10 +1327,10 @@ tpcc_worker::txn_payment()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<1024> c; // probably a safe bet for now
+      static_limit_callback<NMaxCustomerIdxScanElems, str_allocator> c(get_str_allocator()); // probably a safe bet for now
       tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c);
       INVARIANT(c.size() > 0);
-      INVARIANT(c.size() < 1024); // we should detect this
+      INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
       if (c.size() % 2 == 0)
         index--;
@@ -1442,10 +1457,10 @@ tpcc_worker::txn_order_status()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<1024> c; // probably a safe bet for now
+      static_limit_callback<NMaxCustomerIdxScanElems, str_allocator> c(get_str_allocator()); // probably a safe bet for now
       tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c);
       INVARIANT(c.size() > 0);
-      INVARIANT(c.size() < 1024); // we should detect this
+      INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
       if (c.size() % 2 == 0)
         index--;
