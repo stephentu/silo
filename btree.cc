@@ -287,12 +287,9 @@ retry:
   }
 
   while (true) {
-
     // each iteration of this while loop tries to descend
     // down node "cur", looking for key kcur
-    cur->prefetch();
 
-    // use the process label to skip node prefetch
 process:
     uint64_t version = cur->stable_version();
     if (unlikely(node::IsDeleting(version)))
@@ -300,6 +297,7 @@ process:
       // root node of the b-tree *layer*
       goto retry;
     if (leaf_node *leaf = AsLeafCheck(cur, version)) {
+      leaf->prefetch();
       key_search_ret kret = leaf->key_search(kslice, kslicelen);
       ssize_t ret = kret.first;
       if (ret != -1) {
@@ -366,6 +364,7 @@ process:
       return false;
     } else {
       internal_node *internal = AsInternal(cur);
+      internal->prefetch();
       key_search_ret kret = internal->key_lower_bound_search(kslice);
       ssize_t ret = kret.first;
       if (ret != -1)
