@@ -168,7 +168,7 @@ const unsigned long kvtest_rw1::PhaseRuntimes[NPhases] = { 10, 10 }; // seconds
 int
 main(int argc, char **argv)
 {
-  ALWAYS_ASSERT(argc == 1);
+  ALWAYS_ASSERT(argc == 2);
   int nthreads = atoi(argv[1]);
   ALWAYS_ASSERT(nthreads > 0);
   kvtest_runner<kvtest_rw1> r(nthreads);
