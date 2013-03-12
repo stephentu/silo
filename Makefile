@@ -48,7 +48,8 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/bdb_wrapper.h \
 	benchmarks/ndb_wrapper.h \
 	benchmarks/mysql_wrapper.h \
-	benchmarks/tpcc.h
+	benchmarks/tpcc.h \
+	benchmarks/masstree/kvrandom.hh
 BENCH_SRCFILES = \
 	benchmarks/bdb_wrapper.cc \
 	benchmarks/ndb_wrapper.cc \
@@ -56,12 +57,17 @@ BENCH_SRCFILES = \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc \
 	benchmarks/queue.cc \
-	benchmarks/encstress.cc
+	benchmarks/encstress.cc \
+	benchmarks/bench.cc \
+	benchmarks/masstree/kvrandom.cc
 BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
 
 all: test
 
 benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
+	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
+
+benchmarks/masstree/%.o: benchmarks/masstree/%.cc $(BENCH_HEADERS)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
 %.o: %.cc $(HEADERS)
@@ -70,12 +76,18 @@ benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
 test: test.cc $(OBJFILES)
 	$(CXX) $(CXXFLAGS) -o test $^ $(LDFLAGS)
 
-.PHONY: bench
-bench: benchmarks/bench
+.PHONY: dbtest
+dbtest: benchmarks/dbtest
 
-benchmarks/bench: benchmarks/bench.cc $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/bench $^ $(BENCH_LDFLAGS)
+benchmarks/dbtest: benchmarks/dbtest.cc $(OBJFILES) $(BENCH_OBJFILES)
+	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/dbtest $^ $(BENCH_LDFLAGS)
+
+.PHONY: kvtest
+kvtest: benchmarks/masstree/kvtest
+
+benchmarks/masstree/kvtest: benchmarks/masstree/kvtest.cc $(OBJFILES) $(BENCH_OBJFILES)
+	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/masstree/kvtest $^ $(BENCH_LDFLAGS)
 
 .PHONY: clean
 clean:
-	rm -f *.o test benchmarks/*.o benchmarks/bench
+	rm -f *.o test benchmarks/*.o benchmarks/dbtest benchmarks/masstree/*.o benchmarks/masstree/kvtest

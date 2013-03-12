@@ -7,6 +7,8 @@
 
 #include <iostream>
 #include <string>
+#include <type_traits>
+#include <limits>
 
 #include "imstring.h"
 #include "macros.h"
@@ -137,18 +139,49 @@ operator<<(std::ostream &o, const varkey &k)
   return o;
 }
 
-template <typename T, typename Trfm = util::big_endian_trfm<T> >
+template <bool is_signed, typename T>
+struct signed_aware_trfm {};
+
+template <typename T>
+struct signed_aware_trfm<false, T> {
+  inline ALWAYS_INLINE T operator()(T t) const { return t; }
+};
+
+template <typename T>
+struct signed_aware_trfm<true, T> {
+  typedef T signed_type;
+  typedef
+    typename std::enable_if<std::is_signed<T>::value, typename std::make_unsigned<T>::type>::type
+    unsigned_type;
+  inline ALWAYS_INLINE unsigned_type
+  operator()(signed_type s) const
+  {
+    const unsigned_type offset = -std::numeric_limits<signed_type>::min();
+    const unsigned_type converted = static_cast<unsigned_type>(s) + offset;
+    return converted;
+  }
+};
+
+template <typename T,
+          typename EncodingTrfm = signed_aware_trfm<std::is_signed<T>::value, T>,
+          typename ByteTrfm = util::big_endian_trfm<T> >
 class obj_varkey : public varkey {
 public:
-  inline obj_varkey() : varkey() {}
 
-  inline obj_varkey(T t)
-    : varkey((const uint8_t *) &obj, sizeof(T)), obj(Trfm()(t))
+  typedef
+    typename std::enable_if<std::is_integral<T>::value, T>::type
+    integral_type;
+
+  inline obj_varkey() : varkey(), obj() {}
+
+  inline obj_varkey(integral_type t)
+    : varkey((const uint8_t *) &obj, sizeof(integral_type)),
+      obj(ByteTrfm()(EncodingTrfm()(t)))
   {
   }
 
 private:
-  T obj;
+  integral_type obj;
 };
 
 typedef obj_varkey<uint8_t>  u8_varkey;

@@ -1,0 +1,3 @@
+We strip out pieces of kvtest.hh that we need here- this is bad software
+engineering practice, since we really should make our btree implement the
+Client interface used in the masstree test code.
