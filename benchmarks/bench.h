@@ -218,6 +218,30 @@ private:
   size_t n;
 };
 
+template <typename StrAllocator>
+class latest_key_callback : public abstract_ordered_index::scan_callback {
+public:
+  latest_key_callback(const StrAllocator &alloc)
+    : n(0), k(&alloc())
+  { }
+
+  virtual bool invoke(
+      const char *key, size_t key_len,
+      const char *value, size_t value_len)
+  {
+    n++;
+    k->assign(key, key_len);
+    return true;
+  }
+
+  inline size_t size() const { return n; }
+  inline std::string &kstr() { return *k; }
+
+private:
+  size_t n;
+  std::string *k;
+};
+
 template <size_t N, typename StrAllocator>
 class static_limit_callback : public abstract_ordered_index::scan_callback {
 public:

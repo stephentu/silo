@@ -1425,6 +1425,7 @@ public:
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0_cg)
+static event_avg_counter evt_avg_order_status_oorder_scan_size("avg_order_status_oorder_scan_size");
 
 ssize_t
 tpcc_worker::txn_order_status()
@@ -1487,17 +1488,18 @@ tpcc_worker::txn_order_status()
 
     // XXX: store last value from client so we don't have to scan
     // from the beginning
-    limit_callback c_oorder(-1);
+    latest_key_callback<str_allocator> c_oorder(get_str_allocator());
     const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
     const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
     {
       ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
       tbl_oorder_c_id_idx->scan(txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder);
     }
-    ALWAYS_ASSERT(!c_oorder.values.empty());
+    INVARIANT(c_oorder.size());
+    evt_avg_order_status_oorder_scan_size.offer(c_oorder.size());
 
     oorder_c_id_idx::key k_oo_idx_temp;
-    const oorder_c_id_idx::key *k_oo_idx = Decode(c_oorder.values.back().first, k_oo_idx_temp);
+    const oorder_c_id_idx::key *k_oo_idx = Decode(c_oorder.kstr(), k_oo_idx_temp);
     const uint o_id = k_oo_idx->o_o_id;
 
     order_line_nop_callback c_order_line;
