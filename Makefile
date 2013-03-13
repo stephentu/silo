@@ -1,7 +1,5 @@
 -include config.mk
 CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
-#CXXFLAGS := -Wall -g
-
 LDFLAGS := -lpthread
 
 # 0 = libc malloc
@@ -17,7 +15,6 @@ USE_PERF_CTRS ?= 0
 ifeq ($(strip $(USE_MALLOC_MODE)),1)
         CXXFLAGS+=-DUSE_JEMALLOC
         LDFLAGS+=-ljemalloc
-        #LDFLAGS+=-L$(HOME)/jemalloc-bin/lib -ljemalloc
 else
 ifeq ($(strip $(USE_MALLOC_MODE)),2)
         CXXFLAGS+=-DUSE_TCMALLOC
@@ -28,6 +25,10 @@ ifeq ($(strip $(USE_MALLOC_MODE)),3)
         LDFLAGS+=-lflow
 endif
 endif
+endif
+
+ifneq ($(strip $(CUSTOM_LDPATH)), )
+        LDFLAGS+=$(CUSTOM_LDPATH)
 endif
 
 ifeq ($(USE_PERF_CTRS),1)
