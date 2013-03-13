@@ -801,7 +801,7 @@ public:
 
 #ifdef DIE_ON_ABORT
   void
-  abort_trap(abort_reason reason) const
+  abort_trap(abort_reason reason)
   {
     AbortReasonCounter(reason)->inc();
     this->reason = reason; // for dump_debug_info() to see
@@ -810,7 +810,7 @@ public:
   }
 #else
   inline ALWAYS_INLINE void
-  abort_trap(abort_reason reason) const
+  abort_trap(abort_reason reason)
   {
     AbortReasonCounter(reason)->inc();
   }
