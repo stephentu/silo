@@ -32,18 +32,19 @@ main(int argc, char **argv)
   while (1) {
     static struct option long_options[] =
     {
-      {"verbose",      no_argument,       &verbose, 1},
-      {"bench",        required_argument, 0,       'b'},
-      {"scale-factor", required_argument, 0,       's'},
-      {"num-threads",  required_argument, 0,       't'},
-      {"db-type",      required_argument, 0,       'd'},
-      {"basedir",      required_argument, 0,       'B'},
-      {"txn-flags",    required_argument, 0,       'f'},
-      {"runtime",      required_argument, 0,       'r'},
+      {"verbose"          , no_argument       , &verbose                 , 1}   ,
+      {"parallel-loading" , no_argument       , &enable_parallel_loading , 1}   ,
+      {"bench"            , required_argument , 0                        , 'b'} ,
+      {"scale-factor"     , required_argument , 0                        , 's'} ,
+      {"num-threads"      , required_argument , 0                        , 't'} ,
+      {"db-type"          , required_argument , 0                        , 'd'} ,
+      {"basedir"          , required_argument , 0                        , 'B'} ,
+      {"txn-flags"        , required_argument , 0                        , 'f'} ,
+      {"runtime"          , required_argument , 0                        , 'r'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "vb:s:t:d:B:f:r:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "vpb:s:t:d:B:f:r:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -127,28 +128,29 @@ main(int argc, char **argv)
 #endif
 
   if (verbose) {
-    cerr << "settings:"                             << endl;
-    cerr << "  bench       : " << bench_type        << endl;
-    cerr << "  scale       : " << scale_factor      << endl;
-    cerr << "  num-threads : " << nthreads          << endl;
-    cerr << "  db-type     : " << db_type           << endl;
-    cerr << "  basedir     : " << basedir           << endl;
-    cerr << "  txn-flags   : " << hexify(txn_flags) << endl;
-    cerr << "  runtime     : " << runtime           << endl;
+    cerr << "settings:"                                   << endl;
+    cerr << "  par-loading : " << enable_parallel_loading << endl;
+    cerr << "  bench       : " << bench_type              << endl;
+    cerr << "  scale       : " << scale_factor            << endl;
+    cerr << "  num-threads : " << nthreads                << endl;
+    cerr << "  db-type     : " << db_type                 << endl;
+    cerr << "  basedir     : " << basedir                 << endl;
+    cerr << "  txn-flags   : " << hexify(txn_flags)       << endl;
+    cerr << "  runtime     : " << runtime                 << endl;
 #ifdef USE_VARINT_ENCODING
-    cerr << "  var-encode  : 1"                     << endl;
+    cerr << "  var-encode  : 1"                           << endl;
 #else
-    cerr << "  var-encode  : 0"                     << endl;
+    cerr << "  var-encode  : 0"                           << endl;
 #endif
 
 #ifdef USE_JEMALLOC
-    cerr << "  allocator   : jemalloc"              << endl;
+    cerr << "  allocator   : jemalloc"                    << endl;
 #elif defined USE_TCMALLOC
-    cerr << "  allocator   : tcmalloc"              << endl;
+    cerr << "  allocator   : tcmalloc"                    << endl;
 #elif defined USE_FLOW
-    cerr << "  allocator   : flow"                  << endl;
+    cerr << "  allocator   : flow"                        << endl;
 #else
-    cerr << "  allocator   : libc"                  << endl;
+    cerr << "  allocator   : libc"                        << endl;
 #endif
 
     cerr << "system properties:" << endl;

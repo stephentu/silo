@@ -33,6 +33,7 @@ int verbose = 0;
 uint64_t txn_flags = 0;
 double scale_factor = 1.0;
 uint64_t runtime = 30;
+int enable_parallel_loading = false;
 
 template <typename T>
 static void

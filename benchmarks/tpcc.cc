@@ -1626,8 +1626,6 @@ public:
     open_tables["warehouse"]         = db->open_index("warehouse", sizeof(warehouse));
   }
 
-  static const bool EnableParallelLoading = true;
-
 protected:
   virtual vector<bench_loader *>
   make_loaders()
@@ -1635,7 +1633,7 @@ protected:
     vector<bench_loader *> ret;
     ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables));
     ret.push_back(new tpcc_item_loader(235443, db, open_tables));
-    if (EnableParallelLoading) {
+    if (enable_parallel_loading) {
       fast_random r(89785943);
       for (uint i = 1; i <= NumWarehouses(); i++)
         ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, i));
@@ -1643,14 +1641,14 @@ protected:
       ret.push_back(new tpcc_stock_loader(89785943, db, open_tables, -1));
     }
     ret.push_back(new tpcc_district_loader(129856349, db, open_tables));
-    if (EnableParallelLoading) {
+    if (enable_parallel_loading) {
       fast_random r(923587856425);
       for (uint i = 1; i <= NumWarehouses(); i++)
         ret.push_back(new tpcc_customer_loader(r.next(), db, open_tables, i));
     } else {
       ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables, -1));
     }
-    if (EnableParallelLoading) {
+    if (enable_parallel_loading) {
       fast_random r(2343352);
       for (uint i = 1; i <= NumWarehouses(); i++)
         ret.push_back(new tpcc_order_loader(r.next(), db, open_tables, i));

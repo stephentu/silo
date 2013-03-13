@@ -28,6 +28,7 @@ extern int verbose;
 extern uint64_t txn_flags;
 extern double scale_factor;
 extern uint64_t runtime;
+extern int enable_parallel_loading;
 
 class scoped_db_thread_ctx : private util::noncopyable {
 public:

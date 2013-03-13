@@ -7,14 +7,17 @@ import sys
 
 #DBS = ('mysql', 'bdb', 'ndb-proto1', 'ndb-proto2')
 #DBS = ('ndb-proto1', 'ndb-proto2')
-DBS = ('ndb-proto2',)
+DBS = ('ndb-proto2', 'kvdb')
 
 # config for tom
 #THREADS = (1, 2, 4, 8, 12, 18, 24, 30, 36, 42, 48)
 #THREADS = (1,)
 
 # config for ben
-THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80)
+#THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80)
+
+# config for istc*
+THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
 
 #TXN_FLAGS = (0x0, 0x1)
 TXN_FLAGS = (0x1,)
