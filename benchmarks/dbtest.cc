@@ -87,7 +87,7 @@ main(int argc, char **argv)
 
     case '?':
       /* getopt_long already printed an error message. */
-      break;
+      exit(1);
 
     default:
       abort();
