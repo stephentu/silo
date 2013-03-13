@@ -325,7 +325,11 @@ public:
     for (size_t idx = 0; idx < SmallSize; idx++) {
       bucket &b = small_elems[idx];
       INVARIANT(b.mapped);
+#if GCC_AT_LEAST_47
       large_elems->emplace(std::move(b.ref()));
+#else
+      large_elems->operator[](std::move(b.ref().first)) = std::move(b.ref().second);
+#endif
       b.destroy();
     }
     return large_elems->operator[](k);
@@ -352,12 +356,17 @@ public:
     for (size_t idx = 0; idx < SmallSize; idx++) {
       bucket &b = small_elems[idx];
       INVARIANT(b.mapped);
+#if GCC_AT_LEAST_47
       large_elems->emplace(std::move(b.ref()));
+#else
+      large_elems->operator[](std::move(b.ref().first)) = std::move(b.ref().second);
+#endif
       b.destroy();
     }
     return large_elems->operator[](std::move(k));
   }
 
+#if GCC_AT_LEAST_47
   // C++11 goodness
   template <class... Args>
   std::pair<iterator, bool>
@@ -394,6 +403,7 @@ public:
       large_elems->emplace(std::move(tpe));
     return std::make_pair(iterator(ret.first), ret.second);
   }
+#endif
 
   inline size_t
   size() const

@@ -80,4 +80,10 @@
 #define NDB_MEMSET memset
 #endif
 
+#if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)
+#define GCC_AT_LEAST_47 1
+#else
+#define GCC_AT_LEAST_47 0
+#endif
+
 #endif /* _MACROS_H_ */

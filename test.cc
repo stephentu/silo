@@ -514,6 +514,7 @@ Test()
 
   { // C++11 goodness
 
+#if GCC_AT_LEAST_47
     small_unordered_map<string, string> m;
     auto ret = m.emplace("hello", "world");
     ALWAYS_ASSERT(ret.second);
@@ -539,6 +540,8 @@ Test()
     ALWAYS_ASSERT(it != m.end());
     it->second = "baz";
     ALWAYS_ASSERT(m["foo"] == "baz");
+#endif
+
   }
 
   cout << "map test passed" << endl;
