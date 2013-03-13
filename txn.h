@@ -150,38 +150,42 @@ public:
   private:
     static const version_t HDR_LOCKED_MASK = 0x1;
 
-    static const version_t HDR_DELETING_SHIFT = 1;
+    static const version_t HDR_TYPE_SHIFT = 1;
+    static const version_t HDR_TYPE_MASK = 0x1 << HDR_TYPE_SHIFT;
+
+    static const version_t HDR_DELETING_SHIFT = 2;
     static const version_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
 
-    static const version_t HDR_ENQUEUED_SHIFT = 2;
+    static const version_t HDR_ENQUEUED_SHIFT = 3;
     static const version_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
 
-    static const version_t HDR_LATEST_SHIFT = 3;
+    static const version_t HDR_LATEST_SHIFT = 4;
     static const version_t HDR_LATEST_MASK = 0x1 << HDR_LATEST_SHIFT;
 
-    static const version_t HDR_VERSION_SHIFT = 4;
+    static const version_t HDR_VERSION_SHIFT = 5;
     static const version_t HDR_VERSION_MASK = ((version_t)-1) << HDR_VERSION_SHIFT;
 
   public:
 
     // NB(stephentu): ABA problem happens after some multiple of
-    // 2^(NBits(version_t)-4) concurrent modifications- somewhat low probability
+    // 2^(NBits(version_t)-5) concurrent modifications- somewhat low probability
     // event, so we let it happen
     //
-    // [ locked | deleted | enqueued | latest | version ]
-    // [  0..1  |  1..2   |   2..3   |  3..4  |  4..32  ]
-    volatile version_t hdr;
-
     // constraints:
     //   * enqueued => !deleted
     //   * deleted  => !enqueued
+    //
+    // [ locked |  type  | deleted | enqueued | latest | version ]
+    // [  0..1  |  1..2  |  2..3   |   3..4   |  4..5  |  5..32  ]
+    volatile version_t hdr;
 
-    struct logical_node *next;
-
+    // uninterpreted TID
     tid_t version;
+
     // small sizes on purpose
     node_size_type size; // actual size of record (0 implies absent record)
-    node_size_type alloc_size; // max size record allowed
+    node_size_type alloc_size; // max size record allowed. is the space
+                               // available for the record buf
 
     enum QueueType {
       QUEUE_TYPE_NONE,
@@ -202,7 +206,16 @@ public:
     std::vector<op_hist_rec> op_hist;
 #endif
 
-    uint8_t value_start[0]; // must be last field
+    // must be last field
+    union {
+      struct {
+        struct logical_node *next;
+        uint8_t value_start[0];
+      } big;
+      struct {
+        uint8_t value_start[0];
+      } small;
+    } d[0];
 
   private:
     // private ctor/dtor b/c we do some special memory stuff
@@ -215,33 +228,58 @@ public:
       return s;
     }
 
+    // creates a "small" type (type 0), with an empty (deleted) value
     logical_node(size_type alloc_size)
-      : hdr(HDR_LATEST_MASK), next(0), version(MIN_TID),
-        size(0), alloc_size(CheckBounds(alloc_size))
+      : hdr(HDR_LATEST_MASK),
+        version(MIN_TID),
+        size(0),
+        alloc_size(CheckBounds(alloc_size))
 #ifdef LOGICAL_NODE_QUEUE_TRACKING
       , last_queue_type(QUEUE_TYPE_NONE)
 #endif
     {
       // each logical node starts with one "deleted" entry at MIN_TID
       // (this is indicated by size = 0)
-      INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
+      INVARIANT(((char *)this) + sizeof(*this) == (char *) &d[0]);
       ++g_evt_logical_node_creates;
       g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node));
     }
 
+    // creates a "small" type (type 0), with a non-empty value
     logical_node(tid_t version, const_record_type r,
-                 size_type size, size_type alloc_size,
-                 struct logical_node *next, bool set_latest)
-      : hdr(set_latest ? HDR_LATEST_MASK : 0), next(next), version(version),
-        size(CheckBounds(size)), alloc_size(CheckBounds(alloc_size))
+                 size_type size, size_type alloc,
+                 bool set_latest)
+      : hdr(set_latest ? HDR_LATEST_MASK : 0),
+        version(version),
+        size(CheckBounds(size)),
+        alloc_size(CheckBounds(alloc_size))
 #ifdef LOGICAL_NODE_QUEUE_TRACKING
       , last_queue_type(QUEUE_TYPE_NONE)
 #endif
     {
       INVARIANT(size <= alloc_size);
-      NDB_MEMCPY(&value_start[0], r, size);
+      NDB_MEMCPY(&d->small.value_start[0], r, size);
       ++g_evt_logical_node_creates;
       g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node));
+    }
+
+    // creates a "big" type (type 1), with a non-empty value
+    logical_node(tid_t version, const_record_type r,
+                 size_type size, size_type alloc_size,
+                 struct logical_node *next, bool set_latest)
+      : hdr(HDR_TYPE_MASK | (set_latest ? HDR_LATEST_MASK : 0)),
+        version(version),
+        size(CheckBounds(size)),
+        alloc_size(CheckBounds(alloc_size))
+#ifdef LOGICAL_NODE_QUEUE_TRACKING
+      , last_queue_type(QUEUE_TYPE_NONE)
+#endif
+    {
+      INVARIANT(size <= alloc_size);
+      d->big.next = next;
+      NDB_MEMCPY(&d->big.value_start[0], r, size);
+      ++g_evt_logical_node_creates;
+      g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node) + sizeof(next));
     }
 
     friend class rcu;
@@ -289,6 +327,24 @@ public:
       INVARIANT(!IsLocked(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
+    }
+
+    inline bool
+    is_big_type() const
+    {
+      return IsBigType(hdr);
+    }
+
+    inline bool
+    is_small_type() const
+    {
+      return !is_big_type();
+    }
+
+    static inline bool
+    IsBigType(version_t v)
+    {
+      return v & HDR_TYPE_MASK;
     }
 
     inline bool
@@ -429,6 +485,65 @@ public:
       return hdr == version;
     }
 
+    inline struct logical_node *
+    get_next()
+    {
+      if (is_big_type())
+        return d->big.next;
+      return NULL;
+    }
+
+    inline struct logical_node *
+    get_next(version_t v)
+    {
+      INVARIANT(IsBigType(v) == IsBigType(hdr));
+      if (IsBigType(v))
+        return d->big.next;
+      return NULL;
+    }
+
+    inline const struct logical_node *
+    get_next() const
+    {
+      return const_cast<logical_node *>(this)->get_next();
+    }
+
+    inline const struct logical_node *
+    get_next(version_t v) const
+    {
+      return const_cast<logical_node *>(this)->get_next(v);
+    }
+
+    // precondition: only big types can call
+    inline void
+    set_next(struct logical_node *next)
+    {
+      INVARIANT(is_big_type());
+      d->big.next = next;
+    }
+
+    inline void
+    clear_next()
+    {
+      if (is_big_type())
+        d->big.next = NULL;
+    }
+
+    inline char *
+    get_value_start(version_t v)
+    {
+      INVARIANT(IsBigType(v) == IsBigType(hdr));
+      if (IsBigType(v))
+        return (char *) &d->big.value_start[0];
+      return (char *) &d->small.value_start[0];
+    }
+
+    inline const char *
+    get_value_start(version_t v) const
+    {
+      return const_cast<logical_node *>(this)->get_value_start(v);
+    }
+
 private:
 
     inline bool
@@ -443,14 +558,14 @@ private:
     {
     retry:
       const version_t v = stable_version();
-      const struct logical_node *p = next;
+      const struct logical_node *p = get_next(v);
       const bool found = is_not_behind(t);
       if (found) {
         if (unlikely(require_latest && !IsLatest(v)))
           return false;
         start_t = version;
         const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
-        r.assign((const char *) &value_start[0], read_sz);
+        r.assign(get_value_start(v), read_sz);
       }
       if (unlikely(!check_version(v)))
         goto retry;
@@ -537,9 +652,10 @@ public:
     write_record_ret
     write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
     {
-      // XXX: one NDB_MEMCPY in common case, two NDB_MEMCPY in spill case
       INVARIANT(is_locked());
       INVARIANT(is_latest());
+
+      const version_t v = unstable_version();
 
       if (!sz)
         ++g_evt_logical_node_logical_deletes;
@@ -552,13 +668,13 @@ public:
           // directly update in place
           version = t;
           size = sz;
-          NDB_MEMCPY(&value_start[0], r, sz);
+          NDB_MEMCPY(get_value_start(v), r, sz);
           return write_record_ret(false, NULL);
         }
 
         // keep in the chain (it's wasteful, but not incorrect)
         // so that cleanup is easier
-        logical_node *rep = alloc(t, r, sz, this, true);
+        logical_node * const rep = alloc(t, r, sz, this, true);
         INVARIANT(rep->is_latest());
         set_latest(false);
         return write_record_ret(false, rep);
@@ -567,25 +683,28 @@ public:
       // need to spill
       ++g_evt_logical_node_spills;
       g_evt_avg_record_spill_len.offer(size);
-      if (likely(sz <= alloc_size)) {
-        logical_node *spill = alloc(version, &value_start[0], size, next, false);
+
+      char * const vstart = get_value_start(v);
+
+      if (IsBigType(v) && sz <= alloc_size) {
+        logical_node * const spill = alloc(version, (const_record_type) vstart, size, d->big.next, false);
         INVARIANT(!spill->is_latest());
-        next = spill;
+        set_next(spill);
         version = t;
         size = sz;
-        NDB_MEMCPY(&value_start[0], r, sz);
+        NDB_MEMCPY(vstart, r, sz);
         return write_record_ret(true, NULL);
       }
 
-      logical_node *rep = alloc(t, r, sz, this, true);
+      logical_node * const rep = alloc(t, r, sz, this, true);
       INVARIANT(rep->is_latest());
       set_latest(false);
       return write_record_ret(true, rep);
     }
 
-    // why do we round allocation sizes up?  jemalloc will do this internally
-    // anyways, so we might as well grab more usable space (really just
-    // internal vs external fragmentation)
+    // NB: we round up allocation sizes because jemalloc will do this
+    // internally anyways, so we might as well grab more usable space (really
+    // just internal vs external fragmentation)
 
     static inline logical_node *
     alloc_first(size_type alloc_sz)
@@ -607,20 +726,22 @@ public:
     {
       INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
       const size_t max_alloc_sz =
-        std::numeric_limits<node_size_type>::max() + sizeof(logical_node);
+        std::numeric_limits<node_size_type>::max() + sizeof(logical_node) + sizeof(next);
       const size_t alloc_sz =
         std::min(
-            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + sz),
+            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + sizeof(next) + sz),
             max_alloc_sz);
       char *p = (char *) malloc(alloc_sz);
       INVARIANT(p);
-      return new (p) logical_node(version, value, sz, alloc_sz - sizeof(logical_node), next, set_latest);
+      return new (p) logical_node(
+          version, value, sz,
+          alloc_sz - sizeof(logical_node) - sizeof(next), next, set_latest);
     }
 
     static void
     deleter(void *p)
     {
-      logical_node *n = (logical_node *) p;
+      logical_node * const n = (logical_node *) p;
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
       n->~logical_node();

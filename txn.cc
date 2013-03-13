@@ -33,11 +33,11 @@ transaction::logical_node::~logical_node()
   // free reachable nodes:
   // don't do this recursively, to avoid overflowing
   // stack w/ really long chains
-  struct logical_node *cur = next;
+  struct logical_node *cur = get_next();
   while (cur) {
-    struct logical_node *tmp = cur->next;
+    struct logical_node *tmp = cur->get_next();
     INVARIANT(!cur->is_enqueued());
-    cur->next = NULL; // so cur's dtor doesn't attempt to double free
+    cur->clear_next(); // so cur's dtor doesn't attempt to double free
     release_no_rcu(cur); // just a wrapper for ~logical_node() + free()
     cur = tmp;
   }
@@ -62,6 +62,7 @@ transaction::logical_node::VersionInfoStr(version_t v)
   ostringstream buf;
   buf << "[";
   buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
+  buf << (IsBigType(v) ? "BIG" : "SMALL") << " | ";
   buf << (IsDeleting(v) ? "DEL" : "-") << " | ";
   buf << (IsEnqueued(v) ? "ENQ" : "-") << " | ";
   buf << (IsLatest(v) ? "LATEST" : "-") << " | ";
@@ -112,14 +113,14 @@ operator<<(ostream &o, const transaction::logical_node &ln)
   tids.push_back(ln.version);
   recs.push_back(ln.size);
   vector<string> tids_s = format_tid_list(tids);
-  const bool has_spill = ln.next;
+  const bool has_spill = ln.get_next();
   o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) <<
     ", tids=" << format_list(tids_s.rbegin(), tids_s.rend()) <<
     ", sizes=" << format_list(recs.rbegin(), recs.rend()) <<
     ", has_spill=" <<  has_spill << "]";
   o << endl;
-  const struct transaction::logical_node *p = ln.next;
-  for (; p; p = p->next) {
+  const struct transaction::logical_node *p = ln.get_next();
+  for (; p; p = p->get_next()) {
     vector<transaction::tid_t> itids;
     vector<transaction::size_type> irecs;
     itids.push_back(p->version);
@@ -1004,7 +1005,7 @@ chain_contains_enqueued(const transaction::logical_node *p)
   while (cur) {
     if (cur->is_enqueued())
       return true;
-    cur = cur->next;
+    cur = cur->get_next();
   }
   return false;
 }
@@ -1014,8 +1015,8 @@ transaction_proto2::do_logical_node_chain_cleanup(logical_node *ln)
 {
   // try to clean up the chain
   INVARIANT(ln->is_latest());
-  struct logical_node *p = ln, **pp = 0;
-  const bool has_chain = ln->next;
+  struct logical_node *p = ln, *pprev = 0;
+  const bool has_chain = ln->get_next();
   bool do_break = false;
   while (p) {
     INVARIANT(p == ln || !p->is_latest());
@@ -1024,28 +1025,29 @@ transaction_proto2::do_logical_node_chain_cleanup(logical_node *ln)
     do_break = false;
     if (EpochId(p->version) <= g_reads_finished_epoch)
       do_break = true;
-    pp = &p->next;
-    p = p->next;
+    pprev = p;
+    p = p->get_next();
   }
   if (p) {
+    INVARIANT(pprev);
     // can only GC a continous chain of not-enqueued.
     logical_node *last_enq = NULL, *cur = p;
     while (cur) {
       if (cur->is_enqueued())
         last_enq = cur;
-      cur = cur->next;
+      cur = cur->get_next();
     }
-    p = last_enq ? last_enq->next : p;
+    p = last_enq ? last_enq->get_next() : p;
   }
   if (p) {
     INVARIANT(p != ln);
-    INVARIANT(pp);
+    INVARIANT(pprev);
     INVARIANT(!p->is_latest());
     INVARIANT(!chain_contains_enqueued(p));
-    *pp = 0;
+    pprev->set_next(NULL);
     p->gc_chain();
   }
-  if (has_chain && !ln->next)
+  if (has_chain && !ln->get_next())
     ++evt_local_chain_cleanups;
 }
 
@@ -1080,7 +1082,7 @@ transaction_proto2::try_logical_node_cleanup(const logical_node_context &ctx)
       ++evt_try_delete_unlinks;
     }
   } else {
-    ret = ctx.ln->next;
+    ret = ctx.ln->get_next();
   }
   if (ret) {
     ctx.ln->set_enqueued(true, logical_node::QUEUE_TYPE_LOCAL);
