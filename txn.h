@@ -28,6 +28,7 @@
 #include "thread.h"
 #include "spinlock.h"
 #include "small_unordered_map.h"
+#include "prefetch.h"
 
 // just a debug option to help track down a particular
 // race condition
@@ -272,7 +273,23 @@ public:
     friend class rcu;
     ~logical_node();
 
+    inline size_t
+    base_size() const
+    {
+      if (is_big_type())
+        return sizeof(*this) + sizeof(this);
+      return sizeof(*this);
+    }
+
   public:
+
+    inline void
+    prefetch() const
+    {
+#ifdef LOGICAL_NODE_PREFETCH
+      prefetch_bytes(this, base_size() + alloc_size);
+#endif
+    }
 
     // gc_chain() schedules this instance, and all instances
     // reachable from this instance for deletion via RCU.

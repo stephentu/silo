@@ -26,6 +26,30 @@ using namespace std;
 using namespace util;
 
 void
+UtilTest()
+{
+  _static_assert(CACHELINE_SIZE == 64);
+  _static_assert(LG_CACHELINE_SIZE == 6);
+
+  const bool e0 = round_up<size_t, 1>(3) == 4;
+  ALWAYS_ASSERT(e0);
+  const bool e1 = round_down<size_t, 1>(3) == 2;
+  ALWAYS_ASSERT(e1);
+  const bool e2 = round_up<size_t, 1>(2) == 2;
+  ALWAYS_ASSERT(e2);
+  const bool e3 = round_down<size_t, 1>(2) == 2;
+  ALWAYS_ASSERT(e3);
+  const bool e4 = round_down<size_t, LG_CACHELINE_SIZE>(2) == 0;
+  ALWAYS_ASSERT(e4);
+  const bool e5 = round_down<size_t, LG_CACHELINE_SIZE>(CACHELINE_SIZE) == CACHELINE_SIZE;
+  ALWAYS_ASSERT(e5);
+  const bool e6 = round_down<size_t, LG_CACHELINE_SIZE>(CACHELINE_SIZE + 10) == CACHELINE_SIZE;
+  ALWAYS_ASSERT(e6);
+
+  cout << "util test passed" << endl;
+}
+
+void
 XbufTest()
 {
   xbuf s = "hello";
@@ -615,6 +639,7 @@ public:
 #ifndef CHECK_INVARIANTS
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
+    UtilTest();
     XbufTest();
     varint::Test();
     small_vector_ns::Test();

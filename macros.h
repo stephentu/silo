@@ -5,11 +5,12 @@
 #include <stdexcept>
 
 /** options */
-#define NODE_PREFETCH
+#define LOGICAL_NODE_PREFETCH
+#define BTREE_NODE_PREFETCH
 //#define DIE_ON_ABORT
 //#define TRAP_LARGE_ALLOOCATIONS
 #define USE_BUILTIN_MEMFUNCS
-//#define CHECK_INVARIANTS
+#define CHECK_INVARIANTS
 #define USE_SMALL_CONTAINER_OPT
 #define BTREE_NODE_ALLOC_CACHE_ALIGNED
 //#define TXN_BTREE_DUMP_PURGE_STATS
@@ -17,6 +18,7 @@
 #define USE_VARINT_ENCODING
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
+#define LG_CACHELINE_SIZE __builtin_ctz(CACHELINE_SIZE)
 
 // global maximum on the number of unique threads allowed
 // in the system

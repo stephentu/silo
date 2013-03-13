@@ -364,6 +364,7 @@ transaction::commit(bool doThrow)
       INVARIANT(it->second.locked);
       VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
                    << " at commit_tid " << commit_tid.second << endl);
+      it->first->prefetch();
       const logical_node::write_record_ret ret = it->first->write_record_at(
           this, commit_tid.second,
           (const record_type) it->second.r.data(), it->second.r.size());

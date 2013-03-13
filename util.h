@@ -137,6 +137,14 @@ round_up(T t)
   return (t + mask) & ~mask;
 }
 
+template <typename T, unsigned int lgbase>
+inline ALWAYS_INLINE T
+round_down(T t)
+{
+  const T mask = (T(1) << lgbase) - 1;
+  return (t & ~mask);
+}
+
 //// xor-shift:
 //// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
 //class fast_random {

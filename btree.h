@@ -429,7 +429,9 @@ private:
     inline void
     prefetch() const
     {
+#ifdef BTREE_NODE_PREFETCH
       prefetch_object(this);
+#endif
     }
 
     inline size_t
@@ -574,7 +576,9 @@ private:
     inline void
     prefetch() const
     {
+#ifdef BTREE_NODE_PREFETCH
       prefetch_object(this);
+#endif
     }
 
     /**
