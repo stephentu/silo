@@ -1,3 +1,4 @@
+-include config.mk
 CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 #CXXFLAGS := -Wall -g
 
