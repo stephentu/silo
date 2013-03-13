@@ -556,7 +556,26 @@ private:
       }
       if (unlikely(!check_version(v)))
         goto retry;
-      return found ? true : (p ? p->record_at(t, start_t, r, max_len, false) : false);
+      if (found)
+        return true;
+      if (p)
+        return p->record_at(t, start_t, r, max_len, false);
+      // NB(stephentu): if we reach the end of a chain then we assume that
+      // the record exists as a deleted record.
+      //
+      // This is safe because we have been very careful to not garbage collect
+      // elements along the chain until it is guaranteed that the record
+      // is superceded by later record in any consistent read. Therefore,
+      // if we reach the end of the chain, then it *must* be the case that
+      // the record does not actually exist.
+      //
+      // Note that MIN_TID is the *wrong* tid to use here given wrap-around- we
+      // really should be setting this value to the tid which represents the
+      // oldest TID possible in the system. But we currently don't implement
+      // wrap around
+      start_t = MIN_TID;
+      r.clear();
+      return true;
     }
 
     static event_counter g_evt_logical_node_creates;
@@ -581,6 +600,7 @@ public:
     stable_read(tid_t t, tid_t &start_t, string_type &r,
                 size_t max_len = string_type::npos) const
     {
+      INVARIANT(max_len > 0); // otherwise something will probably break
       return record_at(t, start_t, r, max_len, true);
     }
 
