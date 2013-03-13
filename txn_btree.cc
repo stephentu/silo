@@ -354,7 +354,6 @@ txn_btree::purge_tree_walker::on_node_failure()
   spec_values.clear();
 }
 
-
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
   inline bool

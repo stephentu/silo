@@ -5,7 +5,6 @@
 #include "../varkey.h"
 #include "../macros.h"
 #include "../util.h"
-#include "../varint.h"
 
 using namespace std;
 using namespace util;
@@ -60,52 +59,6 @@ void
 ndb_wrapper::close_index(abstract_ordered_index *idx)
 {
   delete idx;
-}
-
-static inline ALWAYS_INLINE size_t
-size_encode_uint32(uint32_t value)
-{
-#ifdef USE_VARINT_ENCODING
-  return size_uvint32(value);
-#else
-  return sizeof(uint32_t);
-#endif
-}
-
-static inline ALWAYS_INLINE uint8_t *
-write_uint32(uint8_t *buf, uint32_t value)
-{
-  uint32_t *p = (uint32_t *) buf;
-  *p = value;
-  return (uint8_t *) (p + 1);
-}
-
-static inline ALWAYS_INLINE uint8_t *
-write_encode_uint32(uint8_t *buf, uint32_t value)
-{
-#ifdef USE_VARINT_ENCODING
-  return write_uvint32(buf, value);
-#else
-  return write_uint32(buf, value);
-#endif
-}
-
-static inline ALWAYS_INLINE const uint8_t *
-read_uint32(const uint8_t *buf, uint32_t *value)
-{
-  const uint32_t *p = (const uint32_t *) buf;
-  *value = *p;
-  return (const uint8_t *) (p + 1);
-}
-
-static inline ALWAYS_INLINE const uint8_t *
-read_encode_uint32(const uint8_t *buf, uint32_t *value)
-{
-#ifdef USE_VARINT_ENCODING
-  return read_uvint32(buf, value);
-#else
-  return read_uint32(buf, value);
-#endif
 }
 
 ndb_ordered_index::ndb_ordered_index(const string &name, size_t value_size_hint, bool mostly_append)

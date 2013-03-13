@@ -54,12 +54,14 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/inline_str.h \
 	benchmarks/bdb_wrapper.h \
 	benchmarks/ndb_wrapper.h \
+	benchmarks/kvdb_wrapper.h \
 	benchmarks/mysql_wrapper.h \
 	benchmarks/tpcc.h \
 	benchmarks/masstree/kvrandom.hh
 BENCH_SRCFILES = \
 	benchmarks/bdb_wrapper.cc \
 	benchmarks/ndb_wrapper.cc \
+	benchmarks/kvdb_wrapper.cc \
 	benchmarks/mysql_wrapper.cc \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc \

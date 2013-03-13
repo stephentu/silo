@@ -13,6 +13,7 @@
 #include "bench.h"
 #include "bdb_wrapper.h"
 #include "ndb_wrapper.h"
+#include "kvdb_wrapper.h"
 #include "mysql_wrapper.h"
 
 using namespace std;
@@ -113,6 +114,8 @@ main(int argc, char **argv)
     db = new ndb_wrapper(ndb_wrapper::PROTO_1);
   } else if (db_type == "ndb-proto2") {
     db = new ndb_wrapper(ndb_wrapper::PROTO_2);
+  } else if (db_type == "kvdb") {
+    db = new kvdb_wrapper;
   } else if (db_type == "mysql") {
     string dbdir = basedir + "/mysql-db";
     db = new mysql_wrapper(dbdir, bench_type);
