@@ -8,22 +8,22 @@ LDFLAGS := -lpthread
 # 1 = jemalloc
 # 2 = tcmalloc
 # 3 = flow
-USE_MALLOC_MODE=1
+USE_MALLOC_MODE ?= 1
 
 # 0 = disable perf counters
 # 1 = enable perf counters
-USE_PERF_CTRS=0
+USE_PERF_CTRS ?= 0
 
-ifeq ($(USE_MALLOC_MODE),1)
+ifeq ($(strip $(USE_MALLOC_MODE)),1)
         CXXFLAGS+=-DUSE_JEMALLOC
         LDFLAGS+=-ljemalloc
         #LDFLAGS+=-L$(HOME)/jemalloc-bin/lib -ljemalloc
 else
-ifeq ($(USE_MALLOC_MODE),2)
+ifeq ($(strip $(USE_MALLOC_MODE)),2)
         CXXFLAGS+=-DUSE_TCMALLOC
         LDFLAGS+=-ltcmalloc
 else
-ifeq ($(USE_MALLOC_MODE),3)
+ifeq ($(strip $(USE_MALLOC_MODE)),3)
         CXXFLAGS+=-DUSE_FLOW
         LDFLAGS+=-lflow
 endif
