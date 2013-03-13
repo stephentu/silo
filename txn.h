@@ -229,8 +229,8 @@ public:
     }
 
     // creates a "small" type (type 0), with an empty (deleted) value
-    logical_node(size_type alloc_size)
-      : hdr(HDR_LATEST_MASK),
+    logical_node(bool do_big_type, size_type alloc_size)
+      : hdr((do_big_type ? HDR_TYPE_MASK : 0) | HDR_LATEST_MASK),
         version(MIN_TID),
         size(0),
         alloc_size(CheckBounds(alloc_size))
@@ -241,26 +241,12 @@ public:
       // each logical node starts with one "deleted" entry at MIN_TID
       // (this is indicated by size = 0)
       INVARIANT(((char *)this) + sizeof(*this) == (char *) &d[0]);
+      if (do_big_type)
+        d->big.next = 0;
       ++g_evt_logical_node_creates;
-      g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node));
-    }
-
-    // creates a "small" type (type 0), with a non-empty value
-    logical_node(tid_t version, const_record_type r,
-                 size_type size, size_type alloc,
-                 bool set_latest)
-      : hdr(set_latest ? HDR_LATEST_MASK : 0),
-        version(version),
-        size(CheckBounds(size)),
-        alloc_size(CheckBounds(alloc_size))
-#ifdef LOGICAL_NODE_QUEUE_TRACKING
-      , last_queue_type(QUEUE_TYPE_NONE)
-#endif
-    {
-      INVARIANT(size <= alloc_size);
-      NDB_MEMCPY(&d->small.value_start[0], r, size);
-      ++g_evt_logical_node_creates;
-      g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node));
+      g_evt_logical_node_bytes_allocated +=
+        (alloc_size + sizeof(logical_node) +
+         (do_big_type ? sizeof(logical_node *) : 0));
     }
 
     // creates a "big" type (type 1), with a non-empty value
@@ -279,7 +265,8 @@ public:
       d->big.next = next;
       NDB_MEMCPY(&d->big.value_start[0], r, size);
       ++g_evt_logical_node_creates;
-      g_evt_logical_node_bytes_allocated += (alloc_size + sizeof(logical_node) + sizeof(next));
+      g_evt_logical_node_bytes_allocated +=
+        (alloc_size + sizeof(logical_node) + sizeof(next));
     }
 
     friend class rcu;
@@ -707,18 +694,22 @@ public:
     // just internal vs external fragmentation)
 
     static inline logical_node *
-    alloc_first(size_type alloc_sz)
+    alloc_first(bool do_big_type, size_type alloc_sz)
     {
       INVARIANT(alloc_sz <= std::numeric_limits<node_size_type>::max());
+      const size_t big_type_contrib_sz = do_big_type ? sizeof(logical_node *) : 0;
       const size_t max_actual_alloc_sz =
-        std::numeric_limits<node_size_type>::max() + sizeof(logical_node);
+        std::numeric_limits<node_size_type>::max() + sizeof(logical_node) + big_type_contrib_sz;
       const size_t actual_alloc_sz =
         std::min(
-            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + alloc_sz),
+            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + big_type_contrib_sz + alloc_sz),
             max_actual_alloc_sz);
       char *p = (char *) malloc(actual_alloc_sz);
       INVARIANT(p);
-      return new (p) logical_node(actual_alloc_sz - sizeof(logical_node));
+      INVARIANT((actual_alloc_sz - sizeof(logical_node) - big_type_contrib_sz) >= alloc_sz);
+      return new (p) logical_node(
+          do_big_type,
+          actual_alloc_sz - sizeof(logical_node) - big_type_contrib_sz);
     }
 
     static inline logical_node *
@@ -1147,7 +1138,13 @@ public:
   {
     INVARIANT(prev < cur);
     INVARIANT(EpochId(cur) >= g_consistent_epoch);
-    return EpochId(prev) == EpochId(cur);
+
+    // XXX(stephentu): the !prev check is a *bit* of a hack-
+    // we're assuming that !prev (MIN_TID) corresponds to an
+    // absent (removed) record, so it is safe to overwrite it,
+    //
+    // This is an OK assumption with *no TID wrap around*.
+    return EpochId(prev) == EpochId(cur) || !prev;
   }
 
 protected:

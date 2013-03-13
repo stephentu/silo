@@ -1616,11 +1616,11 @@ public:
     open_tables["customer"]          = db->open_index("customer", sizeof(customer));
     open_tables["customer_name_idx"] = db->open_index("customer_name_idx", sizeof(customer_name_idx));
     open_tables["district"]          = db->open_index("district", sizeof(district));
-    open_tables["history"]           = db->open_index("history", sizeof(history));
+    open_tables["history"]           = db->open_index("history", sizeof(history), true);
     open_tables["item"]              = db->open_index("item", sizeof(item));
     open_tables["new_order"]         = db->open_index("new_order", sizeof(new_order));
     open_tables["oorder"]            = db->open_index("oorder", sizeof(oorder));
-    open_tables["oorder_c_id_idx"]   = db->open_index("oorder_c_id_idx", sizeof(oorder_c_id_idx));
+    open_tables["oorder_c_id_idx"]   = db->open_index("oorder_c_id_idx", sizeof(oorder_c_id_idx), true);
     open_tables["order_line"]        = db->open_index("order_line", sizeof(order_line));
     open_tables["stock"]             = db->open_index("stock", sizeof(stock));
     open_tables["warehouse"]         = db->open_index("warehouse", sizeof(warehouse));

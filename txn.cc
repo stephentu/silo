@@ -201,7 +201,8 @@ transaction::commit(bool doThrow)
           absent_it->second = true;
         }
       } else {
-        logical_node *ln = logical_node::alloc_first(it->second.size());
+        logical_node *ln = logical_node::alloc_first(
+            !outer_it->first->is_mostly_append(), it->second.size());
         // XXX: underlying btree api should return the existing value if
         // insert fails- this would allow us to avoid having to do another search
         pair<const btree::node_opaque_t *, uint64_t> insert_info;

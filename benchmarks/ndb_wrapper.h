@@ -52,7 +52,9 @@ public:
   virtual void print_txn_debug(void *txn) const;
 
   virtual abstract_ordered_index *
-  open_index(const std::string &name, size_t value_size_hint);
+  open_index(const std::string &name,
+             size_t value_size_hint,
+             bool mostly_append);
 
   virtual void
   close_index(abstract_ordered_index *idx);
@@ -63,7 +65,7 @@ private:
 
 class ndb_ordered_index : public abstract_ordered_index {
 public:
-  ndb_ordered_index(const std::string &name, size_t value_size_hint);
+  ndb_ordered_index(const std::string &name, size_t value_size_hint, bool mostly_append);
   virtual bool get(
       void *txn,
       const std::string &key,
