@@ -127,6 +127,13 @@ public:
     return std::string((const char *) p, l);
   }
 
+  inline std::string &
+  str(std::string &buf) const
+  {
+    buf.assign((const char *) p, l);
+    return buf;
+  }
+
 private:
   const uint8_t *p;
   size_t l;

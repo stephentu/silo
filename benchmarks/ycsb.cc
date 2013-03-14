@@ -19,6 +19,7 @@ using namespace std;
 using namespace util;
 
 static size_t nkeys;
+static const size_t YCSBRecordSize = 1000;
 
 class ycsb_worker : public bench_worker {
 public:
@@ -26,18 +27,19 @@ public:
               const map<string, abstract_ordered_index *> &open_tables,
               spin_barrier *barrier_a, spin_barrier *barrier_b)
     : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
-      tbl(open_tables.at("USERTABLE"))
+      tbl(open_tables.at("USERTABLE")),
+      obj_put_strs_n(0),
+      computation_n(0)
   {
   }
 
   ssize_t
   txn_read()
   {
-    void *txn = db->new_txn(txn_flags);
-    const string k = u64_varkey(r.next() % nkeys).str();
+    void * const txn = db->new_txn(txn_flags);
     try {
-      string v;
-      ALWAYS_ASSERT(tbl->get(txn, k, v));
+      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
+      computation_n += obj_v.size();
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -56,11 +58,9 @@ public:
   ssize_t
   txn_write()
   {
-    void *txn = db->new_txn(txn_flags);
-    string k = u64_varkey(r.next() % nkeys).str();
+    void * const txn = db->new_txn(txn_flags);
     try {
-      string v(128, 'b');
-      tbl->put(txn, move(k), move(v));
+      tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'b'));
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -79,13 +79,11 @@ public:
   ssize_t
   txn_rmw()
   {
-    void *txn = db->new_txn(txn_flags);
-    string k = u64_varkey(r.next() % nkeys).str();
+    void * const txn = db->new_txn(txn_flags);
     try {
-      string v;
-      ALWAYS_ASSERT(tbl->get(txn, k, v));
-      string vnew(128, 'c');
-      tbl->put(txn, move(k), move(vnew));
+      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
+      computation_n += obj_v.size();
+      tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'c'));
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -103,24 +101,28 @@ public:
 
   class worker_scan_callback : public abstract_ordered_index::scan_callback {
   public:
+    worker_scan_callback() : n(0) {}
     virtual bool
     invoke(const char *key, size_t key_len,
            const char *value, size_t value_len)
     {
+      n += value_len;
       return true;
     }
+    size_t n;
   };
 
   ssize_t
   txn_scan()
   {
-    void *txn = db->new_txn(txn_flags);
+    void * const txn = db->new_txn(txn_flags);
     const size_t kstart = r.next() % nkeys;
-    const string kbegin = u64_varkey(kstart).str();
-    const string kend = u64_varkey(kstart + 100).str();
+    const string &kbegin = u64_varkey(kstart).str(obj_key0);
+    const string &kend = u64_varkey(kstart + 100).str(obj_key1);
     worker_scan_callback c;
     try {
       tbl->scan(txn, kbegin, &kend, c);
+      computation_n += c.n;
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -140,14 +142,34 @@ public:
   get_workload() const
   {
     workload_desc_vec w;
-    w.push_back(workload_desc("Read", 0.95, TxnRead));
-    w.push_back(workload_desc("ReadModifyWrite", 0.04, TxnRmw));
-    w.push_back(workload_desc("Write", 0.01, TxnWrite));
+    //w.push_back(workload_desc("Read", 0.95, TxnRead));
+    //w.push_back(workload_desc("ReadModifyWrite", 0.04, TxnRmw));
+    //w.push_back(workload_desc("Write", 0.01, TxnWrite));
+
+    // YCSB workload "A" - 50/50 read/write
+    w.push_back(workload_desc("Read", 0.5, TxnRead));
+    w.push_back(workload_desc("Write", 0.5, TxnWrite));
     return w;
+  }
+
+protected:
+
+  inline ALWAYS_INLINE string &
+  str() {
+    return obj_put_strs[obj_put_strs_n++ % ARRAY_NELEMS(obj_put_strs)];
   }
 
 private:
   abstract_ordered_index *tbl;
+
+  string obj_key0;
+  string obj_key1;
+  string obj_v;
+
+  string obj_put_strs[32];
+  unsigned obj_put_strs_n;
+
+  uint64_t computation_n;
 };
 
 class ycsb_usertable_loader : public bench_loader {
@@ -173,7 +195,7 @@ protected:
         void *txn = db->new_txn(txn_flags);
         for (size_t j = 0; j < nkeys; j++) {
           string k = u64_varkey(j).str();
-          string v(128, 'a');
+          string v(YCSBRecordSize, 'a');
           tbl->insert(txn, move(k), move(v));
         }
         if (verbose)
@@ -185,7 +207,7 @@ protected:
           void *txn = db->new_txn(txn_flags);
           for (size_t j = i * batchsize; j < keyend; j++) {
             string k = u64_varkey(j).str();
-            string v(128, 'a');
+            string v(YCSBRecordSize, 'a');
             tbl->insert(txn, move(k), move(v));
           }
           if (verbose)
@@ -207,7 +229,7 @@ public:
   ycsb_bench_runner(abstract_db *db)
     : bench_runner(db)
   {
-    open_tables["USERTABLE"] = db->open_index("USERTABLE", 128);
+    open_tables["USERTABLE"] = db->open_index("USERTABLE", YCSBRecordSize);
   }
 
 protected:
