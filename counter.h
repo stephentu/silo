@@ -3,6 +3,7 @@
 
 // system event counters, for
 
+#include <algorithm> // for std::max
 #include <vector>
 #include <map>
 #include <string>
@@ -39,9 +40,11 @@ namespace private_ {
     volatile util::aligned_padded_u64 tl_counts[coreid::NMaxCores];
   };
 
+  // more expensive
   struct event_ctx_avg : public event_ctx {
     event_ctx_avg(const std::string &name) : event_ctx(name, true) {}
-    volatile util::aligned_padded_u64 tl_invokes[coreid::NMaxCores];
+    volatile util::aligned_padded_u64 tl_sums[coreid::NMaxCores];
+    volatile util::aligned_padded_u64 tl_highs[coreid::NMaxCores];
   };
 }
 
@@ -72,8 +75,31 @@ public:
     return *this;
   }
 
+  struct counter_data {
+    counter_data() : count(0), sum(0), max(0) {}
+
+    uint64_t count;
+    uint64_t sum;
+    uint64_t max;
+
+    counter_data &
+    operator+=(const counter_data &that)
+    {
+      count += that.count;
+      sum += that.sum;
+      max = std::max(max, that.max);
+      return *this;
+    }
+
+    double
+    avg() const
+    {
+      return double(sum)/double(count);
+    }
+  };
+
   // WARNING: an expensive operation!
-  static std::map<std::string, double> get_all_counters();
+  static std::map<std::string, counter_data> get_all_counters();
   // WARNING: an expensive operation!
   static void reset_all_counters();
 
@@ -92,8 +118,9 @@ public:
   {
 #ifdef ENABLE_EVENT_COUNTERS
     const size_t id = coreid::core_id();
-    ctx->tl_counts[id].elem += value;
-    ctx->tl_invokes[id].elem++;
+    ctx->tl_counts[id].elem++;
+    ctx->tl_sums[id].elem += value;
+    ctx->tl_highs[id].elem = std::max(static_cast<uint64_t>(ctx->tl_highs[id].elem), value);
 #endif
   }
 
@@ -102,5 +129,12 @@ private:
   private_::event_ctx_avg *const ctx;
 #endif
 };
+
+inline std::ostream &
+operator<<(std::ostream &o, const event_counter::counter_data &d)
+{
+  o << "count=" << d.count << ", max=" << d.max << ", avg=" << d.avg();
+  return o;
+}
 
 #endif /* _COUNTER_H_ */

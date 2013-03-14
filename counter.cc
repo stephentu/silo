@@ -20,28 +20,31 @@ event_ctx::event_counters_lock()
   return s_lock;
 }
 
-map<string, double>
+map<string, event_counter::counter_data>
 event_counter::get_all_counters()
 {
-  map<string, double> ret;
+  map<string, counter_data> ret;
   const vector<event_ctx *> &evts = event_ctx::event_counters();
   spinlock &l = event_ctx::event_counters_lock();
   lock_guard<spinlock> sl(l);
   for (vector<event_ctx *>::const_iterator it = evts.begin();
        it != evts.end(); ++it) {
-    uint64_t c = 0;
+    counter_data d;
+    assert(d.count == 0);
     for (size_t i = 0; i < coreid::NMaxCores; i++)
-      c += (*it)->tl_counts[i].elem;
-    double v = 0.0;
+      d.count += (*it)->tl_counts[i].elem;
     if ((*it)->avg_tag) {
+      uint64_t m = 0;
+      for (size_t i = 0; i < coreid::NMaxCores; i++) {
+        m = max(m, static_cast<uint64_t>(static_cast<event_ctx_avg *>(*it)->tl_highs[i].elem));
+      }
       uint64_t s = 0;
       for (size_t i = 0; i < coreid::NMaxCores; i++)
-        s += static_cast<event_ctx_avg *>(*it)->tl_invokes[i].elem;
-      v = double(c)/double(s);
-    } else {
-      v = double(c);
+        s += static_cast<event_ctx_avg *>(*it)->tl_sums[i].elem;
+      d.sum = s;
+      d.max = m;
     }
-    ret[(*it)->name] += v;
+    ret[(*it)->name] += d;
   }
   return ret;
 }
@@ -56,8 +59,10 @@ event_counter::reset_all_counters()
        it != evts.end(); ++it)
     for (size_t i = 0; i < coreid::NMaxCores; i++) {
       (*it)->tl_counts[i].elem = 0;
-      if ((*it)->avg_tag)
-        static_cast<event_ctx_avg *>(*it)->tl_invokes[i].elem = 0;
+      if ((*it)->avg_tag) {
+        static_cast<event_ctx_avg *>(*it)->tl_sums[i].elem = 0;
+        static_cast<event_ctx_avg *>(*it)->tl_highs[i].elem = 0;
+      }
     }
 }
 

@@ -11,6 +11,7 @@
 #include "xbuf.h"
 #include "small_vector.h"
 #include "small_unordered_map.h"
+#include "counter.h"
 
 #include "record/encoder.h"
 
@@ -24,6 +25,34 @@ DO_STRUCT(myrec, MYREC_KEY_FIELDS, MYREC_VALUE_FIELDS)
 
 using namespace std;
 using namespace util;
+
+static event_counter evt_test("test");
+static event_counter evt_test1("test1");
+static event_avg_counter evt_test_avg("test_avg");
+
+void
+CounterTest()
+{
+#ifdef ENABLE_EVENT_COUNTERS
+  ++evt_test;
+  ++evt_test;
+  evt_test_avg.offer(1);
+  evt_test_avg.offer(2);
+  evt_test_avg.offer(3);
+  map<string, event_counter::counter_data> m = event_counter::get_all_counters();
+  ALWAYS_ASSERT(m.find("test") != m.end());
+  ALWAYS_ASSERT(m.find("test1") != m.end());
+  ALWAYS_ASSERT(m.find("test_avg") != m.end());
+
+  ALWAYS_ASSERT(m["test"].count == 2);
+  ALWAYS_ASSERT(m["test1"].count == 0);
+  ALWAYS_ASSERT(m["test_avg"].count == 3);
+  ALWAYS_ASSERT(m["test_avg"].sum == 6);
+  ALWAYS_ASSERT(m["test_avg"].max == 3);
+
+  cout << "event counters test passed" << endl;
+#endif
+}
 
 void
 UtilTest()
@@ -642,6 +671,7 @@ public:
 #ifndef CHECK_INVARIANTS
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
+    CounterTest();
     UtilTest();
     XbufTest();
     varint::Test();
