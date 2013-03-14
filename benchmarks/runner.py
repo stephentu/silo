@@ -25,19 +25,20 @@ TXN_FLAGS = (0x1,)
 
 #SCALE_FACTORS = (10,)
 
-#BENCHMARKS = ('ycsb', 'tpcc')
-BENCHMARKS = ('tpcc',)
+# tuples of (benchname, amplification-factor)
+BENCHMARKS = ( ('ycsb', 1000), ('tpcc', 1), )
 
-def mk_grid(nthds):
+def mk_grid(bench, nthds):
+  # bench is tuple (name, factor)
   return {
       'dbs' : DBS,
       'threads': [nthds],
-      'scale_factors' : [nthds],
-      'benchmarks' : BENCHMARKS,
+      'scale_factors' : [nthds * bench[1]],
+      'benchmarks' : [bench[0]],
       'txn_flags' : TXN_FLAGS,
   }
 
-grids = reversed([mk_grid(n) for n in THREADS])
+grids = [mk_grid(b, n) for b in BENCHMARKS for n in THREADS]
 
 def run_configuration(basedir, dbtype, bench, scale_factor, txn_flags, nthreads):
   args = [
