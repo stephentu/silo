@@ -42,13 +42,16 @@ if __name__ == '__main__':
         pts[config[desc['x-axis']]] = desc['y-axis'](result)
         lines[key] = pts
 
+      labels = []
       for (name, pts) in lines.iteritems():
         spts = sorted(pts.iteritems(), key=lambda x: x[0])
-        plt.plot([x[0] for x in spts], [x[1] for x in spts], label=name)
+        plt.plot([x[0] for x in spts], [x[1] for x in spts])
+        labels.append('-'.join(name))
 
       plt.xlabel(desc['x-label'])
       plt.ylabel(desc['y-label'])
       plt.title(desc['title'])
+      plt.legend(labels, loc='upper left')
       bname = '.'.join(os.path.basename(f).split('.')[:-1])
       plt.savefig('.'.join([bname + '-' + desc['name'], 'pdf']))
       plt.close()
