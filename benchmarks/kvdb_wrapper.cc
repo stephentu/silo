@@ -46,7 +46,7 @@ struct kvdb_record {
     do_write(s);
     unlock();
 #else
-    set_size(s);
+    set_size(s.size());
     do_write(s);
 #endif
   }
