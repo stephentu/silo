@@ -442,7 +442,7 @@ protected:
   load()
   {
     string obj_buf;
-    void *txn = db->new_txn(txn_flags);
+    void *txn = db->new_txn(txn_flags, txn_buf());
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
       vector<warehouse::value> warehouses;
@@ -475,7 +475,7 @@ protected:
         warehouses.push_back(v);
       }
       ALWAYS_ASSERT(db->commit_txn(txn));
-      txn = db->new_txn(txn_flags);
+      txn = db->new_txn(txn_flags, txn_buf());
       for (uint i = 1; i <= NumWarehouses(); i++) {
         const warehouse::key k(i);
         string warehouse_v;
@@ -514,7 +514,7 @@ protected:
   {
     string obj_buf;
     const ssize_t bsize = db->txn_max_batch_size();
-    void *txn = db->new_txn(txn_flags);
+    void *txn = db->new_txn(txn_flags, txn_buf());
     uint64_t total_sz = 0;
     try {
       for (uint i = 1; i <= NumItems(); i++) {
@@ -542,7 +542,7 @@ protected:
 
         if (bsize != -1 && !(i % bsize)) {
           ALWAYS_ASSERT(db->commit_txn(txn));
-          txn = db->new_txn(txn_flags);
+          txn = db->new_txn(txn_flags, txn_buf());
         }
       }
       ALWAYS_ASSERT(db->commit_txn(txn));
@@ -596,7 +596,7 @@ protected:
 
       const size_t NItemsPerBatch = NumItems();
       for (uint b = 0; b < NItemsPerBatch;) {
-        void * const txn = db->new_txn(txn_flags);
+        void * const txn = db->new_txn(txn_flags, txn_buf());
         try {
           for (uint i = (b * NItemsPerBatch + 1); i <= NItemsPerBatch; i++) {
             const stock::key k(w, i);
@@ -679,7 +679,7 @@ protected:
     string obj_buf;
 
     const ssize_t bsize = db->txn_max_batch_size();
-    void *txn = db->new_txn(txn_flags);
+    void *txn = db->new_txn(txn_flags, txn_buf());
     uint64_t district_total_sz = 0, n_districts = 0;
     try {
       uint cnt = 0;
@@ -706,7 +706,7 @@ protected:
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
             ALWAYS_ASSERT(db->commit_txn(txn));
-            txn = db->new_txn(txn_flags);
+            txn = db->new_txn(txn_flags, txn_buf());
           }
         }
       }
@@ -753,7 +753,7 @@ protected:
 
     for (uint w = w_start; w <= w_end; w++) {
       for (uint d = 1; d <= NumDistrictsPerWarehouse();) {
-        void * const txn = db->new_txn(txn_flags);
+        void * const txn = db->new_txn(txn_flags, txn_buf());
         try {
           for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
             const customer::key k(w, d, c);
@@ -887,7 +887,7 @@ protected:
           c_ids_s.insert((r.next() % NumCustomersPerDistrict()) + 1);
         const vector<uint> c_ids(c_ids_s.begin(), c_ids_s.end());
         for (uint c = 1; c <= NumCustomersPerDistrict();) {
-          void * const txn = db->new_txn(txn_flags);
+          void * const txn = db->new_txn(txn_flags, txn_buf());
           try {
             const oorder::key k_oo(w, d, c);
 
@@ -1006,7 +1006,7 @@ tpcc_worker::txn_new_order()
   }
 
   // XXX(stephentu): implement rollback
-  void *txn = db->new_txn(txn_flags);
+  void *txn = db->new_txn(txn_flags, txn_buf());
   try {
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
@@ -1182,7 +1182,7 @@ tpcc_worker::txn_delivery()
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
 
-  void *txn = db->new_txn(txn_flags);
+  void *txn = db->new_txn(txn_flags, txn_buf());
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -1279,7 +1279,7 @@ tpcc_worker::txn_payment()
   }
   const float paymentAmount = (float) (RandomNumber(r, 100, 500000) / 100.0);
   const uint32_t ts = GetCurrentTimeMillis();
-  void *txn = db->new_txn(txn_flags);
+  void *txn = db->new_txn(txn_flags, txn_buf());
   try {
     ssize_t ret = 0;
 
@@ -1431,7 +1431,7 @@ ssize_t
 tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
+  void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY, txn_buf());
   try {
 
     customer::key k_c;
@@ -1555,7 +1555,7 @@ tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY);
+  void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY, txn_buf());
   try {
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key0, k_d), obj_v));

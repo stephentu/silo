@@ -10,13 +10,13 @@ using namespace std;
 using namespace util;
 
 void *
-ndb_wrapper::new_txn(uint64_t txn_flags)
+ndb_wrapper::new_txn(uint64_t txn_flags, void *buf)
 {
   switch (proto) {
   case PROTO_1:
-    return new transaction_proto1(txn_flags);
+    return new (buf) transaction_proto1(txn_flags);
   case PROTO_2:
-    return new transaction_proto2(txn_flags);
+    return new (buf) transaction_proto2(txn_flags);
   default:
     ALWAYS_ASSERT(false);
     return NULL;
@@ -26,21 +26,18 @@ ndb_wrapper::new_txn(uint64_t txn_flags)
 bool
 ndb_wrapper::commit_txn(void *txn)
 {
-  bool ret;
-  try {
-    ret = ((transaction *) txn)->commit();
-  } catch (transaction_abort_exception &ex) {
-    ret = false;
-  }
-  delete (transaction *) txn;
+  transaction * const t = (transaction *) txn;
+  const bool ret = t->commit(); // won't throw
+  t->~transaction();
   return ret;
 }
 
 void
 ndb_wrapper::abort_txn(void *txn)
 {
-  ((transaction *) txn)->abort();
-  delete (transaction *) txn;
+  transaction * const t = (transaction *) txn;
+  t->abort();
+  t->~transaction();
 }
 
 void

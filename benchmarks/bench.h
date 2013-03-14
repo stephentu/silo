@@ -50,7 +50,9 @@ public:
   bench_loader(unsigned long seed, abstract_db *db,
                const std::map<std::string, abstract_ordered_index *> &open_tables)
     : r(seed), db(db), open_tables(open_tables), b(0)
-  {}
+  {
+    txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
+  }
   inline void
   set_barrier(spin_barrier &b)
   {
@@ -70,12 +72,15 @@ public:
     load();
   }
 protected:
+  inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
+
   virtual void load() = 0;
 
   util::fast_random r;
   abstract_db *const db;
   std::map<std::string, abstract_ordered_index *> open_tables;
   spin_barrier *b;
+  std::string txn_obj_buf;
 };
 
 class bench_worker : public ndb_thread {
@@ -89,6 +94,7 @@ public:
       // the ntxn_* numbers are per worker
       ntxn_commits(0), ntxn_aborts(0), size_delta(0)
   {
+    txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
   }
 
   virtual ~bench_worker() {}
@@ -143,6 +149,7 @@ public:
   inline ssize_t get_size_delta() const { return size_delta; }
 
 protected:
+  inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
   util::fast_random r;
   abstract_db *const db;
@@ -154,6 +161,8 @@ protected:
 
   std::vector<size_t> txn_counts; // breakdown of txns
   ssize_t size_delta; // how many logical bytes (of values) did the worker add to the DB
+
+  std::string txn_obj_buf;
 };
 
 class bench_runner : private util::noncopyable {

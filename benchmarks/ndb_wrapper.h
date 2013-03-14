@@ -46,7 +46,22 @@ public:
     }
   }
 
-  virtual void *new_txn(uint64_t txn_flags);
+  virtual size_t
+  sizeof_txn_object(uint64_t txn_flags) const
+  {
+    switch (proto) {
+    case PROTO_1:
+      return sizeof(transaction_proto1);
+    case PROTO_2:
+      return sizeof(transaction_proto2);
+    default:
+      ALWAYS_ASSERT(false);
+      break;
+    }
+    return 0;
+  }
+
+  virtual void *new_txn(uint64_t txn_flags, void *buf);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
   virtual void print_txn_debug(void *txn) const;

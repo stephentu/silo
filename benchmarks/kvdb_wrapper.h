@@ -12,16 +12,22 @@ public:
 
   virtual void do_txn_finish() const { }
 
-  virtual void *
-  new_txn(uint64_t txn_flags)
+  virtual size_t
+  sizeof_txn_object(uint64_t txn_flags) const
   {
-    return new scoped_rcu_region;
+    return sizeof(scoped_rcu_region);
+  }
+
+  virtual void *
+  new_txn(uint64_t txn_flags, void *buf)
+  {
+    return new (buf) scoped_rcu_region;
   }
 
   virtual bool
   commit_txn(void *txn)
   {
-    delete (scoped_rcu_region *) txn;
+    ((scoped_rcu_region *) txn)->~scoped_rcu_region();
     return true;
   }
 

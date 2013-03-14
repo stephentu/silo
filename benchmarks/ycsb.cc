@@ -36,7 +36,7 @@ public:
   ssize_t
   txn_read()
   {
-    void * const txn = db->new_txn(txn_flags);
+    void * const txn = db->new_txn(txn_flags, txn_buf());
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
@@ -58,7 +58,7 @@ public:
   ssize_t
   txn_write()
   {
-    void * const txn = db->new_txn(txn_flags);
+    void * const txn = db->new_txn(txn_flags, txn_buf());
     try {
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'b'));
       if (db->commit_txn(txn))
@@ -79,7 +79,7 @@ public:
   ssize_t
   txn_rmw()
   {
-    void * const txn = db->new_txn(txn_flags);
+    void * const txn = db->new_txn(txn_flags, txn_buf());
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
@@ -115,7 +115,7 @@ public:
   ssize_t
   txn_scan()
   {
-    void * const txn = db->new_txn(txn_flags);
+    void * const txn = db->new_txn(txn_flags, txn_buf());
     const size_t kstart = r.next() % nkeys;
     const string &kbegin = u64_varkey(kstart).str(obj_key0);
     const string &kend = u64_varkey(kstart + 100).str(obj_key1);
@@ -146,9 +146,11 @@ public:
     //w.push_back(workload_desc("ReadModifyWrite", 0.04, TxnRmw));
     //w.push_back(workload_desc("Write", 0.01, TxnWrite));
 
+    w.push_back(workload_desc("Read", 1.0, TxnRead));
+
     // YCSB workload "A" - 50/50 read/write
-    w.push_back(workload_desc("Read", 0.5, TxnRead));
-    w.push_back(workload_desc("Write", 0.5, TxnWrite));
+    //w.push_back(workload_desc("Read", 0.5, TxnRead));
+    //w.push_back(workload_desc("Write", 0.5, TxnWrite));
     return w;
   }
 
@@ -192,7 +194,7 @@ protected:
       ALWAYS_ASSERT(batchsize > 0);
       const size_t nbatches = nkeys / batchsize;
       if (nbatches == 0) {
-        void *txn = db->new_txn(txn_flags);
+        void *txn = db->new_txn(txn_flags, txn_buf());
         for (size_t j = 0; j < nkeys; j++) {
           string k = u64_varkey(j).str();
           string v(YCSBRecordSize, 'a');
@@ -204,7 +206,7 @@ protected:
       } else {
         for (size_t i = 0; i < nbatches; i++) {
           const size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
-          void *txn = db->new_txn(txn_flags);
+          void *txn = db->new_txn(txn_flags, txn_buf());
           for (size_t j = i * batchsize; j < keyend; j++) {
             string k = u64_varkey(j).str();
             string v(YCSBRecordSize, 'a');
@@ -248,7 +250,7 @@ protected:
     const size_t nkeys = keyend - keystart;
     const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
     for (size_t batchid = 0; batchid < nbatches;) {
-      void * const txn = db->new_txn(txn_flags);
+      void * const txn = db->new_txn(txn_flags, txn_buf());
       try {
         for (size_t i = batchid * batchsize + keystart;
              i < min((batchid + 1) * batchsize + keystart, keyend); i++) {

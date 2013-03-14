@@ -40,6 +40,10 @@ public:
 
   virtual bool index_has_stable_put_memory() const { return false; }
 
+  // XXX(stephentu): laziness
+  virtual size_t
+  sizeof_txn_object(uint64_t txn_flags) const { NDB_UNIMPLEMENTED("sizeof_txn_object"); };
+
   /**
    * XXX(stephentu): hack
    */
@@ -61,11 +65,13 @@ public:
   virtual void thread_end() {}
 
   /**
-   * Allocate and return a new txn object, to use with this instance
+   * Initializes a new txn object the space pointed to by buf
    *
    * Flags is only for the ndb protocol for now
+   *
+   * [buf, buf + sizeof_txn_object(txn_flags)) is a valid ptr
    */
-  virtual void *new_txn(uint64_t txn_flags) = 0;
+  virtual void *new_txn(uint64_t txn_flags, void *buf) = 0;
 
   /**
    * Returns true on successful commit.
