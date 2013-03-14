@@ -177,76 +177,82 @@ transaction::commit(bool doThrow)
   const pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
   pair<bool, tid_t> commit_tid(false, 0);
 
-  for (ctx_map_type::iterator outer_it = ctx_map.begin();
-       outer_it != ctx_map.end(); ++outer_it) {
-    INVARIANT(!(get_flags() & TXN_FLAG_READ_ONLY) || outer_it->second.write_set.empty());
-    for (write_set_map::iterator it = outer_it->second.write_set.begin();
-         it != outer_it->second.write_set.end(); ++it) {
-    retry:
-      btree::value_type v = 0;
-      if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
-        VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
-        logical_nodes.emplace_back(
-            (logical_node *) v,
-            lnode_info(outer_it->first, it->first, false, it->second));
-        // mark that we hold lock in read set
-        read_set_map::iterator read_it =
-          outer_it->second.read_set.find((const logical_node *) v);
-        if (read_it != outer_it->second.read_set.end()) {
-          INVARIANT(!read_it->second.holds_lock);
-          read_it->second.holds_lock = true;
-        }
-        // mark that we hold lock in absent set
-        absent_set_map::iterator absent_it =
-          outer_it->second.absent_set.find(it->first);
-        if (absent_it != outer_it->second.absent_set.end()) {
-          INVARIANT(!absent_it->second);
-          absent_it->second = true;
-        }
-      } else {
-        logical_node *ln = logical_node::alloc_first(
-            !outer_it->first->is_mostly_append(), it->second.size());
-        // XXX: underlying btree api should return the existing value if
-        // insert fails- this would allow us to avoid having to do another search
-        pair<const btree::node_opaque_t *, uint64_t> insert_info;
-        if (!outer_it->first->underlying_btree.insert_if_absent(
-              varkey(it->first), (btree::value_type) ln, &insert_info)) {
-          logical_node::release_no_rcu(ln);
-          goto retry;
-        }
-        VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
-        if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
-          // update node #s
-          INVARIANT(insert_info.first);
-          node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
-          if (nit != outer_it->second.node_scan.end()) {
-            if (unlikely(nit->second != insert_info.second)) {
-              abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
-              goto do_abort;
-            }
-            VERBOSE(cerr << "bump node=" << hexify(nit->first) << " from v=" << (nit->second)
-                         << " -> v=" << (nit->second + 1) << endl);
-            // otherwise, bump the version by 1
-            nit->second++; // XXX(stephentu): this doesn't properly handle wrap-around
-                           // but we're probably F-ed on a wrap around anyways for now
-            SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
+  {
+    ctx_map_type::iterator outer_it = ctx_map.begin();
+    ctx_map_type::iterator outer_it_end = ctx_map.end();
+    for (; outer_it != outer_it_end; ++outer_it) {
+      INVARIANT(!(get_flags() & TXN_FLAG_READ_ONLY) || outer_it->second.write_set.empty());
+      if (outer_it->second.write_set.empty())
+        continue;
+      write_set_map::iterator it = outer_it->second.write_set.begin();
+      write_set_map::iterator it_end = outer_it->second.write_set.end();
+      for (; it != it_end; ++it) {
+      retry:
+        btree::value_type v = 0;
+        if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
+          VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
+          logical_nodes.emplace_back(
+              (logical_node *) v,
+              lnode_info(outer_it->first, it->first, false, it->second));
+          // mark that we hold lock in read set
+          read_set_map::iterator read_it =
+            outer_it->second.read_set.find((const logical_node *) v);
+          if (read_it != outer_it->second.read_set.end()) {
+            INVARIANT(!read_it->second.holds_lock);
+            read_it->second.holds_lock = true;
           }
-        }
-        logical_nodes.emplace_back(
-            ln, lnode_info(outer_it->first, it->first, false, it->second));
-        // mark that we hold lock in read set
-        read_set_map::iterator read_it =
-          outer_it->second.read_set.find(ln);
-        if (read_it != outer_it->second.read_set.end()) {
-          INVARIANT(!read_it->second.holds_lock);
-          read_it->second.holds_lock = true;
-        }
-        // mark that we hold lock in absent set
-        absent_set_map::iterator absent_it =
-          outer_it->second.absent_set.find(it->first);
-        if (absent_it != outer_it->second.absent_set.end()) {
-          INVARIANT(!absent_it->second);
-          absent_it->second = true;
+          // mark that we hold lock in absent set
+          absent_set_map::iterator absent_it =
+            outer_it->second.absent_set.find(it->first);
+          if (absent_it != outer_it->second.absent_set.end()) {
+            INVARIANT(!absent_it->second);
+            absent_it->second = true;
+          }
+        } else {
+          logical_node *ln = logical_node::alloc_first(
+              !outer_it->first->is_mostly_append(), it->second.size());
+          // XXX: underlying btree api should return the existing value if
+          // insert fails- this would allow us to avoid having to do another search
+          pair<const btree::node_opaque_t *, uint64_t> insert_info;
+          if (!outer_it->first->underlying_btree.insert_if_absent(
+                varkey(it->first), (btree::value_type) ln, &insert_info)) {
+            logical_node::release_no_rcu(ln);
+            goto retry;
+          }
+          VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
+          if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
+            // update node #s
+            INVARIANT(insert_info.first);
+            node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
+            if (nit != outer_it->second.node_scan.end()) {
+              if (unlikely(nit->second != insert_info.second)) {
+                abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+                goto do_abort;
+              }
+              VERBOSE(cerr << "bump node=" << hexify(nit->first) << " from v=" << (nit->second)
+                           << " -> v=" << (nit->second + 1) << endl);
+              // otherwise, bump the version by 1
+              nit->second++; // XXX(stephentu): this doesn't properly handle wrap-around
+                             // but we're probably F-ed on a wrap around anyways for now
+              SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
+            }
+          }
+          logical_nodes.emplace_back(
+              ln, lnode_info(outer_it->first, it->first, false, it->second));
+          // mark that we hold lock in read set
+          read_set_map::iterator read_it =
+            outer_it->second.read_set.find(ln);
+          if (read_it != outer_it->second.read_set.end()) {
+            INVARIANT(!read_it->second.holds_lock);
+            read_it->second.holds_lock = true;
+          }
+          // mark that we hold lock in absent set
+          absent_set_map::iterator absent_it =
+            outer_it->second.absent_set.find(it->first);
+          if (absent_it != outer_it->second.absent_set.end()) {
+            INVARIANT(!absent_it->second);
+            absent_it->second = true;
+          }
         }
       }
     }
@@ -255,143 +261,158 @@ transaction::commit(bool doThrow)
   if (!snapshot_tid_t.first || !logical_nodes.empty()) {
     // we don't have consistent tids, or not a read-only txn
 
-    // lock the logical nodes in sort order
-    sort(logical_nodes.begin(), logical_nodes.end(), LNodeComp());
-    for (typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
-         it != logical_nodes.end(); ++it) {
-      VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
-      it->first->lock();
-      it->second.locked = true; // we locked the node
-      if (unlikely(it->first->is_deleting() ||
-                   !it->first->is_latest() ||
-                   !can_read_tid(it->first->version))) {
-        // XXX(stephentu): overly conservative (with the can_read_tid() check)
-        abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
-        goto do_abort;
-      }
-    }
-
-    // acquire commit tid (if not read-only txn)
     if (!logical_nodes.empty()) {
+      // lock the logical nodes in sort order
+      sort(logical_nodes.begin(), logical_nodes.end(), LNodeComp());
+      typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
+      typename vec<lnode_pair>::type::iterator it_end = logical_nodes.end();
+      for (; it != it_end; ++it) {
+        VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
+        const logical_node::version_t v = it->first->lock();
+        it->second.locked = true; // we locked the node
+        if (unlikely(logical_node::IsDeleting(v) ||
+                     !logical_node::IsLatest(v) ||
+                     !can_read_tid(it->first->version))) {
+          // XXX(stephentu): overly conservative (with the can_read_tid() check)
+          abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+          goto do_abort;
+        }
+      }
       commit_tid.first = true;
       commit_tid.second = gen_commit_tid(logical_nodes);
+      VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
+    } else {
+      VERBOSE(cerr << "commit tid: <read-only>" << endl);
     }
 
-    if (logical_nodes.empty())
-      VERBOSE(cerr << "commit tid: <read-only>" << endl);
-    else
-      VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
-
     // do read validation
-    for (ctx_map_type::iterator outer_it = ctx_map.begin();
-         outer_it != ctx_map.end(); ++outer_it) {
-      // check the nodes we actually read are still the latest version
-      for (read_set_map::iterator it = outer_it->second.read_set.begin();
-           it != outer_it->second.read_set.end(); ++it) {
-        const transaction::logical_node *ln = it->first;
-        VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
-                     << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
+    {
+      ctx_map_type::iterator outer_it = ctx_map.begin();
+      ctx_map_type::iterator outer_it_end = ctx_map.end();
+      for (; outer_it != outer_it_end; ++outer_it) {
 
-        if (likely(it->second.holds_lock ?
-              ln->is_latest_version(it->second.t) :
-              ln->stable_is_latest_version(it->second.t)))
-          continue;
+        // check the nodes we actually read are still the latest version
+        if (!outer_it->second.read_set.empty()) {
+          read_set_map::iterator it = outer_it->second.read_set.begin();
+          read_set_map::iterator it_end = outer_it->second.read_set.end();
+          for (; it != it_end; ++it) {
+            const transaction::logical_node * const ln = it->first;
+            VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
+                         << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
-        VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
-                     << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << " FAILED" << endl
-                     << "  txn read version: " << g_proto_version_str(it->second.t) << endl
-                     << "  ln=" << *ln << endl);
+            if (likely(it->second.holds_lock ?
+                  ln->is_latest_version(it->second.t) :
+                  ln->stable_is_latest_version(it->second.t)))
+              continue;
 
-        abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
-        goto do_abort;
-      }
+            VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
+                         << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << " FAILED" << endl
+                         << "  txn read version: " << g_proto_version_str(it->second.t) << endl
+                         << "  ln=" << *ln << endl);
 
-      // check the nodes we read as absent are actually absent
-      VERBOSE(cerr << "absent_set.size(): " << outer_it->second.absent_set.size() << endl);
-      for (absent_set_map::iterator it = outer_it->second.absent_set.begin();
-           it != outer_it->second.absent_set.end(); ++it) {
-        btree::value_type v = 0;
-        if (!outer_it->first->underlying_btree.search(varkey(it->first), v)) {
-          // done
-          VERBOSE(cerr << "absent key " << hexify(it->first) << " was not found in btree" << endl);
-          continue;
-        }
-        const transaction::logical_node *ln = (const transaction::logical_node *) v;
-        if (it->second ? ln->latest_value_is_nil() :
-                         ln->stable_latest_value_is_nil()) {
-          // NB(stephentu): this seems like an optimization,
-          // but its actually necessary- otherwise a newly inserted
-          // key which we read first would always get aborted
-          VERBOSE(cerr << "absent key " << hexify(it->first) << " @ logical_node "
-                       << hexify(ln) << " has latest value nil" << endl);
-          continue;
-        }
-        abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
-        goto do_abort;
-      }
-
-      // check the nodes we scanned are still the same
-      if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
-        // do it the fast way
-        INVARIANT(outer_it->second.absent_range_set.empty());
-        for (node_scan_map::iterator it = outer_it->second.node_scan.begin();
-             it != outer_it->second.node_scan.end(); ++it) {
-          const uint64_t v = btree::ExtractVersionNumber(it->first);
-          if (unlikely(v != it->second)) {
-            VERBOSE(cerr << "expected node " << hexify(it->first) << " at v="
-                         << it->second << ", got v=" << v << endl);
-            abort_trap((reason = ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED));
+            abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
             goto do_abort;
           }
         }
-      } else {
-        // do it the slow way
-        INVARIANT(outer_it->second.node_scan.empty());
-        for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
-             it != outer_it->second.absent_range_set.end(); ++it) {
-          VERBOSE(cerr << "checking absent range: " << *it << endl);
-          txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid.second);
-          varkey upper(it->b);
-          outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
-          if (unlikely(c.failed())) {
-            abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+
+        // check the nodes we read as absent are actually absent
+        if (!outer_it->second.absent_set.empty()) {
+          VERBOSE(cerr << "absent_set.size(): " << outer_it->second.absent_set.size() << endl);
+          absent_set_map::iterator it = outer_it->second.absent_set.begin();
+          absent_set_map::iterator it_end = outer_it->second.absent_set.end();
+          for (; it != it_end; ++it) {
+            btree::value_type v = 0;
+            if (likely(!outer_it->first->underlying_btree.search(varkey(it->first), v))) {
+              // done
+              VERBOSE(cerr << "absent key " << hexify(it->first) << " was not found in btree" << endl);
+              continue;
+            }
+            const transaction::logical_node * const ln = (const transaction::logical_node *) v;
+            if (it->second ? ln->latest_value_is_nil() :
+                             ln->stable_latest_value_is_nil()) {
+              // NB(stephentu): this seems like an optimization,
+              // but its actually necessary- otherwise a newly inserted
+              // key which we read first would always get aborted
+              VERBOSE(cerr << "absent key " << hexify(it->first) << " @ logical_node "
+                           << hexify(ln) << " has latest value nil" << endl);
+              continue;
+            }
+            abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
             goto do_abort;
           }
         }
+
+        // check the nodes we scanned are still the same
+        if (likely(get_flags() & TXN_FLAG_LOW_LEVEL_SCAN)) {
+          // do it the fast way
+          INVARIANT(outer_it->second.absent_range_set.empty());
+          if (!outer_it->second.node_scan.empty()) {
+            node_scan_map::iterator it = outer_it->second.node_scan.begin();
+            node_scan_map::iterator it_end = outer_it->second.node_scan.end();
+            for (; it != it_end; ++it) {
+              const uint64_t v = btree::ExtractVersionNumber(it->first);
+              if (unlikely(v != it->second)) {
+                VERBOSE(cerr << "expected node " << hexify(it->first) << " at v="
+                             << it->second << ", got v=" << v << endl);
+                abort_trap((reason = ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED));
+                goto do_abort;
+              }
+            }
+          }
+        } else {
+          // do it the slow way
+          INVARIANT(outer_it->second.node_scan.empty());
+          for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
+               it != outer_it->second.absent_range_set.end(); ++it) {
+            VERBOSE(cerr << "checking absent range: " << *it << endl);
+            txn_btree::absent_range_validation_callback c(&outer_it->second, commit_tid.second);
+            varkey upper(it->b);
+            outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
+            if (unlikely(c.failed())) {
+              abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+              goto do_abort;
+            }
+          }
+        }
+
       }
     }
 
     // commit actual records
-    for (typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
-         it != logical_nodes.end(); ++it) {
-      INVARIANT(it->second.locked);
-      VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
-                   << " at commit_tid " << commit_tid.second << endl);
-      it->first->prefetch();
-      const logical_node::write_record_ret ret = it->first->write_record_at(
-          this, commit_tid.second,
-          (const record_type) it->second.r.data(), it->second.r.size());
-      lock_guard<logical_node> guard(ret.second);
-      if (unlikely(ret.second)) {
-        // need to unlink it->first from underlying btree, replacing
-        // with ret.second (atomically)
-        btree::value_type old_v = 0;
-        if (it->second.btr->underlying_btree.insert(
-              varkey(it->second.key), (btree::value_type) ret.second, &old_v, NULL))
-          // should already exist in tree
-          INVARIANT(false);
-        INVARIANT(old_v == (btree::value_type) it->first);
-        ++evt_logical_node_latest_replacement;
+    if (!logical_nodes.empty()) {
+      typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
+      typename vec<lnode_pair>::type::iterator it_end = logical_nodes.end();
+      for (; it != it_end; ++it) {
+        INVARIANT(it->second.locked);
+        VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
+                     << " at commit_tid " << commit_tid.second << endl);
+        it->first->prefetch();
+        const logical_node::write_record_ret ret = it->first->write_record_at(
+            this, commit_tid.second,
+            (const record_type) it->second.r.data(), it->second.r.size());
+        lock_guard<logical_node> guard(ret.second);
+        if (unlikely(ret.second)) {
+          // need to unlink it->first from underlying btree, replacing
+          // with ret.second (atomically)
+          btree::value_type old_v = 0;
+          if (it->second.btr->underlying_btree.insert(
+                varkey(it->second.key), (btree::value_type) ret.second, &old_v, NULL))
+            // should already exist in tree
+            INVARIANT(false);
+          INVARIANT(old_v == (btree::value_type) it->first);
+          ++evt_logical_node_latest_replacement;
+        }
+        logical_node * const latest = ret.second ? ret.second : it->first;
+        if (unlikely(ret.first))
+          // spill happened: signal for GC
+          on_logical_node_spill(it->second.btr, it->second.key, latest);
+        if (it->second.r.empty())
+          // logical delete happened: schedule physical deletion
+          on_logical_delete(it->second.btr, it->second.key, latest);
+        it->first->unlock();
       }
-      logical_node *latest = ret.second ? ret.second : it->first;
-      if (unlikely(ret.first))
-        // spill happened: signal for GC
-        on_logical_node_spill(it->second.btr, it->second.key, latest);
-      if (it->second.r.empty())
-        // logical delete happened: schedule physical deletion
-        on_logical_delete(it->second.btr, it->second.key, latest);
-      it->first->unlock();
     }
+
   }
 
   state = TXN_COMMITED;

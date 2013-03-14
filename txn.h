@@ -307,7 +307,7 @@ public:
       return v & HDR_LOCKED_MASK;
     }
 
-    inline void
+    inline version_t
     lock()
     {
       version_t v = hdr;
@@ -317,6 +317,8 @@ public:
         v = hdr;
       }
       COMPILER_MEMORY_FENCE;
+      INVARIANT(IsLocked(hdr));
+      return hdr;
     }
 
     inline void
