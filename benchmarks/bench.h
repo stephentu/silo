@@ -114,6 +114,9 @@ public:
   virtual void
   run()
   {
+    { // XXX(stephentu): this is a hack
+      scoped_rcu_region r; // register this thread in rcu region
+    }
     scoped_db_thread_ctx ctx(db);
     const workload_desc_vec workload = get_workload();
     txn_counts.resize(workload.size());
