@@ -7,7 +7,8 @@ import sys
 
 #DBS = ('mysql', 'bdb', 'ndb-proto1', 'ndb-proto2')
 #DBS = ('ndb-proto1', 'ndb-proto2')
-DBS = ('ndb-proto2', 'kvdb')
+#DBS = ('ndb-proto2', 'kvdb')
+DBS = ('kvdb', 'ndb-proto2')
 
 # config for tom
 #THREADS = (1, 2, 4, 8, 12, 18, 24, 30, 36, 42, 48)
@@ -47,7 +48,7 @@ def run_configuration(basedir, dbtype, bench, scale_factor, txn_flags, nthreads)
       '--num-threads', str(nthreads),
       '--scale-factor', str(scale_factor),
       '--txn-flags', '%d' % (txn_flags),
-      '--runtime', '180',
+      '--runtime', '60',
   ]
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
