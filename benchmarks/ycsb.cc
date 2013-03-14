@@ -224,6 +224,58 @@ protected:
   }
 };
 
+class ycsb_parallel_usertable_loader : public bench_loader {
+public:
+  ycsb_parallel_usertable_loader(unsigned long seed,
+                                 abstract_db *db,
+                                 const map<string, abstract_ordered_index *> &open_tables,
+                                 uint64_t keystart,
+                                 uint64_t keyend)
+    : bench_loader(seed, db, open_tables),
+      keystart(keystart), keyend(keyend)
+  {
+    INVARIANT(keyend > keystart);
+  }
+
+protected:
+  virtual void
+  load()
+  {
+    abstract_ordered_index *tbl = open_tables.at("USERTABLE");
+    const size_t batchsize = (db->txn_max_batch_size() == -1) ?
+      10000 : db->txn_max_batch_size();
+    ALWAYS_ASSERT(batchsize > 0);
+    const size_t nkeys = keyend - keystart;
+    const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
+    for (size_t batchid = 0; batchid < nbatches;) {
+      void * const txn = db->new_txn(txn_flags);
+      try {
+        for (size_t i = batchid * batchsize + keystart;
+             i < min((batchid + 1) * batchsize + keystart, keyend); i++) {
+          const string k = u64_varkey(i).str();
+          const string v(YCSBRecordSize, 'a');
+          tbl->insert(txn, move(k), move(v));
+        }
+        if (db->commit_txn(txn))
+          batchid++;
+        else
+          db->abort_txn(txn);
+      } catch (abstract_db::abstract_abort_exception &ex) {
+        db->abort_txn(txn);
+      }
+    }
+    if (verbose)
+      cerr << "[INFO] finished loading USERTABLE range [kstart="
+           << keystart << ", kend=" << keyend << ")" << endl;
+  }
+
+private:
+  uint64_t keystart;
+  uint64_t keyend;
+
+};
+
+
 class ycsb_bench_runner : public bench_runner {
 public:
   ycsb_bench_runner(abstract_db *db)
@@ -237,7 +289,13 @@ protected:
   make_loaders()
   {
     vector<bench_loader *> ret;
-    ret.push_back(new ycsb_usertable_loader(0, db, open_tables));
+    if (enable_parallel_loading && nkeys >= nthreads) {
+      const size_t nkeysperthd = nkeys / nthreads;
+      for (size_t i = 0; i < nthreads; i++)
+        ret.push_back(new ycsb_parallel_usertable_loader(0, db, open_tables, i * nkeysperthd, min((i + 1) * nkeysperthd, nkeys)));
+    } else {
+      ret.push_back(new ycsb_usertable_loader(0, db, open_tables));
+    }
     return ret;
   }
 
