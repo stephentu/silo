@@ -29,6 +29,7 @@ __thread unsigned int rcu::tl_crit_section_depth = 0;
 static event_counter evt_rcu_deletes("rcu_deletes");
 static event_counter evt_rcu_frees("rcu_frees");
 static event_counter evt_rcu_local_reaps("rcu_local_reaps");
+static event_counter evt_rcu_incomplete_local_reaps("rcu_incomplete_local_reaps");
 
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
@@ -217,7 +218,7 @@ rcu::in_rcu_region()
 }
 
 
-static const uint64_t rcu_epoch_us = 50 * 1000; /* 50 ms */
+static const uint64_t rcu_epoch_us = 10 * 1000; /* 10 ms */
 static const uint64_t rcu_epoch_ns = rcu_epoch_us * 1000;
 
 class gc_reaper_thread : public ndb_thread {
@@ -225,14 +226,14 @@ public:
   gc_reaper_thread()
     : ndb_thread(true, "rcu-reaper")
   {
-    queue.reserve(32000);
+    queue.reserve(rcu::SyncDeleteQueueBufSize);
   }
   virtual void
   run()
   {
     struct timespec t;
     NDB_MEMSET(&t, 0, sizeof(t));
-    t.tv_nsec = rcu_epoch_ns;
+    t.tv_nsec = rcu_epoch_ns / 10; // these go a factor of 10 faster
     rcu::delete_queue stack_queue;
     stack_queue.reserve(rcu::SyncDeleteQueueBufSize);
     for (;;) {
@@ -241,9 +242,9 @@ public:
         lock_guard<spinlock> l(lock);
         stack_queue.swap(queue);
       }
-      evt_avg_gc_reaper_queue_len.offer(stack_queue.size());
       if (stack_queue.empty())
         nanosleep(&t, NULL);
+      evt_avg_gc_reaper_queue_len.offer(stack_queue.size());
       for (rcu::delete_queue::iterator it = stack_queue.begin();
            it != stack_queue.end(); ++it) {
         try {
@@ -260,6 +261,8 @@ public:
   void
   reap_and_clear(rcu::delete_queue &local_queue)
   {
+    if (local_queue.empty())
+      return;
     lock_guard<spinlock> l0(lock);
     if (queue.empty()) {
       queue.swap(local_queue);
@@ -329,8 +332,10 @@ rcu::gc_thread_loop(void *p)
             // cleanup, then we move the pointers into the
             // gc reapers
             delete_queue &local_queue = s->local_queues[global_epoch % 2];
-            if (!local_queue.empty())
+            if (!local_queue.empty()) {
               reaper_loops[rr++ % NGCReapers].reap_and_clear(local_queue);
+              ++evt_rcu_incomplete_local_reaps;
+            }
           }
           INVARIANT(s->local_queues[global_epoch % 2].empty());
           s->local_epoch = global_epoch;
@@ -359,8 +364,7 @@ rcu::gc_thread_loop(void *p)
       // pull the ones from the global queue
       if (EnableThreadLocalCleanup) {
         delete_queue &q = global_queues[global_epoch % 2];
-        if (!q.empty())
-          reaper_loops[rr++ % NGCReapers].reap_and_clear(q);
+        reaper_loops[rr++ % NGCReapers].reap_and_clear(q);
       }
       INVARIANT(global_queues[global_epoch % 2].empty());
       delete_queue &global_queue = global_queues[cleaning_epoch % 2];

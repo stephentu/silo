@@ -1241,9 +1241,8 @@ transaction_proto2::InitEpochScheme()
 }
 
 transaction_proto2::epoch_loop transaction_proto2::g_epoch_loop;
-bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
 
-static const uint64_t txn_epoch_us = 50 * 1000; /* 50 ms */
+static const uint64_t txn_epoch_us = 10 * 1000; /* 10 ms */
 //static const uint64_t txn_epoch_ns = txn_epoch_us * 1000;
 
 static event_avg_counter evt_avg_epoch_thread_queue_len("avg_epoch_thread_queue_len");
@@ -1388,3 +1387,6 @@ volatile uint64_t transaction_proto2::g_reads_finished_epoch = 0;
 
 aligned_padded_elem<spinlock> transaction_proto2::g_epoch_spinlocks[NMaxCores];
 volatile aligned_padded_elem<transaction_proto2::work_q*> transaction_proto2::g_work_queues[NMaxCores];
+
+// put at bottom
+bool transaction_proto2::_init_epoch_scheme_flag = InitEpochScheme();
