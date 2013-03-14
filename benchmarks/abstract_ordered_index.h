@@ -72,7 +72,8 @@ public:
       std::string &&key,
       std::string &&value)
   {
-    NDB_UNIMPLEMENTED("put rvalue refs");
+    return put(txn, static_cast<const std::string &>(key),
+                    static_cast<const std::string &>(value));
   }
 
   /**
@@ -96,7 +97,8 @@ public:
          std::string &&key,
          std::string &&value)
   {
-    return put(txn, std::move(key), std::move(value));
+    return insert(txn, static_cast<const std::string &>(key),
+                       static_cast<const std::string &>(value));
   }
 
   /**
@@ -113,7 +115,7 @@ public:
       void *txn,
       std::string &&key)
   {
-    put(txn, std::move(key), "");
+    remove(txn, static_cast<const std::string &>(key));
   }
 
   /**

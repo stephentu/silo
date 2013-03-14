@@ -1,13 +1,18 @@
 #include <vector>
+#include <limits>
 #include <utility>
 
 #include "kvdb_wrapper.h"
 #include "../varint.h"
 #include "../macros.h"
 #include "../util.h"
+#include "../amd64.h"
+#include "../lockguard.h"
 
 using namespace std;
 using namespace util;
+
+#define MUTABLE_RECORDS
 
 abstract_ordered_index *
 kvdb_wrapper::open_index(const string &name, size_t value_size_hint, bool mostly_append)
@@ -15,51 +20,168 @@ kvdb_wrapper::open_index(const string &name, size_t value_size_hint, bool mostly
   return new kvdb_ordered_index;
 }
 
-//static inline ALWAYS_INLINE size_t
-//size_encode_uint32(uint32_t value)
-//{
-//#ifdef USE_VARINT_ENCODING
-//  return size_uvint32(value);
-//#else
-//  return sizeof(uint32_t);
-//#endif
-//}
-//
-//static inline ALWAYS_INLINE uint8_t *
-//write_uint32(uint8_t *buf, uint32_t value)
-//{
-//  uint32_t *p = (uint32_t *) buf;
-//  *p = value;
-//  return (uint8_t *) (p + 1);
-//}
-//
-//static inline ALWAYS_INLINE uint8_t *
-//write_encode_uint32(uint8_t *buf, uint32_t value)
-//{
-//#ifdef USE_VARINT_ENCODING
-//  return write_uvint32(buf, value);
-//#else
-//  return write_uint32(buf, value);
-//#endif
-//}
-//
-//static inline ALWAYS_INLINE const uint8_t *
-//read_uint32(const uint8_t *buf, uint32_t *value)
-//{
-//  const uint32_t *p = (const uint32_t *) buf;
-//  *value = *p;
-//  return (const uint8_t *) (p + 1);
-//}
-//
-//static inline ALWAYS_INLINE const uint8_t *
-//read_encode_uint32(const uint8_t *buf, uint32_t *value)
-//{
-//#ifdef USE_VARINT_ENCODING
-//  return read_uvint32(buf, value);
-//#else
-//  return read_uint32(buf, value);
-//#endif
-//}
+#ifdef MUTABLE_RECORDS
+
+struct kvdb_record {
+  volatile uint32_t hdr;
+  char data[0];
+
+  // [ locked | size  | version ]
+  // [  0..1  | 1..17 | 17..32  ]
+
+  static const uint32_t HDR_LOCKED_MASK = 0x1;
+
+  static const uint32_t HDR_SIZE_SHIFT = 1;
+  static const uint32_t HDR_SIZE_MASK = numeric_limits<uint16_t>::max() << HDR_SIZE_SHIFT;
+
+  static const uint32_t HDR_VERSION_SHIFT = 17;
+  static const uint32_t HDR_VERSION_MASK = ((uint32_t)-1) << HDR_VERSION_SHIFT;
+
+  kvdb_record(const string &s)
+    : hdr(0)
+  {
+#ifdef CHECK_INVARIANTS
+    lock();
+    set_size(s.size());
+    do_write(s);
+    unlock();
+#else
+    set_size(s);
+    do_write(s);
+#endif
+  }
+
+  static inline bool
+  IsLocked(uint32_t v)
+  {
+    return v & HDR_LOCKED_MASK;
+  }
+
+  inline bool
+  is_locked() const
+  {
+    return IsLocked(hdr);
+  }
+
+  inline void
+  lock()
+  {
+    uint32_t v = hdr;
+    while (IsLocked(v) ||
+           !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
+      nop_pause();
+      v = hdr;
+    }
+    COMPILER_MEMORY_FENCE;
+  }
+
+  inline void
+  unlock()
+  {
+    uint32_t v = hdr;
+    INVARIANT(IsLocked(v));
+    const uint32_t n = Version(v);
+    v &= ~HDR_VERSION_MASK;
+    v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
+    v &= ~HDR_LOCKED_MASK;
+    INVARIANT(!IsLocked(v));
+    COMPILER_MEMORY_FENCE;
+    hdr = v;
+  }
+
+  static inline size_t
+  Size(uint32_t v)
+  {
+    return (v & HDR_SIZE_MASK) >> HDR_SIZE_SHIFT;
+  }
+
+  inline size_t
+  size() const
+  {
+    return Size(hdr);
+  }
+
+  inline void
+  set_size(size_t s)
+  {
+    INVARIANT(s <= numeric_limits<uint16_t>::max());
+    INVARIANT(is_locked());
+    const uint16_t new_sz = static_cast<uint16_t>(s);
+    hdr &= ~HDR_SIZE_MASK;
+    hdr |= (new_sz << HDR_SIZE_SHIFT);
+    INVARIANT(size() == s);
+  }
+
+  static inline uint32_t
+  Version(uint32_t v)
+  {
+    return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
+  }
+
+  inline uint32_t
+  stable_version() const
+  {
+    uint32_t v = hdr;
+    while (IsLocked(v)) {
+      nop_pause();
+      v = hdr;
+    }
+    COMPILER_MEMORY_FENCE;
+    return v;
+  }
+
+  inline bool
+  check_version(uint32_t version) const
+  {
+    COMPILER_MEMORY_FENCE;
+    return hdr == version;
+  }
+
+  inline void
+  do_read(string &s, size_t max_bytes_read) const
+  {
+  retry:
+    const uint32_t v = stable_version();
+    const size_t sz = min(Size(v), max_bytes_read);
+    s.assign(&data[0], sz);
+    if (unlikely(!check_version(v)))
+      goto retry;
+  }
+
+  inline bool
+  do_write(const string &s)
+  {
+    INVARIANT(is_locked());
+    const size_t max_r =
+      round_up<size_t, /* lgbase*/ 4>(sizeof(*this) + size()) - sizeof(*this);
+    if (unlikely(s.size() > max_r))
+      return false;
+    set_size(s.size());
+    NDB_MEMCPY(&data[0], s.data(), s.size());
+    return true;
+  }
+
+  static struct kvdb_record *
+  alloc(const string &s)
+  {
+    const size_t sz = s.size();
+    const size_t alloc_sz = round_up<size_t, 4>(sizeof(kvdb_record) + sz);
+    void * const p = malloc(alloc_sz);
+    INVARIANT(p);
+    return new (p) kvdb_record(s);
+  }
+
+  static void
+  release(struct kvdb_record *r)
+  {
+    if (unlikely(!r))
+      return;
+    rcu::free_with_fn(r, free);
+  }
+
+} PACKED;
+
+#else
 
 struct kvdb_record {
   uint16_t size;
@@ -85,7 +207,16 @@ struct kvdb_record {
     rcu::free_with_fn(r, free);
   }
 
+  inline void
+  do_read(string &s, size_t max_bytes_read) const
+  {
+    const size_t sz = min(static_cast<size_t>(size), max_bytes_read);
+    s.assign(&r->data[0], sz);
+  }
+
 } PACKED;
+
+#endif
 
 bool
 kvdb_ordered_index::get(
@@ -96,8 +227,7 @@ kvdb_ordered_index::get(
   btree::value_type v = 0;
   if (btr.search(varkey(key), v)) {
     const struct kvdb_record * const r = (const struct kvdb_record *) v;
-    const size_t sz = std::min(static_cast<size_t>(r->size), max_bytes_read);
-    value.assign(&r->data[0], sz);
+    r->do_read(value, max_bytes_read);
     return true;
   }
   return false;
@@ -109,21 +239,54 @@ kvdb_ordered_index::put(
     const string &key,
     const string &value)
 {
+#ifdef MUTABLE_RECORDS
+  btree::value_type v = 0, v_old = 0;
+  if (btr.search(varkey(key), v)) {
+    // easy
+    struct kvdb_record * const r = (struct kvdb_record *) v;
+    lock_guard<kvdb_record> guard(*r);
+    if (r->do_write(value))
+      return 0;
+    // replace
+    struct kvdb_record * const rnew = kvdb_record::alloc(value);
+    btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0);
+    INVARIANT((btree::value_type) r == v_old);
+    // rcu-free the old record
+    kvdb_record::release(r);
+    return 0;
+  }
+  struct kvdb_record * const rnew = kvdb_record::alloc(value);
+  if (!btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0)) {
+    struct kvdb_record *r = (struct kvdb_record *) v_old;
+    kvdb_record::release(r);
+  }
+  return 0;
+#else
   btree::value_type old_v = 0;
   if (!btr.insert(varkey(key), (btree::value_type) kvdb_record::alloc(value), &old_v, 0)) {
     struct kvdb_record *r = (struct kvdb_record *) old_v;
     kvdb_record::release(r);
   }
+#endif
   return 0;
 }
 
 const char *
-kvdb_ordered_index::put(
-    void *txn,
-    string &&key,
-    string &&value)
+kvdb_ordered_index::insert(void *txn,
+                           const std::string &key,
+                           const std::string &value)
 {
-  return put(txn, static_cast<const string &>(key), static_cast<const string &>(value));
+#ifdef MUTABLE_RECORDS
+  struct kvdb_record * const rnew = kvdb_record::alloc(value);
+  btree::value_type v_old = 0;
+  if (!btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0)) {
+    struct kvdb_record *r = (struct kvdb_record *) v_old;
+    kvdb_record::release(r);
+  }
+  return 0;
+#else
+  return put(txn, key, value);
+#endif
 }
 
 class kvdb_wrapper_search_range_callback : public btree::search_range_callback {
@@ -138,8 +301,10 @@ public:
     const size_t keylen = k.size();
 
     const struct kvdb_record * const r = (const struct kvdb_record *) v;
-
-    return upcall->invoke(key, keylen, &r->data[0], r->size);
+    // XXX(stephentu): FIX! THIS IS BAD
+    string s;
+    r->do_read(s, numeric_limits<size_t>::max());
+    return upcall->invoke(key, keylen, s.data(), s.size());
   }
 
 private:
@@ -166,12 +331,6 @@ kvdb_ordered_index::remove(void *txn, const string &key)
     struct kvdb_record * const r = (struct kvdb_record *) v;
     kvdb_record::release(r);
   }
-}
-
-void
-kvdb_ordered_index::remove(void *txn, string &&key)
-{
-  remove(txn, static_cast<const string &>(key));
 }
 
 size_t

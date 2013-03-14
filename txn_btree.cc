@@ -138,6 +138,7 @@ txn_btree::txn_search_range_callback::invoke(
     prev_key = k;
   }
   invoked = true;
+  // XXX(stephentu): FIX! we are allocating a buffer here every time!
   string_type local_v;
   bool local_read = ctx->local_search_str(*t, k, local_v);
   bool ret = true; // true means keep going, false means stop
