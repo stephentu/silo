@@ -8,6 +8,7 @@
 #include "../util.h"
 #include "../amd64.h"
 #include "../lockguard.h"
+#include "../prefetch.h"
 
 using namespace std;
 using namespace util;
@@ -48,6 +49,14 @@ struct kvdb_record {
 #else
     set_size(s.size());
     do_write(s);
+#endif
+  }
+
+  inline void
+  prefetch() const
+  {
+#ifdef LOGICAL_NODE_PREFETCH
+    prefetch_bytes(this, sizeof(*this) + size());
 #endif
   }
 
@@ -208,6 +217,14 @@ struct kvdb_record {
   }
 
   inline void
+  prefetch() const
+  {
+#ifdef LOGICAL_NODE_PREFETCH
+    prefetch_bytes(this, sizeof(*this) + size);
+#endif
+  }
+
+  inline void
   do_read(string &s, size_t max_bytes_read) const
   {
     const size_t sz = min(static_cast<size_t>(size), max_bytes_read);
@@ -227,6 +244,7 @@ kvdb_ordered_index::get(
   btree::value_type v = 0;
   if (btr.search(varkey(key), v)) {
     const struct kvdb_record * const r = (const struct kvdb_record *) v;
+    r->prefetch();
     r->do_read(value, max_bytes_read);
     return true;
   }
@@ -245,6 +263,7 @@ kvdb_ordered_index::put(
     // easy
     struct kvdb_record * const r = (struct kvdb_record *) v;
     lock_guard<kvdb_record> guard(*r);
+    r->prefetch();
     if (r->do_write(value))
       return 0;
     // replace
@@ -257,14 +276,14 @@ kvdb_ordered_index::put(
   }
   struct kvdb_record * const rnew = kvdb_record::alloc(value);
   if (!btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0)) {
-    struct kvdb_record *r = (struct kvdb_record *) v_old;
+    struct kvdb_record * const r = (struct kvdb_record *) v_old;
     kvdb_record::release(r);
   }
   return 0;
 #else
   btree::value_type old_v = 0;
   if (!btr.insert(varkey(key), (btree::value_type) kvdb_record::alloc(value), &old_v, 0)) {
-    struct kvdb_record *r = (struct kvdb_record *) old_v;
+    struct kvdb_record * const r = (struct kvdb_record *) old_v;
     kvdb_record::release(r);
   }
 #endif
@@ -280,7 +299,7 @@ kvdb_ordered_index::insert(void *txn,
   struct kvdb_record * const rnew = kvdb_record::alloc(value);
   btree::value_type v_old = 0;
   if (!btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0)) {
-    struct kvdb_record *r = (struct kvdb_record *) v_old;
+    struct kvdb_record * const r = (struct kvdb_record *) v_old;
     kvdb_record::release(r);
   }
   return 0;
@@ -303,6 +322,7 @@ public:
     const struct kvdb_record * const r = (const struct kvdb_record *) v;
     // XXX(stephentu): FIX! THIS IS BAD
     string s;
+    r->prefetch();
     r->do_read(s, numeric_limits<size_t>::max());
     return upcall->invoke(key, keylen, s.data(), s.size());
   }
