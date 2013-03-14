@@ -3,6 +3,7 @@
 #include "txn.h"
 #include "txn_btree.h"
 #include "lockguard.h"
+#include "scopedperf.hh"
 
 #include <algorithm>
 #include <iostream>
@@ -149,6 +150,7 @@ transaction::~transaction()
 }
 
 static event_counter evt_logical_node_latest_replacement("logical_node_latest_replacement");
+//STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_commit_probe0_tsc, txn_commit_probe0_cg);
 
 bool
 transaction::commit(bool doThrow)
@@ -156,6 +158,7 @@ transaction::commit(bool doThrow)
   // XXX(stephentu): specific abort counters, to see which
   // case we are aborting the most on (could integrate this with
   // abort_trap())
+  //ANON_REGION("transaction::commit:", &txn_commit_probe0_cg);
 
   switch (state) {
   case TXN_EMBRYO:

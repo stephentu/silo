@@ -122,6 +122,7 @@ bench_runner::run()
   db->do_txn_epoch_sync();
 
   event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
+  PERF_EXPR(scopedperf::perfsum_base::resetall());
 
   map<string, size_t> table_sizes_before;
   if (verbose) {
@@ -202,7 +203,7 @@ bench_runner::run()
     for (map<string, event_counter::counter_data>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
-    cerr << "--- perf counters (if enabled) ---" << endl;
+    cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
     PERF_EXPR(scopedperf::perfsum_base::printall());
     cerr << "---------------------------------------" << endl;
 

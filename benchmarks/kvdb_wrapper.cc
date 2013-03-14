@@ -9,6 +9,7 @@
 #include "../amd64.h"
 #include "../lockguard.h"
 #include "../prefetch.h"
+#include "../scopedperf.hh"
 
 using namespace std;
 using namespace util;
@@ -235,12 +236,15 @@ struct kvdb_record {
 
 #endif
 
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe0_tsc, kvdb_get_probe0_cg);
+
 bool
 kvdb_ordered_index::get(
     void *txn,
     const string &key,
     string &value, size_t max_bytes_read)
 {
+  ANON_REGION("kvdb_ordered_index::get:", &kvdb_get_probe0_cg);
   btree::value_type v = 0;
   if (btr.search(varkey(key), v)) {
     const struct kvdb_record * const r = (const struct kvdb_record *) v;

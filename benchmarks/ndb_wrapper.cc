@@ -5,6 +5,7 @@
 #include "../varkey.h"
 #include "../macros.h"
 #include "../util.h"
+#include "../scopedperf.hh"
 
 using namespace std;
 using namespace util;
@@ -65,12 +66,15 @@ ndb_ordered_index::ndb_ordered_index(const string &name, size_t value_size_hint,
   btr.set_mostly_append(mostly_append);
 }
 
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, ndb_get_probe0_tsc, ndb_get_probe0_cg);
+
 bool
 ndb_ordered_index::get(
     void *txn,
     const string &key,
     string &value, size_t max_bytes_read)
 {
+  ANON_REGION("ndb_ordered_index::get:", &ndb_get_probe0_cg);
   try {
     if (!btr.search(*((transaction *) txn), key, value, max_bytes_read))
       return false;
