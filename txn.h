@@ -29,6 +29,7 @@
 #include "spinlock.h"
 #include "small_unordered_map.h"
 #include "prefetch.h"
+#include "keyrange.h"
 
 // just a debug option to help track down a particular
 // race condition
@@ -44,8 +45,6 @@ class transaction : private util::noncopyable {
 protected:
   friend class txn_btree;
   friend class txn_context;
-  class key_range_t;
-  friend std::ostream &operator<<(std::ostream &, const key_range_t &);
 
 public:
 
@@ -979,90 +978,6 @@ protected:
   };
 
   void clear();
-
-  // [a, b)
-  struct key_range_t {
-    key_range_t() : a(), has_b(true), b() {}
-
-    key_range_t(const key_type &a) : a(a.str()), has_b(false), b() {}
-    key_range_t(const key_type &a, const key_type &b)
-      : a(a.str()), has_b(true), b(b.str())
-    { }
-    key_range_t(const key_type &a, const string_type &b)
-      : a(a.str()), has_b(true), b(b)
-    { }
-    key_range_t(const key_type &a, bool has_b, const key_type &b)
-      : a(a.str()), has_b(has_b), b(b.str())
-    { }
-    key_range_t(const key_type &a, bool has_b, const string_type &b)
-      : a(a.str()), has_b(has_b), b(b)
-    { }
-
-    key_range_t(const string_type &a) : a(a), has_b(false), b() {}
-    key_range_t(const string_type &a, const key_type &b)
-      : a(a), has_b(true), b(b.str())
-    { }
-    key_range_t(const string_type &a, bool has_b, const key_type &b)
-      : a(a), has_b(has_b), b(b.str())
-    { }
-
-    key_range_t(const string_type &a, const string_type &b)
-      : a(a), has_b(true), b(b)
-    { }
-    key_range_t(const string_type &a, bool has_b, const string_type &b)
-      : a(a), has_b(has_b), b(b)
-    { }
-
-    string_type a;
-    bool has_b; // false indicates infinity, true indicates use b
-    string_type b; // has meaning only if !has_b
-
-    inline bool
-    is_empty_range() const
-    {
-      return has_b && a >= b;
-    }
-
-    inline bool
-    contains(const key_range_t &that) const
-    {
-      if (a > that.a)
-        return false;
-      if (!has_b)
-        return true;
-      if (!that.has_b)
-        return false;
-      return b >= that.b;
-    }
-
-    inline bool
-    key_in_range(const key_type &k) const
-    {
-      return varkey(a) <= k && (!has_b || k < varkey(b));
-    }
-  };
-
-  // NOTE: with this comparator, upper_bound() will return a pointer to the first
-  // range which has upper bound greater than k (if one exists)- it does not
-  // guarantee that the range returned has a lower bound <= k
-  struct key_range_search_less_cmp {
-    inline bool
-    operator()(const key_type &k, const key_range_t &range) const
-    {
-      return !range.has_b || k < varkey(range.b);
-    }
-  };
-
-#ifdef CHECK_INVARIANTS
-  static void AssertValidRangeSet(const std::vector<key_range_t> &range_set);
-#else
-  static inline ALWAYS_INLINE void
-  AssertValidRangeSet(const std::vector<key_range_t> &range_set)
-  { }
-#endif /* CHECK_INVARIANTS */
-
-  static std::string PrintRangeSet(
-      const std::vector<key_range_t> &range_set);
 
   txn_state state;
   abort_reason reason;

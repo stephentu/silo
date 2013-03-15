@@ -132,9 +132,9 @@ txn_btree::txn_search_range_callback::invoke(
                << ", version=" << version << ">" << endl
                << "  " << *((transaction::logical_node *) v) << endl);
   if (!(t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
-    transaction::key_range_t r =
-      invoked ? transaction::key_range_t(next_key(prev_key), k) :
-                transaction::key_range_t(lower, k);
+    key_range_t r =
+      invoked ? key_range_t(next_key(prev_key), k) :
+                key_range_t(lower, k);
     VERBOSE(cerr << "  range: " << r << endl);
     if (!r.is_empty_range())
       ctx->add_absent_range(r);
@@ -251,11 +251,11 @@ txn_btree::search_range_call(transaction &t,
   if (!(t.get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
     if (upper)
       ctx.add_absent_range(
-          transaction::key_range_t(
+          key_range_t(
             c.invoked ? next_key(c.prev_key) : lower, *upper));
     else
       ctx.add_absent_range(
-          transaction::key_range_t(
+          key_range_t(
             c.invoked ? next_key(c.prev_key) : lower));
   }
 }

@@ -150,7 +150,7 @@ transaction::~transaction()
 }
 
 static event_counter evt_logical_node_latest_replacement("logical_node_latest_replacement");
-//STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_commit_probe0_tsc, txn_commit_probe0_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_commit_probe0_tsc, txn_commit_probe0_cg);
 
 bool
 transaction::commit(bool doThrow)
@@ -158,7 +158,7 @@ transaction::commit(bool doThrow)
   // XXX(stephentu): specific abort counters, to see which
   // case we are aborting the most on (could integrate this with
   // abort_trap())
-  //ANON_REGION("transaction::commit:", &txn_commit_probe0_cg);
+  ANON_REGION("transaction::commit:", &txn_commit_probe0_cg);
 
   switch (state) {
   case TXN_EMBRYO:
@@ -546,18 +546,6 @@ transaction::dump_debug_info() const
   }
 }
 
-ostream &
-operator<<(ostream &o, const transaction::key_range_t &range)
-{
-  o << "[" << hexify(range.a) << ", ";
-  if (range.has_b)
-    o << hexify(range.b);
-  else
-    o << "+inf";
-  o << ")";
-  return o;
-}
-
 #define EVENT_COUNTER_IMPL_X(x) \
   event_counter transaction::g_ ## x ## _ctr(#x);
 ABORT_REASONS(EVENT_COUNTER_IMPL_X)
@@ -568,64 +556,31 @@ event_counter transaction::g_evt_read_logical_deleted_node_search(
 event_counter transaction::g_evt_read_logical_deleted_node_scan(
     "read_logical_deleted_node_scan");
 
-#ifdef CHECK_INVARIANTS
-void
-transaction::AssertValidRangeSet(const vector<key_range_t> &range_set)
-{
-  if (range_set.empty())
-    return;
-  key_range_t last = range_set.front();
-  INVARIANT(!last.is_empty_range());
-  for (vector<key_range_t>::const_iterator it = range_set.begin() + 1;
-       it != range_set.end(); ++it) {
-    INVARIANT(!it->is_empty_range());
-    INVARIANT(last.has_b);
-    INVARIANT(last.b < it->a);
-  }
-}
-#endif /* CHECK_INVARIANTS */
-
-string
-transaction::PrintRangeSet(const vector<key_range_t> &range_set)
-{
-  ostringstream buf;
-  buf << "<";
-  bool first = true;
-  for (vector<key_range_t>::const_iterator it = range_set.begin();
-       it != range_set.end(); ++it, first = false) {
-    if (!first)
-      buf << ", ";
-    buf << *it;
-  }
-  buf << ">";
-  return buf.str();
-}
-
 void
 transaction::Test()
 {
   txn_context t;
 
   t.add_absent_range(key_range_t(u64_varkey(10), u64_varkey(20)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(20), u64_varkey(30)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(60)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(31), u64_varkey(40)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(49), u64_varkey(50)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(47), u64_varkey(50)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(39), u64_varkey(50)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(100), u64_varkey(200)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(300), u64_varkey(400)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
   t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(212)));
-  cout << PrintRangeSet(t.absent_range_set) << endl;
+  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
 }
 
 static event_counter evt_local_search_lookups("local_search_lookups");
@@ -763,7 +718,7 @@ transaction::txn_context::add_absent_range(const key_range_t &range)
     new_absent_range_set.push_back(key_range_t(left_key));
   }
 
-  AssertValidRangeSet(new_absent_range_set);
+  key_range_t::AssertValidRangeSet(new_absent_range_set);
   swap(absent_range_set, new_absent_range_set);
 }
 
