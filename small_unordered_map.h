@@ -209,7 +209,12 @@ public:
 
   ~small_unordered_map()
   {
-    clear();
+    if (unlikely(large_elems)) {
+      delete large_elems;
+      return;
+    }
+    for (size_t i = 0; i < n; i++)
+      small_elems[i].destroy();
   }
 
   small_unordered_map(const small_unordered_map &other)
