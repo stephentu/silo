@@ -35,12 +35,51 @@ ifeq ($(USE_PERF_CTRS),1)
 	CXXFLAGS+=-DUSE_PERF_CTRS
 endif
 
-HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
-	  spinbarrier.h counter.h core.h imstring.h lockguard.h spinlock.h hash_bytes.h \
-	  keyrange.h prefetch.h xbuf.h small_vector.h small_unordered_map.h scopedperf.hh \
-	  tuple.h record/encoder.h record/serializer.h
-SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc \
-	tuple.cc txn_btree.cc varint.cc memory.cc hash_bytes.cc keyrange.cc
+HEADERS = amd64.h \
+	btree.h \
+	core.h \
+	counter.h \
+	hash_bytes.h \
+	imstring.h \
+	keyrange.h \
+	lockguard.h \
+	macros.h \
+	prefetch.h \
+	rcu.h \
+	record/encoder.h \
+	record/serializer.h \
+	small_unordered_map.h \
+	small_vector.h \
+	spinbarrier.h \
+	spinlock.h \
+	static_assert.h \
+	thread.h \
+	tuple.h \
+	txn_btree.h \
+	txn_btree_impl.h \
+	txn.h \
+	txn_impl.h \
+	txn_proto1_impl.h \
+	txn_proto2_impl.h \
+	util.h \
+	varint.h \
+	varkey.h \
+	xbuf.h
+SRCFILES = btree.cc \
+	core.cc \
+	counter.cc \
+	hash_bytes.cc \
+	keyrange.cc \
+	memory.cc \
+	rcu.cc \
+	thread.cc \
+	tuple.cc \
+	txn_btree.cc \
+	txn.cc \
+	txn_proto1_impl.cc \
+	txn_proto2_impl.cc \
+	varint.cc
+
 OBJFILES = $(SRCFILES:.cc=.o)
 
 MYSQL_SHARE_DIR=/x/stephentu/mysql-5.5.29/build/sql/share
@@ -55,13 +94,13 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/inline_str.h \
 	benchmarks/bdb_wrapper.h \
 	benchmarks/ndb_wrapper.h \
+	benchmarks/ndb_wrapper_impl.h \
 	benchmarks/kvdb_wrapper.h \
 	benchmarks/mysql_wrapper.h \
 	benchmarks/tpcc.h \
 	benchmarks/masstree/kvrandom.hh
 BENCH_SRCFILES = \
 	benchmarks/bdb_wrapper.cc \
-	benchmarks/ndb_wrapper.cc \
 	benchmarks/kvdb_wrapper.cc \
 	benchmarks/mysql_wrapper.cc \
 	benchmarks/tpcc.cc \

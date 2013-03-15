@@ -13,6 +13,7 @@
 #include "bench.h"
 #include "bdb_wrapper.h"
 #include "ndb_wrapper.h"
+#include "ndb_wrapper_impl.h"
 #include "kvdb_wrapper.h"
 #include "mysql_wrapper.h"
 
@@ -112,9 +113,9 @@ main(int argc, char **argv)
     int ret UNUSED = system(cmd.c_str());
     db = new bdb_wrapper("db", bench_type + ".db");
   } else if (db_type == "ndb-proto1") {
-    db = new ndb_wrapper(ndb_wrapper::PROTO_1);
+    db = new ndb_wrapper<transaction_proto1>;
   } else if (db_type == "ndb-proto2") {
-    db = new ndb_wrapper(ndb_wrapper::PROTO_2);
+    db = new ndb_wrapper<transaction_proto2>;
   } else if (db_type == "kvdb") {
     db = new kvdb_wrapper;
   } else if (db_type == "mysql") {

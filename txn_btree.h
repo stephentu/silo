@@ -4,6 +4,9 @@
 #include "btree.h"
 #include "txn.h"
 
+// XXX: hacky
+extern void txn_btree_test();
+
 /**
  * This class implements a serializable, multi-version b-tree
  *
@@ -19,13 +22,14 @@
  * Note that the txn_btree *manages* the memory of both keys and values internally.
  * See the specific notes on search()/insert() about memory ownership
  */
+template <typename Transaction>
 class txn_btree {
-  friend class transaction;
-  friend class transaction_proto1;
-  friend class transaction_proto2;
+  friend class transaction<Transaction>;
+  friend Transaction; // C++11 allows this
+
 public:
-  typedef transaction::key_type key_type;
-  typedef transaction::string_type string_type;
+  typedef typename Transaction::key_type key_type;
+  typedef typename Transaction::string_type string_type;
   typedef const uint8_t * value_type;
   typedef size_t size_type;
 
@@ -70,7 +74,7 @@ public:
 
   // either returns false or v is set to not-empty with value
   // precondition: max_bytes_read > 0
-  bool search(transaction &t, const string_type &k, string_type &v,
+  bool search(Transaction &t, const string_type &k, string_type &v,
               size_t max_bytes_read = string_type::npos);
 
   // memory:
@@ -78,20 +82,20 @@ public:
   // v - if k is found, points to a region of (immutable) memory of size sz which
   //     is guaranteed to be valid memory as long as transaction t is in scope
   inline bool
-  search(transaction &t, const key_type &k, string_type &v,
+  search(Transaction &t, const key_type &k, string_type &v,
          size_t max_bytes_read = string_type::npos)
   {
     return search(t, to_string_type(k), v, max_bytes_read);
   }
 
   void
-  search_range_call(transaction &t,
+  search_range_call(Transaction &t,
                     const string_type &lower,
                     const string_type *upper,
                     search_range_callback &callback);
 
   inline void
-  search_range_call(transaction &t,
+  search_range_call(Transaction &t,
                     const key_type &lower,
                     const key_type *upper,
                     search_range_callback &callback)
@@ -105,7 +109,7 @@ public:
   template <typename T>
   inline void
   search_range(
-      transaction &t, const string_type &lower,
+      Transaction &t, const string_type &lower,
       const string_type *upper, T callback)
   {
     type_callback_wrapper<T> w(&callback);
@@ -115,7 +119,7 @@ public:
   template <typename T>
   inline void
   search_range(
-      transaction &t, const key_type &lower,
+      Transaction &t, const key_type &lower,
       const key_type *upper, T callback)
   {
     type_callback_wrapper<T> w(&callback);
@@ -123,14 +127,14 @@ public:
   }
 
   inline void
-  insert(transaction &t, const string_type &k, const string_type &v)
+  insert(Transaction &t, const string_type &k, const string_type &v)
   {
     INVARIANT(!v.empty());
     insert_impl(t, k, v);
   }
 
   inline void
-  insert(transaction &t, string_type &&k, string_type &&v)
+  insert(Transaction &t, string_type &&k, string_type &&v)
   {
     INVARIANT(!v.empty());
     insert_impl(t, std::move(k), std::move(v));
@@ -139,7 +143,7 @@ public:
   // insert() methods below are for legacy use
 
   inline void
-  insert(transaction &t, const string_type &k, value_type v, size_type sz)
+  insert(Transaction &t, const string_type &k, value_type v, size_type sz)
   {
     INVARIANT(v);
     INVARIANT(sz);
@@ -147,7 +151,7 @@ public:
   }
 
   inline void
-  insert(transaction &t, const key_type &k, value_type v, size_type sz)
+  insert(Transaction &t, const key_type &k, value_type v, size_type sz)
   {
     INVARIANT(v);
     INVARIANT(sz);
@@ -156,32 +160,32 @@ public:
 
   template <typename T>
   inline void
-  insert_object(transaction &t, const key_type &k, const T &obj)
+  insert_object(Transaction &t, const key_type &k, const T &obj)
   {
     insert(t, k, (value_type) &obj, sizeof(obj));
   }
 
   template <typename T>
   inline void
-  insert_object(transaction &t, const string_type &k, const T &obj)
+  insert_object(Transaction &t, const string_type &k, const T &obj)
   {
     insert(t, k, (value_type) &obj, sizeof(obj));
   }
 
   inline void
-  remove(transaction &t, const string_type &k)
+  remove(Transaction &t, const string_type &k)
   {
     insert_impl(t, k, "");
   }
 
   inline void
-  remove(transaction &t, string_type &&k)
+  remove(Transaction &t, string_type &&k)
   {
     insert_impl(t, std::move(k), "");
   }
 
   inline void
-  remove(transaction &t, const key_type &k)
+  remove(Transaction &t, const key_type &k)
   {
     insert_impl(t, to_string_type(k), "");
   }
@@ -245,8 +249,8 @@ private:
   };
 
   struct txn_search_range_callback : public btree::low_level_search_range_callback {
-    txn_search_range_callback(transaction *t,
-                              transaction::txn_context *ctx,
+    txn_search_range_callback(Transaction *t,
+                              typename Transaction::txn_context *ctx,
                               const key_type &lower,
                               search_range_callback *caller_callback)
       : t(t), ctx(ctx), lower(lower), prev_key(),
@@ -255,8 +259,8 @@ private:
     virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
     virtual bool invoke(const btree::string_type &k, btree::value_type v,
                         const btree::node_opaque_t *n, uint64_t version);
-    transaction *const t;
-    transaction::txn_context *const ctx;
+    Transaction *const t;
+    typename Transaction::txn_context *const ctx;
     const key_type lower;
     string_type prev_key;
     bool invoked;
@@ -265,19 +269,32 @@ private:
   };
 
   struct absent_range_validation_callback : public btree::search_range_callback {
-    absent_range_validation_callback(transaction::txn_context *ctx,
-                                     transaction::tid_t commit_tid)
+    absent_range_validation_callback(typename Transaction::txn_context *ctx,
+                                     transaction_base::tid_t commit_tid)
       : ctx(ctx), commit_tid(commit_tid), failed_flag(false) {}
     inline bool failed() const { return failed_flag; }
-    virtual bool invoke(const btree::string_type &k, btree::value_type v);
-    transaction::txn_context *const ctx;
-    const transaction::tid_t commit_tid;
+    virtual bool
+    invoke(const btree::string_type &k, btree::value_type v)
+    {
+      dbtuple *ln = (dbtuple *) v;
+      INVARIANT(ln);
+      VERBOSE(std::cerr << "absent_range_validation_callback: key " << util::hexify(k)
+          << " found dbtuple 0x" << util::hexify(ln) << std::endl);
+      const bool did_write = ctx->write_set.find(k) != ctx->write_set.end();
+      failed_flag = did_write ? !ln->latest_value_is_nil() : !ln->stable_latest_value_is_nil();
+      if (failed_flag)
+        VERBOSE(std::cerr << "absent_range_validation_callback: key " << util::hexify(k)
+            << " found dbtuple 0x" << util::hexify(ln) << std::endl);
+      return !failed_flag;
+    }
+    typename Transaction::txn_context *const ctx;
+    const transaction_base::tid_t commit_tid;
     bool failed_flag;
   };
 
   // remove() is just insert_impl() with NULL value
-  void insert_impl(transaction &t, const string_type &k, const string_type &v);
-  void insert_impl(transaction &t, string_type &&k, string_type &&v);
+  void insert_impl(Transaction &t, const string_type &k, const string_type &v);
+  void insert_impl(Transaction &t, string_type &&k, string_type &&v);
 
   btree underlying_btree;
   size_type value_size_hint;

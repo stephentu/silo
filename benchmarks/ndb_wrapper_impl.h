@@ -1,3 +1,6 @@
+#ifndef _NDB_WRAPPER_IMPL_H_
+#define _NDB_WRAPPER_IMPL_H_
+
 #include <stdint.h>
 #include "ndb_wrapper.h"
 #include "../counter.h"
@@ -6,77 +9,77 @@
 #include "../macros.h"
 #include "../util.h"
 #include "../scopedperf.hh"
+#include "../txn.h"
+#include "../txn_proto1_impl.h"
+#include "../txn_proto2_impl.h"
 
-using namespace std;
-using namespace util;
-
+template <typename T>
 void *
-ndb_wrapper::new_txn(uint64_t txn_flags, void *buf)
+ndb_wrapper<T>::new_txn(uint64_t txn_flags, void *buf)
 {
-  switch (proto) {
-  case PROTO_1:
-    return new (buf) transaction_proto1(txn_flags);
-  case PROTO_2:
-    return new (buf) transaction_proto2(txn_flags);
-  default:
-    ALWAYS_ASSERT(false);
-    return NULL;
-  }
+  return new (buf) T(txn_flags);
 }
 
+template <typename T>
 bool
-ndb_wrapper::commit_txn(void *txn)
+ndb_wrapper<T>::commit_txn(void *txn)
 {
-  transaction * const t = (transaction *) txn;
+  T * const t = (T *) txn;
   const bool ret = t->commit(); // won't throw
-  t->~transaction();
+  t->~T();
   return ret;
 }
 
+template <typename T>
 void
-ndb_wrapper::abort_txn(void *txn)
+ndb_wrapper<T>::abort_txn(void *txn)
 {
-  transaction * const t = (transaction *) txn;
+  T * const t = (T *) txn;
   t->abort();
-  t->~transaction();
+  t->~T();
 }
 
+template <typename T>
 void
-ndb_wrapper::print_txn_debug(void *txn) const
+ndb_wrapper<T>::print_txn_debug(void *txn) const
 {
-  ((transaction *) txn)->dump_debug_info();
+  ((T *) txn)->dump_debug_info();
 }
 
+template <typename T>
 abstract_ordered_index *
-ndb_wrapper::open_index(const string &name, size_t value_size_hint, bool mostly_append)
+ndb_wrapper<T>::open_index(const std::string &name, size_t value_size_hint, bool mostly_append)
 {
-  return new ndb_ordered_index(name, value_size_hint, mostly_append);
+  return new ndb_ordered_index<T>(name, value_size_hint, mostly_append);
 }
 
+template <typename T>
 void
-ndb_wrapper::close_index(abstract_ordered_index *idx)
+ndb_wrapper<T>::close_index(abstract_ordered_index *idx)
 {
   delete idx;
 }
 
-ndb_ordered_index::ndb_ordered_index(const string &name, size_t value_size_hint, bool mostly_append)
+template <typename T>
+ndb_ordered_index<T>::ndb_ordered_index(const std::string &name, size_t value_size_hint, bool mostly_append)
   : name(name), btr()
 {
   btr.set_value_size_hint(value_size_hint);
   btr.set_mostly_append(mostly_append);
 }
 
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, ndb_get_probe0_tsc, ndb_get_probe0_cg);
+//STATIC_COUNTER_DECL(scopedperf::tsc_ctr, ndb_get_probe0_tsc, ndb_get_probe0_cg);
 
+template <typename T>
 bool
-ndb_ordered_index::get(
+ndb_ordered_index<T>::get(
     void *txn,
-    const string &key,
-    string &value, size_t max_bytes_read)
+    const std::string &key,
+    std::string &value, size_t max_bytes_read)
 {
-  ANON_REGION("ndb_ordered_index::get:", &ndb_get_probe0_cg);
+  //ANON_REGION("ndb_ordered_index::get:", &ndb_get_probe0_cg);
   try {
-    if (!btr.search(*((transaction *) txn), key, value, max_bytes_read))
+    if (!btr.search(*((T *) txn), key, value, max_bytes_read))
       return false;
     INVARIANT(!value.empty());
     return true;
@@ -87,14 +90,15 @@ ndb_ordered_index::get(
 
 static event_counter evt_rec_inserts("record_inserts");
 
+template <typename T>
 const char *
-ndb_ordered_index::put(
+ndb_ordered_index<T>::put(
     void *txn,
-    const string &key,
-    const string &value)
+    const std::string &key,
+    const std::string &value)
 {
   try {
-    btr.insert(*((transaction *) txn), key, value);
+    btr.insert(*((T *) txn), key, value);
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
@@ -106,14 +110,15 @@ ndb_ordered_index::put(
   return 0;
 }
 
+template <typename T>
 const char *
-ndb_ordered_index::put(
+ndb_ordered_index<T>::put(
     void *txn,
-    string &&key,
-    string &&value)
+    std::string &&key,
+    std::string &&value)
 {
   try {
-    btr.insert(*((transaction *) txn), move(key), move(value));
+    btr.insert(*((T *) txn), move(key), move(value));
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
@@ -125,13 +130,16 @@ ndb_ordered_index::put(
   return 0;
 }
 
-class ndb_wrapper_search_range_callback : public txn_btree::search_range_callback {
+template <typename T>
+class ndb_wrapper_search_range_callback : public txn_btree<T>::search_range_callback {
 public:
-  ndb_wrapper_search_range_callback(ndb_ordered_index::scan_callback &upcall)
+  ndb_wrapper_search_range_callback(abstract_ordered_index::scan_callback &upcall)
     : upcall(&upcall) {}
 
   virtual bool
-  invoke(const txn_btree::string_type &k, const txn_btree::value_type v, txn_btree::size_type sz)
+  invoke(const typename txn_btree<T>::string_type &k,
+         const typename txn_btree<T>::value_type v,
+         const typename txn_btree<T>::size_type sz)
   {
     const char * const key = (const char *) k.data();
     const size_t keylen = k.size();
@@ -143,18 +151,19 @@ public:
   }
 
 private:
-  ndb_ordered_index::scan_callback *upcall;
+  abstract_ordered_index::scan_callback *upcall;
 };
 
+template <typename T>
 void
-ndb_ordered_index::scan(
+ndb_ordered_index<T>::scan(
     void *txn,
-    const string &start_key,
-    const string *end_key,
+    const std::string &start_key,
+    const std::string *end_key,
     scan_callback &callback)
 {
-  transaction &t = *((transaction *) txn);
-  ndb_wrapper_search_range_callback c(callback);
+  T &t = *((T *) txn);
+  ndb_wrapper_search_range_callback<T> c(callback);
   try {
     btr.search_range_call(t, start_key, end_key, c);
   } catch (transaction_abort_exception &ex) {
@@ -162,10 +171,11 @@ ndb_ordered_index::scan(
   }
 }
 
+template <typename T>
 void
-ndb_ordered_index::remove(void *txn, const string &key)
+ndb_ordered_index<T>::remove(void *txn, const std::string &key)
 {
-  transaction &t = *((transaction *) txn);
+  T &t = *((T *) txn);
   try {
     btr.remove(t, key);
   } catch (transaction_abort_exception &ex) {
@@ -173,10 +183,11 @@ ndb_ordered_index::remove(void *txn, const string &key)
   }
 }
 
+template <typename T>
 void
-ndb_ordered_index::remove(void *txn, string &&key)
+ndb_ordered_index<T>::remove(void *txn, std::string &&key)
 {
-  transaction &t = *((transaction *) txn);
+  T &t = *((T *) txn);
   try {
     btr.remove(t, move(key));
   } catch (transaction_abort_exception &ex) {
@@ -184,17 +195,21 @@ ndb_ordered_index::remove(void *txn, string &&key)
   }
 }
 
+template <typename T>
 size_t
-ndb_ordered_index::size() const
+ndb_ordered_index<T>::size() const
 {
   return btr.size_estimate();
 }
 
+template <typename T>
 void
-ndb_ordered_index::clear()
+ndb_ordered_index<T>::clear()
 {
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
   cerr << "purging txn index: " << name << endl;
 #endif
   return btr.unsafe_purge(true);
 }
+
+#endif /* _NDB_WRAPPER_IMPL_H_ */

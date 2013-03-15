@@ -47,60 +47,6 @@ dbtuple::gc_chain()
   release(this); // ~dbtuple() takes care of all reachable ptrs
 }
 
-dbtuple::write_record_ret
-dbtuple::write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
-{
-  INVARIANT(is_locked());
-  INVARIANT(is_latest());
-
-  const version_t v = unstable_version();
-
-  if (!sz)
-    ++g_evt_dbtuple_logical_deletes;
-
-  // try to overwrite this record
-  if (likely(txn->can_overwrite_record_tid(version, t))) {
-    // see if we have enough space
-
-    if (likely(sz <= alloc_size)) {
-      // directly update in place
-      version = t;
-      size = sz;
-      NDB_MEMCPY(get_value_start(v), r, sz);
-      return write_record_ret(false, NULL);
-    }
-
-    // keep in the chain (it's wasteful, but not incorrect)
-    // so that cleanup is easier
-    dbtuple * const rep = alloc(t, r, sz, this, true);
-    INVARIANT(rep->is_latest());
-    set_latest(false);
-    return write_record_ret(false, rep);
-  }
-
-  // need to spill
-  ++g_evt_dbtuple_spills;
-  g_evt_avg_record_spill_len.offer(size);
-
-  char * const vstart = get_value_start(v);
-
-  if (IsBigType(v) && sz <= alloc_size) {
-    dbtuple * const spill = alloc(version, (const_record_type) vstart, size, d->big.next, false);
-    INVARIANT(!spill->is_latest());
-    set_next(spill);
-    version = t;
-    size = sz;
-    NDB_MEMCPY(vstart, r, sz);
-    return write_record_ret(true, NULL);
-  }
-
-  dbtuple * const rep = alloc(t, r, sz, this, true);
-  INVARIANT(rep->is_latest());
-  set_latest(false);
-  return write_record_ret(true, rep);
-
-}
-
 string
 dbtuple::VersionInfoStr(version_t v)
 {
@@ -117,10 +63,10 @@ dbtuple::VersionInfoStr(version_t v)
 }
 
 static vector<string>
-format_tid_list(const vector<transaction::tid_t> &tids)
+format_tid_list(const vector<transaction_base::tid_t> &tids)
 {
   vector<string> s;
-  for (vector<transaction::tid_t>::const_iterator it = tids.begin();
+  for (vector<transaction_base::tid_t>::const_iterator it = tids.begin();
        it != tids.end(); ++it)
     s.push_back(g_proto_version_str(*it));
   return s;
@@ -129,8 +75,8 @@ format_tid_list(const vector<transaction::tid_t> &tids)
 inline ostream &
 operator<<(ostream &o, const dbtuple &ln)
 {
-  vector<transaction::tid_t> tids;
-  vector<transaction::size_type> recs;
+  vector<transaction_base::tid_t> tids;
+  vector<transaction_base::size_type> recs;
   tids.push_back(ln.version);
   recs.push_back(ln.size);
   vector<string> tids_s = format_tid_list(tids);
@@ -142,8 +88,8 @@ operator<<(ostream &o, const dbtuple &ln)
   o << endl;
   const struct dbtuple *p = ln.get_next();
   for (; p; p = p->get_next()) {
-    vector<transaction::tid_t> itids;
-    vector<transaction::size_type> irecs;
+    vector<transaction_base::tid_t> itids;
+    vector<transaction_base::size_type> irecs;
     itids.push_back(p->version);
     irecs.push_back(p->size);
     vector<string> itids_s = format_tid_list(itids);

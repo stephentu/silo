@@ -1431,7 +1431,7 @@ ssize_t
 tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY, txn_buf());
+  void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf());
   try {
 
     customer::key k_c;
@@ -1555,7 +1555,7 @@ tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  void *txn = db->new_txn(txn_flags | transaction::TXN_FLAG_READ_ONLY, txn_buf());
+  void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf());
   try {
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key0, k_d), obj_v));

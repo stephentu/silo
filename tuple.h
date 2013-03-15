@@ -24,7 +24,7 @@
 // race condition
 //#define dbtuple_QUEUE_TRACKING
 
-class transaction; // forward decl
+template <typename Protocol> class transaction; // forward decl
 
 /**
  * A dbtuple is the type of value which we stick
@@ -573,8 +573,59 @@ public:
    *
    * XXX: document return value
    */
+  template <typename Transaction>
   write_record_ret
-  write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz);
+  write_record_at(const Transaction *txn, tid_t t, const_record_type r, size_type sz)
+  {
+    INVARIANT(is_locked());
+    INVARIANT(is_latest());
+
+    const version_t v = unstable_version();
+
+    if (!sz)
+      ++g_evt_dbtuple_logical_deletes;
+
+    // try to overwrite this record
+    if (likely(txn->can_overwrite_record_tid(version, t))) {
+      // see if we have enough space
+
+      if (likely(sz <= alloc_size)) {
+        // directly update in place
+        version = t;
+        size = sz;
+        NDB_MEMCPY(get_value_start(v), r, sz);
+        return write_record_ret(false, NULL);
+      }
+
+      // keep in the chain (it's wasteful, but not incorrect)
+      // so that cleanup is easier
+      dbtuple * const rep = alloc(t, r, sz, this, true);
+      INVARIANT(rep->is_latest());
+      set_latest(false);
+      return write_record_ret(false, rep);
+    }
+
+    // need to spill
+    ++g_evt_dbtuple_spills;
+    g_evt_avg_record_spill_len.offer(size);
+
+    char * const vstart = get_value_start(v);
+
+    if (IsBigType(v) && sz <= alloc_size) {
+      dbtuple * const spill = alloc(version, (const_record_type) vstart, size, d->big.next, false);
+      INVARIANT(!spill->is_latest());
+      set_next(spill);
+      version = t;
+      size = sz;
+      NDB_MEMCPY(vstart, r, sz);
+      return write_record_ret(true, NULL);
+    }
+
+    dbtuple * const rep = alloc(t, r, sz, this, true);
+    INVARIANT(rep->is_latest());
+    set_latest(false);
+    return write_record_ret(true, rep);
+  }
 
   // NB: we round up allocation sizes because jemalloc will do this
   // internally anyways, so we might as well grab more usable space (really

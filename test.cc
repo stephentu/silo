@@ -659,7 +659,7 @@ public:
     //transaction::Test();
     btree::TestFast();
     //btree::TestSlow();
-    txn_btree::Test();
+    txn_btree_test();
     ret = 0;
   }
 

@@ -1,7 +1,11 @@
 #include <unistd.h>
 #include <limits>
 
+#include "txn.h"
+#include "txn_proto1_impl.h"
+#include "txn_proto2_impl.h"
 #include "txn_btree.h"
+#include "txn_btree_impl.h"
 #include "thread.h"
 #include "util.h"
 #include "macros.h"
@@ -12,357 +16,10 @@
 using namespace std;
 using namespace util;
 
-//#define IV(expr) expr
-#define IV(expr)
-
-IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe0_tsc, txn_btree_search_probe0_cg));
-IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe1_tsc, txn_btree_search_probe1_cg));
-IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe2_tsc, txn_btree_search_probe2_cg));
-IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe3_tsc, txn_btree_search_probe3_cg));
-IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe4_tsc, txn_btree_search_probe4_cg));
-
-bool
-txn_btree::search(transaction &t, const string_type &k, string_type &v,
-                  size_t max_bytes_read)
-{
-  IV(ANON_REGION("txn_btree::search:", &txn_btree_search_probe0_cg));
-  INVARIANT(max_bytes_read > 0);
-  t.ensure_active();
-  transaction::txn_context &ctx = t.ctx_map[this];
-
-  // priority is
-  // 1) write set
-  // 2) absent set
-  // 3) absent range set
-  // 4) underlying tree
-  //
-  // note (1)-(3) are served by transaction::local_search()
-
-  {
-    IV(ANON_REGION("txn_btree::search:local_search:", &txn_btree_search_probe1_cg));
-    if (ctx.local_search_str(t, k, v)) {
-      if (v.size() > max_bytes_read)
-        v.resize(max_bytes_read);
-      return !v.empty();
-    }
-  }
-
-  btree::value_type underlying_v;
-  if (!underlying_btree.search(varkey(k), underlying_v)) {
-    // all records exist in the system at MIN_TID with no value
-    INVARIANT(ctx.absent_set.find(k) == ctx.absent_set.end());
-    ctx.absent_set[k] = false;
-    return false;
-  } else {
-    IV(ANON_REGION("txn_btree::search:process:", &txn_btree_search_probe2_cg));
-    const dbtuple * const ln =
-      (const dbtuple *) underlying_v;
-    INVARIANT(ln);
-    transaction::tid_t start_t = 0;
-
-    const pair<bool, transaction::tid_t> snapshot_tid_t =
-      t.consistent_snapshot_tid();
-    const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
-      snapshot_tid_t.second : dbtuple::MAX_TID;
-
-    ln->prefetch();
-    {
-      IV(ANON_REGION("txn_btree::search:process:extract:", &txn_btree_search_probe3_cg));
-      if (unlikely(!ln->stable_read(snapshot_tid, start_t, v, max_bytes_read))) {
-        const transaction::abort_reason r =
-          transaction::ABORT_REASON_UNSTABLE_READ;
-        t.abort_impl(r);
-        throw transaction_abort_exception(r);
-      }
-    }
-
-    if (unlikely(!t.can_read_tid(start_t))) {
-      const transaction::abort_reason r =
-        transaction::ABORT_REASON_FUTURE_TID_READ;
-      t.abort_impl(r);
-      throw transaction_abort_exception(r);
-    }
-
-    const bool v_empty = v.empty();
-    if (v_empty)
-      ++transaction::g_evt_read_logical_deleted_node_search;
-    IV(ANON_REGION("txn_btree::search:process:readset:", &txn_btree_search_probe4_cg));
-    transaction_base::read_record_t &read_rec = ctx.read_set[ln];
-    if (!read_rec.t) {
-      // XXX(stephentu): this doesn't work if we allow wrap around
-      read_rec.t = start_t;
-    } else if (unlikely(read_rec.t != start_t)) {
-      const transaction::abort_reason r =
-        transaction::ABORT_REASON_READ_NODE_INTEREFERENCE;
-      t.abort_impl(r);
-      throw transaction_abort_exception(r);
-    }
-    return !v_empty;
-  }
-}
-
-void
-txn_btree::txn_search_range_callback::on_resp_node(
-    const btree::node_opaque_t *n, uint64_t version)
-{
-  VERBOSE(cerr << "on_resp_node(): <node=0x" << hexify(intptr_t(n))
-               << ", version=" << version << ">" << endl);
-  VERBOSE(cerr << "  " << btree::NodeStringify(n) << endl);
-  if (t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN) {
-    transaction::node_scan_map::iterator it = ctx->node_scan.find(n);
-    if (it == ctx->node_scan.end()) {
-      ctx->node_scan[n] = version;
-    } else {
-      if (unlikely(it->second != version)) {
-        const transaction::abort_reason r =
-          transaction::ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED;
-        t->abort_impl(r);
-        throw transaction_abort_exception(r);
-      }
-    }
-  }
-}
-
-bool
-txn_btree::txn_search_range_callback::invoke(
-    const btree::string_type &k, btree::value_type v,
-    const btree::node_opaque_t *n, uint64_t version)
-{
-  t->ensure_active();
-  VERBOSE(cerr << "search range k: " << hexify(k) << " from <node=0x" << hexify(intptr_t(n))
-               << ", version=" << version << ">" << endl
-               << "  " << *((dbtuple *) v) << endl);
-  if (!(t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
-    key_range_t r =
-      invoked ? key_range_t(next_key(prev_key), k) :
-                key_range_t(lower, k);
-    VERBOSE(cerr << "  range: " << r << endl);
-    if (!r.is_empty_range())
-      ctx->add_absent_range(r);
-    prev_key = k;
-  }
-  invoked = true;
-  // XXX(stephentu): FIX! we are allocating a buffer here every time!
-  string_type local_v;
-  bool local_read = ctx->local_search_str(*t, k, local_v);
-  bool ret = true; // true means keep going, false means stop
-  if (local_read && !local_v.empty()) {
-    // found locally non-deleted copy, so let client read own writes
-    ret = caller_callback->invoke(
-        k, (const value_type) local_v.data(), local_v.size());
-  }
-  const dbtuple * const ln = (dbtuple *) v;
-  if (ctx->read_set.find(ln) == ctx->read_set.end()) {
-    INVARIANT(ln);
-    transaction::tid_t start_t = 0;
-    string_type r;
-    const pair<bool, transaction::tid_t> snapshot_tid_t =
-      t->consistent_snapshot_tid();
-    const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
-      snapshot_tid_t.second : dbtuple::MAX_TID;
-    ln->prefetch();
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
-      const transaction::abort_reason r =
-        transaction::ABORT_REASON_UNSTABLE_READ;
-      t->abort_impl(r);
-      throw transaction_abort_exception(r);
-    }
-    if (unlikely(!t->can_read_tid(start_t))) {
-      const transaction::abort_reason r =
-        transaction::ABORT_REASON_FUTURE_TID_READ;
-      t->abort_impl(r);
-      throw transaction_abort_exception(r);
-    }
-    if (r.empty())
-      ++transaction::g_evt_read_logical_deleted_node_scan;
-    transaction_base::read_record_t * const read_rec = &ctx->read_set[ln];
-    if (!read_rec->t) {
-      // XXX(stephentu): this doesn't work if we allow wrap around
-      read_rec->t = start_t;
-    } else if (unlikely(read_rec->t != start_t)) {
-      const transaction::abort_reason r =
-        transaction::ABORT_REASON_READ_NODE_INTEREFERENCE;
-      t->abort_impl(r);
-      throw transaction_abort_exception(r);
-    }
-    VERBOSE(cerr << "read <t=" << start_t << ", sz=" << r.size()
-                 << "> (local_read="
-                 << (local_read ? "Y" : "N") << ")" << endl);
-    if (!local_read && !r.empty())
-      ret = caller_callback->invoke(
-          k, (const value_type) r.data(), r.size());
-  }
-  if (!ret)
-    caller_stopped = true;
-  return ret;
-}
-
-bool
-txn_btree::absent_range_validation_callback::invoke(const string_type &k, btree::value_type v)
-{
-  dbtuple *ln = (dbtuple *) v;
-  INVARIANT(ln);
-  VERBOSE(cerr << "absent_range_validation_callback: key " << hexify(k)
-               << " found dbtuple 0x" << hexify(ln) << endl);
-  const bool did_write = ctx->write_set.find(k) != ctx->write_set.end();
-  failed_flag = did_write ? !ln->latest_value_is_nil() : !ln->stable_latest_value_is_nil();
-  if (failed_flag)
-    VERBOSE(cerr << "absent_range_validation_callback: key " << hexify(k)
-                 << " found dbtuple 0x" << hexify(ln) << endl);
-  return !failed_flag;
-}
-
-void
-txn_btree::search_range_call(transaction &t,
-                             const string_type &lower,
-                             const string_type *upper,
-                             search_range_callback &callback)
-{
-  t.ensure_active();
-  transaction::txn_context &ctx = t.ctx_map[this];
-
-  if (upper)
-    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this))
-                 << ")::search_range_call [" << hexify(lower)
-                 << ", " << hexify(*upper) << ")" << endl);
-  else
-    VERBOSE(cerr << "txn_btree(0x" << hexify(intptr_t(this))
-                 << ")::search_range_call [" << hexify(lower)
-                 << ", +inf)" << endl);
-
-  // many cases to consider:
-  // 1) for each dbtuple returned from the scan, we need to
-  //    record it in our local read set. there are several cases:
-  //    A) if the dbtuple corresponds to a key we have written, then
-  //       we emit the version from the local write set
-  //    B) if the dbtuple corresponds to a key we have previous read,
-  //       then we emit the previous version
-  // 2) for each dbtuple node *not* returned from the scan, we need
-  //    to record its absense. we optimize this by recording the absense
-  //    of contiguous ranges
-  if (unlikely(upper && *upper <= lower))
-    return;
-
-  key_type lower_k(lower);
-  key_type upper_k(upper ? key_type(*upper) : key_type());
-  txn_search_range_callback c(&t, &ctx, lower_k, &callback);
-  underlying_btree.search_range_call(lower_k, upper ? &upper_k : NULL, c);
-  if (c.caller_stopped)
-    return;
-  if (!(t.get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
-    if (upper)
-      ctx.add_absent_range(
-          key_range_t(
-            c.invoked ? next_key(c.prev_key) : lower, *upper));
-    else
-      ctx.add_absent_range(
-          key_range_t(
-            c.invoked ? next_key(c.prev_key) : lower));
-  }
-}
-
-void
-txn_btree::insert_impl(transaction &t, const string_type &k, const string_type &v)
-{
-  t.ensure_active();
-  transaction::txn_context &ctx = t.ctx_map[this];
-  if (unlikely(t.get_flags() & transaction::TXN_FLAG_READ_ONLY)) {
-    transaction::abort_reason r = transaction::ABORT_REASON_USER;
-    t.abort_impl(r);
-    throw transaction_abort_exception(r);
-  }
-  //ctx.write_set.emplace(k, v);
-  ctx.write_set[k] = v;
-}
-
-void
-txn_btree::insert_impl(transaction &t, string_type &&k, string_type &&v)
-{
-  t.ensure_active();
-  transaction::txn_context &ctx = t.ctx_map[this];
-  if (unlikely(t.get_flags() & transaction::TXN_FLAG_READ_ONLY)) {
-    transaction::abort_reason r = transaction::ABORT_REASON_USER;
-    t.abort_impl(r);
-    throw transaction_abort_exception(r);
-  }
-  //ctx.write_set.emplace(std::move(k), std::move(v));
-  swap(ctx.write_set[move(k)], v);
-}
-
-void
-txn_btree::unsafe_purge(bool dump_stats)
-{
-  purge_tree_walker w;
-  underlying_btree.tree_walk(w);
-  underlying_btree.clear();
-#ifdef TXN_BTREE_DUMP_PURGE_STATS
-  if (!dump_stats)
-    return;
-  size_t v = 0;
-  for (vector<uint16_t>::iterator it = w.purge_stats_nkeys_node.begin();
-       it != w.purge_stats_nkeys_node.end(); ++it)
-    v += *it;
-  const double avg_nkeys_node = double(v)/double(w.purge_stats_nkeys_node.size());
-  const double avg_fill_factor = avg_nkeys_node/double(btree::NKeysPerNode);
-  cerr << "btree node stats" << endl;
-  cerr << "    avg_nkeys_node: " << avg_nkeys_node << endl;
-  cerr << "    avg_fill_factor: " << avg_fill_factor << endl;
-  cerr << "    num_nodes: " << w.purge_stats_nodes << endl;
-  cerr << "    num_nosuffix_nodes: " << w.purge_stats_nosuffix_nodes << endl;
-  cerr << "record size stats (nbytes => count)" << endl;
-  for (map<size_t, size_t>::iterator it = w.purge_stats_ln_record_size_counts.begin();
-       it != w.purge_stats_ln_record_size_counts.end(); ++it)
-    cerr << "    " << it->first << " => " << it->second << endl;
-  cerr << "alloc size stats  (nbytes => count)" << endl;
-  for (map<size_t, size_t>::iterator it = w.purge_stats_ln_alloc_size_counts.begin();
-       it != w.purge_stats_ln_alloc_size_counts.end(); ++it)
-    cerr << "    " << (it->first + sizeof(dbtuple)) << " => " << it->second << endl;
-#endif
-}
-
-void
-txn_btree::purge_tree_walker::on_node_begin(const btree::node_opaque_t *n)
-{
-  INVARIANT(spec_values.empty());
-  spec_values = btree::ExtractValues(n);
-}
-
-void
-txn_btree::purge_tree_walker::on_node_success()
-{
-  for (size_t i = 0; i < spec_values.size(); i++) {
-    dbtuple *ln =
-      (dbtuple *) spec_values[i].first;
-    INVARIANT(ln);
-#ifdef TXN_BTREE_DUMP_PURGE_STATS
-    // XXX(stephentu): should we also walk the chain?
-    purge_stats_ln_record_size_counts[ln->size]++;
-    purge_stats_ln_alloc_size_counts[ln->alloc_size]++;
-#endif
-    dbtuple::release_no_rcu(ln);
-  }
-#ifdef TXN_BTREE_DUMP_PURGE_STATS
-  purge_stats_nkeys_node.push_back(spec_values.size());
-  purge_stats_nodes++;
-  for (size_t i = 0; i < spec_values.size(); i++)
-    if (spec_values[i].second)
-      goto done;
-  purge_stats_nosuffix_nodes++;
-done:
-#endif
-  spec_values.clear();
-}
-
-void
-txn_btree::purge_tree_walker::on_node_failure()
-{
-  spec_values.clear();
-}
-
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
   inline bool
-  operator()(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz) const
+  operator()(const string &k, const uint8_t *v, size_t sz) const
   {
     (*ctr)++;
     return true;
@@ -371,11 +28,12 @@ struct test_callback_ctr {
 };
 
 // all combinations of txn flags to test
-static uint64_t TxnFlags[] = { 0, transaction::TXN_FLAG_LOW_LEVEL_SCAN };
+static uint64_t TxnFlags[] = { 0, transaction_base::TXN_FLAG_LOW_LEVEL_SCAN };
 
+template <typename P>
 static void
 always_assert_cond_in_txn(
-    const transaction &t, bool cond,
+    const transaction<P> &t, bool cond,
     const char *condstr, const char *func,
     const char *filename, int lineno)
 {
@@ -395,21 +53,23 @@ always_assert_cond_in_txn(
 #define ALWAYS_ASSERT_COND_IN_TXN(t, cond) \
   always_assert_cond_in_txn(t, cond, #cond, __PRETTY_FUNCTION__, __FILE__, __LINE__)
 
+template <typename P>
 static inline void
-AssertSuccessfulCommit(transaction &t)
+AssertSuccessfulCommit(transaction<P> &t)
 {
   ALWAYS_ASSERT_COND_IN_TXN(t, t.commit(false));
 }
 
+template <typename P>
 static inline void
-AssertFailedCommit(transaction &t)
+AssertFailedCommit(transaction<P> &t)
 {
   ALWAYS_ASSERT_COND_IN_TXN(t, !t.commit(false));
 }
 
 template <typename T>
 inline void
-AssertByteEquality(const T &t, txn_btree::value_type v, txn_btree::size_type sz)
+AssertByteEquality(const T &t, const uint8_t * v, size_t sz)
 {
   ALWAYS_ASSERT(sizeof(T) == sz);
   bool success = memcmp(&t, v, sz) == 0;
@@ -422,9 +82,9 @@ AssertByteEquality(const T &t, txn_btree::value_type v, txn_btree::size_type sz)
 
 template <typename T>
 inline void
-AssertByteEquality(const T &t, const txn_btree::string_type &v)
+AssertByteEquality(const T &t, const string &v)
 {
-  AssertByteEquality(t, (txn_btree::value_type) v.data(), v.size());
+  AssertByteEquality(t, (const uint8_t *) v.data(), v.size());
 }
 
 struct rec {
@@ -451,11 +111,11 @@ test1()
 
     VERBOSE(cerr << "Testing with flags=0x" << hexify(txn_flags) << endl);
 
-    txn_btree btr(sizeof(rec));
+    txn_btree<TxnType> btr(sizeof(rec));
 
     {
       TxnType t(txn_flags);
-      txn_btree::string_type v;
+      string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, u64_varkey(0), v));
       btr.insert_object(t, u64_varkey(0), rec(0));
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
@@ -467,7 +127,7 @@ test1()
 
     {
       TxnType t0(txn_flags), t1(txn_flags);
-      txn_btree::string_type v0, v1;
+      string v0, v1;
 
       ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
       ALWAYS_ASSERT_COND_IN_TXN(t0, !v0.empty());
@@ -496,7 +156,7 @@ test1()
     {
       // racy insert
       TxnType t0(txn_flags), t1(txn_flags);
-      txn_btree::string_type v0, v1;
+      string v0, v1;
 
       ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
       ALWAYS_ASSERT_COND_IN_TXN(t0, !v0.empty());
@@ -557,7 +217,7 @@ test2()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr(sizeof(bufrec));
+    txn_btree<TxnType> btr(sizeof(bufrec));
     bufrec r;
     NDB_MEMSET(r.buf, 'a', ARRAY_NELEMS(r.buf));
     for (size_t i = 0; i < 100; i++) {
@@ -567,7 +227,7 @@ test2()
     }
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
-      txn_btree::string_type v;
+      string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(i), v));
       AssertByteEquality(r, v);
       AssertSuccessfulCommit(t);
@@ -585,11 +245,11 @@ test_absent_key_race()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr;
+    txn_btree<TxnType> btr;
 
     {
       TxnType t0(txn_flags), t1(txn_flags);
-      txn_btree::string_type v0, v1;
+      string v0, v1;
       ALWAYS_ASSERT_COND_IN_TXN(t0, !btr.search(t0, u64_varkey(0), v0));
       ALWAYS_ASSERT_COND_IN_TXN(t1, !btr.search(t1, u64_varkey(0), v1));
 
@@ -617,12 +277,12 @@ test_inc_value_size()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr;
+    txn_btree<TxnType> btr;
     const size_t upper = numeric_limits<dbtuple::node_size_type>::max();
     for (size_t i = 1; i < upper; i++) {
       const string v(i, 'a');
       TxnType t(txn_flags);
-      btr.insert(t, u64_varkey(0), (txn_btree::value_type) v.data(), v.size());
+      btr.insert(t, u64_varkey(0), (const uint8_t *) v.data(), v.size());
       AssertSuccessfulCommit(t);
     }
     txn_epoch_sync<TxnType>::sync();
@@ -638,7 +298,7 @@ test_multi_btree()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr0, btr1;
+    txn_btree<TxnType> btr0, btr1;
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
       btr0.insert_object(t, u64_varkey(i), rec(123));
@@ -648,7 +308,7 @@ test_multi_btree()
 
     for (size_t i = 0; i < 100; i++) {
       TxnType t(txn_flags);
-      txn_btree::string_type v0, v1;
+      string v0, v1;
       bool ret0 = btr0.search(t, u64_varkey(i), v0);
       bool ret1 = btr1.search(t, u64_varkey(i), v1);
       AssertSuccessfulCommit(t);
@@ -673,7 +333,7 @@ test_read_only_snapshot()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr;
+    txn_btree<TxnType> btr;
 
     {
       TxnType t(txn_flags);
@@ -687,8 +347,8 @@ test_read_only_snapshot()
     txn_epoch_sync<TxnType>::sync();
 
     {
-      TxnType t0(txn_flags), t1(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-      txn_btree::string_type v0, v1;
+      TxnType t0(txn_flags), t1(txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+      string v0, v1;
       ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
       ALWAYS_ASSERT_COND_IN_TXN(t0, !v0.empty());
       AssertByteEquality(rec(0), v0);
@@ -721,12 +381,13 @@ make_long_key(int32_t a, int32_t b, int32_t c, int32_t d) {
   return string(&buf[0], ARRAY_NELEMS(buf));
 }
 
-class counting_scan_callback : public txn_btree::search_range_callback {
+template <typename Protocol>
+class counting_scan_callback : public txn_btree<Protocol>::search_range_callback {
 public:
   counting_scan_callback(uint64_t expect) : ctr(0), expect(expect) {}
 
   virtual bool
-  invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+  invoke(const string &k, const uint8_t * v, size_t sz)
   {
     AssertByteEquality(rec(expect), v, sz);
     ctr++;
@@ -748,7 +409,7 @@ test_long_keys()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr;
+    txn_btree<TxnType> btr;
 
     {
       TxnType t(txn_flags);
@@ -767,7 +428,7 @@ test_long_keys()
       const string lowkey_s = make_long_key(1, 2, 3, 0);
       const string highkey_s = make_long_key(1, 2, 3, N);
       const varkey highkey(highkey_s);
-      counting_scan_callback c(1);
+      counting_scan_callback<TxnType> c(1);
       btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       AssertSuccessfulCommit(t);
       if (c.ctr != N)
@@ -805,7 +466,7 @@ test_long_keys2()
     };
     const string highkey_s((const char *) &highkey_cstr[0], ARRAY_NELEMS(highkey_cstr));
 
-    txn_btree btr;
+    txn_btree<TxnType> btr;
     {
       TxnType t(txn_flags);
       btr.insert_object(t, varkey(lowkey_s), rec(12345));
@@ -814,7 +475,7 @@ test_long_keys2()
 
     {
       TxnType t(txn_flags);
-      txn_btree::string_type v;
+      string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, varkey(lowkey_s), v));
       AssertByteEquality(rec(12345), v);
       AssertSuccessfulCommit(t);
@@ -822,7 +483,7 @@ test_long_keys2()
 
     {
       TxnType t(txn_flags);
-      counting_scan_callback c(12345);
+      counting_scan_callback<TxnType> c(12345);
       const varkey highkey(highkey_s);
       btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       AssertSuccessfulCommit(t);
@@ -834,12 +495,14 @@ test_long_keys2()
   }
 }
 
+template <typename Protocol>
 class txn_btree_worker : public ndb_thread {
 public:
-  txn_btree_worker(txn_btree &btr, uint64_t txn_flags)
+  txn_btree_worker(txn_btree<Protocol> &btr, uint64_t txn_flags)
     : btr(&btr), txn_flags(txn_flags) {}
+  inline uint64_t get_txn_flags() const { return txn_flags; }
 protected:
-  txn_btree *const btr;
+  txn_btree<Protocol> *const btr;
   const uint64_t txn_flags;
 };
 
@@ -849,26 +512,26 @@ namespace mp_test1_ns {
   const size_t niters = 1000;
 
   template <typename TxnType>
-  class worker : public txn_btree_worker {
+  class worker : public txn_btree_worker<TxnType> {
   public:
-    worker(txn_btree &btr, uint64_t txn_flags)
-      : txn_btree_worker(btr, txn_flags) {}
+    worker(txn_btree<TxnType> &btr, uint64_t txn_flags)
+      : txn_btree_worker<TxnType>(btr, txn_flags) {}
     ~worker() {}
     virtual void run()
     {
       for (size_t i = 0; i < niters; i++) {
       retry:
-        TxnType t(txn_flags);
+        TxnType t(this->txn_flags);
         try {
           rec r;
-          txn_btree::string_type v;
-          if (!btr->search(t, u64_varkey(0), v)) {
+          string v;
+          if (!this->btr->search(t, u64_varkey(0), v)) {
             r.v = 1;
           } else {
             r = *((const rec *) v.data());
             r.v++;
           }
-          btr->insert_object(t, u64_varkey(0), r);
+          this->btr->insert_object(t, u64_varkey(0), r);
           t.commit(true);
         } catch (transaction_abort_exception &e) {
           goto retry;
@@ -888,7 +551,7 @@ mp_test1()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr;
+    txn_btree<TxnType> btr;
 
     worker<TxnType> w0(btr, txn_flags);
     worker<TxnType> w1(btr, txn_flags);
@@ -900,7 +563,7 @@ mp_test1()
 
     {
       TxnType t(txn_flags);
-      txn_btree::string_type v;
+      string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
       ALWAYS_ASSERT_COND_IN_TXN(t, !v.empty());
       const uint64_t rv = ((const rec *) v.data())->v;
@@ -924,11 +587,12 @@ namespace mp_test2_ns {
   static volatile bool running = true;
 
   // expects the values to be monotonically increasing (as records)
-  class counting_scan_callback : public txn_btree::search_range_callback {
+  template <typename Protocol>
+  class counting_scan_callback : public txn_btree<Protocol>::search_range_callback {
   public:
     counting_scan_callback() : ctr(0), has_last(false), last(0) {}
     virtual bool
-    invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+    invoke(const string &k, const uint8_t * v, size_t sz)
     {
       ALWAYS_ASSERT(sz == sizeof(rec));
       rec *r = (rec *) v;
@@ -949,31 +613,31 @@ namespace mp_test2_ns {
   };
 
   template <typename TxnType>
-  class mutate_worker : public txn_btree_worker {
+  class mutate_worker : public txn_btree_worker<TxnType> {
   public:
-    mutate_worker(txn_btree &btr, uint64_t flags)
-      : txn_btree_worker(btr, flags), naborts(0) {}
+    mutate_worker(txn_btree<TxnType> &btr, uint64_t flags)
+      : txn_btree_worker<TxnType>(btr, flags), naborts(0) {}
     virtual void run()
     {
       while (running) {
         for (size_t i = range_begin; running && i < range_end; i++) {
         retry:
-          TxnType t(txn_flags);
+          TxnType t(this->txn_flags);
           try {
             rec ctr_rec;
-            txn_btree::string_type v, v_ctr;
-            ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr));
+            string v, v_ctr;
+            ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
             ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
             ALWAYS_ASSERT_COND_IN_TXN(t, ((const rec *) v_ctr.data())->v > 1);
-            if (btr->search(t, u64_varkey(i), v)) {
+            if (this->btr->search(t, u64_varkey(i), v)) {
               AssertByteEquality(rec(i), v);
-              btr->remove(t, u64_varkey(i));
+              this->btr->remove(t, u64_varkey(i));
               ctr_rec.v = ((const rec *) v_ctr.data())->v - 1;
             } else {
-              btr->insert_object(t, u64_varkey(i), rec(i));
+              this->btr->insert_object(t, u64_varkey(i), rec(i));
               ctr_rec.v = ((const rec *) v_ctr.data())->v + 1;
             }
-            btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
+            this->btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
             t.commit(true);
           } catch (transaction_abort_exception &e) {
             naborts++;
@@ -986,21 +650,21 @@ namespace mp_test2_ns {
   };
 
   template <typename TxnType>
-  class reader_worker : public txn_btree_worker {
+  class reader_worker : public txn_btree_worker<TxnType> {
   public:
-    reader_worker(txn_btree &btr, uint64_t flags)
-      : txn_btree_worker(btr, flags), validations(0), naborts(0) {}
+    reader_worker(txn_btree<TxnType> &btr, uint64_t flags)
+      : txn_btree_worker<TxnType>(btr, flags), validations(0), naborts(0) {}
     virtual void run()
     {
       while (running) {
         try {
-          TxnType t(txn_flags);
-          txn_btree::string_type v_ctr;
-          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(ctr_key), v_ctr));
+          TxnType t(this->txn_flags);
+          string v_ctr;
+          ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
           ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
-          counting_scan_callback c;
+          counting_scan_callback<TxnType> c;
           const u64_varkey kend(range_end);
-          btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
+          this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
           t.commit(true);
           if (c.ctr != ((const rec *) v_ctr.data())->v) {
             cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
@@ -1028,7 +692,7 @@ mp_test2()
        txn_flags_idx < ARRAY_NELEMS(TxnFlags);
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
-    txn_btree btr;
+    txn_btree<TxnType> btr;
     {
       TxnType t(txn_flags);
       size_t n = 0;
@@ -1048,11 +712,11 @@ mp_test2()
 
     {
       // make sure the first validation passes
-      TxnType t(txn_flags | transaction::TXN_FLAG_READ_ONLY);
-      txn_btree::string_type v_ctr;
+      TxnType t(txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+      string v_ctr;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(ctr_key), v_ctr));
       ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
-      counting_scan_callback c;
+      counting_scan_callback<TxnType> c;
       const u64_varkey kend(range_end);
       btr.search_range_call(t, u64_varkey(range_begin), &kend, c);
       AssertSuccessfulCommit(t);
@@ -1065,7 +729,7 @@ mp_test2()
 
     mutate_worker<TxnType> w0(btr, txn_flags);
     reader_worker<TxnType> w1(btr, txn_flags);
-    reader_worker<TxnType> w2(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
+    reader_worker<TxnType> w2(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
 
     running = true;
     __sync_synchronize();
@@ -1097,32 +761,32 @@ namespace mp_test3_ns {
   static const size_t niters = 1000000;
 
   template <typename TxnType>
-  class transfer_worker : public txn_btree_worker {
+  class transfer_worker : public txn_btree_worker<TxnType> {
   public:
-    transfer_worker(txn_btree &btr, uint64_t flags, unsigned long seed)
-      : txn_btree_worker(btr, flags), seed(seed) {}
+    transfer_worker(txn_btree<TxnType> &btr, uint64_t flags, unsigned long seed)
+      : txn_btree_worker<TxnType>(btr, flags), seed(seed) {}
     virtual void run()
     {
       fast_random r(seed);
       for (size_t i = 0; i < niters; i++) {
       retry:
         try {
-          TxnType t(txn_flags);
+          TxnType t(this->txn_flags);
           uint64_t a = r.next() % naccounts;
           uint64_t b = r.next() % naccounts;
           while (unlikely(a == b))
             b = r.next() % naccounts;
-          txn_btree::string_type arecv, brecv;
-          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(a), arecv));
-          ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(b), brecv));
+          string arecv, brecv;
+          ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(a), arecv));
+          ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(b), brecv));
           const rec *arec = (const rec *) arecv.data();
           const rec *brec = (const rec *) brecv.data();
           if (arec->v == 0) {
             t.abort();
           } else {
             const uint64_t xfer = (arec->v > 1) ? (r.next() % (arec->v - 1) + 1) : 1;
-            btr->insert_object(t, u64_varkey(a), rec(arec->v - xfer));
-            btr->insert_object(t, u64_varkey(b), rec(brec->v + xfer));
+            this->btr->insert_object(t, u64_varkey(a), rec(arec->v - xfer));
+            this->btr->insert_object(t, u64_varkey(b), rec(brec->v + xfer));
             t.commit(true);
           }
         } catch (transaction_abort_exception &e) {
@@ -1135,19 +799,19 @@ namespace mp_test3_ns {
   };
 
   template <typename TxnType>
-  class invariant_worker_scan : public txn_btree_worker,
-                                public txn_btree::search_range_callback {
+  class invariant_worker_scan : public txn_btree_worker<TxnType>,
+                                public txn_btree<TxnType>::search_range_callback {
   public:
-    invariant_worker_scan(txn_btree &btr, uint64_t flags)
-      : txn_btree_worker(btr, flags), running(true),
+    invariant_worker_scan(txn_btree<TxnType> &btr, uint64_t flags)
+      : txn_btree_worker<TxnType>(btr, flags), running(true),
         validations(0), naborts(0), sum(0) {}
     virtual void run()
     {
       while (running) {
         try {
-          TxnType t(txn_flags);
+          TxnType t(this->txn_flags);
           sum = 0;
-          btr->search_range_call(t, u64_varkey(0), NULL, *this);
+          this->btr->search_range_call(t, u64_varkey(0), NULL, *this);
           t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, sum == (naccounts * amount_per_person));
           validations++;
@@ -1156,7 +820,7 @@ namespace mp_test3_ns {
         }
       }
     }
-    virtual bool invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type)
+    virtual bool invoke(const string &k, const uint8_t * v, size_t)
     {
       sum += ((rec *) v)->v;
       return true;
@@ -1168,20 +832,20 @@ namespace mp_test3_ns {
   };
 
   template <typename TxnType>
-  class invariant_worker_1by1 : public txn_btree_worker {
+  class invariant_worker_1by1 : public txn_btree_worker<TxnType> {
   public:
-    invariant_worker_1by1(txn_btree &btr, uint64_t flags)
-      : txn_btree_worker(btr, flags), running(true),
+    invariant_worker_1by1(txn_btree<TxnType> &btr, uint64_t flags)
+      : txn_btree_worker<TxnType>(btr, flags), running(true),
         validations(0), naborts(0) {}
     virtual void run()
     {
       while (running) {
         try {
-          TxnType t(txn_flags);
+          TxnType t(this->txn_flags);
           uint64_t sum = 0;
           for (uint64_t i = 0; i < naccounts; i++) {
-            txn_btree::string_type v;
-            ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(i), v));
+            string v;
+            ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(i), v));
             sum += ((const rec *) v.data())->v;
           }
           t.commit(true);
@@ -1214,7 +878,7 @@ mp_test3()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
-    txn_btree btr;
+    txn_btree<TxnType> btr;
     {
       TxnType t(txn_flags);
       for (uint64_t i = 0; i < naccounts; i++)
@@ -1230,8 +894,8 @@ mp_test3()
                              w3(btr, txn_flags, 859438989);
     invariant_worker_scan<TxnType> w4(btr, txn_flags);
     invariant_worker_1by1<TxnType> w5(btr, txn_flags);
-    invariant_worker_scan<TxnType> w6(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
-    invariant_worker_1by1<TxnType> w7(btr, txn_flags | transaction::TXN_FLAG_READ_ONLY);
+    invariant_worker_scan<TxnType> w6(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+    invariant_worker_1by1<TxnType> w7(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
 
     w0.start(); w1.start(); w2.start(); w3.start(); w4.start(); w5.start(); w6.start(); w7.start();
     w0.join(); w1.join(); w2.join(); w3.join();
@@ -1255,33 +919,33 @@ namespace mp_test_simple_write_skew_ns {
   volatile bool running = true;
 
   template <typename TxnType>
-  class get_worker : public txn_btree_worker {
+  class get_worker : public txn_btree_worker<TxnType> {
   public:
-    get_worker(unsigned int d, txn_btree &btr, uint64_t txn_flags)
-      : txn_btree_worker(btr, txn_flags), n(0), d(d) {}
+    get_worker(unsigned int d, txn_btree<TxnType> &btr, uint64_t txn_flags)
+      : txn_btree_worker<TxnType>(btr, txn_flags), n(0), d(d) {}
     virtual void run()
     {
       while (running) {
         try {
-          TxnType t(txn_flags);
+          TxnType t(this->txn_flags);
           if ((n % 2) == 0) {
             // try to take this doctor off call
             unsigned int ctr = 0;
             for (unsigned int i = 0; i < NDoctors && ctr < 2; i++) {
-              txn_btree::string_type v;
-              ALWAYS_ASSERT_COND_IN_TXN(t, btr->search(t, u64_varkey(i), v));
+              string v;
+              ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(i), v));
               INVARIANT(v.size() == sizeof(rec));
               const rec *r = (const rec *) v.data();
               if (r->v)
                 ctr++;
             }
             if (ctr == 2)
-              btr->insert_object(t, u64_varkey(d), rec(0));
+              this->btr->insert_object(t, u64_varkey(d), rec(0));
             t.commit(true);
             ALWAYS_ASSERT_COND_IN_TXN(t, ctr >= 1);
           } else {
             // place this doctor on call
-            btr->insert_object(t, u64_varkey(d), rec(1));
+            this->btr->insert_object(t, u64_varkey(d), rec(1));
             t.commit(true);
           }
           n++;
@@ -1296,25 +960,25 @@ namespace mp_test_simple_write_skew_ns {
   };
 
   template <typename TxnType>
-  class scan_worker : public txn_btree_worker,
-                      public txn_btree::search_range_callback {
+  class scan_worker : public txn_btree_worker<TxnType>,
+                      public txn_btree<TxnType>::search_range_callback {
   public:
-    scan_worker(unsigned int d, txn_btree &btr, uint64_t txn_flags)
-      : txn_btree_worker(btr, txn_flags), n(0), d(d), ctr(0) {}
+    scan_worker(unsigned int d, txn_btree<TxnType> &btr, uint64_t txn_flags)
+      : txn_btree_worker<TxnType>(btr, txn_flags), n(0), d(d), ctr(0) {}
     virtual void run()
     {
       while (running) {
         try {
-          TxnType t(txn_flags);
+          TxnType t(this->txn_flags);
           if ((n % 2) == 0) {
             ctr = 0;
-            btr->search_range_call(t, u64_varkey(0), NULL, *this);
+            this->btr->search_range_call(t, u64_varkey(0), NULL, *this);
             if (ctr == 2)
-              btr->insert_object(t, u64_varkey(d), rec(0));
+              this->btr->insert_object(t, u64_varkey(d), rec(0));
             t.commit(true);
             ALWAYS_ASSERT_COND_IN_TXN(t, ctr >= 1);
           } else {
-            btr->insert_object(t, u64_varkey(d), rec(1));
+            this->btr->insert_object(t, u64_varkey(d), rec(1));
             t.commit(true);
           }
           n++;
@@ -1323,7 +987,7 @@ namespace mp_test_simple_write_skew_ns {
         }
       }
     }
-    virtual bool invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+    virtual bool invoke(const string &k, const uint8_t * v, size_t sz)
     {
       INVARIANT(sz == sizeof(rec));
       const rec *r = (const rec *) v;
@@ -1349,7 +1013,7 @@ mp_test_simple_write_skew()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
-    txn_btree btr;
+    txn_btree<TxnType> btr;
     {
       TxnType t(txn_flags);
       _static_assert(NDoctors >= 2);
@@ -1362,7 +1026,7 @@ mp_test_simple_write_skew()
 
     running = true;
     __sync_synchronize();
-    vector<txn_btree_worker *> workers;
+    vector<txn_btree_worker<TxnType> *> workers;
     for (size_t i = 0; i < NDoctors / 2; i++)
       workers.push_back(new get_worker<TxnType>(i, btr, txn_flags));
     for (size_t i = NDoctors / 2; i < NDoctors; i++)
@@ -1412,16 +1076,16 @@ namespace mp_test_batch_processing_ns {
 
   template <typename TxnType>
   class report_worker : public ndb_thread,
-                        public txn_btree::search_range_callback {
+                        public txn_btree<TxnType>::search_range_callback {
   public:
-    report_worker(txn_btree &ctrl, txn_btree &receipts, uint64_t txn_flags)
+    report_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
       : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags), n(0), m(0), sum(0) {}
     virtual void run()
     {
       while (running) {
         try {
-          TxnType t(txn_flags);
-          txn_btree::string_type v;
+          TxnType t(this->txn_flags);
+          string v;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
           ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
           const rec * const r = (const rec *) v.data();
@@ -1443,7 +1107,7 @@ namespace mp_test_batch_processing_ns {
         }
       }
     }
-    virtual bool invoke(const txn_btree::string_type &k, txn_btree::value_type v, txn_btree::size_type sz)
+    virtual bool invoke(const string &k, const uint8_t * v, size_t sz)
     {
       INVARIANT(sz == sizeof(rec));
       const rec * const r = (const rec *) v;
@@ -1451,8 +1115,8 @@ namespace mp_test_batch_processing_ns {
       return true;
     }
   private:
-    txn_btree *ctrl;
-    txn_btree *receipts;
+    txn_btree<TxnType> *ctrl;
+    txn_btree<TxnType> *receipts;
     uint64_t txn_flags;
 
   public:
@@ -1467,15 +1131,15 @@ namespace mp_test_batch_processing_ns {
   template <typename TxnType>
   class new_receipt_worker : public ndb_thread {
   public:
-    new_receipt_worker(txn_btree &ctrl, txn_btree &receipts, uint64_t txn_flags)
+    new_receipt_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
       : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags),
         n(0), last_bid(0), last_rid(0) {}
     virtual void run()
     {
       while (running) {
         try {
-          TxnType t(txn_flags);
-          txn_btree::string_type v;
+          TxnType t(this->txn_flags);
+          string v;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
           ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
           const rec * const r = (const rec *) v.data();
@@ -1494,8 +1158,8 @@ namespace mp_test_batch_processing_ns {
     }
 
   private:
-    txn_btree *ctrl;
-    txn_btree *receipts;
+    txn_btree<TxnType> *ctrl;
+    txn_btree<TxnType> *receipts;
     uint64_t txn_flags;
 
   public:
@@ -1509,7 +1173,7 @@ namespace mp_test_batch_processing_ns {
   template <typename TxnType>
   class incr_worker : public ndb_thread {
   public:
-    incr_worker(txn_btree &ctrl, txn_btree &receipts, uint64_t txn_flags)
+    incr_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
       : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags), n(0) {}
     virtual void run()
     {
@@ -1518,8 +1182,8 @@ namespace mp_test_batch_processing_ns {
       t.tv_nsec = 1000; // 1 us
       while (running) {
         try {
-          TxnType t(txn_flags);
-          txn_btree::string_type v;
+          TxnType t(this->txn_flags);
+          string v;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
           ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
           const rec * const r = (const rec *) v.data();
@@ -1533,8 +1197,8 @@ namespace mp_test_batch_processing_ns {
       }
     }
   private:
-    txn_btree *ctrl;
-    txn_btree *receipts;
+    txn_btree<TxnType> *ctrl;
+    txn_btree<TxnType> *receipts;
     uint64_t txn_flags;
 
   public:
@@ -1553,8 +1217,8 @@ mp_test_batch_processing()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
-    txn_btree ctrl;
-    txn_btree receipts;
+    txn_btree<TxnType> ctrl;
+    txn_btree<TxnType> receipts;
     {
       TxnType t(txn_flags);
       ctrl.insert_object(t, u64_varkey(0), rec(1));
@@ -1611,10 +1275,10 @@ namespace read_only_perf_ns {
   volatile bool running = false;
 
   template <typename TxnType>
-  class worker : public txn_btree_worker {
+  class worker : public txn_btree_worker<TxnType> {
   public:
-    worker(unsigned int seed, txn_btree &btr, uint64_t txn_flags)
-      : txn_btree_worker(btr, txn_flags), n(0), seed(seed) {}
+    worker(unsigned int seed, txn_btree<TxnType> &btr, uint64_t txn_flags)
+      : txn_btree_worker<TxnType>(btr, txn_flags), n(0), seed(seed) {}
     virtual void run()
     {
       fast_random r(seed);
@@ -1622,9 +1286,9 @@ namespace read_only_perf_ns {
         const uint64_t k = r.next() % nkeys;
       retry:
         try {
-          TxnType t(txn_flags);
-          txn_btree::string_type v;
-          bool found = btr->search(t, u64_varkey(k), v);
+          TxnType t(this->txn_flags);
+          string v;
+          bool found = this->btr->search(t, u64_varkey(k), v);
           t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, found);
           AssertByteEquality(rec(k + 1), v);
@@ -1650,7 +1314,7 @@ read_only_perf()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
-    txn_btree btr;
+    txn_btree<TxnType> btr;
 
     {
       const size_t nkeyspertxn = 100000;
@@ -1696,8 +1360,7 @@ read_only_perf()
   }
 }
 
-void
-txn_btree::Test()
+void txn_btree_test()
 {
   // XXX(stephentu): proto1 is bit-rotting for now
   //cerr << "Test proto1" << endl;

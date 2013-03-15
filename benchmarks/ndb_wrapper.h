@@ -3,62 +3,28 @@
 
 #include "abstract_db.h"
 #include "../txn_btree.h"
+#include "../txn_btree_impl.h"
 
+template <typename Transaction>
 class ndb_wrapper : public abstract_db {
 public:
-
-  enum Proto {
-    PROTO_1,
-    PROTO_2,
-  };
-
-  ndb_wrapper(Proto proto) : proto(proto) {}
 
   virtual void
   do_txn_epoch_sync() const
   {
-    switch (proto) {
-    case PROTO_1:
-      txn_epoch_sync<transaction_proto1>::sync();
-      break;
-    case PROTO_2:
-      txn_epoch_sync<transaction_proto2>::sync();
-      break;
-    default:
-      ALWAYS_ASSERT(false);
-      break;
-    }
+    txn_epoch_sync<Transaction>::sync();
   }
 
   virtual void
   do_txn_finish() const
   {
-    switch (proto) {
-    case PROTO_1:
-      txn_epoch_sync<transaction_proto1>::finish();
-      break;
-    case PROTO_2:
-      txn_epoch_sync<transaction_proto2>::finish();
-      break;
-    default:
-      ALWAYS_ASSERT(false);
-      break;
-    }
+    txn_epoch_sync<Transaction>::finish();
   }
 
   virtual size_t
   sizeof_txn_object(uint64_t txn_flags) const
   {
-    switch (proto) {
-    case PROTO_1:
-      return sizeof(transaction_proto1);
-    case PROTO_2:
-      return sizeof(transaction_proto2);
-    default:
-      ALWAYS_ASSERT(false);
-      break;
-    }
-    return 0;
+    return sizeof(Transaction);
   }
 
   virtual void *new_txn(uint64_t txn_flags, void *buf);
@@ -74,10 +40,9 @@ public:
   virtual void
   close_index(abstract_ordered_index *idx);
 
-private:
-  Proto proto;
 };
 
+template <typename Transaction>
 class ndb_ordered_index : public abstract_ordered_index {
 public:
   ndb_ordered_index(const std::string &name, size_t value_size_hint, bool mostly_append);
@@ -108,7 +73,7 @@ public:
   virtual void clear();
 private:
   std::string name;
-  txn_btree btr;
+  txn_btree<Transaction> btr;
 };
 
 #endif /* _NDB_WRAPPER_H_ */
