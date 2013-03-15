@@ -55,7 +55,8 @@ private:
   typedef typename large_table_type::iterator large_table_iterator;
   typedef typename large_table_type::const_iterator large_table_const_iterator;
 
-  static const size_t TableSize = SmallSize;
+  static_assert(SmallSize >= 1, "XXX");
+  static const size_t TableSize = (SmallSize == 1) ? 1 : SmallSize / 2;
 
   struct bucket {
     inline ALWAYS_INLINE bucket_value_type *
