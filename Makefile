@@ -90,25 +90,24 @@ BENCH_LDFLAGS := $(LDFLAGS) -L/usr/lib/mysql -ldb_cxx -lmysqld -lz -lrt -lcrypt 
 BENCH_HEADERS = $(HEADERS) \
 	benchmarks/abstract_db.h \
 	benchmarks/abstract_ordered_index.h \
+	benchmarks/bdb_wrapper.h \
 	benchmarks/bench.h \
 	benchmarks/inline_str.h \
-	benchmarks/bdb_wrapper.h \
+	benchmarks/kvdb_wrapper.h \
+	benchmarks/masstree/kvrandom.hh \
+	benchmarks/mysql_wrapper.h \
 	benchmarks/ndb_wrapper.h \
 	benchmarks/ndb_wrapper_impl.h \
-	benchmarks/kvdb_wrapper.h \
-	benchmarks/mysql_wrapper.h \
-	benchmarks/tpcc.h \
-	benchmarks/masstree/kvrandom.hh
-BENCH_SRCFILES = \
-	benchmarks/bdb_wrapper.cc \
-	benchmarks/kvdb_wrapper.cc \
-	benchmarks/mysql_wrapper.cc \
-	benchmarks/tpcc.cc \
-	benchmarks/ycsb.cc \
-	benchmarks/queue.cc \
-	benchmarks/encstress.cc \
+	benchmarks/tpcc.h
+BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/bench.cc \
-	benchmarks/masstree/kvrandom.cc
+	benchmarks/encstress.cc \
+	benchmarks/kvdb_wrapper.cc \
+	benchmarks/masstree/kvrandom.cc \
+	benchmarks/mysql_wrapper.cc \
+	benchmarks/queue.cc \
+	benchmarks/tpcc.cc \
+	benchmarks/ycsb.cc
 BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
 
 all: test

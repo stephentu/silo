@@ -9,7 +9,7 @@
 
 // protocol 1 - global consistent TIDs
 class transaction_proto1_static {
-  friend class transaction_proto1;
+  template <typename> friend class transaction_proto1;
 public:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
 private:
@@ -20,13 +20,19 @@ private:
 
 // XXX(stephentu): proto1 is unmaintained for now, will
 // need to fix later
-class transaction_proto1 : public transaction<transaction_proto1>,
+template <typename Traits = default_transaction_traits>
+class transaction_proto1 : public transaction<transaction_proto1, Traits>,
                            private transaction_proto1_static {
-  friend class transaction;
+  friend class transaction<transaction_proto1, Traits>;
 
 public:
+  typedef Traits traits_type;
+  typedef transaction_base::tid_t tid_t;
+  typedef transaction_base::string_type string_type;
+  typedef typename transaction<transaction_proto1, Traits>::dbtuple_pair dbtuple_pair;
+
   transaction_proto1(uint64_t flags)
-    : transaction(flags),
+    : transaction<transaction_proto1, Traits>(flags),
       snapshot_tid(last_consistent_global_tid)
   {
   }
@@ -57,7 +63,7 @@ public:
   void
   dump_debug_info() const
   {
-    transaction::dump_debug_info();
+    transaction<transaction_proto1, Traits>::dump_debug_info();
     std::cerr << "  snapshot_tid: " << snapshot_tid << std::endl;
     std::cerr << "  global_tid: " << global_tid << std::endl;
   }
@@ -84,7 +90,8 @@ protected:
 
   void on_tid_finish(tid_t commit_tid)
   {
-    INVARIANT(state == TXN_COMMITED || state == TXN_ABRT);
+    INVARIANT(this->state == transaction_base::TXN_COMMITED ||
+              this->state == transaction_base::TXN_ABRT);
     // XXX(stephentu): handle wrap around
     INVARIANT(commit_tid > last_consistent_global_tid);
     while (!__sync_bool_compare_and_swap(

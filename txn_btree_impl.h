@@ -16,16 +16,17 @@
 //IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe3_tsc, txn_btree_search_probe3_cg));
 //IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe4_tsc, txn_btree_search_probe4_cg));
 
-template <typename Transaction>
+template <template <typename> class Transaction>
+template <typename Traits>
 bool
 txn_btree<Transaction>::search(
-    Transaction &t, const string_type &k,
+    Transaction<Traits> &t, const string_type &k,
     string_type &v, size_t max_bytes_read)
 {
   //IV(ANON_REGION("txn_btree::search:", &txn_btree_search_probe0_cg));
   INVARIANT(max_bytes_read > 0);
   t.ensure_active();
-  typename Transaction::txn_context &ctx = t.ctx_map[this];
+  typename Transaction<Traits>::txn_context &ctx = t.ctx_map[this];
 
   // priority is
   // 1) write set
@@ -97,16 +98,17 @@ txn_btree<Transaction>::search(
   }
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
+template <typename Traits>
 void
-txn_btree<Transaction>::txn_search_range_callback::on_resp_node(
+txn_btree<Transaction>::txn_search_range_callback<Traits>::on_resp_node(
     const btree::node_opaque_t *n, uint64_t version)
 {
   VERBOSE(std::cerr << "on_resp_node(): <node=0x" << util::hexify(intptr_t(n))
                << ", version=" << version << ">" << std::endl);
   VERBOSE(std::cerr << "  " << btree::NodeStringify(n) << std::endl);
   if (t->get_flags() & transaction_base::TXN_FLAG_LOW_LEVEL_SCAN) {
-    typename Transaction::node_scan_map::iterator it = ctx->node_scan.find(n);
+    typename Transaction<Traits>::node_scan_map::iterator it = ctx->node_scan.find(n);
     if (it == ctx->node_scan.end()) {
       ctx->node_scan[n] = version;
     } else {
@@ -120,9 +122,10 @@ txn_btree<Transaction>::txn_search_range_callback::on_resp_node(
   }
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
+template <typename Traits>
 bool
-txn_btree<Transaction>::txn_search_range_callback::invoke(
+txn_btree<Transaction>::txn_search_range_callback<Traits>::invoke(
     const btree::string_type &k, btree::value_type v,
     const btree::node_opaque_t *n, uint64_t version)
 {
@@ -195,15 +198,16 @@ txn_btree<Transaction>::txn_search_range_callback::invoke(
   return ret;
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
+template <typename Traits>
 void
-txn_btree<Transaction>::search_range_call(Transaction &t,
+txn_btree<Transaction>::search_range_call(Transaction<Traits> &t,
                              const string_type &lower,
                              const string_type *upper,
                              search_range_callback &callback)
 {
   t.ensure_active();
-  typename Transaction::txn_context &ctx = t.ctx_map[this];
+  typename Transaction<Traits>::txn_context &ctx = t.ctx_map[this];
 
   if (upper)
     VERBOSE(std::cerr << "txn_btree(0x" << util::hexify(intptr_t(this))
@@ -229,7 +233,7 @@ txn_btree<Transaction>::search_range_call(Transaction &t,
 
   key_type lower_k(lower);
   key_type upper_k(upper ? key_type(*upper) : key_type());
-  txn_search_range_callback c(&t, &ctx, lower_k, &callback);
+  txn_search_range_callback<Traits> c(&t, &ctx, lower_k, &callback);
   underlying_btree.search_range_call(lower_k, upper ? &upper_k : NULL, c);
   if (c.caller_stopped)
     return;
@@ -245,12 +249,13 @@ txn_btree<Transaction>::search_range_call(Transaction &t,
   }
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
+template <typename Traits>
 void
-txn_btree<Transaction>::insert_impl(Transaction &t, const string_type &k, const string_type &v)
+txn_btree<Transaction>::insert_impl(Transaction<Traits> &t, const string_type &k, const string_type &v)
 {
   t.ensure_active();
-  typename Transaction::txn_context &ctx = t.ctx_map[this];
+  typename Transaction<Traits>::txn_context &ctx = t.ctx_map[this];
   if (unlikely(t.get_flags() & transaction_base::TXN_FLAG_READ_ONLY)) {
     transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
     t.abort_impl(r);
@@ -259,12 +264,13 @@ txn_btree<Transaction>::insert_impl(Transaction &t, const string_type &k, const 
   ctx.write_set[k] = v;
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
+template <typename Traits>
 void
-txn_btree<Transaction>::insert_impl(Transaction &t, string_type &&k, string_type &&v)
+txn_btree<Transaction>::insert_impl(Transaction<Traits> &t, string_type &&k, string_type &&v)
 {
   t.ensure_active();
-  typename Transaction::txn_context &ctx = t.ctx_map[this];
+  typename Transaction<Traits>::txn_context &ctx = t.ctx_map[this];
   if (unlikely(t.get_flags() & transaction_base::TXN_FLAG_READ_ONLY)) {
     transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
     t.abort_impl(r);
@@ -273,7 +279,7 @@ txn_btree<Transaction>::insert_impl(Transaction &t, string_type &&k, string_type
   swap(ctx.write_set[move(k)], v);
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
 void
 txn_btree<Transaction>::unsafe_purge(bool dump_stats)
 {
@@ -305,7 +311,7 @@ txn_btree<Transaction>::unsafe_purge(bool dump_stats)
 #endif
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
 void
 txn_btree<Transaction>::purge_tree_walker::on_node_begin(const btree::node_opaque_t *n)
 {
@@ -313,7 +319,7 @@ txn_btree<Transaction>::purge_tree_walker::on_node_begin(const btree::node_opaqu
   spec_values = btree::ExtractValues(n);
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
 void
 txn_btree<Transaction>::purge_tree_walker::on_node_success()
 {
@@ -340,7 +346,7 @@ done:
   spec_values.clear();
 }
 
-template <typename Transaction>
+template <template <typename> class Transaction>
 void
 txn_btree<Transaction>::purge_tree_walker::on_node_failure()
 {

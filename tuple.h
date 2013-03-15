@@ -24,7 +24,8 @@
 // race condition
 //#define dbtuple_QUEUE_TRACKING
 
-template <typename Protocol> class transaction; // forward decl
+template <template <typename> class Protocol, typename Traits>
+  class transaction; // forward decl
 
 /**
  * A dbtuple is the type of value which we stick

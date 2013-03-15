@@ -219,13 +219,30 @@ protected:
 };
 
 // protocol 2 - no global consistent TIDs
-class transaction_proto2 : public transaction<transaction_proto2>,
+template <typename Traits = default_transaction_traits>
+class transaction_proto2 : public transaction<transaction_proto2, Traits>,
                            private transaction_proto2_static {
-  friend class transaction<transaction_proto2>;
+
+  friend class transaction<transaction_proto2, Traits>;
+  typedef transaction<transaction_proto2, Traits> super_type;
+
 public:
 
+  typedef Traits traits_type;
+  typedef transaction_base::tid_t tid_t;
+  typedef transaction_base::string_type string_type;
+  typedef typename super_type::dbtuple_pair dbtuple_pair;
+  typedef typename super_type::read_set_map read_set_map;
+  typedef typename super_type::absent_set_map absent_set_map;
+  typedef typename super_type::write_set_map write_set_map;
+  typedef typename super_type::node_scan_map node_scan_map;
+  typedef typename super_type::txn_context txn_context;
+  typedef typename super_type::ctx_map_type ctx_map_type;
+
   transaction_proto2(uint64_t flags = 0)
-    : transaction(flags), current_epoch(0), last_consistent_tid(0)
+    : transaction<transaction_proto2, Traits>(flags),
+      current_epoch(0),
+      last_consistent_tid(0)
   {
     const size_t my_core_id = coreid::core_id();
     VERBOSE(std::cerr << "new transaction_proto2 (core=" << my_core_id
@@ -233,7 +250,7 @@ public:
     if (tl_nest_level++ == 0)
       g_epoch_spinlocks[my_core_id].elem.lock();
     current_epoch = g_current_epoch;
-    if (get_flags() & TXN_FLAG_READ_ONLY)
+    if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY)
       last_consistent_tid = MakeTid(0, 0, g_consistent_epoch);
   }
 
@@ -276,16 +293,16 @@ public:
 
   inline ALWAYS_INLINE void on_tid_finish(tid_t commit_tid) {}
 
-  inline std::pair<bool, transaction::tid_t>
+  inline std::pair<bool, transaction_base::tid_t>
   consistent_snapshot_tid() const
   {
-    if (get_flags() & TXN_FLAG_READ_ONLY)
+    if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY)
       return std::make_pair(true, last_consistent_tid);
     else
       return std::make_pair(false, 0);
   }
 
-  inline transaction::tid_t
+  inline transaction_base::tid_t
   null_entry_tid() const
   {
     return MakeTid(0, 0, current_epoch);
@@ -294,12 +311,12 @@ public:
   void
   dump_debug_info() const
   {
-    transaction::dump_debug_info();
+    transaction<transaction_proto2, Traits>::dump_debug_info();
     std::cerr << "  current_epoch: " << current_epoch << std::endl;
     std::cerr << "  last_consistent_tid: " << g_proto_version_str(last_consistent_tid) << std::endl;
   }
 
-  transaction::tid_t
+  transaction_base::tid_t
   gen_commit_tid(const typename util::vec<dbtuple_pair>::type &write_nodes)
   {
     const size_t my_core_id = coreid::core_id();
@@ -315,29 +332,37 @@ public:
     // XXX(stephentu): I believe this is correct, but not 100% sure
     //const size_t my_core_id = 0;
     //tid_t ret = 0;
-
-    for (ctx_map_type::const_iterator outer_it = ctx_map.begin();
-         outer_it != ctx_map.end(); ++outer_it)
-      for (read_set_map::const_iterator it = outer_it->second.read_set.begin();
-           it != outer_it->second.read_set.end(); ++it) {
-        // NB: we don't allow ourselves to do reads in future epochs
-        INVARIANT(EpochId(it->second.t) <= current_epoch);
-        if (it->second.t > ret)
-          ret = it->second.t;
+    {
+      typename ctx_map_type::const_iterator outer_it = this->ctx_map.begin();
+      typename ctx_map_type::const_iterator outer_it_end = this->ctx_map.end();
+      for (; outer_it != outer_it_end; ++outer_it) {
+        typename read_set_map::const_iterator it = outer_it->second.read_set.begin();
+        typename read_set_map::const_iterator it_end = outer_it->second.read_set.end();
+        for (; it != it_end; ++it) {
+          // NB: we don't allow ourselves to do reads in future epochs
+          INVARIANT(EpochId(it->second.t) <= current_epoch);
+          if (it->second.t > ret)
+            ret = it->second.t;
+        }
       }
-    for (typename util::vec<dbtuple_pair>::type::const_iterator it = write_nodes.begin();
-         it != write_nodes.end(); ++it) {
-      INVARIANT(it->first->is_locked());
-      INVARIANT(it->first->is_latest());
-      const tid_t t = it->first->version;
-      // XXX(stephentu): we are overly conservative for now- technically this
-      // abort isn't necessary (we really should just write the value in the correct
-      // position)
-      INVARIANT(EpochId(t) <= current_epoch);
-      if (t > ret)
-        ret = t;
     }
-    ret = MakeTid(my_core_id, NumId(ret) + 1, current_epoch);
+
+    {
+      typename util::vec<dbtuple_pair>::type::const_iterator it = write_nodes.begin();
+      typename util::vec<dbtuple_pair>::type::const_iterator it_end = write_nodes.end();
+      for (; it != it_end; ++it) {
+        INVARIANT(it->first->is_locked());
+        INVARIANT(it->first->is_latest());
+        const tid_t t = it->first->version;
+        // XXX(stephentu): we are overly conservative for now- technically this
+        // abort isn't necessary (we really should just write the value in the correct
+        // position)
+        INVARIANT(EpochId(t) <= current_epoch);
+        if (t > ret)
+          ret = t;
+      }
+      ret = MakeTid(my_core_id, NumId(ret) + 1, current_epoch);
+    }
 
     // XXX(stephentu): document why we need this memory fence
     __sync_synchronize();
@@ -365,7 +390,7 @@ public:
       return;
     ln->set_enqueued(true, dbtuple::QUEUE_TYPE_LOCAL);
     local_cleanup_nodes().emplace_back(
-      dbtuple_context(&btr->underlying_btree, key, ln),
+      dbtuple_context(btr->get_underlying_btree(), key, ln),
       try_dbtuple_cleanup);
   }
 
@@ -391,7 +416,7 @@ public:
                       << ", latest_version_epoch=" << EpochId(ln->version) << endl
                       << "  ln=" << *ln << endl);
     local_cleanup_nodes().emplace_back(
-      dbtuple_context(&btr->underlying_btree, key, ln),
+      dbtuple_context(btr->get_underlying_btree(), key, ln),
       try_dbtuple_cleanup);
   }
 

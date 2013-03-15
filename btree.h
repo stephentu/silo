@@ -27,7 +27,7 @@
 
 //#define LOCK_OWNERSHIP_CHECKING
 
-template <typename Protocol> class txn_btree;
+template <template <typename> class Transaction> class txn_btree;
 
 /**
  * A concurrent, variable key length b+-tree, optimized for read heavy
@@ -47,7 +47,7 @@ template <typename Protocol> class txn_btree;
  * change compiler fences into actual memory fences, at the very least.
  */
 class btree : public rcu_enabled {
-  template <typename P> friend class txn_btree;
+  template <template <typename> class T> friend class txn_btree;
 public:
   typedef varkey key_type;
   typedef std::string string_type;

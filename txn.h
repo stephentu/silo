@@ -33,7 +33,7 @@
 #include "tuple.h"
 
 // forward decl
-template <typename Protocol> class txn_btree;
+template <template <typename> class Transaction> class txn_btree;
 
 class transaction_unusable_exception {};
 class transaction_read_only_exception {};
@@ -43,7 +43,7 @@ extern std::string (*g_proto_version_str)(uint64_t v);
 
 // base class with very simple definitions- nothing too exciting yet
 class transaction_base : private util::noncopyable {
-  template <typename P> friend class txn_btree;
+  template <template <typename> class T> friend class txn_btree;
 public:
 
   typedef dbtuple::tid_t tid_t;
@@ -177,33 +177,42 @@ operator<<(std::ostream &o, const transaction_base::read_record_t &r)
   return o;
 }
 
-template <typename Protocol>
+struct default_transaction_traits {
+  static const size_t read_set_expected_size = SMALL_SIZE_MAP;
+  static const size_t absent_set_expected_size = EXTRA_SMALL_SIZE_MAP;
+  static const size_t write_set_expected_size = SMALL_SIZE_MAP;
+  static const size_t node_scan_expected_size = EXTRA_SMALL_SIZE_MAP;
+  static const size_t context_set_expected_size = EXTRA_SMALL_SIZE_MAP;
+};
+
+template <template <typename> class Protocol, typename Traits>
 class transaction : public transaction_base {
   friend class txn_btree<Protocol>;
-  friend Protocol;
+  friend Protocol<Traits>;
+
+  typedef Traits traits_type;
 
 protected:
   // data structures
 
-  inline ALWAYS_INLINE Protocol *
+  inline ALWAYS_INLINE Protocol<Traits> *
   cast()
   {
-    return static_cast<Protocol *>(this);
+    return static_cast<Protocol<Traits> *>(this);
   }
 
-  inline ALWAYS_INLINE const Protocol *
+  inline ALWAYS_INLINE const Protocol<Traits> *
   cast() const
   {
-    return static_cast<const Protocol *>(this);
+    return static_cast<const Protocol<Traits> *>(this);
   }
 
 #ifdef USE_SMALL_CONTAINER_OPT
-  // XXX(stephentu): these numbers are somewhat tuned for TPC-C
-  typedef small_unordered_map<const dbtuple *, read_record_t> read_set_map;
-  typedef small_unordered_map<string_type, bool, EXTRA_SMALL_SIZE_MAP> absent_set_map;
-  typedef small_unordered_map<string_type, string_type> write_set_map;
+  typedef small_unordered_map<const dbtuple *, read_record_t, traits_type::read_set_expected_size> read_set_map;
+  typedef small_unordered_map<string_type, bool, traits_type::absent_set_expected_size> absent_set_map;
+  typedef small_unordered_map<string_type, string_type, traits_type::write_set_expected_size> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
-  typedef small_unordered_map<const btree::node_opaque_t *, uint64_t, EXTRA_SMALL_SIZE_MAP> node_scan_map;
+  typedef small_unordered_map<const btree::node_opaque_t *, uint64_t, traits_type::node_scan_expected_size> node_scan_map;
 #else
   typedef std::unordered_map<const dbtuple *, read_record_t> read_set_map;
   typedef std::unordered_map<string_type, bool> absent_set_map;
@@ -344,7 +353,7 @@ protected:
   inline void clear();
 
 #ifdef USE_SMALL_CONTAINER_OPT
-  typedef small_unordered_map<txn_btree<Protocol> *, txn_context, EXTRA_SMALL_SIZE_MAP> ctx_map_type;
+  typedef small_unordered_map<txn_btree<Protocol> *, txn_context, traits_type::context_set_expected_size> ctx_map_type;
 #else
   typedef std::unordered_map<txn_btree<Protocol> *, txn_context> ctx_map_type;
 #endif
@@ -371,7 +380,7 @@ private:
 };
 
 // XXX(stephentu): stupid hacks
-template <typename TxnType>
+template <template <typename> class Transaction>
 struct txn_epoch_sync {
   // block until the next epoch
   static inline void sync() {}

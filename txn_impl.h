@@ -6,16 +6,16 @@
 
 // base definitions
 
-template <typename Protocol>
-inline transaction<Protocol>::transaction(uint64_t flags)
+template <template <typename> class Protocol, typename Traits>
+inline transaction<Protocol, Traits>::transaction(uint64_t flags)
   : transaction_base(flags)
 {
   // XXX(stephentu): VERY large RCU region
   rcu::region_begin();
 }
 
-template <typename Protocol>
-inline transaction<Protocol>::~transaction()
+template <template <typename> class Protocol, typename Traits>
+inline transaction<Protocol, Traits>::~transaction()
 {
   // transaction shouldn't fall out of scope w/o resolution
   // resolution means TXN_EMBRYO, TXN_COMMITED, and TXN_ABRT
@@ -23,17 +23,17 @@ inline transaction<Protocol>::~transaction()
   rcu::region_end();
 }
 
-template <typename Protocol>
+template <template <typename> class Protocol, typename Traits>
 inline void
-transaction<Protocol>::clear()
+transaction<Protocol, Traits>::clear()
 {
   // don't clear for debugging purposes
   //ctx_map.clear();
 }
 
-template <typename Protocol>
+template <template <typename> class Protocol, typename Traits>
 inline void
-transaction<Protocol>::abort_impl(abort_reason reason)
+transaction<Protocol, Traits>::abort_impl(abort_reason reason)
 {
   abort_trap(reason);
   switch (state) {
@@ -84,9 +84,9 @@ namespace {
   }
 }
 
-template <typename Protocol>
+template <template <typename> class Protocol, typename Traits>
 void
-transaction<Protocol>::dump_debug_info() const
+transaction<Protocol, Traits>::dump_debug_info() const
 {
   std::cerr << "Transaction (obj=" << util::hexify(this) << ") -- state "
        << transaction_state_to_cstr(state) << std::endl;
@@ -126,9 +126,9 @@ transaction<Protocol>::dump_debug_info() const
   }
 }
 
-template <typename Protocol>
+template <template <typename> class Protocol, typename Traits>
 bool
-transaction<Protocol>::commit(bool doThrow)
+transaction<Protocol, Traits>::commit(bool doThrow)
 {
   // XXX(stephentu): specific abort counters, to see which
   // case we are aborting the most on (could integrate this with
@@ -198,7 +198,7 @@ transaction<Protocol>::commit(bool doThrow)
           if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
             // update node #s
             INVARIANT(insert_info.first);
-            node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
+            typename node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
             if (nit != outer_it->second.node_scan.end()) {
               if (unlikely(nit->second != insert_info.second)) {
                 abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
@@ -293,8 +293,8 @@ transaction<Protocol>::commit(bool doThrow)
         // check the nodes we read as absent are actually absent
         if (!outer_it->second.absent_set.empty()) {
           VERBOSE(cerr << "absent_set.size(): " << outer_it->second.absent_set.size() << endl);
-          absent_set_map::iterator it = outer_it->second.absent_set.begin();
-          absent_set_map::iterator it_end = outer_it->second.absent_set.end();
+          typename absent_set_map::iterator it = outer_it->second.absent_set.begin();
+          typename absent_set_map::iterator it_end = outer_it->second.absent_set.end();
           for (; it != it_end; ++it) {
             btree::value_type v = 0;
             if (likely(!outer_it->first->underlying_btree.search(varkey(it->first), v))) {
@@ -322,8 +322,8 @@ transaction<Protocol>::commit(bool doThrow)
           // do it the fast way
           INVARIANT(outer_it->second.absent_range_set.empty());
           if (!outer_it->second.node_scan.empty()) {
-            node_scan_map::iterator it = outer_it->second.node_scan.begin();
-            node_scan_map::iterator it_end = outer_it->second.node_scan.end();
+            typename node_scan_map::iterator it = outer_it->second.node_scan.begin();
+            typename node_scan_map::iterator it_end = outer_it->second.node_scan.end();
             for (; it != it_end; ++it) {
               const uint64_t v = btree::ExtractVersionNumber(it->first);
               if (unlikely(v != it->second)) {
@@ -340,7 +340,8 @@ transaction<Protocol>::commit(bool doThrow)
           for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
                it != outer_it->second.absent_range_set.end(); ++it) {
             VERBOSE(cerr << "checking absent range: " << *it << endl);
-            typename txn_btree<Protocol>::absent_range_validation_callback c(&outer_it->second, commit_tid.second);
+            typename txn_btree<Protocol>::template absent_range_validation_callback<Traits> c(
+                &outer_it->second, commit_tid.second);
             varkey upper(it->b);
             outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
             if (unlikely(c.failed())) {
@@ -414,9 +415,9 @@ do_abort:
   return false;
 }
 
-template <typename Protocol>
+template <template <typename> class Protocol, typename Traits>
 bool
-transaction<Protocol>::txn_context::local_search_str(
+transaction<Protocol, Traits>::txn_context::local_search_str(
     const transaction &t, const string_type &k, string_type &v) const
 {
   ++evt_local_search_lookups;
@@ -425,7 +426,7 @@ transaction<Protocol>::txn_context::local_search_str(
   // can only need to do a hash table lookup once
 
   if (!write_set.empty()) {
-    typename transaction<Protocol>::write_set_map::const_iterator it =
+    typename transaction<Protocol, Traits>::write_set_map::const_iterator it =
       write_set.find(k);
     if (it != write_set.end()) {
       VERBOSE(cerr << "local_search_str: key " << util::hexify(k) << " found in write set"  << endl);
@@ -437,7 +438,7 @@ transaction<Protocol>::txn_context::local_search_str(
   }
 
   if (!absent_set.empty()) {
-    typename transaction<Protocol>::absent_set_map::const_iterator it =
+    typename transaction<Protocol, Traits>::absent_set_map::const_iterator it =
       absent_set.find(k);
     if (it != absent_set.end()) {
       VERBOSE(cerr << "local_search_str: key " << util::hexify(k) << " found in absent set"  << endl);
@@ -458,9 +459,9 @@ transaction<Protocol>::txn_context::local_search_str(
   return false;
 }
 
-template <typename Protocol>
+template <template <typename> class Protocol, typename Traits>
 bool
-transaction<Protocol>::txn_context::key_in_absent_set(const key_type &k) const
+transaction<Protocol, Traits>::txn_context::key_in_absent_set(const key_type &k) const
 {
   std::vector<key_range_t>::const_iterator it =
     std::upper_bound(absent_range_set.begin(), absent_range_set.end(), k,
@@ -470,9 +471,9 @@ transaction<Protocol>::txn_context::key_in_absent_set(const key_type &k) const
   return it->key_in_range(k);
 }
 
-template <typename Protocol>
+template <template <typename> class Protocol, typename Traits>
 void
-transaction<Protocol>::txn_context::add_absent_range(const key_range_t &range)
+transaction<Protocol, Traits>::txn_context::add_absent_range(const key_range_t &range)
 {
   // add range, possibly merging overlapping ranges
   if (range.is_empty_range())

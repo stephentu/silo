@@ -1006,6 +1006,23 @@ tpcc_worker::txn_new_order()
   }
 
   // XXX(stephentu): implement rollback
+  //
+  // worst case txn profile:
+  //   1 customer get
+  //   1 warehouse get
+  //   1 district get
+  //   1 new_order insert
+  //   1 district put
+  //   1 oorder insert
+  //   1 oorder_cid_idx insert
+  //   15 times:
+  //      1 item get
+  //      1 stock get
+  //      1 stock put
+  //      1 order_line insert
+  //
+  // summary:
+  //   9 indexes
   void *txn = db->new_txn(txn_flags, txn_buf());
   try {
     ssize_t ret = 0;
@@ -1182,6 +1199,19 @@ tpcc_worker::txn_delivery()
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
 
+  // worst case txn profile:
+  //   10 times:
+  //     1 new_order scan node
+  //     1 oorder get
+  //     2 order_line scan nodes
+  //     15 order_line puts
+  //     1 new_order remove
+  //     1 oorder put
+  //     1 customer get
+  //     1 customer put
+  //
+  // summary:
+  //   4 indexes
   void *txn = db->new_txn(txn_flags, txn_buf());
   try {
     ssize_t ret = 0;

@@ -36,7 +36,7 @@ public:
   ssize_t
   txn_read()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf());
+    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
@@ -58,7 +58,7 @@ public:
   ssize_t
   txn_write()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf());
+    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
     try {
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'b'));
       if (db->commit_txn(txn))
@@ -79,7 +79,7 @@ public:
   ssize_t
   txn_rmw()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf());
+    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_RMW);
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
@@ -115,7 +115,7 @@ public:
   ssize_t
   txn_scan()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf());
+    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_SCAN);
     const size_t kstart = r.next() % nkeys;
     const string &kbegin = u64_varkey(kstart).str(obj_key0);
     const string &kend = u64_varkey(kstart + 100).str(obj_key1);

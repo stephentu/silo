@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <map>
 #include <string>
 
 #include "abstract_ordered_index.h"
@@ -64,6 +65,13 @@ public:
    */
   virtual void thread_end() {}
 
+  enum TxnProfileHint {
+    HINT_DEFAULT,
+    HINT_KV_GET_PUT, // KV workloads over a single key
+    HINT_KV_RMW, // get/put over a single key
+    HINT_KV_SCAN, // KV scan workloads (~100 keys)
+  };
+
   /**
    * Initializes a new txn object the space pointed to by buf
    *
@@ -71,7 +79,17 @@ public:
    *
    * [buf, buf + sizeof_txn_object(txn_flags)) is a valid ptr
    */
-  virtual void *new_txn(uint64_t txn_flags, void *buf) = 0;
+  virtual void *new_txn(uint64_t txn_flags, void *buf,
+      TxnProfileHint hint = HINT_DEFAULT) = 0;
+
+  /**
+   * Reports things like read/write set sizes
+   */
+  virtual std::map<std::string, uint64_t>
+  get_txn_counters(void *txn)
+  {
+    return std::map<std::string, uint64_t>();
+  }
 
   /**
    * Returns true on successful commit.
