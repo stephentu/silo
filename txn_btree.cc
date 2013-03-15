@@ -87,7 +87,7 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v,
     if (v_empty)
       ++transaction::g_evt_read_logical_deleted_node_search;
     IV(ANON_REGION("txn_btree::search:process:readset:", &txn_btree_search_probe4_cg));
-    transaction::read_record_t &read_rec = ctx.read_set[ln];
+    transaction_base::read_record_t &read_rec = ctx.read_set[ln];
     if (!read_rec.t) {
       // XXX(stephentu): this doesn't work if we allow wrap around
       read_rec.t = start_t;
@@ -175,7 +175,7 @@ txn_btree::txn_search_range_callback::invoke(
     }
     if (r.empty())
       ++transaction::g_evt_read_logical_deleted_node_scan;
-    transaction::read_record_t * const read_rec = &ctx->read_set[ln];
+    transaction_base::read_record_t * const read_rec = &ctx->read_set[ln];
     if (!read_rec->t) {
       // XXX(stephentu): this doesn't work if we allow wrap around
       read_rec->t = start_t;

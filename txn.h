@@ -41,16 +41,17 @@ class transaction_read_only_exception {};
 // XXX: hacky
 extern std::string (*g_proto_version_str)(uint64_t v);
 
-class transaction : private util::noncopyable {
-protected:
+// base class with very simple definitions- nothing too exciting yet
+class transaction_base : private util::noncopyable {
   friend class txn_btree;
-  friend class txn_context;
-
 public:
+
   typedef dbtuple::tid_t tid_t;
   typedef dbtuple::record_type record_type;
   typedef dbtuple::const_record_type const_record_type;
   typedef dbtuple::size_type size_type;
+  typedef btree::key_type key_type;
+  typedef dbtuple::string_type string_type;
 
   // TXN_EMBRYO - the transaction object has been allocated but has not
   // done any operations yet
@@ -99,6 +100,10 @@ public:
     return 0;
   }
 
+  inline transaction_base(uint64_t flags)
+    : state(TXN_EMBRYO), flags(flags) {}
+
+protected:
 #define EVENT_COUNTER_DEF_X(x) \
   static event_counter g_ ## x ## _ctr;
   ABORT_REASONS(EVENT_COUNTER_DEF_X)
@@ -118,11 +123,76 @@ public:
     return 0;
   }
 
+public:
+
+  /**
+   * throws transaction_unusable_exception if already resolved (commited/aborted)
+   */
+  inline void
+  ensure_active()
+  {
+    if (state == TXN_EMBRYO)
+      state = TXN_ACTIVE;
+    else if (unlikely(state != TXN_ACTIVE))
+      throw transaction_unusable_exception();
+  }
+
+  inline uint64_t
+  get_flags() const
+  {
+    return flags;
+  }
+
+  //static void Test();
+
+protected:
+
+  struct read_record_t {
+    read_record_t() : t(0), holds_lock(false) {}
+    tid_t t;
+    bool holds_lock;
+  };
+
+  friend std::ostream &
+  operator<<(std::ostream &o, const read_record_t &r);
+
+  struct dbtuple_info {
+    dbtuple_info() {}
+    dbtuple_info(txn_btree *btr,
+                 const string_type &key,
+                 bool locked,
+                 const string_type &r)
+      : btr(btr),
+        key(key),
+        locked(locked),
+        r(r)
+    {}
+    txn_btree *btr;
+    string_type key;
+    bool locked;
+    string_type r;
+  };
+  typedef std::pair<dbtuple *, dbtuple_info> dbtuple_pair;
+
+  struct LNodeComp {
+    inline ALWAYS_INLINE bool
+    operator()(const dbtuple_pair &lhs, const dbtuple_pair &rhs) const
+    {
+      return lhs.first < rhs.first;
+    }
+  };
+
   static event_counter g_evt_read_logical_deleted_node_search;
   static event_counter g_evt_read_logical_deleted_node_scan;
 
-  typedef btree::key_type key_type;
-  typedef dbtuple::string_type string_type;
+  txn_state state;
+  abort_reason reason;
+  const uint64_t flags;
+};
+
+class transaction : public transaction_base {
+  friend class txn_btree;
+public:
 
   // declared here so dbtuple::write_record_at() can see it.
   virtual bool
@@ -146,15 +216,7 @@ public:
     abort_impl(ABORT_REASON_USER);
   }
 
-  inline uint64_t
-  get_flags() const
-  {
-    return flags;
-  }
-
   virtual void dump_debug_info() const;
-
-  static void Test();
 
 #ifdef DIE_ON_ABORT
   void
@@ -184,32 +246,6 @@ protected:
 
   void abort_impl(abort_reason r);
 
-  struct dbtuple_info {
-    dbtuple_info() {}
-    dbtuple_info(txn_btree *btr,
-               const string_type &key,
-               bool locked,
-               const string_type &r)
-      : btr(btr),
-        key(key),
-        locked(locked),
-        r(r)
-    {}
-    txn_btree *btr;
-    string_type key;
-    bool locked;
-    string_type r;
-  };
-  typedef std::pair<dbtuple *, dbtuple_info> dbtuple_pair;
-
-  struct LNodeComp {
-  inline ALWAYS_INLINE bool
-  operator()(const dbtuple_pair &lhs, const dbtuple_pair &rhs) const
-  {
-    return lhs.first < rhs.first;
-  }
-  };
-
   /**
    * create a new, unique TID for a txn. at the point which gen_commit_tid(),
    * it still has not been decided whether or not this txn will commit
@@ -237,27 +273,6 @@ protected:
   // with the commit tid. before on_tid_finish() is called, state is updated
   // with the resolution (commited, aborted) of this txn
   virtual void on_tid_finish(tid_t commit_tid) = 0;
-
-  /**
-   * throws transaction_unusable_exception if already resolved (commited/aborted)
-   */
-  inline void
-  ensure_active()
-  {
-    if (state == TXN_EMBRYO)
-      state = TXN_ACTIVE;
-    else if (unlikely(state != TXN_ACTIVE))
-      throw transaction_unusable_exception();
-  }
-
-  struct read_record_t {
-    read_record_t() : t(0), holds_lock(false) {}
-    tid_t t;
-    bool holds_lock;
-  };
-
-  friend std::ostream &
-  operator<<(std::ostream &o, const read_record_t &r);
 
 #ifdef USE_SMALL_CONTAINER_OPT
   // XXX(stephentu): these numbers are somewhat tuned for TPC-C
@@ -298,10 +313,6 @@ protected:
 
   void clear();
 
-  txn_state state;
-  abort_reason reason;
-  const uint64_t flags;
-
 #ifdef USE_SMALL_CONTAINER_OPT
   typedef small_unordered_map<txn_btree *, txn_context, EXTRA_SMALL_SIZE_MAP> ctx_map_type;
 #else
@@ -312,9 +323,9 @@ protected:
 
 class transaction_abort_exception : public std::exception {
 public:
-  transaction_abort_exception(transaction::abort_reason r)
+  transaction_abort_exception(transaction_base::abort_reason r)
     : r(r) {}
-  inline transaction::abort_reason
+  inline transaction_base::abort_reason
   get_reason() const
   {
     return r;
@@ -322,10 +333,10 @@ public:
   virtual const char *
   what() const throw()
   {
-    return transaction::AbortReasonStr(r);
+    return transaction_base::AbortReasonStr(r);
   }
 private:
-  transaction::abort_reason r;
+  transaction_base::abort_reason r;
 };
 
 // protocol 1 - global consistent TIDs

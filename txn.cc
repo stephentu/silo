@@ -39,7 +39,7 @@ proto2_version_str(uint64_t v)
 string (*g_proto_version_str)(uint64_t v) = proto2_version_str;
 
 transaction::transaction(uint64_t flags)
-  : state(TXN_EMBRYO), flags(flags)
+  : transaction_base(flags)
 {
   // XXX(stephentu): VERY large RCU region
   rcu::region_begin();
@@ -402,7 +402,7 @@ transaction_flags_to_str(uint64_t flags)
 }
 
 inline ostream &
-operator<<(ostream &o, const transaction::read_record_t &r)
+operator<<(ostream &o, const transaction_base::read_record_t &r)
 {
   o << "[tid_read=" << g_proto_version_str(r.t)
     << ", locked=" << r.holds_lock << "]";
@@ -451,41 +451,41 @@ transaction::dump_debug_info() const
 }
 
 #define EVENT_COUNTER_IMPL_X(x) \
-  event_counter transaction::g_ ## x ## _ctr(#x);
+  event_counter transaction_base::g_ ## x ## _ctr(#x);
 ABORT_REASONS(EVENT_COUNTER_IMPL_X)
 #undef EVENT_COUNTER_IMPL_X
 
-event_counter transaction::g_evt_read_logical_deleted_node_search(
+event_counter transaction_base::g_evt_read_logical_deleted_node_search(
     "read_logical_deleted_node_search");
-event_counter transaction::g_evt_read_logical_deleted_node_scan(
+event_counter transaction_base::g_evt_read_logical_deleted_node_scan(
     "read_logical_deleted_node_scan");
 
-void
-transaction::Test()
-{
-  txn_context t;
-
-  t.add_absent_range(key_range_t(u64_varkey(10), u64_varkey(20)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(20), u64_varkey(30)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(60)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(31), u64_varkey(40)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(49), u64_varkey(50)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(47), u64_varkey(50)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(39), u64_varkey(50)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(100), u64_varkey(200)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(300), u64_varkey(400)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(212)));
-  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-}
+//void
+//transaction_base::Test()
+//{
+//  txn_context t;
+//
+//  t.add_absent_range(key_range_t(u64_varkey(10), u64_varkey(20)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(20), u64_varkey(30)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(60)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(31), u64_varkey(40)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(49), u64_varkey(50)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(47), u64_varkey(50)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(39), u64_varkey(50)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(100), u64_varkey(200)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(300), u64_varkey(400)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(212)));
+//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
+//}
 
 static event_counter evt_local_search_lookups("local_search_lookups");
 static event_counter evt_local_search_write_set_hits("local_search_write_set_hits");
