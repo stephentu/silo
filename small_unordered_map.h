@@ -55,9 +55,9 @@ private:
   typedef typename large_table_type::iterator large_table_iterator;
   typedef typename large_table_type::const_iterator large_table_const_iterator;
 
-  struct bucket {
-    inline bucket() : mapped(false) {}
+  static const size_t TableSize = SmallSize;
 
+  struct bucket {
     inline ALWAYS_INLINE bucket_value_type *
     ptr()
     {
@@ -83,24 +83,20 @@ private:
     }
 
     template <class... Args>
-    void
+    inline void
     construct(size_t hash, Args &&... args)
     {
-      INVARIANT(!mapped);
-      new (&ref()) bucket_value_type(std::forward<Args>(args)...);
-      mapped = true;
       h = hash;
+      new (&ref()) bucket_value_type(std::forward<Args>(args)...);
     }
 
-    void
+    inline void
     destroy()
     {
-      INVARIANT(mapped);
       ref().~bucket_value_type();
-      mapped = false;
     }
 
-    bool mapped;
+    struct bucket *bnext;
     size_t h;
     char buf[sizeof(value_type)];
   };
@@ -125,7 +121,6 @@ private:
       if (unlikely(large))
         return *large_it;
       INVARIANT(b != bend);
-      INVARIANT(b->mapped);
       return reinterpret_cast<ValueType &>(b->ref());
     }
 
@@ -135,18 +130,16 @@ private:
       if (unlikely(large))
         return &(*large_it);
       INVARIANT(b != bend);
-      INVARIANT(b->mapped);
       return reinterpret_cast<ValueType *>(b->ptr());
     }
 
     inline bool
     operator==(const iterator_ &o) const
     {
-      if (unlikely(large && o.large))
-        return large_it == o.large_it;
-      if (!large && !o.large)
+      INVARIANT(large == o.large);
+      if (likely(!large))
         return b == o.b;
-      return false;
+      return large_it == o.large_it;
     }
 
     inline bool
@@ -163,9 +156,7 @@ private:
         return *this;
       }
       INVARIANT(b < bend);
-      do {
-        b++;
-      } while (b != bend && !b->mapped);
+      b++;
       return *this;
     }
 
@@ -181,7 +172,7 @@ private:
     inline iterator_(SmallIterType *b, SmallIterType *bend)
       : large(false), b(b), bend(bend)
     {
-      INVARIANT(b == bend || b->mapped);
+      INVARIANT(b <= bend);
     }
     inline iterator_(LargeIterType large_it)
       : large(true), large_it(large_it) {}
@@ -212,6 +203,7 @@ public:
   small_unordered_map()
     : n(0), large_elems(0)
   {
+    NDB_MEMSET(&table[0], 0, sizeof(table));
   }
 
   ~small_unordered_map()
@@ -220,22 +212,10 @@ public:
   }
 
   small_unordered_map(const small_unordered_map &other)
-    : n(other.n), large_elems()
+    : n(0), large_elems(0)
   {
-    if (unlikely(other.large_elems)) {
-      large_elems = new large_table_type(*other.large_elems);
-    } else {
-      if (!n)
-        return;
-      for (size_t i = 0; i < SmallSize; i++) {
-        bucket *const this_b = &small_elems[i];
-        const bucket *const that_b = &other.small_elems[i];
-        if (that_b->mapped)
-          this_b->construct(that_b->h,
-                            that_b->ref().first,
-                            that_b->ref().second);
-      }
-    }
+    NDB_MEMSET(&table[0], 0, sizeof(table));
+    assignFrom(other);
   }
 
   small_unordered_map &
@@ -244,22 +224,7 @@ public:
     // self assignment
     if (unlikely(this == &other))
       return *this;
-    clear();
-    n = other.n;
-    if (unlikely(other.large_elems)) {
-      large_elems = new large_table_type(*other.large_elems);
-    } else {
-      if (!n)
-        return *this;
-      for (size_t i = 0; i < SmallSize; i++) {
-        bucket *const this_b = &small_elems[i];
-        const bucket *const that_b = &other.small_elems[i];
-        if (that_b->mapped)
-          this_b->construct(that_b->h,
-                            that_b->ref().first,
-                            that_b->ref().second);
-      }
-    }
+    assignFrom(other);
     return *this;
   }
 
@@ -271,25 +236,13 @@ private:
     const size_t h = Hash()(k);
     if (hash_value)
       *hash_value = h;
-    size_t i = h % SmallSize;
-    size_t n = 0;
-    while (n++ < SmallSize) {
-      bucket &b = small_elems[i];
+    const size_t i = h % TableSize;
+    bucket *b = table[i];
+    while (b) {
       const bool check_hash = private_::is_eq_expensive<key_type>::value;
-      if (check_hash) {
-        if ((b.mapped && b.h == h && b.ref().first == k) ||
-            !b.mapped) {
-          // found bucket
-          return &b;
-        }
-      } else {
-        if ((b.mapped && b.ref().first == k) ||
-            !b.mapped) {
-          // found bucket
-          return &b;
-        }
-      }
-      i = (i + 1) % SmallSize;
+      if ((!check_hash || b->h == h) && b->ref().first == k)
+        return b;
+      b = b->bnext;
     }
     return 0;
   }
@@ -302,7 +255,7 @@ private:
 
 public:
 
-  // XXX(stephentu): can we avoid this code duplication?
+  // XXX(stephentu): template away this stuff
 
   mapped_type &
   operator[](const key_type &k)
@@ -310,29 +263,30 @@ public:
     if (unlikely(large_elems))
       return large_elems->operator[](k);
     size_t h;
-    bucket * const b = find_bucket(k, &h);
-    if (likely(b)) {
-      if (!b->mapped) {
-        n++;
-        b->construct(h, k, mapped_type());
-      }
+    bucket *b = find_bucket(k, &h);
+    if (b)
       return b->ref().second;
-    }
-    INVARIANT(n == SmallSize);
-    // small_elems is full, so spill over to large_elems
-    n = 0;
-    large_elems = new large_table_type;
-    for (size_t idx = 0; idx < SmallSize; idx++) {
-      bucket &b = small_elems[idx];
-      INVARIANT(b.mapped);
+    if (unlikely(n == SmallSize)) {
+      large_elems = new large_table_type;
+      for (size_t n = 0; n < SmallSize; n++) {
+        bucket &b = small_elems[n];
 #if GCC_AT_LEAST_47
-      large_elems->emplace(std::move(b.ref()));
+        large_elems->emplace(std::move(b.ref()));
 #else
-      large_elems->operator[](std::move(b.ref().first)) = std::move(b.ref().second);
+        large_elems->operator[](std::move(b.ref().first)) = std::move(b.ref().second);
 #endif
-      b.destroy();
+        b.destroy();
+      }
+      n = 0;
+      return large_elems->operator[](k);
     }
-    return large_elems->operator[](k);
+    INVARIANT(n < SmallSize);
+    b = &small_elems[n++];
+    b->construct(h, k, mapped_type());
+    const size_t i = h % TableSize;
+    b->bnext = table[i];
+    table[i] = b;
+    return b->ref().second;
   }
 
   mapped_type &
@@ -341,69 +295,31 @@ public:
     if (unlikely(large_elems))
       return large_elems->operator[](std::move(k));
     size_t h;
-    bucket * const b = find_bucket(k, &h);
-    if (likely(b)) {
-      if (!b->mapped) {
-        n++;
-        b->construct(h, std::move(k), mapped_type());
-      }
+    bucket *b = find_bucket(k, &h);
+    if (b)
       return b->ref().second;
-    }
-    INVARIANT(n == SmallSize);
-    // small_elems is full, so spill over to large_elems
-    n = 0;
-    large_elems = new large_table_type;
-    for (size_t idx = 0; idx < SmallSize; idx++) {
-      bucket &b = small_elems[idx];
-      INVARIANT(b.mapped);
+    if (unlikely(n == SmallSize)) {
+      large_elems = new large_table_type;
+      for (size_t n = 0; n < SmallSize; n++) {
+        bucket &b = small_elems[n];
 #if GCC_AT_LEAST_47
-      large_elems->emplace(std::move(b.ref()));
+        large_elems->emplace(std::move(b.ref()));
 #else
-      large_elems->operator[](std::move(b.ref().first)) = std::move(b.ref().second);
+        large_elems->operator[](std::move(b.ref().first)) = std::move(b.ref().second);
 #endif
-      b.destroy();
-    }
-    return large_elems->operator[](std::move(k));
-  }
-
-#if GCC_AT_LEAST_47
-  // C++11 goodness
-  template <class... Args>
-  std::pair<iterator, bool>
-  emplace(Args &&... args)
-  {
-    if (unlikely(large_elems)) {
-      std::pair<large_table_iterator, bool> ret =
-        large_elems->emplace(std::forward<Args>(args)...);
-      return std::make_pair(iterator(ret.first), ret.second);
-    }
-    bucket_value_type tpe(std::forward<Args>(args)...);
-    size_t h;
-    bucket * const b = find_bucket(tpe.first, &h);
-    bucket * const bend = &small_elems[SmallSize];
-    if (likely(b)) {
-      if (!b->mapped) {
-        n++;
-        b->construct(h, std::move(tpe));
-        return std::make_pair(iterator(b, bend), true);
+        b.destroy();
       }
-      return std::make_pair(iterator(b, bend), false);
+      n = 0;
+      return large_elems->operator[](std::move(k));
     }
-    INVARIANT(n == SmallSize);
-    // small_elems is full, so spill over to large_elems
-    n = 0;
-    large_elems = new large_table_type;
-    for (size_t idx = 0; idx < SmallSize; idx++) {
-      bucket &b = small_elems[idx];
-      INVARIANT(b.mapped);
-      large_elems->emplace(std::move(b.ref()));
-      b.destroy();
-    }
-    std::pair<large_table_iterator, bool> ret =
-      large_elems->emplace(std::move(tpe));
-    return std::make_pair(iterator(ret.first), ret.second);
+    INVARIANT(n < SmallSize);
+    b = &small_elems[n++];
+    b->construct(h, std::move(k), mapped_type());
+    const size_t i = h % TableSize;
+    b->bnext = table[i];
+    table[i] = b;
+    return b->ref().second;
   }
-#endif
 
   inline size_t
   size() const
@@ -424,11 +340,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->begin());
-    bucket *b = &small_elems[0];
-    bucket *const bend = &small_elems[SmallSize];
-    while (b != bend && !b->mapped)
-      b++;
-    return iterator(b, bend);
+    return iterator(&small_elems[0], &small_elems[n]);
   }
 
   const_iterator
@@ -436,11 +348,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->begin());
-    const bucket *b = &small_elems[0];
-    const bucket *const bend = &small_elems[SmallSize];
-    while (b != bend && !b->mapped)
-      b++;
-    return const_iterator(b, bend);
+    return const_iterator(&small_elems[0], &small_elems[n]);
   }
 
   inline iterator
@@ -448,7 +356,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->end());
-    return iterator(&small_elems[SmallSize], &small_elems[SmallSize]);
+    return iterator(&small_elems[n], &small_elems[n]);
   }
 
   inline const_iterator
@@ -456,7 +364,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->end());
-    return const_iterator(&small_elems[SmallSize], &small_elems[SmallSize]);
+    return const_iterator(&small_elems[n], &small_elems[n]);
   }
 
   iterator
@@ -464,9 +372,9 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->find(k));
-    bucket *b = find_bucket(k, 0);
-    if (likely(b) && b->mapped)
-      return iterator(b, &small_elems[SmallSize]);
+    bucket * const b = find_bucket(k, 0);
+    if (b)
+      return iterator(b, &small_elems[n]);
     return end();
   }
 
@@ -475,9 +383,9 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->find(k));
-    const bucket *b = find_bucket(k, 0);
-    if (likely(b) && b->mapped)
-      return const_iterator(b, &small_elems[SmallSize]);
+    const bucket * const b = find_bucket(k, 0);
+    if (b)
+      return const_iterator(b, &small_elems[n]);
     return end();
   }
 
@@ -490,16 +398,47 @@ public:
       large_elems = NULL;
       return;
     }
-    for (size_t i = 0; i < SmallSize; i++)
-      if (small_elems[i].mapped)
-        small_elems[i].destroy();
+    if (!n)
+      return;
+    NDB_MEMSET(&table[0], 0, sizeof(table));
+    for (size_t i = 0; i < n; i++)
+      small_elems[i].destroy();
     n = 0;
   }
 
+public:
+  // non-standard API
+  inline bool is_small_type() const { return !large_elems; }
+
 private:
 
+  // doesn't check for self assignment
+  inline void
+  assignFrom(const small_unordered_map &that)
+  {
+    clear();
+    if (that.large_elems) {
+      INVARIANT(!that.n);
+      INVARIANT(!n);
+      large_elems = new large_table_type(*that.large_elems);
+      return;
+    }
+    INVARIANT(!large_elems);
+    for (size_t i = 0; i < that.n; i++) {
+      bucket * const b = &small_elems[n++];
+      const bucket * const that_b = &that.small_elems[i];
+      b->construct(that_b->h, that_b->ref().first, that_b->ref().second);
+      const size_t idx = b->h % TableSize;
+      b->bnext = table[idx];
+      table[idx] = b;
+    }
+  }
+
   size_t n;
+
   bucket small_elems[SmallSize];
+  bucket *table[TableSize];
+
   large_table_type *large_elems;
 };
 
