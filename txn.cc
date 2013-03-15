@@ -14,64 +14,6 @@
 using namespace std;
 using namespace util;
 
-event_counter transaction::logical_node::g_evt_logical_node_creates("logical_node_creates");
-event_counter transaction::logical_node::g_evt_logical_node_logical_deletes("logical_node_logical_deletes");
-event_counter transaction::logical_node::g_evt_logical_node_physical_deletes("logical_node_physical_deletes");
-event_counter transaction::logical_node::g_evt_logical_node_bytes_allocated("logical_node_bytes_allocated");
-event_counter transaction::logical_node::g_evt_logical_node_bytes_freed("logical_node_bytes_freed");
-event_counter transaction::logical_node::g_evt_logical_node_spills("logical_node_spills");
-
-event_avg_counter transaction::logical_node::g_evt_avg_record_spill_len("avg_record_spill_len");
-
-transaction::logical_node::~logical_node()
-{
-  INVARIANT(is_deleting());
-  INVARIANT(!is_enqueued());
-  INVARIANT(!is_locked());
-
-  VERBOSE(cerr << "logical_node: " << hexify(intptr_t(this)) << " is being deleted" << endl);
-
-  // free reachable nodes:
-  // don't do this recursively, to avoid overflowing
-  // stack w/ really long chains
-  struct logical_node *cur = get_next();
-  while (cur) {
-    struct logical_node *tmp = cur->get_next();
-    INVARIANT(!cur->is_enqueued());
-    cur->clear_next(); // so cur's dtor doesn't attempt to double free
-    release_no_rcu(cur); // just a wrapper for ~logical_node() + free()
-    cur = tmp;
-  }
-
-  // stats-keeping
-  ++g_evt_logical_node_physical_deletes;
-  g_evt_logical_node_bytes_freed += (alloc_size + sizeof(logical_node));
-}
-
-void
-transaction::logical_node::gc_chain()
-{
-  INVARIANT(rcu::in_rcu_region());
-  INVARIANT(!is_latest());
-  INVARIANT(!is_enqueued());
-  release(this); // ~logical_node() takes care of all reachable ptrs
-}
-
-string
-transaction::logical_node::VersionInfoStr(version_t v)
-{
-  ostringstream buf;
-  buf << "[";
-  buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
-  buf << (IsBigType(v) ? "BIG" : "SMALL") << " | ";
-  buf << (IsDeleting(v) ? "DEL" : "-") << " | ";
-  buf << (IsEnqueued(v) ? "ENQ" : "-") << " | ";
-  buf << (IsLatest(v) ? "LATEST" : "-") << " | ";
-  buf << Version(v);
-  buf << "]";
-  return buf.str();
-}
-
 static string
 proto1_version_str(uint64_t v) UNUSED;
 static string
@@ -94,45 +36,7 @@ proto2_version_str(uint64_t v)
 }
 
 // XXX(stephentu): hacky!
-static string (*g_proto_version_str)(uint64_t v) = proto2_version_str;
-
-static vector<string>
-format_tid_list(const vector<transaction::tid_t> &tids)
-{
-  vector<string> s;
-  for (vector<transaction::tid_t>::const_iterator it = tids.begin();
-       it != tids.end(); ++it)
-    s.push_back(g_proto_version_str(*it));
-  return s;
-}
-
-inline ostream &
-operator<<(ostream &o, const transaction::logical_node &ln)
-{
-  vector<transaction::tid_t> tids;
-  vector<transaction::size_type> recs;
-  tids.push_back(ln.version);
-  recs.push_back(ln.size);
-  vector<string> tids_s = format_tid_list(tids);
-  const bool has_spill = ln.get_next();
-  o << "[v=" << transaction::logical_node::VersionInfoStr(ln.unstable_version()) <<
-    ", tids=" << format_list(tids_s.rbegin(), tids_s.rend()) <<
-    ", sizes=" << format_list(recs.rbegin(), recs.rend()) <<
-    ", has_spill=" <<  has_spill << "]";
-  o << endl;
-  const struct transaction::logical_node *p = ln.get_next();
-  for (; p; p = p->get_next()) {
-    vector<transaction::tid_t> itids;
-    vector<transaction::size_type> irecs;
-    itids.push_back(p->version);
-    irecs.push_back(p->size);
-    vector<string> itids_s = format_tid_list(itids);
-    o << "[tids=" << format_list(itids_s.rbegin(), itids_s.rend())
-      << ", sizes=" << format_list(irecs.rbegin(), irecs.rend())
-      << "]" << endl;
-  }
-  return o;
-}
+string (*g_proto_version_str)(uint64_t v) = proto2_version_str;
 
 transaction::transaction(uint64_t flags)
   : state(TXN_EMBRYO), flags(flags)
@@ -149,7 +53,7 @@ transaction::~transaction()
   rcu::region_end();
 }
 
-static event_counter evt_logical_node_latest_replacement("logical_node_latest_replacement");
+static event_counter evt_dbtuple_latest_replacement("dbtuple_latest_replacement");
 STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_commit_probe0_tsc, txn_commit_probe0_cg);
 
 bool
@@ -172,8 +76,8 @@ transaction::commit(bool doThrow)
     return false;
   }
 
-  // fetch logical_nodes for insert
-  typename vec<lnode_pair>::type logical_nodes;
+  // fetch dbtuples for insert
+  typename vec<dbtuple_pair>::type dbtuples;
   const pair<bool, tid_t> snapshot_tid_t = consistent_snapshot_tid();
   pair<bool, tid_t> commit_tid(false, 0);
 
@@ -190,13 +94,13 @@ transaction::commit(bool doThrow)
       retry:
         btree::value_type v = 0;
         if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
-          VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(v)) << endl);
-          logical_nodes.emplace_back(
-              (logical_node *) v,
-              lnode_info(outer_it->first, it->first, false, it->second));
+          VERBOSE(cerr << "key " << hexify(it->first) << " : dbtuple 0x" << hexify(intptr_t(v)) << endl);
+          dbtuples.emplace_back(
+              (dbtuple *) v,
+              dbtuple_info(outer_it->first, it->first, false, it->second));
           // mark that we hold lock in read set
           read_set_map::iterator read_it =
-            outer_it->second.read_set.find((const logical_node *) v);
+            outer_it->second.read_set.find((const dbtuple *) v);
           if (read_it != outer_it->second.read_set.end()) {
             INVARIANT(!read_it->second.holds_lock);
             read_it->second.holds_lock = true;
@@ -209,17 +113,17 @@ transaction::commit(bool doThrow)
             absent_it->second = true;
           }
         } else {
-          logical_node *ln = logical_node::alloc_first(
+          dbtuple *ln = dbtuple::alloc_first(
               !outer_it->first->is_mostly_append(), it->second.size());
           // XXX: underlying btree api should return the existing value if
           // insert fails- this would allow us to avoid having to do another search
           pair<const btree::node_opaque_t *, uint64_t> insert_info;
           if (!outer_it->first->underlying_btree.insert_if_absent(
                 varkey(it->first), (btree::value_type) ln, &insert_info)) {
-            logical_node::release_no_rcu(ln);
+            dbtuple::release_no_rcu(ln);
             goto retry;
           }
-          VERBOSE(cerr << "key " << hexify(it->first) << " : logical_node 0x" << hexify(intptr_t(ln)) << endl);
+          VERBOSE(cerr << "key " << hexify(it->first) << " : dbtuple 0x" << hexify(intptr_t(ln)) << endl);
           if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
             // update node #s
             INVARIANT(insert_info.first);
@@ -237,8 +141,8 @@ transaction::commit(bool doThrow)
               SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
             }
           }
-          logical_nodes.emplace_back(
-              ln, lnode_info(outer_it->first, it->first, false, it->second));
+          dbtuples.emplace_back(
+              ln, dbtuple_info(outer_it->first, it->first, false, it->second));
           // mark that we hold lock in read set
           read_set_map::iterator read_it =
             outer_it->second.read_set.find(ln);
@@ -258,20 +162,20 @@ transaction::commit(bool doThrow)
     }
   }
 
-  if (!snapshot_tid_t.first || !logical_nodes.empty()) {
+  if (!snapshot_tid_t.first || !dbtuples.empty()) {
     // we don't have consistent tids, or not a read-only txn
 
-    if (!logical_nodes.empty()) {
+    if (!dbtuples.empty()) {
       // lock the logical nodes in sort order
-      sort(logical_nodes.begin(), logical_nodes.end(), LNodeComp());
-      typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
-      typename vec<lnode_pair>::type::iterator it_end = logical_nodes.end();
+      sort(dbtuples.begin(), dbtuples.end(), LNodeComp());
+      typename vec<dbtuple_pair>::type::iterator it = dbtuples.begin();
+      typename vec<dbtuple_pair>::type::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {
         VERBOSE(cerr << "locking node 0x" << hexify(intptr_t(it->first)) << endl);
-        const logical_node::version_t v = it->first->lock();
+        const dbtuple::version_t v = it->first->lock();
         it->second.locked = true; // we locked the node
-        if (unlikely(logical_node::IsDeleting(v) ||
-                     !logical_node::IsLatest(v) ||
+        if (unlikely(dbtuple::IsDeleting(v) ||
+                     !dbtuple::IsLatest(v) ||
                      !can_read_tid(it->first->version))) {
           // XXX(stephentu): overly conservative (with the can_read_tid() check)
           abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
@@ -279,7 +183,7 @@ transaction::commit(bool doThrow)
         }
       }
       commit_tid.first = true;
-      commit_tid.second = gen_commit_tid(logical_nodes);
+      commit_tid.second = gen_commit_tid(dbtuples);
       VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
     } else {
       VERBOSE(cerr << "commit tid: <read-only>" << endl);
@@ -296,8 +200,8 @@ transaction::commit(bool doThrow)
           read_set_map::iterator it = outer_it->second.read_set.begin();
           read_set_map::iterator it_end = outer_it->second.read_set.end();
           for (; it != it_end; ++it) {
-            const transaction::logical_node * const ln = it->first;
-            VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
+            const dbtuple * const ln = it->first;
+            VERBOSE(cerr << "validating key " << hexify(it->first) << " @ dbtuple 0x"
                          << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
 
             if (likely(it->second.holds_lock ?
@@ -305,7 +209,7 @@ transaction::commit(bool doThrow)
                   ln->stable_is_latest_version(it->second.t)))
               continue;
 
-            VERBOSE(cerr << "validating key " << hexify(it->first) << " @ logical_node 0x"
+            VERBOSE(cerr << "validating key " << hexify(it->first) << " @ dbtuple 0x"
                          << hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << " FAILED" << endl
                          << "  txn read version: " << g_proto_version_str(it->second.t) << endl
                          << "  ln=" << *ln << endl);
@@ -327,13 +231,13 @@ transaction::commit(bool doThrow)
               VERBOSE(cerr << "absent key " << hexify(it->first) << " was not found in btree" << endl);
               continue;
             }
-            const transaction::logical_node * const ln = (const transaction::logical_node *) v;
+            const dbtuple * const ln = (const dbtuple *) v;
             if (it->second ? ln->latest_value_is_nil() :
                              ln->stable_latest_value_is_nil()) {
               // NB(stephentu): this seems like an optimization,
               // but its actually necessary- otherwise a newly inserted
               // key which we read first would always get aborted
-              VERBOSE(cerr << "absent key " << hexify(it->first) << " @ logical_node "
+              VERBOSE(cerr << "absent key " << hexify(it->first) << " @ dbtuple "
                            << hexify(ln) << " has latest value nil" << endl);
               continue;
             }
@@ -379,18 +283,18 @@ transaction::commit(bool doThrow)
     }
 
     // commit actual records
-    if (!logical_nodes.empty()) {
-      typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
-      typename vec<lnode_pair>::type::iterator it_end = logical_nodes.end();
+    if (!dbtuples.empty()) {
+      typename vec<dbtuple_pair>::type::iterator it = dbtuples.begin();
+      typename vec<dbtuple_pair>::type::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {
         INVARIANT(it->second.locked);
-        VERBOSE(cerr << "writing logical_node 0x" << hexify(intptr_t(it->first))
+        VERBOSE(cerr << "writing dbtuple 0x" << hexify(intptr_t(it->first))
                      << " at commit_tid " << commit_tid.second << endl);
         it->first->prefetch();
-        const logical_node::write_record_ret ret = it->first->write_record_at(
+        const dbtuple::write_record_ret ret = it->first->write_record_at(
             this, commit_tid.second,
             (const record_type) it->second.r.data(), it->second.r.size());
-        lock_guard<logical_node> guard(ret.second);
+        lock_guard<dbtuple> guard(ret.second);
         if (unlikely(ret.second)) {
           // need to unlink it->first from underlying btree, replacing
           // with ret.second (atomically)
@@ -400,12 +304,12 @@ transaction::commit(bool doThrow)
             // should already exist in tree
             INVARIANT(false);
           INVARIANT(old_v == (btree::value_type) it->first);
-          ++evt_logical_node_latest_replacement;
+          ++evt_dbtuple_latest_replacement;
         }
-        logical_node * const latest = ret.second ? ret.second : it->first;
+        dbtuple * const latest = ret.second ? ret.second : it->first;
         if (unlikely(ret.first))
           // spill happened: signal for GC
-          on_logical_node_spill(it->second.btr, it->second.key, latest);
+          on_dbtuple_spill(it->second.btr, it->second.key, latest);
         if (it->second.r.empty())
           // logical delete happened: schedule physical deletion
           on_logical_delete(it->second.btr, it->second.key, latest);
@@ -427,8 +331,8 @@ do_abort:
     VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
     VERBOSE(cerr << "aborting txn" << endl);
-  for (typename vec<lnode_pair>::type::iterator it = logical_nodes.begin();
-       it != logical_nodes.end(); ++it)
+  for (typename vec<dbtuple_pair>::type::iterator it = dbtuples.begin();
+       it != dbtuples.end(); ++it)
     if (it->second.locked)
       it->first->unlock();
   state = TXN_ABRT;
@@ -748,7 +652,7 @@ transaction_proto1::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto1::gen_commit_tid(const typename vec<lnode_pair>::type &write_nodes)
+transaction_proto1::gen_commit_tid(const typename vec<dbtuple_pair>::type &write_nodes)
 {
   return incr_and_get_global_tid();
 }
@@ -757,13 +661,13 @@ transaction_proto1::gen_commit_tid(const typename vec<lnode_pair>::type &write_n
 // need to fix later
 
 void
-transaction_proto1::on_logical_node_spill(
-    txn_btree *btr, const string_type &key, logical_node *ln)
+transaction_proto1::on_dbtuple_spill(
+    txn_btree *btr, const string_type &key, dbtuple *ln)
 {
   NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   //INVARIANT(ln->is_locked());
   //INVARIANT(rcu::in_rcu_region());
-  //struct logical_node *p = ln->next, **pp = &ln->next;
+  //struct dbtuple *p = ln->next, **pp = &ln->next;
   //for (size_t i = 0; p && i < NMaxChainLength; i++) {
   //  pp = &p->next;
   //  p = p->next;
@@ -776,7 +680,7 @@ transaction_proto1::on_logical_node_spill(
 
 void
 transaction_proto1::on_logical_delete(
-    txn_btree *btr, const string_type &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, dbtuple *ln)
 {
   NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   //INVARIANT(ln->is_locked());
@@ -786,7 +690,7 @@ transaction_proto1::on_logical_delete(
   ////btree::value_type removed = 0;
   ////ALWAYS_ASSERT(btr->underlying_btree.remove(varkey(key), &removed));
   ////ALWAYS_ASSERT(removed == (btree::value_type) ln);
-  ////logical_node::release(ln);
+  ////dbtuple::release(ln);
 
   //// XXX(stephentu): cannot do the above, b/c some consistent
   //// reads might break. we need to enqueue this work to run
@@ -811,7 +715,7 @@ transaction_proto1::incr_and_get_global_tid()
   return __sync_add_and_fetch(&global_tid, 1);
 }
 
-volatile transaction::tid_t transaction_proto1::global_tid = MIN_TID;
+volatile transaction::tid_t transaction_proto1::global_tid = dbtuple::MIN_TID;
 volatile transaction::tid_t transaction_proto1::last_consistent_global_tid = 0;
 
 transaction_proto2::transaction_proto2(uint64_t flags)
@@ -867,11 +771,12 @@ transaction_proto2::dump_debug_info() const
 }
 
 transaction::tid_t
-transaction_proto2::gen_commit_tid(const typename vec<lnode_pair>::type &write_nodes)
+transaction_proto2::gen_commit_tid(const typename vec<dbtuple_pair>::type &write_nodes)
 {
   const size_t my_core_id = coreid::core_id();
   const tid_t l_last_commit_tid = tl_last_commit_tid;
-  INVARIANT(l_last_commit_tid == MIN_TID || CoreId(l_last_commit_tid) == my_core_id);
+  INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
+            CoreId(l_last_commit_tid) == my_core_id);
 
   // XXX(stephentu): wrap-around messes this up
   INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);
@@ -891,7 +796,7 @@ transaction_proto2::gen_commit_tid(const typename vec<lnode_pair>::type &write_n
       if (it->second.t > ret)
         ret = it->second.t;
     }
-  for (typename vec<lnode_pair>::type::const_iterator it = write_nodes.begin();
+  for (typename vec<dbtuple_pair>::type::const_iterator it = write_nodes.begin();
        it != write_nodes.end(); ++it) {
     INVARIANT(it->first->is_locked());
     INVARIANT(it->first->is_latest());
@@ -915,14 +820,14 @@ transaction_proto2::gen_commit_tid(const typename vec<lnode_pair>::type &write_n
 }
 
 void
-transaction_proto2::on_logical_node_spill(
-    txn_btree *btr, const string_type &key, logical_node *ln)
+transaction_proto2::on_dbtuple_spill(
+    txn_btree *btr, const string_type &key, dbtuple *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
   INVARIANT(rcu::in_rcu_region());
 
-  do_logical_node_chain_cleanup(ln);
+  do_dbtuple_chain_cleanup(ln);
 
   if (!ln->size)
     // let the on_delete handler take care of this
@@ -930,22 +835,22 @@ transaction_proto2::on_logical_node_spill(
   if (ln->is_enqueued())
     // already being taken care of by another queue
     return;
-  ln->set_enqueued(true, logical_node::QUEUE_TYPE_LOCAL);
+  ln->set_enqueued(true, dbtuple::QUEUE_TYPE_LOCAL);
   local_cleanup_nodes().emplace_back(
-    logical_node_context(btr, key, ln),
-    try_logical_node_cleanup);
+    dbtuple_context(btr, key, ln),
+    try_dbtuple_cleanup);
 }
 
 void
 transaction_proto2::on_logical_delete(
-    txn_btree *btr, const string_type &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, dbtuple *ln)
 {
   on_logical_delete_impl(btr, key, ln);
 }
 
 void
 transaction_proto2::on_logical_delete_impl(
-    txn_btree *btr, const string_type &key, logical_node *ln)
+    txn_btree *btr, const string_type &key, dbtuple *ln)
 {
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
@@ -953,15 +858,15 @@ transaction_proto2::on_logical_delete_impl(
   INVARIANT(!ln->is_deleting());
   if (ln->is_enqueued())
     return;
-  ln->set_enqueued(true, logical_node::QUEUE_TYPE_LOCAL);
+  ln->set_enqueued(true, dbtuple::QUEUE_TYPE_LOCAL);
   INVARIANT(ln->is_enqueued());
   VERBOSE(cerr << "on_logical_delete: enq ln=0x" << hexify(intptr_t(ln))
                << " at current_epoch=" << current_epoch
                << ", latest_version_epoch=" << EpochId(ln->version) << endl
                << "  ln=" << *ln << endl);
   local_cleanup_nodes().emplace_back(
-    logical_node_context(btr, key, ln),
-    try_logical_node_cleanup);
+    dbtuple_context(btr, key, ln),
+    try_dbtuple_cleanup);
 }
 
 void
@@ -980,9 +885,9 @@ static event_counter evt_try_delete_reschedules("try_delete_reschedules");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
 static inline bool
-chain_contains_enqueued(const transaction::logical_node *p)
+chain_contains_enqueued(const dbtuple *p)
 {
-  const transaction::logical_node *cur = p;
+  const dbtuple *cur = p;
   while (cur) {
     if (cur->is_enqueued())
       return true;
@@ -992,11 +897,11 @@ chain_contains_enqueued(const transaction::logical_node *p)
 }
 
 void
-transaction_proto2::do_logical_node_chain_cleanup(logical_node *ln)
+transaction_proto2::do_dbtuple_chain_cleanup(dbtuple *ln)
 {
   // try to clean up the chain
   INVARIANT(ln->is_latest());
-  struct logical_node *p = ln, *pprev = 0;
+  struct dbtuple *p = ln, *pprev = 0;
   const bool has_chain = ln->get_next();
   bool do_break = false;
   while (p) {
@@ -1012,7 +917,7 @@ transaction_proto2::do_logical_node_chain_cleanup(logical_node *ln)
   if (p) {
     INVARIANT(pprev);
     // can only GC a continous chain of not-enqueued.
-    logical_node *last_enq = NULL, *cur = p;
+    dbtuple *last_enq = NULL, *cur = p;
     while (cur) {
       if (cur->is_enqueued())
         last_enq = cur;
@@ -1033,20 +938,20 @@ transaction_proto2::do_logical_node_chain_cleanup(logical_node *ln)
 }
 
 bool
-transaction_proto2::try_logical_node_cleanup(const logical_node_context &ctx)
+transaction_proto2::try_dbtuple_cleanup(const dbtuple_context &ctx)
 {
   bool ret = false;
-  lock_guard<logical_node> lock(ctx.ln);
+  lock_guard<dbtuple> lock(ctx.ln);
   INVARIANT(rcu::in_rcu_region());
   INVARIANT(ctx.ln->is_enqueued());
   INVARIANT(!ctx.ln->is_deleting());
 
-  ctx.ln->set_enqueued(false, logical_node::QUEUE_TYPE_LOCAL);
+  ctx.ln->set_enqueued(false, dbtuple::QUEUE_TYPE_LOCAL);
   if (!ctx.ln->is_latest())
     // was replaced, so let the newer handlers do the work
     return false;
 
-  do_logical_node_chain_cleanup(ctx.ln);
+  do_dbtuple_chain_cleanup(ctx.ln);
 
   if (!ctx.ln->size) {
     // latest version is a deleted entry, so try to delete
@@ -1059,21 +964,21 @@ transaction_proto2::try_logical_node_cleanup(const logical_node_context &ctx)
       bool did_remove = ctx.btr->underlying_btree.remove(varkey(ctx.key), &removed);
       if (!did_remove) INVARIANT(false);
       INVARIANT(removed == (btree::value_type) ctx.ln);
-      logical_node::release(ctx.ln);
+      dbtuple::release(ctx.ln);
       ++evt_try_delete_unlinks;
     }
   } else {
     ret = ctx.ln->get_next();
   }
   if (ret) {
-    ctx.ln->set_enqueued(true, logical_node::QUEUE_TYPE_LOCAL);
+    ctx.ln->set_enqueued(true, dbtuple::QUEUE_TYPE_LOCAL);
     ++evt_local_cleanup_reschedules;
   }
   return ret;
 }
 
 bool
-transaction_proto2::try_chain_cleanup(const logical_node_context &ctx)
+transaction_proto2::try_chain_cleanup(const dbtuple_context &ctx)
 {
   NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   //const uint64_t last_consistent_epoch = g_consistent_epoch;
@@ -1084,7 +989,7 @@ transaction_proto2::try_chain_cleanup(const logical_node_context &ctx)
   //INVARIANT(!ctx.ln->is_deleting());
   //// find the first value n w/ EpochId < last_consistent_epoch.
   //// call gc_chain() on n->next
-  //struct logical_node *p = ctx.ln, **pp = 0;
+  //struct dbtuple *p = ctx.ln, **pp = 0;
   //const bool has_chain = ctx.ln->next;
   //bool do_break = false;
   //while (p) {
@@ -1109,7 +1014,7 @@ transaction_proto2::try_chain_cleanup(const logical_node_context &ctx)
   //  // keep enqueued so we can clean up at a later time
   //  ret = true;
   //} else {
-  //  ctx.ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC); // we're done
+  //  ctx.ln->set_enqueued(false, dbtuple::QUEUE_TYPE_GC); // we're done
   //}
   //// XXX(stephentu): I can't figure out why doing the following causes all
   //// sorts of race conditions (seems like the same node gets on the delete
@@ -1121,9 +1026,9 @@ transaction_proto2::try_chain_cleanup(const logical_node_context &ctx)
   //return ret;
 }
 
-#ifdef LOGICAL_NODE_QUEUE_TRACKING
+#ifdef dbtuple_QUEUE_TRACKING
 static ostream &
-operator<<(ostream &o, const transaction::logical_node::op_hist_rec &h)
+operator<<(ostream &o, const dbtuple::op_hist_rec &h)
 {
   o << "[enq=" << h.enqueued << ", type=" << h.type << ", tid=" << h.tid << "]";
   return o;
@@ -1131,7 +1036,7 @@ operator<<(ostream &o, const transaction::logical_node::op_hist_rec &h)
 #endif
 
 bool
-transaction_proto2::try_delete_logical_node(const logical_node_context &info)
+transaction_proto2::try_delete_dbtuple(const dbtuple_context &info)
 {
   NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
 //  INVARIANT(info.btr);
@@ -1141,30 +1046,30 @@ transaction_proto2::try_delete_logical_node(const logical_node_context &info)
 //  uint64_t v = 0;
 //  scoped_rcu_region rcu_region;
 //  info.ln->lock();
-//#ifdef LOGICAL_NODE_QUEUE_TRACKING
+//#ifdef dbtuple_QUEUE_TRACKING
 //  if (!info.ln->is_enqueued()) {
-//    cerr << "try_delete_logical_node: ln=0x" << hexify(intptr_t(info.ln)) << " is NOT enqueued" << endl;
+//    cerr << "try_delete_dbtuple: ln=0x" << hexify(intptr_t(info.ln)) << " is NOT enqueued" << endl;
 //    cerr << "  last_queue_type: " << info.ln->last_queue_type << endl;
 //    cerr << "  op_hist: " << format_list(info.ln->op_hist.begin(), info.ln->op_hist.end()) << endl;
 //  }
 //#endif
 //  INVARIANT(info.ln->is_enqueued());
 //  INVARIANT(!info.ln->is_deleting());
-//  //cerr << "try_delete_logical_node: setting ln=0x" << hexify(intptr_t(info.ln)) << " to NOT enqueued" << endl;
-//  info.ln->set_enqueued(false, logical_node::QUEUE_TYPE_DELETE); // we are processing this record
+//  //cerr << "try_delete_dbtuple: setting ln=0x" << hexify(intptr_t(info.ln)) << " to NOT enqueued" << endl;
+//  info.ln->set_enqueued(false, dbtuple::QUEUE_TYPE_DELETE); // we are processing this record
 //  if (!info.ln->is_latest() || info.ln->size) {
 //    // somebody added a record again, so we don't want to delete it
 //    ++evt_try_delete_revivals;
 //    goto unlock_and_free;
 //  }
-//  VERBOSE(cerr << "logical_node: 0x" << hexify(intptr_t(info.ln)) << " is being unlinked" << endl
+//  VERBOSE(cerr << "dbtuple: 0x" << hexify(intptr_t(info.ln)) << " is being unlinked" << endl
 //               << "  g_consistent_epoch=" << g_consistent_epoch << endl
 //               << "  ln=" << *info.ln << endl);
 //  v = EpochId(info.ln->version);
 //  if (g_reads_finished_epoch < v) {
 //    // need to reschedule to run when epoch=v ends
 //    VERBOSE(cerr << "  rerunning at end of epoch=" << v << endl);
-//    info.ln->set_enqueued(true, logical_node::QUEUE_TYPE_DELETE); // re-queue it up
+//    info.ln->set_enqueued(true, dbtuple::QUEUE_TYPE_DELETE); // re-queue it up
 //    info.ln->unlock();
 //    // don't free, b/c we need to run again
 //    //epoch = v;
@@ -1173,7 +1078,7 @@ transaction_proto2::try_delete_logical_node(const logical_node_context &info)
 //  }
 //  ALWAYS_ASSERT(info.btr->underlying_btree.remove(varkey(info.key), &removed));
 //  ALWAYS_ASSERT(removed == (btree::value_type) info.ln);
-//  logical_node::release(info.ln);
+//  dbtuple::release(info.ln);
 //  ++evt_try_delete_unlinks;
 //unlock_and_free:
 //  info.ln->unlock();
@@ -1337,7 +1242,7 @@ transaction_proto2::purge_local_work_queue()
        it != tl_cleanup_nodes->end(); ++it) {
     it->first.ln->lock();
     ALWAYS_ASSERT(it->first.ln->is_enqueued());
-    it->first.ln->set_enqueued(false, logical_node::QUEUE_TYPE_GC);
+    it->first.ln->set_enqueued(false, dbtuple::QUEUE_TYPE_GC);
     it->first.ln->unlock();
   }
   tl_cleanup_nodes->clear();
@@ -1354,8 +1259,8 @@ transaction_proto2::completion_callback(ndb_thread *p)
 NDB_THREAD_REGISTER_COMPLETION_CALLBACK(transaction_proto2::completion_callback)
 
 __thread unsigned int transaction_proto2::tl_nest_level = 0;
-__thread uint64_t transaction_proto2::tl_last_commit_tid = MIN_TID;
-__thread uint64_t transaction_proto2::tl_last_cleanup_epoch = MIN_TID;
+__thread uint64_t transaction_proto2::tl_last_commit_tid = dbtuple::MIN_TID;
+__thread uint64_t transaction_proto2::tl_last_cleanup_epoch = dbtuple::MIN_TID;
 __thread transaction_proto2::node_cleanup_queue *transaction_proto2::tl_cleanup_nodes = NULL;
 __thread transaction_proto2::node_cleanup_queue *transaction_proto2::tl_cleanup_nodes_buf = NULL;
 

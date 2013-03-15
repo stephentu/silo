@@ -38,9 +38,9 @@ endif
 HEADERS = btree.h macros.h rcu.h static_assert.h thread.h txn.h txn_btree.h varkey.h util.h \
 	  spinbarrier.h counter.h core.h imstring.h lockguard.h spinlock.h hash_bytes.h \
 	  keyrange.h prefetch.h xbuf.h small_vector.h small_unordered_map.h scopedperf.hh \
-	  record/encoder.h record/serializer.h
+	  tuple.h record/encoder.h record/serializer.h
 SRCFILES = btree.cc counter.cc core.cc rcu.cc thread.cc txn.cc \
-	txn_btree.cc varint.cc memory.cc hash_bytes.cc keyrange.cc
+	tuple.cc txn_btree.cc varint.cc memory.cc hash_bytes.cc keyrange.cc
 OBJFILES = $(SRCFILES:.cc=.o)
 
 MYSQL_SHARE_DIR=/x/stephentu/mysql-5.5.29/build/sql/share

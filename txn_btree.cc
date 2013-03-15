@@ -5,6 +5,7 @@
 #include "thread.h"
 #include "util.h"
 #include "macros.h"
+#include "tuple.h"
 
 #include "scopedperf.hh"
 
@@ -54,15 +55,15 @@ txn_btree::search(transaction &t, const string_type &k, string_type &v,
     return false;
   } else {
     IV(ANON_REGION("txn_btree::search:process:", &txn_btree_search_probe2_cg));
-    const transaction::logical_node * const ln =
-      (const transaction::logical_node *) underlying_v;
+    const dbtuple * const ln =
+      (const dbtuple *) underlying_v;
     INVARIANT(ln);
     transaction::tid_t start_t = 0;
 
     const pair<bool, transaction::tid_t> snapshot_tid_t =
       t.consistent_snapshot_tid();
     const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
-      snapshot_tid_t.second : transaction::MAX_TID;
+      snapshot_tid_t.second : dbtuple::MAX_TID;
 
     ln->prefetch();
     {
@@ -130,7 +131,7 @@ txn_btree::txn_search_range_callback::invoke(
   t->ensure_active();
   VERBOSE(cerr << "search range k: " << hexify(k) << " from <node=0x" << hexify(intptr_t(n))
                << ", version=" << version << ">" << endl
-               << "  " << *((transaction::logical_node *) v) << endl);
+               << "  " << *((dbtuple *) v) << endl);
   if (!(t->get_flags() & transaction::TXN_FLAG_LOW_LEVEL_SCAN)) {
     key_range_t r =
       invoked ? key_range_t(next_key(prev_key), k) :
@@ -150,7 +151,7 @@ txn_btree::txn_search_range_callback::invoke(
     ret = caller_callback->invoke(
         k, (const value_type) local_v.data(), local_v.size());
   }
-  const transaction::logical_node * const ln = (transaction::logical_node *) v;
+  const dbtuple * const ln = (dbtuple *) v;
   if (ctx->read_set.find(ln) == ctx->read_set.end()) {
     INVARIANT(ln);
     transaction::tid_t start_t = 0;
@@ -158,7 +159,7 @@ txn_btree::txn_search_range_callback::invoke(
     const pair<bool, transaction::tid_t> snapshot_tid_t =
       t->consistent_snapshot_tid();
     const transaction::tid_t snapshot_tid = snapshot_tid_t.first ?
-      snapshot_tid_t.second : transaction::MAX_TID;
+      snapshot_tid_t.second : dbtuple::MAX_TID;
     ln->prefetch();
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
       const transaction::abort_reason r =
@@ -199,15 +200,15 @@ txn_btree::txn_search_range_callback::invoke(
 bool
 txn_btree::absent_range_validation_callback::invoke(const string_type &k, btree::value_type v)
 {
-  transaction::logical_node *ln = (transaction::logical_node *) v;
+  dbtuple *ln = (dbtuple *) v;
   INVARIANT(ln);
   VERBOSE(cerr << "absent_range_validation_callback: key " << hexify(k)
-               << " found logical_node 0x" << hexify(ln) << endl);
+               << " found dbtuple 0x" << hexify(ln) << endl);
   const bool did_write = ctx->write_set.find(k) != ctx->write_set.end();
   failed_flag = did_write ? !ln->latest_value_is_nil() : !ln->stable_latest_value_is_nil();
   if (failed_flag)
     VERBOSE(cerr << "absent_range_validation_callback: key " << hexify(k)
-                 << " found logical_node 0x" << hexify(ln) << endl);
+                 << " found dbtuple 0x" << hexify(ln) << endl);
   return !failed_flag;
 }
 
@@ -230,13 +231,13 @@ txn_btree::search_range_call(transaction &t,
                  << ", +inf)" << endl);
 
   // many cases to consider:
-  // 1) for each logical_node returned from the scan, we need to
+  // 1) for each dbtuple returned from the scan, we need to
   //    record it in our local read set. there are several cases:
-  //    A) if the logical_node corresponds to a key we have written, then
+  //    A) if the dbtuple corresponds to a key we have written, then
   //       we emit the version from the local write set
-  //    B) if the logical_node corresponds to a key we have previous read,
+  //    B) if the dbtuple corresponds to a key we have previous read,
   //       then we emit the previous version
-  // 2) for each logical_node node *not* returned from the scan, we need
+  // 2) for each dbtuple node *not* returned from the scan, we need
   //    to record its absense. we optimize this by recording the absense
   //    of contiguous ranges
   if (unlikely(upper && *upper <= lower))
@@ -315,7 +316,7 @@ txn_btree::unsafe_purge(bool dump_stats)
   cerr << "alloc size stats  (nbytes => count)" << endl;
   for (map<size_t, size_t>::iterator it = w.purge_stats_ln_alloc_size_counts.begin();
        it != w.purge_stats_ln_alloc_size_counts.end(); ++it)
-    cerr << "    " << (it->first + sizeof(transaction::logical_node)) << " => " << it->second << endl;
+    cerr << "    " << (it->first + sizeof(dbtuple)) << " => " << it->second << endl;
 #endif
 }
 
@@ -330,15 +331,15 @@ void
 txn_btree::purge_tree_walker::on_node_success()
 {
   for (size_t i = 0; i < spec_values.size(); i++) {
-    transaction::logical_node *ln =
-      (transaction::logical_node *) spec_values[i].first;
+    dbtuple *ln =
+      (dbtuple *) spec_values[i].first;
     INVARIANT(ln);
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
     // XXX(stephentu): should we also walk the chain?
     purge_stats_ln_record_size_counts[ln->size]++;
     purge_stats_ln_alloc_size_counts[ln->alloc_size]++;
 #endif
-    transaction::logical_node::release_no_rcu(ln);
+    dbtuple::release_no_rcu(ln);
   }
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
   purge_stats_nkeys_node.push_back(spec_values.size());
@@ -617,7 +618,7 @@ test_inc_value_size()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree btr;
-    const size_t upper = numeric_limits<transaction::logical_node::node_size_type>::max();
+    const size_t upper = numeric_limits<dbtuple::node_size_type>::max();
     for (size_t i = 1; i < upper; i++) {
       const string v(i, 'a');
       TxnType t(txn_flags);

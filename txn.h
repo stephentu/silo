@@ -30,10 +30,7 @@
 #include "small_unordered_map.h"
 #include "prefetch.h"
 #include "keyrange.h"
-
-// just a debug option to help track down a particular
-// race condition
-//#define LOGICAL_NODE_QUEUE_TRACKING
+#include "tuple.h"
 
 // forward decl
 class txn_btree;
@@ -41,17 +38,19 @@ class txn_btree;
 class transaction_unusable_exception {};
 class transaction_read_only_exception {};
 
+// XXX: hacky
+extern std::string (*g_proto_version_str)(uint64_t v);
+
 class transaction : private util::noncopyable {
 protected:
   friend class txn_btree;
   friend class txn_context;
 
 public:
-
-  typedef uint64_t tid_t;
-  typedef uint8_t * record_type;
-  typedef const uint8_t * const_record_type;
-  typedef size_t size_type;
+  typedef dbtuple::tid_t tid_t;
+  typedef dbtuple::record_type record_type;
+  typedef dbtuple::const_record_type const_record_type;
+  typedef dbtuple::size_type size_type;
 
   // TXN_EMBRYO - the transaction object has been allocated but has not
   // done any operations yet
@@ -122,695 +121,15 @@ public:
   static event_counter g_evt_read_logical_deleted_node_search;
   static event_counter g_evt_read_logical_deleted_node_scan;
 
-  static const tid_t MIN_TID = 0;
-  static const tid_t MAX_TID = (tid_t) -1;
-
   typedef btree::key_type key_type;
-  typedef btree::string_type string_type;
+  typedef dbtuple::string_type string_type;
 
-  // declared here so logical_node::write_record_at() can see it.
+  // declared here so dbtuple::write_record_at() can see it.
   virtual bool
   can_overwrite_record_tid(tid_t prev, tid_t cur) const
   {
     return false;
   }
-
-  /**
-   * A logical_node is the type of value which we stick
-   * into underlying (non-transactional) data structures- it
-   * also contains the memory of the value
-   */
-  struct logical_node : private util::noncopyable {
-  public:
-    // trying to save space by putting constraints
-    // on node maximums
-    typedef uint32_t version_t;
-    typedef uint16_t node_size_type;
-
-  private:
-    static const version_t HDR_LOCKED_MASK = 0x1;
-
-    static const version_t HDR_TYPE_SHIFT = 1;
-    static const version_t HDR_TYPE_MASK = 0x1 << HDR_TYPE_SHIFT;
-
-    static const version_t HDR_DELETING_SHIFT = 2;
-    static const version_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
-
-    static const version_t HDR_ENQUEUED_SHIFT = 3;
-    static const version_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
-
-    static const version_t HDR_LATEST_SHIFT = 4;
-    static const version_t HDR_LATEST_MASK = 0x1 << HDR_LATEST_SHIFT;
-
-    static const version_t HDR_VERSION_SHIFT = 5;
-    static const version_t HDR_VERSION_MASK = ((version_t)-1) << HDR_VERSION_SHIFT;
-
-  public:
-
-    // NB(stephentu): ABA problem happens after some multiple of
-    // 2^(NBits(version_t)-5) concurrent modifications- somewhat low probability
-    // event, so we let it happen
-    //
-    // constraints:
-    //   * enqueued => !deleted
-    //   * deleted  => !enqueued
-    //
-    // [ locked |  type  | deleted | enqueued | latest | version ]
-    // [  0..1  |  1..2  |  2..3   |   3..4   |  4..5  |  5..32  ]
-    volatile version_t hdr;
-
-    // uninterpreted TID
-    tid_t version;
-
-    // small sizes on purpose
-    node_size_type size; // actual size of record (0 implies absent record)
-    node_size_type alloc_size; // max size record allowed. is the space
-                               // available for the record buf
-
-    enum QueueType {
-      QUEUE_TYPE_NONE,
-      QUEUE_TYPE_DELETE,
-      QUEUE_TYPE_GC,
-      QUEUE_TYPE_LOCAL,
-    };
-
-#ifdef LOGICAL_NODE_QUEUE_TRACKING
-    QueueType last_queue_type;
-    struct op_hist_rec {
-      op_hist_rec(bool enqueued, QueueType type, uint64_t tid)
-        : enqueued(enqueued), type(type), tid(tid) {}
-      bool enqueued;
-      QueueType type;
-      uint64_t tid;
-    };
-    std::vector<op_hist_rec> op_hist;
-#endif
-
-    // must be last field
-    union {
-      struct {
-        struct logical_node *next;
-        uint8_t value_start[0];
-      } big;
-      struct {
-        uint8_t value_start[0];
-      } small;
-    } d[0];
-
-  private:
-    // private ctor/dtor b/c we do some special memory stuff
-    // ctors start node off as latest node
-
-    static inline ALWAYS_INLINE node_size_type
-    CheckBounds(size_type s)
-    {
-      INVARIANT(s <= std::numeric_limits<node_size_type>::max());
-      return s;
-    }
-
-    // creates a "small" type (type 0), with an empty (deleted) value
-    logical_node(bool do_big_type, size_type alloc_size)
-      : hdr((do_big_type ? HDR_TYPE_MASK : 0) | HDR_LATEST_MASK),
-        version(MIN_TID),
-        size(0),
-        alloc_size(CheckBounds(alloc_size))
-#ifdef LOGICAL_NODE_QUEUE_TRACKING
-      , last_queue_type(QUEUE_TYPE_NONE)
-#endif
-    {
-      // each logical node starts with one "deleted" entry at MIN_TID
-      // (this is indicated by size = 0)
-      INVARIANT(((char *)this) + sizeof(*this) == (char *) &d[0]);
-      if (do_big_type)
-        d->big.next = 0;
-      ++g_evt_logical_node_creates;
-      g_evt_logical_node_bytes_allocated +=
-        (alloc_size + sizeof(logical_node) +
-         (do_big_type ? sizeof(logical_node *) : 0));
-    }
-
-    // creates a "big" type (type 1), with a non-empty value
-    logical_node(tid_t version, const_record_type r,
-                 size_type size, size_type alloc_size,
-                 struct logical_node *next, bool set_latest)
-      : hdr(HDR_TYPE_MASK | (set_latest ? HDR_LATEST_MASK : 0)),
-        version(version),
-        size(CheckBounds(size)),
-        alloc_size(CheckBounds(alloc_size))
-#ifdef LOGICAL_NODE_QUEUE_TRACKING
-      , last_queue_type(QUEUE_TYPE_NONE)
-#endif
-    {
-      INVARIANT(size <= alloc_size);
-      d->big.next = next;
-      NDB_MEMCPY(&d->big.value_start[0], r, size);
-      ++g_evt_logical_node_creates;
-      g_evt_logical_node_bytes_allocated +=
-        (alloc_size + sizeof(logical_node) + sizeof(next));
-    }
-
-    friend class rcu;
-    ~logical_node();
-
-    inline size_t
-    base_size() const
-    {
-      if (is_big_type())
-        return sizeof(*this) + sizeof(this);
-      return sizeof(*this);
-    }
-
-  public:
-
-    inline void
-    prefetch() const
-    {
-#ifdef LOGICAL_NODE_PREFETCH
-      prefetch_bytes(this, base_size() + alloc_size);
-#endif
-    }
-
-    // gc_chain() schedules this instance, and all instances
-    // reachable from this instance for deletion via RCU.
-    void gc_chain();
-
-    inline bool
-    is_locked() const
-    {
-      return IsLocked(hdr);
-    }
-
-    static inline bool
-    IsLocked(version_t v)
-    {
-      return v & HDR_LOCKED_MASK;
-    }
-
-    inline version_t
-    lock()
-    {
-      version_t v = hdr;
-      while (IsLocked(v) ||
-             !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
-        nop_pause();
-        v = hdr;
-      }
-      COMPILER_MEMORY_FENCE;
-      INVARIANT(IsLocked(hdr));
-      return hdr;
-    }
-
-    inline void
-    unlock()
-    {
-      version_t v = hdr;
-      INVARIANT(IsLocked(v));
-      const version_t n = Version(v);
-      v &= ~HDR_VERSION_MASK;
-      v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
-      v &= ~HDR_LOCKED_MASK;
-      INVARIANT(!IsLocked(v));
-      COMPILER_MEMORY_FENCE;
-      hdr = v;
-    }
-
-    inline bool
-    is_big_type() const
-    {
-      return IsBigType(hdr);
-    }
-
-    inline bool
-    is_small_type() const
-    {
-      return !is_big_type();
-    }
-
-    static inline bool
-    IsBigType(version_t v)
-    {
-      return v & HDR_TYPE_MASK;
-    }
-
-    inline bool
-    is_deleting() const
-    {
-      return IsDeleting(hdr);
-    }
-
-    static inline bool
-    IsDeleting(version_t v)
-    {
-      return v & HDR_DELETING_MASK;
-    }
-
-    inline void
-    mark_deleting()
-    {
-      // the lock on the latest version guards non-latest versions
-      INVARIANT(!is_latest() || is_locked());
-      INVARIANT(!is_enqueued());
-      INVARIANT(!is_deleting());
-      hdr |= HDR_DELETING_MASK;
-    }
-
-    inline bool
-    is_enqueued() const
-    {
-      return IsEnqueued(hdr);
-    }
-
-    static inline bool
-    IsEnqueued(version_t v)
-    {
-      return v & HDR_ENQUEUED_MASK;
-    }
-
-#ifdef LOGICAL_NODE_QUEUE_TRACKING
-    inline void
-    set_enqueued(bool enqueued, QueueType type)
-    {
-      INVARIANT(type != QUEUE_TYPE_NONE);
-      INVARIANT(is_locked());
-      INVARIANT(!is_deleting());
-      if (enqueued) {
-        INVARIANT(!is_enqueued());
-        hdr |= HDR_ENQUEUED_MASK;
-      } else {
-        // can only dequeue off of same queue type
-        INVARIANT(type == last_queue_type);
-        INVARIANT(is_enqueued());
-        hdr &= ~HDR_ENQUEUED_MASK;
-      }
-      last_queue_type = type;
-      op_hist.push_back(op_hist_rec(enqueued, type, coreid::core_id()));
-    }
-#else
-    inline void
-    set_enqueued(bool enqueued, QueueType type)
-    {
-      INVARIANT(is_locked());
-      INVARIANT(!is_deleting());
-      if (enqueued) {
-        INVARIANT(!is_enqueued());
-        hdr |= HDR_ENQUEUED_MASK;
-      } else {
-        INVARIANT(is_enqueued());
-        hdr &= ~HDR_ENQUEUED_MASK;
-      }
-    }
-#endif
-
-    inline bool
-    is_latest() const
-    {
-      return IsLatest(hdr);
-    }
-
-    static inline bool
-    IsLatest(version_t v)
-    {
-      return v & HDR_LATEST_MASK;
-    }
-
-    inline void
-    set_latest(bool latest)
-    {
-      INVARIANT(is_locked());
-      if (latest)
-        hdr |= HDR_LATEST_MASK;
-      else
-        hdr &= ~HDR_LATEST_MASK;
-    }
-
-    static inline version_t
-    Version(version_t v)
-    {
-      return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
-    }
-
-    inline version_t
-    stable_version() const
-    {
-      version_t v = hdr;
-      while (IsLocked(v)) {
-        nop_pause();
-        v = hdr;
-      }
-      COMPILER_MEMORY_FENCE;
-      return v;
-    }
-
-    /**
-     * returns true if succeeded, false otherwise
-     */
-    inline bool
-    try_stable_version(version_t &v, unsigned int spins) const
-    {
-      v = hdr;
-      while (IsLocked(v) && spins) {
-        nop_pause();
-        v = hdr;
-        spins--;
-      }
-      COMPILER_MEMORY_FENCE;
-      return !IsLocked(v);
-    }
-
-    inline version_t
-    unstable_version() const
-    {
-      return hdr;
-    }
-
-    inline bool
-    check_version(version_t version) const
-    {
-      COMPILER_MEMORY_FENCE;
-      return hdr == version;
-    }
-
-    inline struct logical_node *
-    get_next()
-    {
-      if (is_big_type())
-        return d->big.next;
-      return NULL;
-    }
-
-    inline struct logical_node *
-    get_next(version_t v)
-    {
-      INVARIANT(IsBigType(v) == IsBigType(hdr));
-      if (IsBigType(v))
-        return d->big.next;
-      return NULL;
-    }
-
-    inline const struct logical_node *
-    get_next() const
-    {
-      return const_cast<logical_node *>(this)->get_next();
-    }
-
-    inline const struct logical_node *
-    get_next(version_t v) const
-    {
-      return const_cast<logical_node *>(this)->get_next(v);
-    }
-
-    // precondition: only big types can call
-    inline void
-    set_next(struct logical_node *next)
-    {
-      INVARIANT(is_big_type());
-      d->big.next = next;
-    }
-
-    inline void
-    clear_next()
-    {
-      if (is_big_type())
-        d->big.next = NULL;
-    }
-
-    inline char *
-    get_value_start(version_t v)
-    {
-      INVARIANT(IsBigType(v) == IsBigType(hdr));
-      if (IsBigType(v))
-        return (char *) &d->big.value_start[0];
-      return (char *) &d->small.value_start[0];
-    }
-
-    inline const char *
-    get_value_start(version_t v) const
-    {
-      return const_cast<logical_node *>(this)->get_value_start(v);
-    }
-
-private:
-
-    inline bool
-    is_not_behind(tid_t t) const
-    {
-      return version <= t;
-    }
-
-    bool
-    record_at(tid_t t, tid_t &start_t, string_type &r, size_t max_len,
-              bool require_latest) const
-    {
-    retry:
-      const version_t v = stable_version();
-      const struct logical_node *p = get_next(v);
-      const bool found = is_not_behind(t);
-      if (found) {
-        if (unlikely(require_latest && !IsLatest(v)))
-          return false;
-        start_t = version;
-        const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
-        r.assign(get_value_start(v), read_sz);
-      }
-      if (unlikely(!check_version(v)))
-        goto retry;
-      if (found)
-        return true;
-      if (p)
-        return p->record_at(t, start_t, r, max_len, false);
-      // NB(stephentu): if we reach the end of a chain then we assume that
-      // the record exists as a deleted record.
-      //
-      // This is safe because we have been very careful to not garbage collect
-      // elements along the chain until it is guaranteed that the record
-      // is superceded by later record in any consistent read. Therefore,
-      // if we reach the end of the chain, then it *must* be the case that
-      // the record does not actually exist.
-      //
-      // Note that MIN_TID is the *wrong* tid to use here given wrap-around- we
-      // really should be setting this value to the tid which represents the
-      // oldest TID possible in the system. But we currently don't implement
-      // wrap around
-      start_t = MIN_TID;
-      r.clear();
-      return true;
-    }
-
-    static event_counter g_evt_logical_node_creates;
-    static event_counter g_evt_logical_node_logical_deletes;
-    static event_counter g_evt_logical_node_physical_deletes;
-    static event_counter g_evt_logical_node_bytes_allocated;
-    static event_counter g_evt_logical_node_bytes_freed;
-    static event_counter g_evt_logical_node_spills;
-    static event_avg_counter g_evt_avg_record_spill_len;
-
-public:
-
-    /**
-     * Read the record at tid t. Returns true if such a record exists, false
-     * otherwise (ie the record was GC-ed, or other reasons). On a successful
-     * read, the value @ start_t will be stored in r
-     *
-     * NB(stephentu): calling stable_read() while holding the lock
-     * is an error- this will cause deadlock
-     */
-    inline bool
-    stable_read(tid_t t, tid_t &start_t, string_type &r,
-                size_t max_len = string_type::npos) const
-    {
-      INVARIANT(max_len > 0); // otherwise something will probably break
-      return record_at(t, start_t, r, max_len, true);
-    }
-
-    inline bool
-    is_latest_version(tid_t t) const
-    {
-      return is_latest() && is_not_behind(t);
-    }
-
-    bool
-    stable_is_latest_version(tid_t t) const
-    {
-      version_t v = 0;
-      if (!try_stable_version(v, 16))
-        return false;
-      // now v is a stable version
-      const bool ret = IsLatest(v) && is_not_behind(t);
-      // only check_version() if the answer would be true- otherwise,
-      // no point in doing a version check
-      if (ret && check_version(v))
-        return true;
-      else
-        // no point in retrying, since we know it will fail (since we had a
-        // version change)
-        return false;
-    }
-
-    inline bool
-    latest_value_is_nil() const
-    {
-      return is_latest() && size == 0;
-    }
-
-    inline bool
-    stable_latest_value_is_nil() const
-    {
-      version_t v = 0;
-      if (!try_stable_version(v, 16))
-        return false;
-      const bool ret = IsLatest(v) && size == 0;
-      if (ret && check_version(v))
-        return true;
-      else
-        return false;
-    }
-
-    typedef std::pair<bool, logical_node *> write_record_ret;
-
-    /**
-     * Always writes the record in the latest (newest) version slot,
-     * not asserting whether or not inserting r @ t would violate the
-     * sorted order invariant
-     *
-     * XXX: document return value
-     */
-    write_record_ret
-    write_record_at(const transaction *txn, tid_t t, const_record_type r, size_type sz)
-    {
-      INVARIANT(is_locked());
-      INVARIANT(is_latest());
-
-      const version_t v = unstable_version();
-
-      if (!sz)
-        ++g_evt_logical_node_logical_deletes;
-
-      // try to overwrite this record
-      if (likely(txn->can_overwrite_record_tid(version, t))) {
-        // see if we have enough space
-
-        if (likely(sz <= alloc_size)) {
-          // directly update in place
-          version = t;
-          size = sz;
-          NDB_MEMCPY(get_value_start(v), r, sz);
-          return write_record_ret(false, NULL);
-        }
-
-        // keep in the chain (it's wasteful, but not incorrect)
-        // so that cleanup is easier
-        logical_node * const rep = alloc(t, r, sz, this, true);
-        INVARIANT(rep->is_latest());
-        set_latest(false);
-        return write_record_ret(false, rep);
-      }
-
-      // need to spill
-      ++g_evt_logical_node_spills;
-      g_evt_avg_record_spill_len.offer(size);
-
-      char * const vstart = get_value_start(v);
-
-      if (IsBigType(v) && sz <= alloc_size) {
-        logical_node * const spill = alloc(version, (const_record_type) vstart, size, d->big.next, false);
-        INVARIANT(!spill->is_latest());
-        set_next(spill);
-        version = t;
-        size = sz;
-        NDB_MEMCPY(vstart, r, sz);
-        return write_record_ret(true, NULL);
-      }
-
-      logical_node * const rep = alloc(t, r, sz, this, true);
-      INVARIANT(rep->is_latest());
-      set_latest(false);
-      return write_record_ret(true, rep);
-    }
-
-    // NB: we round up allocation sizes because jemalloc will do this
-    // internally anyways, so we might as well grab more usable space (really
-    // just internal vs external fragmentation)
-
-    static inline logical_node *
-    alloc_first(bool do_big_type, size_type alloc_sz)
-    {
-      INVARIANT(alloc_sz <= std::numeric_limits<node_size_type>::max());
-      const size_t big_type_contrib_sz = do_big_type ? sizeof(logical_node *) : 0;
-      const size_t max_actual_alloc_sz =
-        std::numeric_limits<node_size_type>::max() + sizeof(logical_node) + big_type_contrib_sz;
-      const size_t actual_alloc_sz =
-        std::min(
-            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + big_type_contrib_sz + alloc_sz),
-            max_actual_alloc_sz);
-      char *p = (char *) malloc(actual_alloc_sz);
-      INVARIANT(p);
-      INVARIANT((actual_alloc_sz - sizeof(logical_node) - big_type_contrib_sz) >= alloc_sz);
-      return new (p) logical_node(
-          do_big_type,
-          actual_alloc_sz - sizeof(logical_node) - big_type_contrib_sz);
-    }
-
-    static inline logical_node *
-    alloc(tid_t version, const_record_type value, size_type sz, struct logical_node *next, bool set_latest)
-    {
-      INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
-      const size_t max_alloc_sz =
-        std::numeric_limits<node_size_type>::max() + sizeof(logical_node) + sizeof(next);
-      const size_t alloc_sz =
-        std::min(
-            util::round_up<size_t, /* lgbase*/ 4>(sizeof(logical_node) + sizeof(next) + sz),
-            max_alloc_sz);
-      char *p = (char *) malloc(alloc_sz);
-      INVARIANT(p);
-      return new (p) logical_node(
-          version, value, sz,
-          alloc_sz - sizeof(logical_node) - sizeof(next), next, set_latest);
-    }
-
-    static void
-    deleter(void *p)
-    {
-      logical_node * const n = (logical_node *) p;
-      INVARIANT(n->is_deleting());
-      INVARIANT(!n->is_locked());
-      n->~logical_node();
-      free(n);
-    }
-
-    static inline void
-    release(logical_node *n)
-    {
-      if (unlikely(!n))
-        return;
-      n->mark_deleting();
-      rcu::free_with_fn(n, deleter);
-    }
-
-    static inline void
-    release_no_rcu(logical_node *n)
-    {
-      if (unlikely(!n))
-        return;
-#ifdef CHECK_INVARIANTS
-      n->lock();
-      n->mark_deleting();
-      n->unlock();
-#endif
-      n->~logical_node();
-      free(n);
-    }
-
-    static std::string
-    VersionInfoStr(version_t v);
-
-  }
-#ifndef LOGICAL_NODE_QUEUE_TRACKING
-  PACKED
-#endif
-  ;
-
-  friend std::ostream &
-  operator<<(std::ostream &o, const logical_node &ln);
 
   transaction(uint64_t flags);
   virtual ~transaction();
@@ -865,9 +184,9 @@ protected:
 
   void abort_impl(abort_reason r);
 
-  struct lnode_info {
-    lnode_info() {}
-    lnode_info(txn_btree *btr,
+  struct dbtuple_info {
+    dbtuple_info() {}
+    dbtuple_info(txn_btree *btr,
                const string_type &key,
                bool locked,
                const string_type &r)
@@ -881,11 +200,11 @@ protected:
     bool locked;
     string_type r;
   };
-  typedef std::pair<logical_node *, lnode_info> lnode_pair;
+  typedef std::pair<dbtuple *, dbtuple_info> dbtuple_pair;
 
   struct LNodeComp {
   inline ALWAYS_INLINE bool
-  operator()(const lnode_pair &lhs, const lnode_pair &rhs) const
+  operator()(const dbtuple_pair &lhs, const dbtuple_pair &rhs) const
   {
     return lhs.first < rhs.first;
   }
@@ -897,22 +216,22 @@ protected:
    * successfully
    */
   virtual tid_t gen_commit_tid(
-      const typename util::vec<lnode_pair>::type &write_nodes) = 0;
+      const typename util::vec<dbtuple_pair>::type &write_nodes) = 0;
 
   virtual bool can_read_tid(tid_t t) const { return true; }
 
-  // For GC handlers- note that on_logical_node_spill() is called
+  // For GC handlers- note that on_dbtuple_spill() is called
   // with the lock on ln held, to simplify GC code
   //
   // Is also called within an RCU read region
-  virtual void on_logical_node_spill(
-      txn_btree *btr, const string_type &key, logical_node *ln) = 0;
+  virtual void on_dbtuple_spill(
+      txn_btree *btr, const string_type &key, dbtuple *ln) = 0;
 
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
   // the logical node for actual deletion
   virtual void on_logical_delete(
-      txn_btree *btr, const string_type &key, logical_node *ln) = 0;
+      txn_btree *btr, const string_type &key, dbtuple *ln) = 0;
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called
   // with the commit tid. before on_tid_finish() is called, state is updated
@@ -942,13 +261,13 @@ protected:
 
 #ifdef USE_SMALL_CONTAINER_OPT
   // XXX(stephentu): these numbers are somewhat tuned for TPC-C
-  typedef small_unordered_map<const logical_node *, read_record_t> read_set_map;
+  typedef small_unordered_map<const dbtuple *, read_record_t> read_set_map;
   typedef small_unordered_map<string_type, bool, EXTRA_SMALL_SIZE_MAP> absent_set_map;
   typedef small_unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef small_unordered_map<const btree::node_opaque_t *, uint64_t, EXTRA_SMALL_SIZE_MAP> node_scan_map;
 #else
-  typedef std::unordered_map<const logical_node *, read_record_t> read_set_map;
+  typedef std::unordered_map<const dbtuple *, read_record_t> read_set_map;
   typedef std::unordered_map<string_type, bool> absent_set_map;
   typedef std::unordered_map<string_type, string_type> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
@@ -1021,11 +340,11 @@ protected:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
 
   virtual tid_t gen_commit_tid(
-      const typename util::vec<lnode_pair>::type &write_nodes);
-  virtual void on_logical_node_spill(
-      txn_btree *btr, const string_type &key, logical_node *ln);
+      const typename util::vec<dbtuple_pair>::type &write_nodes);
+  virtual void on_dbtuple_spill(
+      txn_btree *btr, const string_type &key, dbtuple *ln);
   virtual void on_logical_delete(
-      txn_btree *btr, const string_type &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, dbtuple *ln);
   virtual void on_tid_finish(tid_t commit_tid);
 
 private:
@@ -1103,7 +422,7 @@ public:
 
 protected:
   virtual tid_t gen_commit_tid(
-      const typename util::vec<lnode_pair>::type &write_nodes);
+      const typename util::vec<dbtuple_pair>::type &write_nodes);
 
   // can only read elements in this epoch or previous epochs
   virtual bool
@@ -1112,15 +431,15 @@ protected:
     return EpochId(t) <= current_epoch;
   }
 
-  virtual void on_logical_node_spill(
-      txn_btree *btr, const string_type &key, logical_node *ln);
+  virtual void on_dbtuple_spill(
+      txn_btree *btr, const string_type &key, dbtuple *ln);
   virtual void on_logical_delete(
-      txn_btree *btr, const string_type &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, dbtuple *ln);
   virtual void on_tid_finish(tid_t commit_tid) {}
 
 private:
   void on_logical_delete_impl(
-      txn_btree *btr, const string_type &key, logical_node *ln);
+      txn_btree *btr, const string_type &key, dbtuple *ln);
 
   // the global epoch this txn is running in (this # is read when it starts)
   uint64_t current_epoch;
@@ -1193,11 +512,11 @@ private:
   static __thread uint64_t tl_last_cleanup_epoch;
 
   // is cleaned-up by an NDB_THREAD_REGISTER_COMPLETION_CALLBACK
-  struct logical_node_context {
-    logical_node_context() : btr(), key(), ln() {}
-    logical_node_context(txn_btree *btr,
+  struct dbtuple_context {
+    dbtuple_context() : btr(), key(), ln() {}
+    dbtuple_context(txn_btree *btr,
                          const string_type &key,
-                         logical_node *ln)
+                         dbtuple *ln)
       : btr(btr), key(key), ln(ln)
     {
       INVARIANT(btr);
@@ -1206,13 +525,13 @@ private:
     }
     txn_btree *btr;
     string_type key;
-    logical_node *ln;
+    dbtuple *ln;
   };
 
   // returns true if should run again
   // note that work will run under a RCU region
-  typedef bool (*local_work_callback_t)(const logical_node_context &);
-  typedef std::pair<logical_node_context, local_work_callback_t> local_work_t;
+  typedef bool (*local_work_callback_t)(const dbtuple_context &);
+  typedef std::pair<dbtuple_context, local_work_callback_t> local_work_t;
   typedef std::vector<local_work_t> node_cleanup_queue;
   //typedef std::list<local_work_t> node_cleanup_queue;
 
@@ -1234,16 +553,16 @@ private:
   }
 
   static void
-  do_logical_node_chain_cleanup(logical_node *ln);
+  do_dbtuple_chain_cleanup(dbtuple *ln);
 
   static bool
-  try_logical_node_cleanup(const logical_node_context &ctx);
+  try_dbtuple_cleanup(const dbtuple_context &ctx);
 
   static bool
-  try_chain_cleanup(const logical_node_context &ctx);
+  try_chain_cleanup(const dbtuple_context &ctx);
 
   static bool
-  try_delete_logical_node(const logical_node_context &info);
+  try_delete_dbtuple(const dbtuple_context &info);
 
   static void
   process_local_cleanup_nodes();
