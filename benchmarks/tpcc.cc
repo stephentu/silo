@@ -1151,6 +1151,7 @@ tpcc_worker::txn_new_order()
       ret += order_line_sz;
     }
 
+    measure_txn_counters(txn, "txn_new_order");
     if (db->commit_txn(txn)) {
       ntxn_commits++;
       return ret;
@@ -1280,6 +1281,7 @@ tpcc_worker::txn_delivery()
       v_c_new.c_balance += ol_total;
       tbl_customer->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
     }
+    measure_txn_counters(txn, "txn_delivery");
     if (db->commit_txn(txn)) {
       ntxn_commits++;
       return ret;
@@ -1420,6 +1422,7 @@ tpcc_worker::txn_payment()
     tbl_history->insert(txn, Encode(str(), k_h), Encode(str(), v_h));
     ret += history_sz;
 
+    measure_txn_counters(txn, "txn_payment");
     if (db->commit_txn(txn)) {
       ntxn_commits++;
       return ret;
@@ -1538,6 +1541,7 @@ tpcc_worker::txn_order_status()
     tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line);
     INVARIANT(c_order_line.n >= 5 && c_order_line.n <= 15);
 
+    measure_txn_counters(txn, "txn_order_status");
     if (db->commit_txn(txn))
       ntxn_commits++;
     else
@@ -1627,6 +1631,7 @@ tpcc_worker::txn_stock_level()
       evt_avg_stock_level_loop_join_lookups.offer(c.s_i_ids.size());
       // NB(stephentu): s_i_ids_distinct.size() is the computed result of this txn
     }
+    measure_txn_counters(txn, "txn_stock_level");
     if (db->commit_txn(txn))
       ntxn_commits++;
     else

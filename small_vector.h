@@ -164,6 +164,9 @@ public:
       large_elems->reserve(n);
   }
 
+  // non-standard API
+  inline bool is_small_type() const { return !large_elems; }
+
 private:
 
   template <typename ObjType, typename LargeTypeIter>

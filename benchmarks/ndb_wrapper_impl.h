@@ -150,6 +150,26 @@ ndb_wrapper<Transaction>::print_txn_debug(void *txn) const
 }
 
 template <template <typename> class Transaction>
+std::map<std::string, uint64_t>
+ndb_wrapper<Transaction>::get_txn_counters(void *txn) const
+{
+  ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
+#define MY_OP_X(a, b) \
+  case a: \
+    { \
+      auto t = cast< b >()(p); \
+      return t->get_txn_counters(); \
+    }
+  switch (p->hint) {
+    TXN_PROFILE_HINT_OP(MY_OP_X)
+  default:
+    ALWAYS_ASSERT(false);
+  }
+#undef MY_OP_X
+  return std::map<std::string, uint64_t>();
+}
+
+template <template <typename> class Transaction>
 abstract_ordered_index *
 ndb_wrapper<Transaction>::open_index(const std::string &name, size_t value_size_hint, bool mostly_append)
 {

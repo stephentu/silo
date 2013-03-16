@@ -146,6 +146,17 @@ public:
 
   std::map<std::string, size_t> get_txn_counts() const;
 
+  typedef abstract_db::counter_map counter_map;
+  typedef abstract_db::txn_counter_map txn_counter_map;
+
+#ifdef ENABLE_BENCH_TXN_COUNTERS
+  inline txn_counter_map
+  get_local_txn_counters() const
+  {
+    return local_txn_counters;
+  }
+#endif
+
   inline ssize_t get_size_delta() const { return size_delta; }
 
 protected:
@@ -158,6 +169,13 @@ protected:
   spin_barrier *const barrier_b;
   size_t ntxn_commits;
   size_t ntxn_aborts;
+
+#ifdef ENABLE_BENCH_TXN_COUNTERS
+  txn_counter_map local_txn_counters;
+  void measure_txn_counters(void *txn, const char *txn_name);
+#else
+  inline ALWAYS_INLINE void measure_txn_counters(void *txn, const char *txn_name) {}
+#endif
 
   std::vector<size_t> txn_counts; // breakdown of txns
   ssize_t size_delta; // how many logical bytes (of values) did the worker add to the DB

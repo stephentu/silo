@@ -82,13 +82,16 @@ public:
   virtual void *new_txn(uint64_t txn_flags, void *buf,
       TxnProfileHint hint = HINT_DEFAULT) = 0;
 
+  typedef std::map<std::string, uint64_t> counter_map;
+  typedef std::map<std::string, counter_map> txn_counter_map;
+
   /**
    * Reports things like read/write set sizes
    */
-  virtual std::map<std::string, uint64_t>
-  get_txn_counters(void *txn)
+  virtual counter_map
+  get_txn_counters(void *txn) const
   {
-    return std::map<std::string, uint64_t>();
+    return counter_map();
   }
 
   /**

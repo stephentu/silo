@@ -127,6 +127,41 @@ transaction<Protocol, Traits>::dump_debug_info() const
 }
 
 template <template <typename> class Protocol, typename Traits>
+std::map<std::string, uint64_t>
+transaction<Protocol, Traits>::get_txn_counters() const
+{
+  std::map<std::string, uint64_t> ret;
+  // num_txn_contexts:
+  ret["num_txn_contexts"] = ctx_map.size();
+  for (typename ctx_map_type::const_iterator it = ctx_map.begin();
+       it != ctx_map.end(); ++it) {
+    // max_read_set_size
+    ret["max_read_set_size"] = std::max(ret["max_read_set_size"], it->second.read_set.size());
+    if (!it->second.read_set.is_small_type())
+      ret["n_read_set_large_instances"]++;
+
+    // max_absent_set_size
+    ret["max_absent_set_size"] = std::max(ret["max_absent_set_size"], it->second.absent_set.size());
+    if (!it->second.absent_set.is_small_type())
+      ret["n_absent_set_large_instances"]++;
+
+    // max_write_set_size
+    ret["max_write_set_size"] = std::max(ret["max_write_set_size"], it->second.write_set.size());
+    if (!it->second.write_set.is_small_type())
+      ret["n_write_set_large_instances"]++;
+
+    // max_absent_range_set_size
+    ret["max_absent_range_set_size"] = std::max(ret["max_absent_range_set_size"], it->second.absent_range_set.size());
+
+    // max_node_scan_size
+    ret["max_node_scan_size"] = std::max(ret["max_node_scan_size"], it->second.node_scan.size());
+    if (!it->second.node_scan.is_small_type())
+      ret["n_node_scan_large_instances"]++;
+  }
+  return ret;
+}
+
+template <template <typename> class Protocol, typename Traits>
 bool
 transaction<Protocol, Traits>::commit(bool doThrow)
 {

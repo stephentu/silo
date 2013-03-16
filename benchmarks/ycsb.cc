@@ -40,6 +40,7 @@ public:
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
+      measure_txn_counters(txn, "txn_read");
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -61,6 +62,7 @@ public:
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
     try {
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'b'));
+      measure_txn_counters(txn, "txn_write");
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -84,6 +86,7 @@ public:
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'c'));
+      measure_txn_counters(txn, "txn_rmw");
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -123,6 +126,7 @@ public:
     try {
       tbl->scan(txn, kbegin, &kend, c);
       computation_n += c.n;
+      measure_txn_counters(txn, "txn_scan");
       if (db->commit_txn(txn))
         ntxn_commits++;
     } catch (abstract_db::abstract_abort_exception &ex) {

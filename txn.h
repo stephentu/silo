@@ -305,6 +305,8 @@ public:
   }
 #endif
 
+  std::map<std::string, uint64_t> get_txn_counters() const;
+
 protected:
   void abort_impl(abort_reason r);
 

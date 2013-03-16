@@ -189,6 +189,18 @@ bench_runner::run()
       else
         cerr << " (+" << delta << " records)" << endl;
     }
+#ifdef ENABLE_BENCH_TXN_COUNTERS
+    cerr << "--- txn counter statistics ---" << endl;
+    {
+      // take from thread 0 for now
+      abstract_db::txn_counter_map agg = workers[0]->get_local_txn_counters();
+      for (auto &p : agg) {
+        cerr << p.first << ":" << endl;
+        for (auto &q : p.second)
+          cerr << "  " << q.first << " : " << q.second << endl;
+      }
+    }
+#endif
     cerr << "--- benchmark statistics ---" << endl;
     cerr << "memory delta: " << delta_mb  << " MB" << endl;
     cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
@@ -232,6 +244,33 @@ bench_runner::run()
   delete_pointers(loaders);
   delete_pointers(workers);
 }
+
+template <typename K, typename V>
+struct map_maxer {
+  typedef map<K, V> map_type;
+  void
+  operator()(map_type &agg, const map_type &m) const
+  {
+    for (typename map_type::const_iterator it = m.begin();
+        it != m.end(); ++it)
+      agg[it->first] = std::max(agg[it->first], it->second);
+  }
+};
+
+//template <typename KOuter, typename KInner, typename VInner>
+//struct map_maxer<KOuter, map<KInner, VInner>> {
+//  typedef map<KInner, VInner> inner_map_type;
+//  typedef map<KOuter, inner_map_type> map_type;
+//};
+
+#ifdef ENABLE_BENCH_TXN_COUNTERS
+void
+bench_worker::measure_txn_counters(void *txn, const char *txn_name)
+{
+  auto ret = db->get_txn_counters(txn);
+  map_maxer<string, uint64_t>()(local_txn_counters[txn_name], ret);
+}
+#endif
 
 map<string, size_t>
 bench_worker::get_txn_counts() const
