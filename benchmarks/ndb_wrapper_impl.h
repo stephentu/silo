@@ -21,6 +21,8 @@
 //  static const size_t context_set_expected_size = EXTRA_SMALL_SIZE_MAP;
 //};
 
+// ycsb profiles
+
 struct hint_kv_get_put_traits {
   static const size_t read_set_expected_size = 1;
   static const size_t absent_set_expected_size = 1;
@@ -39,11 +41,58 @@ struct hint_kv_scan_traits {
   static const size_t context_set_expected_size = 1;
 };
 
+// tpcc profiles
+
+struct hint_tpcc_new_order_traits {
+  static const size_t read_set_expected_size = 15;
+  static const size_t absent_set_expected_size = 1;
+  static const size_t write_set_expected_size = 15;
+  static const size_t node_scan_expected_size = 1;
+  static const size_t context_set_expected_size = 9;
+};
+
+struct hint_tpcc_payment_traits {
+  static const size_t read_set_expected_size = 75;
+  static const size_t absent_set_expected_size = 1;
+  static const size_t write_set_expected_size = 1;
+  static const size_t node_scan_expected_size = 15;
+  static const size_t context_set_expected_size = 5;
+};
+
+struct hint_tpcc_delivery_traits {
+  static const size_t read_set_expected_size = 140;
+  static const size_t absent_set_expected_size = 1;
+  static const size_t write_set_expected_size = 140;
+  static const size_t node_scan_expected_size = 25;
+  static const size_t context_set_expected_size = 4;
+};
+
+struct hint_tpcc_order_status_traits {
+  static const size_t read_set_expected_size = 90;
+  static const size_t absent_set_expected_size = 1;
+  static const size_t write_set_expected_size = 1;
+  static const size_t node_scan_expected_size = 15;
+  static const size_t context_set_expected_size = 4;
+};
+
+struct hint_tpcc_stock_level_traits {
+  static const size_t read_set_expected_size = 250;
+  static const size_t absent_set_expected_size = 1;
+  static const size_t write_set_expected_size = 1;
+  static const size_t node_scan_expected_size = 21;
+  static const size_t context_set_expected_size = 3;
+};
+
 #define TXN_PROFILE_HINT_OP(x) \
   x(abstract_db::HINT_DEFAULT, default_transaction_traits) \
   x(abstract_db::HINT_KV_GET_PUT, hint_kv_get_put_traits) \
   x(abstract_db::HINT_KV_RMW, hint_kv_rmw_traits) \
-  x(abstract_db::HINT_KV_SCAN, hint_kv_scan_traits)
+  x(abstract_db::HINT_KV_SCAN, hint_kv_scan_traits) \
+  x(abstract_db::HINT_TPCC_NEW_ORDER, hint_tpcc_new_order_traits) \
+  x(abstract_db::HINT_TPCC_PAYMENT, hint_tpcc_payment_traits) \
+  x(abstract_db::HINT_TPCC_DELIVERY, hint_tpcc_delivery_traits) \
+  x(abstract_db::HINT_TPCC_ORDER_STATUS, hint_tpcc_order_status_traits) \
+  x(abstract_db::HINT_TPCC_STOCK_LEVEL, hint_tpcc_stock_level_traits)
 
 template <template <typename> class Transaction>
 size_t

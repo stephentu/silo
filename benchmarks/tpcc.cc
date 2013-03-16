@@ -1021,9 +1021,14 @@ tpcc_worker::txn_new_order()
   //      1 stock put
   //      1 order_line insert
   //
-  // summary:
-  //   9 indexes
-  void *txn = db->new_txn(txn_flags, txn_buf());
+  // output from txn counters:
+  //   max_absent_range_set_size : 0
+  //   max_absent_set_size : 0
+  //   max_node_scan_size : 0
+  //   max_read_set_size : 15
+  //   max_write_set_size : 15
+  //   num_txn_contexts : 9
+  void *txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
   try {
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
@@ -1211,9 +1216,14 @@ tpcc_worker::txn_delivery()
   //     1 customer get
   //     1 customer put
   //
-  // summary:
-  //   4 indexes
-  void *txn = db->new_txn(txn_flags, txn_buf());
+  // output from counters:
+  //   max_absent_range_set_size : 0
+  //   max_absent_set_size : 0
+  //   max_node_scan_size : 21
+  //   max_read_set_size : 133
+  //   max_write_set_size : 133
+  //   num_txn_contexts : 4
+  void *txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_TPCC_DELIVERY);
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -1311,7 +1321,15 @@ tpcc_worker::txn_payment()
   }
   const float paymentAmount = (float) (RandomNumber(r, 100, 500000) / 100.0);
   const uint32_t ts = GetCurrentTimeMillis();
-  void *txn = db->new_txn(txn_flags, txn_buf());
+
+  // output from txn counters:
+  //   max_absent_range_set_size : 0
+  //   max_absent_set_size : 0
+  //   max_node_scan_size : 10
+  //   max_read_set_size : 71
+  //   max_write_set_size : 1
+  //   num_txn_contexts : 5
+  void *txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_TPCC_PAYMENT);
   try {
     ssize_t ret = 0;
 
@@ -1464,7 +1482,15 @@ ssize_t
 tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf());
+
+  // output from txn counters:
+  //   max_absent_range_set_size : 0
+  //   max_absent_set_size : 0
+  //   max_node_scan_size : 13
+  //   max_read_set_size : 81
+  //   max_write_set_size : 0
+  //   num_txn_contexts : 4
+  void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf(), abstract_db::HINT_TPCC_ORDER_STATUS);
   try {
 
     customer::key k_c;
@@ -1589,7 +1615,17 @@ tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-  void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf());
+
+  // output from txn counters:
+  //   max_absent_range_set_size : 0
+  //   max_absent_set_size : 0
+  //   max_node_scan_size : 19
+  //   max_read_set_size : 241
+  //   max_write_set_size : 0
+  //   n_node_scan_large_instances : 1
+  //   n_read_set_large_instances : 2
+  //   num_txn_contexts : 3
+  void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf(), abstract_db::HINT_TPCC_STOCK_LEVEL);
   try {
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key0, k_d), obj_v));

@@ -67,9 +67,18 @@ public:
 
   enum TxnProfileHint {
     HINT_DEFAULT,
+
+    // ycsb profiles
     HINT_KV_GET_PUT, // KV workloads over a single key
     HINT_KV_RMW, // get/put over a single key
     HINT_KV_SCAN, // KV scan workloads (~100 keys)
+
+    // tpcc profiles
+    HINT_TPCC_NEW_ORDER,
+    HINT_TPCC_PAYMENT,
+    HINT_TPCC_DELIVERY,
+    HINT_TPCC_ORDER_STATUS,
+    HINT_TPCC_STOCK_LEVEL,
   };
 
   /**
