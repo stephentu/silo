@@ -150,11 +150,11 @@ public:
     //w.push_back(workload_desc("ReadModifyWrite", 0.04, TxnRmw));
     //w.push_back(workload_desc("Write", 0.01, TxnWrite));
 
-    w.push_back(workload_desc("Read", 1.0, TxnRead));
+    //w.push_back(workload_desc("Read", 1.0, TxnRead));
 
     // YCSB workload "A" - 50/50 read/write
-    //w.push_back(workload_desc("Read", 0.5, TxnRead));
-    //w.push_back(workload_desc("Write", 0.5, TxnWrite));
+    w.push_back(workload_desc("Read", 0.5, TxnRead));
+    w.push_back(workload_desc("Write", 0.5, TxnWrite));
     return w;
   }
 

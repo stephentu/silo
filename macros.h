@@ -5,7 +5,7 @@
 #include <stdexcept>
 
 /** options */
-//#define LOGICAL_NODE_PREFETCH
+#define LOGICAL_NODE_PREFETCH
 #define BTREE_NODE_PREFETCH
 //#define DIE_ON_ABORT
 //#define TRAP_LARGE_ALLOOCATIONS
@@ -15,7 +15,7 @@
 #define BTREE_NODE_ALLOC_CACHE_ALIGNED
 //#define TXN_BTREE_DUMP_PURGE_STATS
 //#define ENABLE_EVENT_COUNTERS
-#define ENABLE_BENCH_TXN_COUNTERS
+//#define ENABLE_BENCH_TXN_COUNTERS
 #define USE_VARINT_ENCODING
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
