@@ -232,6 +232,7 @@ public:
   typedef transaction_base::tid_t tid_t;
   typedef transaction_base::string_type string_type;
   typedef typename super_type::dbtuple_pair dbtuple_pair;
+  typedef typename super_type::dbtuple_vec dbtuple_vec;
   typedef typename super_type::read_set_map read_set_map;
   typedef typename super_type::absent_set_map absent_set_map;
   typedef typename super_type::write_set_map write_set_map;
@@ -317,7 +318,7 @@ public:
   }
 
   transaction_base::tid_t
-  gen_commit_tid(const typename util::vec<dbtuple_pair>::type &write_nodes)
+  gen_commit_tid(const dbtuple_vec &write_nodes)
   {
     const size_t my_core_id = coreid::core_id();
     const tid_t l_last_commit_tid = tl_last_commit_tid;
@@ -348,8 +349,8 @@ public:
     }
 
     {
-      typename util::vec<dbtuple_pair>::type::const_iterator it = write_nodes.begin();
-      typename util::vec<dbtuple_pair>::type::const_iterator it_end = write_nodes.end();
+      typename dbtuple_vec::const_iterator it = write_nodes.begin();
+      typename dbtuple_vec::const_iterator it_end = write_nodes.end();
       for (; it != it_end; ++it) {
         INVARIANT(it->first->is_locked());
         INVARIANT(it->first->is_latest());

@@ -183,7 +183,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
   }
 
   // fetch dbtuples for insert
-  typename util::vec<dbtuple_pair>::type dbtuples;
+  dbtuple_vec dbtuples;
   const std::pair<bool, tid_t> snapshot_tid_t = cast()->consistent_snapshot_tid();
   std::pair<bool, tid_t> commit_tid(false, 0);
 
@@ -274,8 +274,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     if (!dbtuples.empty()) {
       // lock the logical nodes in sort order
       std::sort(dbtuples.begin(), dbtuples.end(), LNodeComp());
-      typename util::vec<dbtuple_pair>::type::iterator it = dbtuples.begin();
-      typename util::vec<dbtuple_pair>::type::iterator it_end = dbtuples.end();
+      typename dbtuple_vec::iterator it = dbtuples.begin();
+      typename dbtuple_vec::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {
         VERBOSE(cerr << "locking node 0x" << util::hexify(intptr_t(it->first)) << endl);
         const dbtuple::version_t v = it->first->lock();
@@ -391,8 +391,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
 
     // commit actual records
     if (!dbtuples.empty()) {
-      typename util::vec<dbtuple_pair>::type::iterator it = dbtuples.begin();
-      typename util::vec<dbtuple_pair>::type::iterator it_end = dbtuples.end();
+      typename dbtuple_vec::iterator it = dbtuples.begin();
+      typename dbtuple_vec::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {
         INVARIANT(it->second.locked);
         VERBOSE(cerr << "writing dbtuple 0x" << util::hexify(intptr_t(it->first))
@@ -437,7 +437,7 @@ do_abort:
     VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
     VERBOSE(cerr << "aborting txn" << endl);
-  for (typename util::vec<dbtuple_pair>::type::iterator it = dbtuples.begin();
+  for (typename dbtuple_vec::iterator it = dbtuples.begin();
        it != dbtuples.end(); ++it)
     if (it->second.locked)
       it->first->unlock();

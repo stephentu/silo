@@ -238,6 +238,7 @@ protected:
     string_type r;
   };
   typedef std::pair<dbtuple *, dbtuple_info> dbtuple_pair;
+  typedef typename util::vec<dbtuple_pair, 512>::type dbtuple_vec;
 
   struct LNodeComp {
     inline ALWAYS_INLINE bool
@@ -329,7 +330,7 @@ protected:
    * it still has not been decided whether or not this txn will commit
    * successfully
    */
-  tid_t gen_commit_tid(const typename util::vec<dbtuple_pair>::type &write_nodes);
+  tid_t gen_commit_tid(const dbtuple_vec &write_nodes);
 
   bool can_read_tid(tid_t t) const;
 

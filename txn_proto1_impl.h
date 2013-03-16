@@ -30,6 +30,7 @@ public:
   typedef transaction_base::tid_t tid_t;
   typedef transaction_base::string_type string_type;
   typedef typename transaction<transaction_proto1, Traits>::dbtuple_pair dbtuple_pair;
+  typedef typename transaction<transaction_proto1, Traits>::dbtuple_vec dbtuple_vec;
 
   transaction_proto1(uint64_t flags)
     : transaction<transaction_proto1, Traits>(flags),
@@ -70,8 +71,7 @@ public:
 
 protected:
 
-  tid_t gen_commit_tid(
-      const typename util::vec<dbtuple_pair>::type &write_nodes)
+  tid_t gen_commit_tid(const dbtuple_vec &write_nodes)
   {
     return incr_and_get_global_tid();
   }
