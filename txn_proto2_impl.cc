@@ -240,152 +240,155 @@ txn_walker_loop::run()
     // region
 
     size_t nnodes = 0;
-    scoped_rcu_region rcu_region;
-    btree::value_type v = 0;
+    {
+      scoped_rcu_region rcu_region;
+      btree::value_type v = 0;
 
-    // round up s to 8 byte boundaries for ease of computation
-    if (s.empty())
-      s.resize(8);
-    else
-      s.resize(round_up<size_t, 3>(s.size()));
-    q.clear();
-    btr->search_impl(varkey(s), v, q);
-    INVARIANT(!q.empty());
-    INVARIANT(s.size() % 8 == 0);
-    INVARIANT(s.size() / 8 >= q.size());
+      // round up s to 8 byte boundaries for ease of computation
+      if (s.empty())
+        s.resize(8);
+      else
+        s.resize(round_up<size_t, 3>(s.size()));
+      q.clear();
+      btr->search_impl(varkey(s), v, q);
+      INVARIANT(!q.empty());
+      INVARIANT(s.size() % 8 == 0);
+      INVARIANT(s.size() / 8 >= q.size());
 
-    size_t depth = q.size() - 1;
-    // NB:
-    //   s[0, 8 * (q.size() - 1)) contains the key prefix
-    //   s[8 * (q.size() - 1), s.size()) contains the key suffix
-    bool include_kmin = true;
-    while (!q.empty()) {
-    descend:
+      size_t depth = q.size() - 1;
+      // NB:
+      //   s[0, 8 * (q.size() - 1)) contains the key prefix
+      //   s[8 * (q.size() - 1), s.size()) contains the key suffix
+      bool include_kmin = true;
+      while (!q.empty()) {
+      descend:
 
-      //cerr << "on descend: " << endl
-      //     << "  q.size(): " << q.size() << endl
-      //     << "  s: " << hexify(s) << endl
-      //     << "  depth: " << depth << endl
-      //     ;
-
-      const btree::key_slice kmin =
-        host_endian_trfm<btree::key_slice>()(
-            *reinterpret_cast<const btree::key_slice *>(
-              s.data() + 8 * (q.size() - 1)));
-
-      // resize
-      s.resize(8 * (q.size() - 1));
-
-      btree::leaf_node *cur = q.back();
-      q.pop_back();
-
-      // now:
-      //  s[0, 8 * q.size()) contains key prefix
-      INVARIANT(depth == q.size());
-      INVARIANT(s.size() == depth * 8);
-
-      while (cur) {
-        if (++nnodes == nodesperrun)
-          goto recalc;
-      process:
-        //cerr << "processing node: " << hexify(cur) << endl
-        //     << "  prefix: " << hexify(s) << endl
-        //     << "  prefix_size: " << s.size() << endl
-        //     << "  kmin: " << kmin << endl
-        //     << "  include_kmin: " << include_kmin << endl
-        //     << "  depth: " << depth << endl
+        //cerr << "on descend: " << endl
         //     << "  q.size(): " << q.size() << endl
+        //     << "  s: " << hexify(s) << endl
+        //     << "  depth: " << depth << endl
         //     ;
 
+        const btree::key_slice kmin =
+          host_endian_trfm<btree::key_slice>()(
+              *reinterpret_cast<const btree::key_slice *>(
+                s.data() + 8 * (q.size() - 1)));
+
+        // resize
+        s.resize(8 * (q.size() - 1));
+
+        btree::leaf_node *cur = q.back();
+        q.pop_back();
+
+        // now:
+        //  s[0, 8 * q.size()) contains key prefix
         INVARIANT(depth == q.size());
+        INVARIANT(s.size() == depth * 8);
 
-        const uint64_t version = cur->stable_version();
-        const size_t n = cur->key_slots_used();
-        typename vec<pair<btree::key_slice, btree::node *>>::type layers;
-        typename vec<leaf_value_desc>::type values;
-        for (size_t i = 0; i < n; i++) {
-          if ((include_kmin && cur->keys[i] < kmin) ||
-              (!include_kmin && cur->keys[i] <= kmin))
-            continue;
-          if (cur->value_is_layer(i))
-            layers.emplace_back(cur->keys[i], cur->values[i].n);
-          else
-            values.emplace_back(
-                cur->keys[i],
-                cur->keyslice_length(i),
-                cur->suffix(i),
-                cur->values[i].v);
-        }
-        btree::leaf_node * const next = cur->next;
-        if (unlikely(!cur->check_version(version)))
-          goto process;
+        while (cur) {
+          if (++nnodes == nodesperrun)
+            goto recalc;
+        process:
+          //cerr << "processing node: " << hexify(cur) << endl
+          //     << "  prefix: " << hexify(s) << endl
+          //     << "  prefix_size: " << s.size() << endl
+          //     << "  kmin: " << kmin << endl
+          //     << "  include_kmin: " << include_kmin << endl
+          //     << "  depth: " << depth << endl
+          //     << "  q.size(): " << q.size() << endl
+          //     ;
 
-        // process all values
-        for (size_t i = 0; i < values.size(); i++) {
-          dbtuple * const tuple = reinterpret_cast<dbtuple *>(values[i].value);
-          const size_t klen = values[i].len;
-          INVARIANT(klen <= 9);
-          INVARIANT(tuple);
-          if (klen == 9) {
-            s.resize(8 * (q.size() + 1) + values[i].suffix.size());
-            NDB_MEMCPY((char *) s.data() + 8 * q.size(), values[i].keyslice(), 8);
-            NDB_MEMCPY((char *) s.data() + 8 * (q.size() + 1),
-                       values[i].suffix.data(), values[i].suffix.size());
-          } else {
-            s.resize(8 * q.size() + klen);
-            NDB_MEMCPY((char *) s.data() + 8 * q.size(), values[i].keyslice(), klen);
+          INVARIANT(depth == q.size());
+
+          const uint64_t version = cur->stable_version();
+          const size_t n = cur->key_slots_used();
+          typename vec<pair<btree::key_slice, btree::node *>>::type layers;
+          typename vec<leaf_value_desc>::type values;
+          for (size_t i = 0; i < n; i++) {
+            if ((include_kmin && cur->keys[i] < kmin) ||
+                (!include_kmin && cur->keys[i] <= kmin))
+              continue;
+            if (cur->value_is_layer(i))
+              layers.emplace_back(cur->keys[i], cur->values[i].n);
+            else
+              values.emplace_back(
+                  cur->keys[i],
+                  cur->keyslice_length(i),
+                  cur->suffix(i),
+                  cur->values[i].v);
+          }
+          btree::leaf_node * const next = cur->next;
+          if (unlikely(!cur->check_version(version)))
+            goto process;
+
+          // process all values
+          for (size_t i = 0; i < values.size(); i++) {
+            dbtuple * const tuple = reinterpret_cast<dbtuple *>(values[i].value);
+            const size_t klen = values[i].len;
+            INVARIANT(klen <= 9);
+            INVARIANT(tuple);
+            if (klen == 9) {
+              s.resize(8 * (q.size() + 1) + values[i].suffix.size());
+              NDB_MEMCPY((char *) s.data() + 8 * q.size(), values[i].keyslice(), 8);
+              NDB_MEMCPY((char *) s.data() + 8 * (q.size() + 1),
+                         values[i].suffix.data(), values[i].suffix.size());
+            } else {
+              s.resize(8 * q.size() + klen);
+              NDB_MEMCPY((char *) s.data() + 8 * q.size(), values[i].keyslice(), klen);
+            }
+
+            //cerr << "klen: " << klen << endl;
+            //cerr << "values[i].key: " << values[i].key << endl;
+            //cerr << "s0: " << hexify(s) << endl;
+            transaction_proto2_static::try_dbtuple_cleanup(btr, s, tuple);
           }
 
-          //cerr << "klen: " << klen << endl;
-          //cerr << "values[i].key: " << values[i].key << endl;
-          //cerr << "s0: " << hexify(s) << endl;
-          transaction_proto2_static::try_dbtuple_cleanup(btr, s, tuple);
+          // deal w/ the layers
+          if (!layers.empty()) {
+            const btree::key_slice k =
+              big_endian_trfm<btree::key_slice>()(layers[0].first);
+
+            // NB: at this point, s[0, 8 * q.size()) contains the key prefix-
+            // ie the bytes *not* including the current layer.
+            //
+            // adjust s[8 * q.size(), 8 * (q.size() + 1)) to contain the
+            // the next key_slice for the next layer
+            s.resize(8 * (q.size() + 1));
+            *((btree::key_slice *) (s.data() + (8 * q.size()))) = k;
+
+            q.push_back(cur);
+            INVARIANT(!q.empty());
+            INVARIANT(q.size());
+
+            // find leftmost leaf node of this new layer
+            btree::leaf_node * const l = btr->leftmost_descend_layer(layers[0].second);
+            INVARIANT(l);
+            const btree::key_slice k0 =
+              big_endian_trfm<btree::key_slice>()(l->min_key);
+
+            s.resize(8 * (q.size() + 1));
+            *((btree::key_slice *) (s.data() + (8 * q.size()))) = k0;
+
+            q.push_back(l);
+
+            include_kmin = true;
+            depth++;
+            goto descend; // descend the next layer
+          }
+
+          cur = next;
         }
 
-        // deal w/ the layers
-        if (!layers.empty()) {
-          const btree::key_slice k =
-            big_endian_trfm<btree::key_slice>()(layers[0].first);
-
-          // NB: at this point, s[0, 8 * q.size()) contains the key prefix-
-          // ie the bytes *not* including the current layer.
-          //
-          // adjust s[8 * q.size(), 8 * (q.size() + 1)) to contain the
-          // the next key_slice for the next layer
-          s.resize(8 * (q.size() + 1));
-          *((btree::key_slice *) (s.data() + (8 * q.size()))) = k;
-
-          q.push_back(cur);
-          INVARIANT(!q.empty());
-          INVARIANT(q.size());
-
-          // find leftmost leaf node of this new layer
-          btree::leaf_node * const l = btr->leftmost_descend_layer(layers[0].second);
-          INVARIANT(l);
-          const btree::key_slice k0 =
-            big_endian_trfm<btree::key_slice>()(l->min_key);
-
-          s.resize(8 * (q.size() + 1));
-          *((btree::key_slice *) (s.data() + (8 * q.size()))) = k0;
-
-          q.push_back(l);
-
-          include_kmin = true;
-          depth++;
-          goto descend; // descend the next layer
-        }
-
-        cur = next;
+        // finished this layer
+        include_kmin = false;
+        //cout << "finished layer at depth: " << q.size() << endl;
+        depth--;
       }
-
-      // finished this layer
-      include_kmin = false;
-      //cout << "finished layer at depth: " << q.size() << endl;
-      depth--;
-    }
 
     //cerr << "full tree scan" << endl;
     s.clear();
+
+  } // end RCU region
 
   recalc:
     // very simple heuristic
