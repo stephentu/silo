@@ -332,10 +332,14 @@ txn_btree<Transaction>::purge_tree_walker::on_node_success()
     purge_stats_ln_record_size_counts[ln->size]++;
     purge_stats_ln_alloc_size_counts[ln->alloc_size]++;
 #endif
-    if (txn_btree_handler<Transaction>::has_background_task)
+    if (txn_btree_handler<Transaction>::has_background_task) {
+#ifdef CHECK_INVARIANTS
+      lock_guard<dbtuple> l(ln);
+#endif
       dbtuple::release(ln);
-    else
+    } else {
       dbtuple::release_no_rcu(ln);
+    }
   }
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
   purge_stats_nkeys_node.push_back(spec_values.size());

@@ -42,6 +42,162 @@ namespace varkeytest {
   }
 }
 
+namespace pxqueuetest {
+
+  static inline void *
+  N2P(uint64_t n)
+  {
+    return (void *) n;
+  }
+
+  static inline rcu::deleter_t
+  N2D(uint64_t n)
+  {
+    return (rcu::deleter_t) n;
+  }
+
+  struct sorter {
+    bool
+    operator()(const rcu::delete_entry &a,
+               const rcu::delete_entry &b) const
+    {
+      return (a.first < b.first) || (a.first == b.first && a.second < b.second);
+    }
+  };
+
+  void
+  Test()
+  {
+    typedef rcu::basic_px_queue<8> px_queue;
+
+    {
+      px_queue q0;
+      for (size_t i = 0; i < 14; i++)
+        q0.enqueue(0, N2P(i), N2D(i));
+      ALWAYS_ASSERT(!q0.empty());
+      q0.sanity_check();
+      ALWAYS_ASSERT(!q0.all_epochs_past(0));
+      ALWAYS_ASSERT(!q0.all_epochs_before(0));
+      ALWAYS_ASSERT(q0.all_epochs_before(1));
+
+      uint64_t i = 0;
+      for (auto &p : q0) {
+        ALWAYS_ASSERT(p.first == N2P(i));
+        ALWAYS_ASSERT(p.second == N2D(i));
+        i++;
+      }
+      ALWAYS_ASSERT(i == 14);
+
+      px_queue q1;
+      q1.enqueue(0, N2P(123), N2D(543));
+      q1.enqueue(1, N2P(12345), N2D(54321));
+      q1.sanity_check();
+      auto q1_it = q1.begin();
+      ALWAYS_ASSERT(q1_it != q1.end());
+      ALWAYS_ASSERT(q1_it->first == N2P(123));
+      ALWAYS_ASSERT(q1_it->second == N2D(543));
+      ++q1_it;
+      ALWAYS_ASSERT(q1_it != q1.end());
+      ALWAYS_ASSERT(q1_it->first == N2P(12345));
+      ALWAYS_ASSERT(q1_it->second == N2D(54321));
+      ++q1_it;
+      ALWAYS_ASSERT(q1_it == q1.end());
+
+      q1.accept_from(q0, 0);
+      INVARIANT(q0.empty());
+
+      vector<rcu::delete_entry> v0;
+      for (size_t i = 0; i < 14; i++)
+        v0.emplace_back(N2P(i), N2D(i));
+      v0.emplace_back(N2P(123), N2D(543));
+      v0.emplace_back(N2P(12345), N2D(54321));
+
+      vector<rcu::delete_entry> v1(q1.begin(), q1.end());
+
+      sort(v0.begin(), v0.end(), sorter());
+      sort(v1.begin(), v1.end(), sorter());
+
+      if (v0 != v1) {
+        cerr << "v0:" << endl;
+        for (auto &p : v0)
+          cerr << "  " << uint64_t(p.first) << " : " << uint64_t(p.second) << endl;
+        cerr << "v1:" << endl;
+        for (auto &p : v1)
+          cerr << "  " << uint64_t(p.first) << " : " << uint64_t(p.second) << endl;
+      }
+      ALWAYS_ASSERT(v0 == v1);
+    }
+
+    {
+      px_queue q0, q1;
+      q0.enqueue(1, N2P(1), N2D(1));
+      q1.enqueue(0, N2P(0), N2D(0));
+      q0.sanity_check();
+      q1.sanity_check();
+
+      q0.accept_from(q1, 1);
+      ALWAYS_ASSERT(q1.empty());
+
+      vector<rcu::delete_entry> v0(q0.begin(), q0.end());
+      vector<rcu::delete_entry> vtest = {{N2P(0), N2D(0)}, {N2P(1), N2D(1)}};
+      ALWAYS_ASSERT(v0 == vtest);
+
+      q0.dequeue_all(0);
+      ALWAYS_ASSERT(!q0.empty());
+      q0.sanity_check();
+
+      q0.clear();
+      ALWAYS_ASSERT(q0.empty());
+      q0.sanity_check();
+    }
+
+    {
+      px_queue q0, q1;
+      q0.enqueue(1, N2P(1), N2D(1));
+      q0.enqueue(3, N2P(3), N2D(3));
+
+      q1.enqueue(2, N2P(2), N2D(2));
+      q1.enqueue(4, N2P(4), N2D(4));
+      q1.enqueue(6, N2P(6), N2D(6));
+
+      q0.sanity_check();
+      q1.sanity_check();
+
+      q0.accept_from(q1, 5);
+      ALWAYS_ASSERT(!q1.empty());
+
+      vector<rcu::delete_entry> v0(q0.begin(), q0.end());
+      vector<rcu::delete_entry> v0test =
+        {{N2P(1), N2D(1)},
+         {N2P(2), N2D(2)},
+         {N2P(3), N2D(3)},
+         {N2P(4), N2D(4)}};
+      ALWAYS_ASSERT(v0 == v0test);
+
+      vector<rcu::delete_entry> v1(q1.begin(), q1.end());
+      vector<rcu::delete_entry> v1test = {{N2P(6), N2D(6)}};
+      ALWAYS_ASSERT(v1 == v1test);
+
+      q0.transfer_freelist(q1);
+      q0.sanity_check();
+      q1.sanity_check();
+
+      q1.transfer_freelist(q0);
+      q0.sanity_check();
+      q1.sanity_check();
+
+      q0.dequeue_all(10);
+      ALWAYS_ASSERT(q0.empty());
+      q1.dequeue_all(10);
+      ALWAYS_ASSERT(q1.empty());
+      q0.sanity_check();
+      q1.sanity_check();
+    }
+
+    cout << "pxqueue test passed" << endl;
+  }
+}
+
 void
 CounterTest()
 {
@@ -662,6 +818,7 @@ public:
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
     varkeytest::Test();
+    pxqueuetest::Test();
     CounterTest();
     UtilTest();
     XbufTest();
@@ -669,7 +826,6 @@ public:
     small_vector_ns::Test();
     small_map_ns::Test();
     recordtest::Test();
-    transaction::Test();
     btree::TestFast();
     //btree::TestSlow();
     txn_btree_test();
