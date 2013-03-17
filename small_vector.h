@@ -22,7 +22,7 @@ public:
   small_vector() : n(0), large_elems(0) {}
   ~small_vector()
   {
-    clear();
+    clearDestructive();
   }
 
   small_vector(const small_vector &that)
@@ -148,8 +148,7 @@ public:
   {
     if (unlikely(large_elems)) {
       INVARIANT(!n);
-      delete large_elems;
-      large_elems = NULL;
+      large_elems->clear();
       return;
     }
     for (size_t i = 0; i < n; i++)
@@ -168,6 +167,20 @@ public:
   inline bool is_small_type() const { return !large_elems; }
 
 private:
+
+  void
+  clearDestructive()
+  {
+    if (unlikely(large_elems)) {
+      INVARIANT(!n);
+      delete large_elems;
+      large_elems = NULL;
+      return;
+    }
+    for (size_t i = 0; i < n; i++)
+      ptr()[i].~T();
+    n = 0;
+  }
 
   template <typename ObjType, typename LargeTypeIter>
   class iterator_ : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
@@ -394,7 +407,7 @@ private:
   {
     if (unlikely(this == &that))
       return;
-    clear();
+    clearDestructive();
     if (unlikely(that.large_elems)) {
       large_elems = new large_vector_type(*that.large_elems);
     } else {
