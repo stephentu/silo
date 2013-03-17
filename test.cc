@@ -30,6 +30,18 @@ static event_counter evt_test("test");
 static event_counter evt_test1("test1");
 static event_avg_counter evt_test_avg("test_avg");
 
+namespace varkeytest {
+  void
+  Test()
+  {
+    const string s0 = u64_varkey(1).str();
+    ALWAYS_ASSERT(s0.size() == 8);
+    const char e0[] = { 0, 0, 0, 0, 0, 0, 0, 1 };
+    ALWAYS_ASSERT(memcmp(s0.data(), &e0[0], 8) == 0);
+    cout << "varkey test passed" << endl;
+  }
+}
+
 void
 CounterTest()
 {
@@ -649,15 +661,16 @@ public:
 #ifndef CHECK_INVARIANTS
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
-    //CounterTest();
-    //UtilTest();
-    //XbufTest();
-    //varint::Test();
-    //small_vector_ns::Test();
-    //small_map_ns::Test();
-    //recordtest::Test();
-    //transaction::Test();
-    //btree::TestFast();
+    varkeytest::Test();
+    CounterTest();
+    UtilTest();
+    XbufTest();
+    varint::Test();
+    small_vector_ns::Test();
+    small_map_ns::Test();
+    recordtest::Test();
+    transaction::Test();
+    btree::TestFast();
     //btree::TestSlow();
     txn_btree_test();
     ret = 0;
