@@ -13,6 +13,7 @@ template <template <typename> class Transaction>
 struct txn_btree_handler {
   inline void on_construct(btree *underlying) {} // get a handle to the underying btree
   inline void on_destruct() {} // called at the beginning of the txn_btree's dtor
+  static const bool has_background_task = false;
 };
 
 /**

@@ -361,6 +361,8 @@ struct txn_btree_handler<transaction_proto2> {
     walker_loop.join();
   }
 
+  static const bool has_background_task = true;
+
 private:
   txn_walker_loop walker_loop;
 };
