@@ -19,6 +19,9 @@ class varkey {
   friend std::ostream &operator<<(std::ostream &o, const varkey &k);
 public:
   inline varkey() : p(NULL), l(0) {}
+  inline varkey(const varkey &that) = default;
+  inline varkey(varkey &&that) = default;
+  inline varkey &operator=(const varkey &that) = default;
 
   inline varkey(const uint8_t *p, size_t l)
     : p(p), l(l)

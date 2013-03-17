@@ -267,6 +267,7 @@ btree::search_impl(const key_type &k, value_type &v,
                    typename vec<leaf_node *>::type &leaf_nodes) const
 {
   ANON_REGION("btree::search_impl:", &btree_search_impl_perf_cg);
+  INVARIANT(leaf_nodes.empty());
 
 retry:
   node *cur;
@@ -390,7 +391,7 @@ struct btree::leaf_kvinfo {
               leaf_node::value_or_node_ptr vn,
               bool layer,
               size_t length,
-              varkey suffix)
+              const varkey &suffix)
     : key(key), key_big_endian(big_endian_trfm<key_slice>()(key)),
       vn(vn), layer(layer), length(length), suffix(suffix)
   {}
@@ -477,13 +478,12 @@ btree::search_range_at_layer(
            (leaf->keys[i] == lower_slice &&
             leaf->keyslice_length(i) >= min(lower.size(), size_t(9)))) &&
           (!upper || leaf->keys[i] <= upper_slice))
-        buf.push_back(
-            leaf_kvinfo(
-              leaf->keys[i],
-              leaf->values[i],
-              leaf->value_is_layer(i),
-              leaf->keyslice_length(i),
-              leaf->suffix(i)));
+        buf.emplace_back(
+            leaf->keys[i],
+            leaf->values[i],
+            leaf->value_is_layer(i),
+            leaf->keyslice_length(i),
+            leaf->suffix(i));
     }
 
     leaf_node *const right_sibling = leaf->next;

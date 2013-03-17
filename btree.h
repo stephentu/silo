@@ -48,6 +48,7 @@ template <template <typename> class Transaction> class txn_btree;
  */
 class btree : public rcu_enabled {
   template <template <typename> class T> friend class txn_btree;
+  friend class txn_walker_loop;
 public:
   typedef varkey key_type;
   typedef std::string string_type;

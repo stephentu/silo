@@ -218,8 +218,8 @@ rcu::in_rcu_region()
 }
 
 
-static const uint64_t rcu_epoch_us = 10 * 1000; /* 10 ms */
-static const uint64_t rcu_epoch_ns = rcu_epoch_us * 1000;
+static const uint64_t rcu_epoch_us = rcu::EpochTimeUsec;
+static const uint64_t rcu_epoch_ns = rcu::EpochTimeNsec;
 
 class gc_reaper_thread : public ndb_thread {
 public:

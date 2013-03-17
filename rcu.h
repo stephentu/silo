@@ -38,6 +38,8 @@ public:
   static const size_t SyncDeleteQueueBufSize = 16384;
   static const size_t NGCReapers = 4;
   static const bool EnableThreadLocalCleanup = true;
+  static const uint64_t EpochTimeUsec = 10 * 1000; /* 10 ms */
+  static const uint64_t EpochTimeNsec = EpochTimeUsec * 1000;
 
   // all RCU threads interact w/ the RCU subsystem via
   // a sync struct

@@ -7,6 +7,14 @@
 // XXX: hacky
 extern void txn_btree_test();
 
+// each Transaction implementation should specialize this for special
+// behavior- the default implementation is just nops
+template <template <typename> class Transaction>
+struct txn_btree_handler {
+  inline void on_construct(btree *underlying) {} // get a handle to the underying btree
+  inline void on_destruct() {} // called at the beginning of the txn_btree's dtor
+};
+
 /**
  * This class implements a serializable, multi-version b-tree
  *
@@ -70,10 +78,13 @@ public:
             bool mostly_append = false)
     : value_size_hint(value_size_hint),
       mostly_append(mostly_append)
-  {}
+  {
+    handler.on_construct(&underlying_btree);
+  }
 
   ~txn_btree()
   {
+    handler.on_destruct();
     unsafe_purge(false);
   }
 
@@ -328,6 +339,7 @@ private:
   btree underlying_btree;
   size_type value_size_hint;
   bool mostly_append;
+  txn_btree_handler<Transaction> handler;
 };
 
 #endif /* _NDB_TXN_BTREE_H_ */
