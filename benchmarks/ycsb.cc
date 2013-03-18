@@ -19,7 +19,7 @@ using namespace std;
 using namespace util;
 
 static size_t nkeys;
-static const size_t YCSBRecordSize = 1000;
+static const size_t YCSBRecordSize = 100;
 
 class ycsb_worker : public bench_worker {
 public:
