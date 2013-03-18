@@ -73,12 +73,9 @@ namespace pxqueuetest {
     {
       px_queue q0;
       for (size_t i = 0; i < 14; i++)
-        q0.enqueue(0, N2P(i), N2D(i));
+        q0.enqueue(N2P(i), N2D(i));
       ALWAYS_ASSERT(!q0.empty());
       q0.sanity_check();
-      ALWAYS_ASSERT(!q0.all_epochs_past(0));
-      ALWAYS_ASSERT(!q0.all_epochs_before(0));
-      ALWAYS_ASSERT(q0.all_epochs_before(1));
 
       uint64_t i = 0;
       for (auto &p : q0) {
@@ -89,8 +86,8 @@ namespace pxqueuetest {
       ALWAYS_ASSERT(i == 14);
 
       px_queue q1;
-      q1.enqueue(0, N2P(123), N2D(543));
-      q1.enqueue(1, N2P(12345), N2D(54321));
+      q1.enqueue(N2P(123), N2D(543));
+      q1.enqueue(N2P(12345), N2D(54321));
       q1.sanity_check();
       auto q1_it = q1.begin();
       ALWAYS_ASSERT(q1_it != q1.end());
@@ -103,7 +100,7 @@ namespace pxqueuetest {
       ++q1_it;
       ALWAYS_ASSERT(q1_it == q1.end());
 
-      q1.accept_from(q0, 0);
+      q1.accept_from(q0);
       INVARIANT(q0.empty());
 
       vector<rcu::delete_entry> v0;
@@ -130,21 +127,19 @@ namespace pxqueuetest {
 
     {
       px_queue q0, q1;
-      q0.enqueue(1, N2P(1), N2D(1));
-      q1.enqueue(0, N2P(0), N2D(0));
+      q0.enqueue(N2P(1), N2D(1));
+      q1.enqueue(N2P(0), N2D(0));
       q0.sanity_check();
       q1.sanity_check();
 
-      q0.accept_from(q1, 1);
+      q0.accept_from(q1);
       ALWAYS_ASSERT(q1.empty());
 
       vector<rcu::delete_entry> v0(q0.begin(), q0.end());
       vector<rcu::delete_entry> vtest = {{N2P(0), N2D(0)}, {N2P(1), N2D(1)}};
+      sort(v0.begin(), v0.end(), sorter());
+      sort(vtest.begin(), vtest.end(), sorter());
       ALWAYS_ASSERT(v0 == vtest);
-
-      q0.dequeue_all(0);
-      ALWAYS_ASSERT(!q0.empty());
-      q0.sanity_check();
 
       q0.clear();
       ALWAYS_ASSERT(q0.empty());
@@ -153,30 +148,27 @@ namespace pxqueuetest {
 
     {
       px_queue q0, q1;
-      q0.enqueue(1, N2P(1), N2D(1));
-      q0.enqueue(3, N2P(3), N2D(3));
+      q0.enqueue(N2P(1), N2D(1));
+      q0.enqueue(N2P(3), N2D(3));
 
-      q1.enqueue(2, N2P(2), N2D(2));
-      q1.enqueue(4, N2P(4), N2D(4));
-      q1.enqueue(6, N2P(6), N2D(6));
+      q1.enqueue(N2P(2), N2D(2));
+      q1.enqueue(N2P(4), N2D(4));
+      q1.enqueue(N2P(6), N2D(6));
 
       q0.sanity_check();
       q1.sanity_check();
 
-      q0.accept_from(q1, 5);
-      ALWAYS_ASSERT(!q1.empty());
+      q0.accept_from(q1);
+      ALWAYS_ASSERT(q1.empty());
 
       vector<rcu::delete_entry> v0(q0.begin(), q0.end());
       vector<rcu::delete_entry> v0test =
         {{N2P(1), N2D(1)},
-         {N2P(2), N2D(2)},
          {N2P(3), N2D(3)},
-         {N2P(4), N2D(4)}};
+         {N2P(2), N2D(2)},
+         {N2P(4), N2D(4)},
+         {N2P(6), N2D(6)}};
       ALWAYS_ASSERT(v0 == v0test);
-
-      vector<rcu::delete_entry> v1(q1.begin(), q1.end());
-      vector<rcu::delete_entry> v1test = {{N2P(6), N2D(6)}};
-      ALWAYS_ASSERT(v1 == v1test);
 
       q0.transfer_freelist(q1);
       q0.sanity_check();
@@ -186,9 +178,9 @@ namespace pxqueuetest {
       q0.sanity_check();
       q1.sanity_check();
 
-      q0.dequeue_all(10);
+      q0.clear();
       ALWAYS_ASSERT(q0.empty());
-      q1.dequeue_all(10);
+      q1.clear();
       ALWAYS_ASSERT(q1.empty());
       q0.sanity_check();
       q1.sanity_check();

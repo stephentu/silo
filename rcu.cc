@@ -19,7 +19,7 @@ event_counter rcu::evt_px_group_deletes("px_group_deletes");
 // avoid some corner cases in the beginning
 volatile rcu::epoch_t rcu::global_epoch = 1;
 volatile rcu::epoch_t rcu::cleaning_epoch = 0;
-rcu::px_queue rcu::global_queue;
+rcu::px_queue rcu::global_queues[2];
 
 volatile bool rcu::gc_thread_started = false;
 pthread_t rcu::gc_thread_p;
@@ -36,7 +36,6 @@ static event_counter evt_rcu_incomplete_local_reaps("rcu_incomplete_local_reaps"
 
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
-static event_avg_counter evt_avg_gc_reaper_queue_xfer("avg_gc_reaper_queue_xfer");
 static event_avg_counter evt_avg_rcu_local_delete_queue_len("avg_rcu_local_delete_queue_len");
 
 spinlock &
@@ -81,22 +80,21 @@ rcu::unregister_sync(pthread_t p)
     cerr << "my_global_epoch: " << my_global_epoch << endl;
   }
   INVARIANT(cleaning_epoch == my_cleaning_epoch);
-  INVARIANT(EnableThreadLocalCleanup ||
-            global_queue.all_epochs_past(local_cleaning_epoch));
-  global_queue.sanity_check();
+  global_queues[0].sanity_check();
+  global_queues[1].sanity_check();
 #endif
 
-  global_queue.accept_from(s->local_queue); // xfer all px_groups to global queue
+  // xfer all px_groups to global queue
+  global_queues[0].accept_from(s->local_queues[0]);
+  global_queues[1].accept_from(s->local_queues[1]);
   sync_map.erase(it);
   INVARIANT(cleaning_epoch == my_cleaning_epoch); // shouldn't change b/c we hold rcu_mutex()
   return s;
 }
 
 void
-rcu::enable()
+rcu::enable_slowpath()
 {
-  if (likely(gc_thread_started))
-    return;
   {
     lock_guard<spinlock> l(rcu_mutex());
     if (gc_thread_started)
@@ -134,7 +132,7 @@ rcu::free_with_fn(void *p, deleter_t fn)
   INVARIANT(tl_sync);
   INVARIANT(tl_crit_section_depth);
   INVARIANT(gc_thread_started);
-  tl_sync->local_queue.enqueue(tl_sync->local_epoch, p, fn);
+  tl_sync->local_queues[tl_sync->local_epoch % 2].enqueue(p, fn);
   ++evt_rcu_frees;
 #ifdef CHECK_INVARIANTS
   const epoch_t my_global_epoch = global_epoch;
@@ -148,12 +146,12 @@ rcu::free_with_fn(void *p, deleter_t fn)
     cerr << "cur_global_epoch     : " << global_epoch << endl;
     INVARIANT(false);
   }
-  tl_sync->local_queue.sanity_check();
+  tl_sync->local_queues[tl_sync->local_epoch % 2].sanity_check();
 #endif
 }
 
 void
-rcu::region_end()
+rcu::region_end(bool do_tl_cleanup)
 {
   INVARIANT(tl_sync);
   INVARIANT(tl_crit_section_depth);
@@ -164,7 +162,7 @@ rcu::region_end()
     INVARIANT(tl_sync->local_epoch == my_global_epoch ||
               tl_sync->local_epoch == (my_global_epoch - 1));
 #endif
-    if (EnableThreadLocalCleanup) {
+    if (do_tl_cleanup) {
       const epoch_t local_cleaning_epoch  = tl_sync->local_epoch - 1;
       const epoch_t global_cleaning_epoch = cleaning_epoch;
 #ifdef CHECK_INVARIANTS
@@ -179,18 +177,18 @@ rcu::region_end()
       }
 #endif
       INVARIANT(tl_sync->scratch_queue.empty());
-      if (EnableThreadLocalCleanup &&
-          local_cleaning_epoch == global_cleaning_epoch) {
+      if (local_cleaning_epoch == global_cleaning_epoch) {
         // reap locally, outside the critical section
-        tl_sync->scratch_queue.accept_from(tl_sync->local_queue, local_cleaning_epoch);
-        INVARIANT(tl_sync->scratch_queue.all_epochs_before(local_cleaning_epoch + 1));
-        tl_sync->scratch_queue.transfer_freelist(tl_sync->local_queue);
+        tl_sync->scratch_queue.accept_from(
+            tl_sync->local_queues[local_cleaning_epoch % 2]);
+        tl_sync->scratch_queue.transfer_freelist(
+            tl_sync->local_queues[local_cleaning_epoch % 2]);
         ++evt_rcu_local_reaps;
       }
     }
     tl_sync->local_critical_mutex.unlock();
     px_queue &q = tl_sync->scratch_queue;
-    if (EnableThreadLocalCleanup && !q.empty()) {
+    if (!q.empty()) {
       size_t n = 0;
       for (px_queue::iterator it = q.begin(); it != q.end(); ++it, ++n) {
         try {
@@ -238,7 +236,6 @@ public:
       if (stack_queue.empty())
         nanosleep(&t, NULL);
       stack_queue.sanity_check();
-      INVARIANT(stack_queue.all_epochs_before(rcu::cleaning_epoch + 1));
       size_t n = 0;
       for (rcu::px_queue::iterator it = stack_queue.begin();
            it != stack_queue.end(); ++it, ++n) {
@@ -254,16 +251,14 @@ public:
     }
   }
 
-  // reaps all elems from local_queue w/ epoch <= e
   void
-  reap(rcu::px_queue &local_queue, rcu::epoch_t e)
+  reap(rcu::px_queue &local_queue)
   {
-    if (local_queue.all_epochs_past(e))
+    if (local_queue.empty())
       return;
     lock_guard<spinlock> l0(lock);
-    const size_t xfer = queue.accept_from(local_queue, e);
-    evt_avg_gc_reaper_queue_xfer.offer(xfer);
-    queue.transfer_freelist(local_queue);
+    queue.accept_from(local_queue);
+    queue.transfer_freelist(local_queue); // push the memory back to the thread
   }
 
   spinlock lock;
@@ -306,24 +301,38 @@ rcu::gc_thread_loop(void *p)
       for (map<pthread_t, sync *>::iterator it = sync_map.begin();
            it != sync_map.end(); ++it) {
         sync * const s = it->second;
-#ifdef CHECK_INVARIANTS
         const epoch_t local_epoch = s->local_epoch;
+#ifdef CHECK_INVARIANTS
         INVARIANT(local_epoch == global_epoch ||
                   local_epoch == new_cleaning_epoch);
 #endif
-        lock_guard<spinlock> l0(s->local_critical_mutex);
-        reaper_loops[rr++ % NGCReapers].reap(s->local_queue, cleaning_epoch);
-        INVARIANT(s->local_queue.all_epochs_past(cleaning_epoch));
-        s->local_epoch = global_epoch;
+        if (local_epoch != global_epoch) {
+          lock_guard<spinlock> l0(s->local_critical_mutex);
+          if (s->local_epoch == global_epoch)
+            continue;
+          // reap
+          reaper_loops[rr++ % NGCReapers].reap(s->local_queues[global_epoch % 2]);
+          s->local_epoch = global_epoch;
+          ++evt_rcu_incomplete_local_reaps;
+        }
+        INVARIANT(s->local_epoch == global_epoch);
       }
 
       COMPILER_MEMORY_FENCE;
       cleaning_epoch = new_cleaning_epoch;
       __sync_synchronize();
 
+      // reap the new cleaning epoch
+      for (map<pthread_t, sync *>::iterator it = sync_map.begin();
+           it != sync_map.end(); ++it) {
+        sync * const s = it->second;
+        // we can do this w/o lock b/c we are guaranteed no concurrent modifications
+        INVARIANT(s->local_epoch == global_epoch);
+        reaper_loops[rr++ % NGCReapers].reap(s->local_queues[new_cleaning_epoch % 2]);
+      }
+
       // pull the ones from the global queue
-      reaper_loops[rr++ % NGCReapers].reap(global_queue, new_cleaning_epoch);
-      INVARIANT(global_queue.all_epochs_past(new_cleaning_epoch));
+      reaper_loops[rr++ % NGCReapers].reap(global_queues[new_cleaning_epoch % 2]);
     }
   }
   return NULL;

@@ -241,7 +241,7 @@ txn_walker_loop::run()
 
     size_t nnodes = 0;
     {
-      scoped_rcu_region rcu_region;
+      scoped_rcu_region rcu_region(true); // do TL cleanup
       btree::value_type v = 0;
 
       // round up s to 8 byte boundaries for ease of computation

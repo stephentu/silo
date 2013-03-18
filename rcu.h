@@ -44,7 +44,6 @@ public:
     static const size_t GroupSize = N;
     friend class basic_px_queue<N>;
   private:
-    epoch_t epoch;
     basic_px_group *next;
     typename util::vec<delete_entry, GroupSize>::type pxs;
   };
@@ -145,16 +144,11 @@ public:
 
     // precondition: cannot enqueue an epoch number less than the latest
     inline void
-    enqueue(epoch_t epoch, void *px, deleter_t fn)
+    enqueue(void *px, deleter_t fn)
     {
-      INVARIANT(!tail || tail->epoch <= epoch);
       px_group *g;
-      if (unlikely(!tail || tail->epoch != epoch ||
-                   tail->pxs.size() == px_group::GroupSize)) {
-
+      if (unlikely(!tail || tail->pxs.size() == px_group::GroupSize)) {
         INVARIANT(bool(head) == bool(tail));
-        // XXX: breaks with wrap around
-        INVARIANT(!tail || tail->epoch <= epoch);
         INVARIANT(!tail || tail->pxs.size() <= px_group::GroupSize);
         ensure_freelist();
 
@@ -163,7 +157,6 @@ public:
         freelist_head = g->next;
         if (g == freelist_tail)
           freelist_tail = nullptr;
-        g->epoch = epoch;
         g->next = nullptr;
         g->pxs.clear();
 
@@ -178,7 +171,6 @@ public:
         g = tail;
       }
 
-      INVARIANT(g->epoch == epoch);
       INVARIANT(g->pxs.size() < px_group::GroupSize);
       INVARIANT(!g->next);
       g->pxs.emplace_back(px, fn);
@@ -215,12 +207,9 @@ public:
       INVARIANT(bool(freelist_head) == bool(freelist_tail));
       INVARIANT(!freelist_tail || !freelist_tail->next);
       px_group *p = head, *pprev = nullptr;
-      epoch_t e = 0;
       while (p) {
         INVARIANT(p->pxs.size());
         INVARIANT(p->pxs.size() <= px_group::GroupSize);
-        INVARIANT(p->epoch >= e);
-        e = p->epoch;
         pprev = p;
         p = p->next;
       }
@@ -237,54 +226,10 @@ public:
     inline ALWAYS_INLINE void sanity_check() const {}
 #endif
 
-    // returns true if all epochs on list are > e, false otherwise
-    bool
-    all_epochs_past(epoch_t e) const
-    {
-      return !head || head->epoch > e;
-    }
-
-    // true if all epochs on list are < e, false otherwise
-    bool
-    all_epochs_before(epoch_t e) const
-    {
-      return !tail || tail->epoch < e;
-    }
-
-    // transfer all px_groups *from* the input source to this instance
-    // which are <= the input epoch e
-    size_t
-    accept_from(basic_px_queue &source, epoch_t e)
-    {
-      size_t ret = 0;
-      px_group *dest_px = head, **dest_ppx = &head;
-      px_group *source_px = source.head, **source_ppx = &source.head;
-      while (source_px && source_px->epoch <= e) {
-        while (dest_px && dest_px->epoch <= source_px->epoch) {
-          dest_ppx = &dest_px->next;
-          dest_px = dest_px->next;
-        }
-        if (source_px == source.tail)
-          source.tail = nullptr;
-        if (!dest_px)
-          tail = source_px;
-        *dest_ppx = source_px;
-        dest_ppx = &source_px->next;
-        *source_ppx = source_px->next;
-        source_px->next = dest_px;
-        source_px = *source_ppx;
-        ret++;
-      }
-      sanity_check();
-      source.sanity_check();
-      INVARIANT(source.all_epochs_past(e));
-      return ret;
-    }
-
     inline void
     accept_from(basic_px_queue &source)
     {
-      // various fast paths
+      INVARIANT(this != &source);
       if (!source.head)
         return;
       if (!tail) {
@@ -292,13 +237,9 @@ public:
         std::swap(tail, source.tail);
         return;
       }
-      if (tail->epoch <= source.head->epoch) {
-        tail->next = source.head;
-        tail = source.tail;
-        source.head = source.tail = nullptr;
-        return;
-      }
-      accept_from(source, std::numeric_limits<epoch_t>::max());
+      tail->next = source.head;
+      tail = source.tail;
+      source.head = source.tail = nullptr;
     }
 
     // transfer *this* elements freelist to dest
@@ -312,24 +253,6 @@ public:
         dest.freelist_tail = freelist_tail;
       dest.freelist_head = freelist_head;
       freelist_head = freelist_tail = nullptr;
-    }
-
-    // dequeue all elements <= e
-    void
-    dequeue_all(epoch_t e)
-    {
-      px_group *px = head, **ppx = &head;
-      while (px && px->epoch <= e) {
-        if (px == tail)
-          tail = nullptr;
-        *ppx = px->next;
-        px->next = freelist_head;
-        if (!freelist_tail)
-          freelist_tail = px;
-        freelist_head = px;
-        px = *ppx;
-      }
-      INVARIANT(all_epochs_past(e));
     }
 
     void
@@ -379,7 +302,6 @@ public:
 
   // XXX(stephentu): tune?
   static const size_t NGCReapers = 4;
-  static const bool EnableThreadLocalCleanup = false;
   static const uint64_t EpochTimeUsec = 10 * 1000; /* 10 ms */
   static const uint64_t EpochTimeNsec = EpochTimeUsec * 1000;
 
@@ -388,12 +310,9 @@ public:
   struct sync {
     volatile epoch_t local_epoch CACHE_ALIGNED;
     spinlock local_critical_mutex;
-    px_queue local_queue;
+    px_queue local_queues[2]; // XXX: cache align?
     px_queue scratch_queue;
-    sync(epoch_t local_epoch)
-      : local_epoch(local_epoch)
-    {
-    }
+    sync(epoch_t local_epoch) : local_epoch(local_epoch) {}
   };
 
   /**
@@ -404,7 +323,13 @@ public:
 
   static sync *unregister_sync(pthread_t p);
 
-  static void enable();
+  static inline ALWAYS_INLINE void
+  enable()
+  {
+    if (likely(gc_thread_started))
+      return;
+    enable_slowpath();
+  }
 
   static void region_begin();
 
@@ -424,18 +349,21 @@ public:
     free_with_fn(p, deleter_array<T>);
   }
 
-  static void region_end();
+  static void region_end(bool do_tl_cleanup = false);
 
   static bool in_rcu_region();
 
 private:
+
+  static void enable_slowpath();
+
   static void *gc_thread_loop(void *p);
   static spinlock &rcu_mutex();
 
   static volatile epoch_t global_epoch CACHE_ALIGNED;
   static volatile epoch_t cleaning_epoch;
 
-  static px_queue global_queue;
+  static px_queue global_queues[2]; // XXX: cache align?
 
   static volatile bool gc_thread_started CACHE_ALIGNED;
   static pthread_t gc_thread_p;
@@ -462,15 +390,25 @@ public:
 
 class scoped_rcu_region {
 public:
-  inline scoped_rcu_region()
+
+  // movable, but not copy-constructable
+  scoped_rcu_region(scoped_rcu_region &&) = default;
+  scoped_rcu_region(const scoped_rcu_region &) = delete;
+  scoped_rcu_region &operator=(const scoped_rcu_region &) = delete;
+
+  inline scoped_rcu_region(bool do_tl_cleanup = false)
+    : do_tl_cleanup(false)
   {
     rcu::region_begin();
   }
 
   inline ~scoped_rcu_region()
   {
-    rcu::region_end();
+    rcu::region_end(do_tl_cleanup);
   }
+
+private:
+  bool do_tl_cleanup;
 };
 
 #endif /* _RCU_H_ */
