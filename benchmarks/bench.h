@@ -217,24 +217,28 @@ private:
 
 class latest_key_callback : public abstract_ordered_index::scan_callback {
 public:
-  latest_key_callback(std::string &k)
-    : n(0), k(&k) { }
+  latest_key_callback(std::string &k, ssize_t limit = -1)
+    : limit(limit), n(0), k(&k)
+  {
+    ALWAYS_ASSERT(limit == -1 || limit > 0);
+  }
 
   virtual bool invoke(
       const std::string &key,
       const std::string &value)
   {
-    n++;
+    INVARIANT(limit == -1 || n < size_t(limit));
     // see the note in static_limit_callback for why we explicitly
     // copy over regular (ref-counting) assignment
     k->assign(key.data(), key.size());
-    return true;
+    return (limit == -1) || (++n < size_t(limit));
   }
 
   inline size_t size() const { return n; }
   inline std::string &kstr() { return *k; }
 
 private:
+  ssize_t limit;
   size_t n;
   std::string *k;
 };
