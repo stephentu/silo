@@ -368,6 +368,9 @@ public:
       const T, typename large_vector_type::const_iterator>
     const_iterator;
 
+  typedef std::reverse_iterator<iterator> reverse_iterator;
+  typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+
   inline iterator
   begin()
   {
@@ -400,6 +403,29 @@ public:
     return const_iterator(ptr() + n);
   }
 
+  inline reverse_iterator
+  rbegin()
+  {
+    return reverse_iterator(end());
+  }
+
+  inline const_reverse_iterator
+  rbegin() const
+  {
+    return const_reverse_iterator(end());
+  }
+
+  inline reverse_iterator
+  rend()
+  {
+    return reverse_iterator(begin());
+  }
+
+  inline const_reverse_iterator
+  rend() const
+  {
+    return const_reverse_iterator(begin());
+  }
 
 private:
   void

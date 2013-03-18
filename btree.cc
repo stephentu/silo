@@ -610,8 +610,7 @@ btree::insert_impl(node **root_location, const key_type &k, value_type v,
 retry:
   key_slice mk;
   node *ret;
-  //typename vec<insert_parent_entry>::type parents;
-  vector<insert_parent_entry> parents;
+  typename vec<insert_parent_entry>::type parents;
   typename vec<node *>::type locked_nodes;
   scoped_rcu_region rcu_region;
   node *local_root = *root_location;
@@ -661,8 +660,7 @@ btree::remove_impl(node **root_location, const key_type &k, value_type *old_v)
 retry:
   key_slice new_key;
   node *replace_node = NULL;
-  //typename vec<remove_parent_entry>::type parents;
-  vector<remove_parent_entry> parents;
+  typename vec<remove_parent_entry>::type parents;
   typename vec<node *>::type locked_nodes;
   scoped_rcu_region rcu_region;
   node *local_root = *root_location;
@@ -790,8 +788,7 @@ btree::insert0(node *np,
                pair< const node_opaque_t *, uint64_t > *insert_info,
                key_slice &min_key,
                node *&new_node,
-               //typename vec<insert_parent_entry>::type &parents,
-               vector<insert_parent_entry> &parents,
+               typename vec<insert_parent_entry>::type &parents,
                typename vec<node *>::type &locked_nodes)
 {
   uint64_t kslice = k.slice();
@@ -956,8 +953,8 @@ btree::insert0(node *np,
           return UnlockAndReturn(locked_nodes, I_RETRY);
         //INVARIANT(leaf == root);
       } else {
-        for (vector<insert_parent_entry>::reverse_iterator rit = parents.rbegin();
-            rit != parents.rend(); ++rit) {
+        for (typename vec<insert_parent_entry>::type::reverse_iterator rit = parents.rbegin();
+             rit != parents.rend(); ++rit) {
           // lock the parent
           node *p = rit->first;
           p->lock();
@@ -1270,8 +1267,7 @@ btree::remove0(node *np,
                node *right_node,
                key_slice &new_key,
                node *&replace_node,
-               //typename vec<remove_parent_entry>::type &parents,
-               vector<remove_parent_entry> &parents,
+               typename vec<remove_parent_entry>::type &parents,
                typename vec<node *>::type &locked_nodes)
 {
   uint64_t kslice = k.slice();
@@ -1374,8 +1370,8 @@ btree::remove0(node *np,
         //INVARIANT(leaf == root);
       }
 
-      for (vector<remove_parent_entry>::reverse_iterator rit = parents.rbegin();
-          rit != parents.rend(); ++rit) {
+      for (typename vec<remove_parent_entry>::type::reverse_iterator rit = parents.rbegin();
+           rit != parents.rend(); ++rit) {
         node *p = rit->parent;
         node *l = rit->parent_left_sibling;
         node *r = rit->parent_right_sibling;

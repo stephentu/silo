@@ -513,6 +513,32 @@ Test()
     ALWAYS_ASSERT(v[1] == "world");
   }
 
+  {
+    // reverse iterators
+    vec_type v0;
+    v0.emplace_back("a");
+    v0.emplace_back("b");
+    v0.emplace_back("c");
+    v0.emplace_back("d");
+
+    stl_vec_type sv0;
+    sv0.emplace_back("a");
+    sv0.emplace_back("b");
+    sv0.emplace_back("c");
+    sv0.emplace_back("d");
+
+    stl_vec_type test(v0.rbegin(), v0.rend());
+    stl_vec_type svtest(sv0.rbegin(), sv0.rend());
+    ALWAYS_ASSERT(test == svtest);
+
+    v0.emplace_back("e");
+    sv0.emplace_back("e");
+
+    stl_vec_type test1(v0.rbegin(), v0.rend());
+    stl_vec_type svtest1(sv0.rbegin(), sv0.rend());
+    ALWAYS_ASSERT(test1 == svtest1);
+  }
+
   cout << "vec test passed" << endl;
 }
 

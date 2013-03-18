@@ -1186,8 +1186,7 @@ private:
           std::pair< const node_opaque_t *, uint64_t > *insert_info,
           key_slice &min_key,
           node *&new_node,
-          //typename util::vec<insert_parent_entry>::type &parents,
-          std::vector<insert_parent_entry> &parents,
+          typename util::vec<insert_parent_entry>::type &parents,
           typename util::vec<node *>::type &locked_nodes);
 
   enum remove_status {
@@ -1270,8 +1269,7 @@ private:
           node *right_node,
           key_slice &new_key,
           node *&replace_node,
-          //typename util::vec<remove_parent_entry>::type &parents,
-          std::vector<remove_parent_entry> &parents,
+          typename util::vec<remove_parent_entry>::type &parents,
           typename util::vec<node *>::type &locked_nodes);
 };
 
