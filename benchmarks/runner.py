@@ -28,6 +28,8 @@ TXN_FLAGS = (0x1,)
 # tuples of (benchname, amplification-factor)
 BENCHMARKS = ( ('ycsb', 1000), ('tpcc', 1), )
 
+NTRIALS = 3
+
 def mk_grid(bench, nthds):
   # bench is tuple (name, factor)
   return {
@@ -74,8 +76,11 @@ if __name__ == '__main__':
         'threads'      : threads,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
-      value = run_configuration(basedir, db, bench, scale_factor, txn_flags, threads)
-      results.append((config, value))
+      values = []
+      for _ in range(NTRIALS):
+        value = run_configuration(basedir, db, bench, scale_factor, txn_flags, threads)
+        values.append(value)
+      results.append((config, values))
 
   # write results
   with open(outfile + '.py', 'w') as fp:
