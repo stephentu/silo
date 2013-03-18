@@ -52,11 +52,12 @@ public:
   struct basic_px_queue {
     basic_px_queue()
       : head(nullptr), tail(nullptr),
-        freelist_head(nullptr), freelist_tail(nullptr) {}
+        freelist_head(nullptr), freelist_tail(nullptr),
+        ngroups(0) {}
 
     typedef basic_px_group<N> px_group;
 
-    basic_px_queue(basic_px_queue &&) = default; // for swap
+    basic_px_queue(basic_px_queue &&) = default;
     basic_px_queue(const basic_px_queue &) = delete;
     basic_px_queue &operator=(const basic_px_queue &) = delete;
 
@@ -73,6 +74,7 @@ public:
       std::swap(tail, other.tail);
       std::swap(freelist_head, other.freelist_head);
       std::swap(freelist_tail, other.freelist_tail);
+      std::swap(ngroups, other.ngroups);
     }
 
     template <typename PtrType, typename ObjType>
@@ -146,12 +148,12 @@ public:
     inline void
     enqueue(void *px, deleter_t fn)
     {
+      INVARIANT(bool(head) == bool(tail));
+      INVARIANT(bool(head) == bool(ngroups));
+      INVARIANT(!tail || tail->pxs.size() <= px_group::GroupSize);
       px_group *g;
       if (unlikely(!tail || tail->pxs.size() == px_group::GroupSize)) {
-        INVARIANT(bool(head) == bool(tail));
-        INVARIANT(!tail || tail->pxs.size() <= px_group::GroupSize);
         ensure_freelist();
-
         // pop off freelist
         g = freelist_head;
         freelist_head = g->next;
@@ -159,6 +161,7 @@ public:
           freelist_tail = nullptr;
         g->next = nullptr;
         g->pxs.clear();
+        ngroups++;
 
         // adjust ptrs
         if (!head) {
@@ -170,10 +173,11 @@ public:
       } else {
         g = tail;
       }
-
       INVARIANT(g->pxs.size() < px_group::GroupSize);
       INVARIANT(!g->next);
+      INVARIANT(tail == g);
       g->pxs.emplace_back(px, fn);
+      sanity_check();
     }
 
     void
@@ -183,13 +187,7 @@ public:
       if (likely(freelist_head))
         return;
       const size_t nalloc = 16;
-      for (size_t i = 0; i < nalloc; i++) {
-        px_group *p = new px_group;
-        if (!freelist_tail)
-          freelist_tail = p;
-        p->next = freelist_head;
-        freelist_head = p;
-      }
+      alloc_freelist(nalloc);
     }
 
     inline bool
@@ -203,16 +201,20 @@ public:
     sanity_check() const
     {
       INVARIANT(bool(head) == bool(tail));
+      INVARIANT(!tail || ngroups);
       INVARIANT(!tail || !tail->next);
       INVARIANT(bool(freelist_head) == bool(freelist_tail));
       INVARIANT(!freelist_tail || !freelist_tail->next);
       px_group *p = head, *pprev = nullptr;
+      size_t n = 0;
       while (p) {
         INVARIANT(p->pxs.size());
         INVARIANT(p->pxs.size() <= px_group::GroupSize);
         pprev = p;
         p = p->next;
+        n++;
       }
+      INVARIANT(n == ngroups);
       INVARIANT(!pprev || tail == pprev);
       p = freelist_head;
       pprev = nullptr;
@@ -226,33 +228,59 @@ public:
     inline ALWAYS_INLINE void sanity_check() const {}
 #endif
 
-    inline void
+    // returns the number of groups xfered
+    inline size_t
     accept_from(basic_px_queue &source)
     {
       INVARIANT(this != &source);
       if (!source.head)
-        return;
+        return 0;
       if (!tail) {
         std::swap(head, source.head);
         std::swap(tail, source.tail);
-        return;
+        std::swap(ngroups, source.ngroups);
+        return ngroups;
       }
+      INVARIANT(!tail->next);
       tail->next = source.head;
       tail = source.tail;
+      const size_t ret = source.ngroups;
+      ngroups += ret;
       source.head = source.tail = nullptr;
+      source.ngroups = 0;
+      sanity_check();
+      source.sanity_check();
+      return ret;
     }
 
     // transfer *this* elements freelist to dest
     void
-    transfer_freelist(basic_px_queue &dest)
+    transfer_freelist(basic_px_queue &dest, ssize_t n = -1)
     {
       if (!freelist_head)
         return;
-      freelist_tail->next = dest.freelist_head;
-      if (!dest.freelist_tail)
-        dest.freelist_tail = freelist_tail;
-      dest.freelist_head = freelist_head;
-      freelist_head = freelist_tail = nullptr;
+      if (n < 0) {
+        freelist_tail->next = dest.freelist_head;
+        if (!dest.freelist_tail)
+          dest.freelist_tail = freelist_tail;
+        dest.freelist_head = freelist_head;
+        freelist_head = freelist_tail = nullptr;
+      } else {
+        px_group *p = freelist_head;
+        size_t c = 0;
+        while (p && c++ < static_cast<size_t>(n)) {
+          px_group *tmp = p->next;
+          p->next = dest.freelist_head;
+          dest.freelist_head = p;
+          if (!dest.freelist_tail)
+            dest.freelist_tail = p;
+          if (p == freelist_tail)
+            freelist_tail = nullptr;
+          p = tmp;
+          freelist_head = p;
+        }
+      }
+      sanity_check();
     }
 
     void
@@ -265,7 +293,23 @@ public:
         freelist_tail = tail;
       freelist_head = head;
       head = tail = nullptr;
+      ngroups = 0;
     }
+
+    // adds n new groups to the freelist
+    void
+    alloc_freelist(size_t n)
+    {
+      for (size_t i = 0; i < n; i++) {
+        px_group *p = new px_group;
+        if (!freelist_tail)
+          freelist_tail = p;
+        p->next = freelist_head;
+        freelist_head = p;
+      }
+    }
+
+    inline size_t get_ngroups() const { return ngroups; }
 
   private:
     void
@@ -282,9 +326,10 @@ public:
     px_group *tail;
     px_group *freelist_head;
     px_group *freelist_tail;
+    size_t ngroups;
   };
 
-  typedef basic_px_queue<4096> px_queue;
+  typedef basic_px_queue<1024> px_queue;
 
   template <typename T>
   static inline void
@@ -304,6 +349,7 @@ public:
   static const size_t NGCReapers = 4;
   static const uint64_t EpochTimeUsec = 10 * 1000; /* 10 ms */
   static const uint64_t EpochTimeNsec = EpochTimeUsec * 1000;
+  static const size_t NQueueGroups = 32;
 
   // all RCU threads interact w/ the RCU subsystem via
   // a sync struct
@@ -312,7 +358,12 @@ public:
     spinlock local_critical_mutex;
     px_queue local_queues[2]; // XXX: cache align?
     px_queue scratch_queue;
-    sync(epoch_t local_epoch) : local_epoch(local_epoch) {}
+    sync(epoch_t local_epoch)
+      : local_epoch(local_epoch)
+    {
+      local_queues[0].alloc_freelist(NQueueGroups);
+      local_queues[1].alloc_freelist(NQueueGroups);
+    }
   };
 
   /**
@@ -396,8 +447,8 @@ public:
   scoped_rcu_region(const scoped_rcu_region &) = delete;
   scoped_rcu_region &operator=(const scoped_rcu_region &) = delete;
 
-  inline scoped_rcu_region(bool do_tl_cleanup = false)
-    : do_tl_cleanup(false)
+  inline scoped_rcu_region(bool do_tl_cleanup = true)
+    : do_tl_cleanup(do_tl_cleanup)
   {
     rcu::region_begin();
   }

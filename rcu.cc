@@ -33,6 +33,8 @@ static event_counter evt_rcu_deletes("rcu_deletes");
 static event_counter evt_rcu_frees("rcu_frees");
 static event_counter evt_rcu_local_reaps("rcu_local_reaps");
 static event_counter evt_rcu_incomplete_local_reaps("rcu_incomplete_local_reaps");
+static event_counter evt_rcu_loop_reaps("rcu_loop_reaps");
+static event_counter evt_rcu_global_queue_reaps("rcu_global_queue_reaps");
 
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
@@ -177,13 +179,15 @@ rcu::region_end(bool do_tl_cleanup)
       }
 #endif
       INVARIANT(tl_sync->scratch_queue.empty());
+      tl_sync->scratch_queue.sanity_check();
       if (local_cleaning_epoch == global_cleaning_epoch) {
         // reap locally, outside the critical section
-        tl_sync->scratch_queue.accept_from(
-            tl_sync->local_queues[local_cleaning_epoch % 2]);
-        tl_sync->scratch_queue.transfer_freelist(
-            tl_sync->local_queues[local_cleaning_epoch % 2]);
-        ++evt_rcu_local_reaps;
+        px_queue &q = tl_sync->local_queues[local_cleaning_epoch % 2];
+        if (!q.empty()) {
+          tl_sync->scratch_queue.accept_from(q);
+          tl_sync->scratch_queue.transfer_freelist(q);
+          ++evt_rcu_local_reaps;
+        }
       }
     }
     tl_sync->local_critical_mutex.unlock();
@@ -233,8 +237,10 @@ public:
         lock_guard<spinlock> l(lock);
         stack_queue.swap(queue);
       }
-      if (stack_queue.empty())
+      if (stack_queue.empty()) {
         nanosleep(&t, NULL);
+        continue;
+      }
       stack_queue.sanity_check();
       size_t n = 0;
       for (rcu::px_queue::iterator it = stack_queue.begin();
@@ -257,8 +263,9 @@ public:
     if (local_queue.empty())
       return;
     lock_guard<spinlock> l0(lock);
-    queue.accept_from(local_queue);
-    queue.transfer_freelist(local_queue); // push the memory back to the thread
+    const size_t xfer = queue.accept_from(local_queue);
+    evt_avg_rcu_delete_queue_len.offer(xfer);
+    queue.transfer_freelist(local_queue, xfer); // push the memory back to the thread
   }
 
   spinlock lock;
@@ -311,9 +318,12 @@ rcu::gc_thread_loop(void *p)
           if (s->local_epoch == global_epoch)
             continue;
           // reap
-          reaper_loops[rr++ % NGCReapers].reap(s->local_queues[global_epoch % 2]);
+          px_queue &q = s->local_queues[global_epoch % 2];
+          if (!q.empty()) {
+            reaper_loops[rr++ % NGCReapers].reap(q);
+            ++evt_rcu_incomplete_local_reaps;
+          }
           s->local_epoch = global_epoch;
-          ++evt_rcu_incomplete_local_reaps;
         }
         INVARIANT(s->local_epoch == global_epoch);
       }
@@ -322,17 +332,29 @@ rcu::gc_thread_loop(void *p)
       cleaning_epoch = new_cleaning_epoch;
       __sync_synchronize();
 
-      // reap the new cleaning epoch
-      for (map<pthread_t, sync *>::iterator it = sync_map.begin();
-           it != sync_map.end(); ++it) {
-        sync * const s = it->second;
-        // we can do this w/o lock b/c we are guaranteed no concurrent modifications
-        INVARIANT(s->local_epoch == global_epoch);
-        reaper_loops[rr++ % NGCReapers].reap(s->local_queues[new_cleaning_epoch % 2]);
-      }
+      //// reap the new cleaning epoch
+      //for (map<pthread_t, sync *>::iterator it = sync_map.begin();
+      //     it != sync_map.end(); ++it) {
+      //  sync * const s = it->second;
+      //  INVARIANT(s->local_epoch == global_epoch);
+      //  INVARIANT(new_cleaning_epoch != s->local_epoch);
+
+      //  lock_guard<spinlock> l0(s->local_critical_mutex);
+      //  // need a lock here because a thread-local cleanup could
+      //  // be happening concurrently
+      //  px_queue &q = s->local_queues[new_cleaning_epoch % 2];
+      //  if (!q.empty()) {
+      //    reaper_loops[rr++ % NGCReapers].reap(q);
+      //    ++evt_rcu_loop_reaps;
+      //  }
+      //}
 
       // pull the ones from the global queue
-      reaper_loops[rr++ % NGCReapers].reap(global_queues[new_cleaning_epoch % 2]);
+      rcu::px_queue &q = global_queues[new_cleaning_epoch % 2];
+      if (!q.empty()) {
+        evt_rcu_global_queue_reaps += q.get_ngroups();
+        reaper_loops[rr++ % NGCReapers].reap(q);
+      }
     }
   }
   return NULL;
