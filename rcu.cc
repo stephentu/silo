@@ -13,6 +13,9 @@
 using namespace std;
 using namespace util;
 
+event_counter rcu::evt_px_group_creates("px_group_creates");
+event_counter rcu::evt_px_group_deletes("px_group_deletes");
+
 // avoid some corner cases in the beginning
 volatile rcu::epoch_t rcu::global_epoch = 1;
 volatile rcu::epoch_t rcu::cleaning_epoch = 0;
@@ -33,6 +36,7 @@ static event_counter evt_rcu_incomplete_local_reaps("rcu_incomplete_local_reaps"
 
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
+static event_avg_counter evt_avg_gc_reaper_queue_xfer("avg_gc_reaper_queue_xfer");
 static event_avg_counter evt_avg_rcu_local_delete_queue_len("avg_rcu_local_delete_queue_len");
 
 spinlock &
@@ -180,6 +184,7 @@ rcu::region_end()
         // reap locally, outside the critical section
         tl_sync->scratch_queue.accept_from(tl_sync->local_queue, local_cleaning_epoch);
         INVARIANT(tl_sync->scratch_queue.all_epochs_before(local_cleaning_epoch + 1));
+        tl_sync->scratch_queue.transfer_freelist(tl_sync->local_queue);
         ++evt_rcu_local_reaps;
       }
     }
@@ -206,7 +211,6 @@ rcu::in_rcu_region()
 {
   return tl_crit_section_depth;
 }
-
 
 static const uint64_t rcu_epoch_us = rcu::EpochTimeUsec;
 static const uint64_t rcu_epoch_ns = rcu::EpochTimeNsec;
@@ -257,7 +261,8 @@ public:
     if (local_queue.all_epochs_past(e))
       return;
     lock_guard<spinlock> l0(lock);
-    queue.accept_from(local_queue, e);
+    const size_t xfer = queue.accept_from(local_queue, e);
+    evt_avg_gc_reaper_queue_xfer.offer(xfer);
     queue.transfer_freelist(local_queue);
   }
 

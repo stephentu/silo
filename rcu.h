@@ -9,6 +9,7 @@
 #include <list>
 #include <utility>
 
+#include "counter.h"
 #include "spinlock.h"
 #include "util.h"
 
@@ -24,10 +25,20 @@ public:
   template <size_t N>
     struct basic_px_queue;
 
+  static event_counter evt_px_group_creates;
+  static event_counter evt_px_group_deletes;
+
   // templated so we can test on smaller sizes
   template <size_t N>
   struct basic_px_group {
-    basic_px_group() = default;
+    inline basic_px_group()
+    {
+      ++evt_px_group_creates;
+    }
+    inline ~basic_px_group()
+    {
+      ++evt_px_group_deletes;
+    }
     basic_px_group(const basic_px_group &) = delete;
     basic_px_group &operator=(const basic_px_group &) = delete;
     static const size_t GroupSize = N;
@@ -242,9 +253,10 @@ public:
 
     // transfer all px_groups *from* the input source to this instance
     // which are <= the input epoch e
-    void
+    size_t
     accept_from(basic_px_queue &source, epoch_t e)
     {
+      size_t ret = 0;
       px_group *dest_px = head, **dest_ppx = &head;
       px_group *source_px = source.head, **source_ppx = &source.head;
       while (source_px && source_px->epoch <= e) {
@@ -261,15 +273,31 @@ public:
         *source_ppx = source_px->next;
         source_px->next = dest_px;
         source_px = *source_ppx;
+        ret++;
       }
       sanity_check();
       source.sanity_check();
       INVARIANT(source.all_epochs_past(e));
+      return ret;
     }
 
     inline void
     accept_from(basic_px_queue &source)
     {
+      // various fast paths
+      if (!source.head)
+        return;
+      if (!tail) {
+        std::swap(head, source.head);
+        std::swap(tail, source.tail);
+        return;
+      }
+      if (tail->epoch <= source.head->epoch) {
+        tail->next = source.head;
+        tail = source.tail;
+        source.head = source.tail = nullptr;
+        return;
+      }
       accept_from(source, std::numeric_limits<epoch_t>::max());
     }
 
@@ -350,7 +378,6 @@ public:
   }
 
   // XXX(stephentu): tune?
-  static const size_t SyncDeleteQueueBufSize = 16384;
   static const size_t NGCReapers = 4;
   static const bool EnableThreadLocalCleanup = false;
   static const uint64_t EpochTimeUsec = 10 * 1000; /* 10 ms */
