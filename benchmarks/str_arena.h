@@ -8,13 +8,20 @@
 class str_arena {
 public:
 
-  str_arena() : n(0) {}
+  static const size_t PreAllocBufSize = 256;
+  static const size_t NStrs = 1024;
+
+  str_arena()
+    : n(0)
+  {
+    for (size_t i = 0; i < NStrs; i++)
+      strs[i].reserve(PreAllocBufSize);
+  }
 
   // non-copyable/non-movable for the time being
   str_arena(str_arena &&) = delete;
   str_arena(const str_arena &) = delete;
   str_arena &operator=(const str_arena &) = delete;
-
 
   inline void
   reset()
@@ -25,17 +32,13 @@ public:
   std::string *
   next()
   {
-    if (n < 1024) {
-      if (strs.size() == n)
-        strs.emplace_back();
-      ALWAYS_ASSERT(strs.size() > n);
+    if (n < NStrs)
       return &strs[n++];
-    }
     return nullptr;
   }
 
 private:
-  small_vector<std::string, 1024> strs;
+  std::string strs[NStrs];
   size_t n;
 };
 
