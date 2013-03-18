@@ -6,6 +6,7 @@
 #include <map>
 
 #include "txn_btree.h"
+#include "lockguard.h"
 
 //#define IV(expr) expr
 //#define IV(expr)
@@ -60,7 +61,7 @@ txn_btree<Transaction>::search(
     const std::pair<bool, transaction_base::tid_t> snapshot_tid_t =
       t.consistent_snapshot_tid();
     const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
-      snapshot_tid_t.second : dbtuple::MAX_TID;
+      snapshot_tid_t.second : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
 
     ln->prefetch();
     {
@@ -160,7 +161,7 @@ txn_btree<Transaction>::txn_search_range_callback<Traits>::invoke(
     const std::pair<bool, transaction_base::tid_t> snapshot_tid_t =
       t->consistent_snapshot_tid();
     const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
-      snapshot_tid_t.second : dbtuple::MAX_TID;
+      snapshot_tid_t.second : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
     ln->prefetch();
     if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
       const transaction_base::abort_reason r =
