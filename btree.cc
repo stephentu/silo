@@ -577,13 +577,12 @@ btree::search_range_call(const key_type &lower,
   INVARIANT(!leaf_nodes.empty());
   bool first = true;
   string_type prefix_tmp, *prefix_px;
-  if (buf) {
-    buf->clear();
+  if (buf)
     prefix_px = buf;
-  } else {
+  else
     prefix_px = &prefix_tmp;
-  }
   string_type &prefix(*prefix_px);
+  INVARIANT(prefix.empty());
   prefix.assign((const char *) lower.data(), 8 * (leaf_nodes.size() - 1));
   while (!leaf_nodes.empty()) {
     leaf_node *cur = leaf_nodes.back();

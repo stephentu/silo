@@ -29,11 +29,15 @@ public:
     n = 0;
   }
 
+  // next() is guaranteed to return an empty string
   std::string *
   next()
   {
-    if (n < NStrs)
-      return &strs[n++];
+    if (n < NStrs) {
+      std::string * const px = &strs[n++];
+      px->clear();
+      return px;
+    }
     ALWAYS_ASSERT(false); // for now, to catch inefficiencies
     return nullptr;
   }

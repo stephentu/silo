@@ -146,10 +146,12 @@ txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::invo
   invoked = true;
 
   string_type *local_v_ptr = sa();
-  if (!local_v_ptr)
+  if (!local_v_ptr) {
+    temp_buf0.clear();
     local_v_ptr = &temp_buf0;
+  }
   string_type &local_v(*local_v_ptr);
-  local_v.clear();
+  INVARIANT(temp_buf0.empty());
 
   bool local_read = ctx->local_search_str(*t, k, local_v);
   bool ret = true; // true means keep going, false means stop
@@ -162,10 +164,12 @@ txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::invo
     INVARIANT(ln);
     transaction_base::tid_t start_t = 0;
     string_type *r_ptr = sa();
-    if (!r_ptr)
+    if (!r_ptr) {
+      temp_buf1.clear();
       r_ptr = &temp_buf1;
+    }
     string_type &r(*r_ptr);
-    r.clear();
+    INVARIANT(r.empty());
     const std::pair<bool, transaction_base::tid_t> snapshot_tid_t =
       t->consistent_snapshot_tid();
     const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?

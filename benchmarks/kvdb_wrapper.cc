@@ -323,21 +323,16 @@ public:
   invoke(const btree::string_type &k, btree::value_type v)
   {
     const struct kvdb_record * const r = (const struct kvdb_record *) v;
-
-    string *s_px = likely(arena) ? arena->next() : nullptr;
-    if (!s_px)
-      s_px = &s_buf;
-    string &s(*s_px);
-    s.clear();
+    string * const s_px = likely(arena) ? arena->next() : nullptr;
+    INVARIANT(s_px && s_px->empty());
     r->prefetch();
-    r->do_read(s, numeric_limits<size_t>::max());
-    return upcall->invoke(k, s);
+    r->do_read(*s_px, numeric_limits<size_t>::max());
+    return upcall->invoke(k, *s_px);
   }
 
 private:
   kvdb_ordered_index::scan_callback *upcall;
   str_arena *arena;
-  string s_buf;
 };
 
 void

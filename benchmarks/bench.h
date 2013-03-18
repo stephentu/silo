@@ -214,25 +214,29 @@ private:
   size_t n;
 };
 
+
 class latest_key_callback : public abstract_ordered_index::scan_callback {
 public:
-  latest_key_callback() : n(0) { }
+  latest_key_callback(std::string &k)
+    : n(0), k(&k) { }
 
   virtual bool invoke(
       const std::string &key,
       const std::string &value)
   {
     n++;
-    k = key;
+    // see the note in static_limit_callback for why we explicitly
+    // copy over regular (ref-counting) assignment
+    k->assign(key.data(), key.size());
     return true;
   }
 
   inline size_t size() const { return n; }
-  inline std::string &kstr() { return k; }
+  inline std::string &kstr() { return *k; }
 
 private:
   size_t n;
-  std::string k;
+  std::string *k;
 };
 
 // explicitly copies keys, because btree::search_range_call() interally
@@ -256,9 +260,8 @@ public:
   {
     INVARIANT(n < N);
     // see note above
-    std::string *s_px = likely(arena) ? arena->next() : nullptr;
-    if (unlikely(!s_px))
-      s_px = &tmp_buf;
+    std::string * const s_px = likely(arena) ? arena->next() : nullptr;
+    INVARIANT(s_px && s_px->empty());
     s_px->assign(key.data(), key.size());
     values.emplace_back(*s_px, value);
     return ++n < N;
@@ -276,7 +279,6 @@ public:
 private:
   size_t n;
   str_arena *arena;
-  std::string tmp_buf;
 };
 
 #endif /* _NDB_BENCH_H_ */

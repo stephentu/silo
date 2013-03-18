@@ -935,8 +935,9 @@ public:
    * the last string parameter is an optional string buffer to use:
    * if null, a stack allocated string will be used. if not null, must
    * ensure:
-   *   A) no concurrent mutation of string-
-   *   B) string contents upon return are arbitrary
+   *   A) buf->empty() at the beginning
+   *   B) no concurrent mutation of string
+   * note that string contents upon return are arbitrary
    */
   void
   search_range_call(const key_type &lower,
@@ -957,7 +958,7 @@ public:
                string_type *buf = nullptr) const
   {
     type_callback_wrapper<T> w(&callback);
-    search_range_call(lower, upper, w);
+    search_range_call(lower, upper, w, buf);
   }
 
   /**

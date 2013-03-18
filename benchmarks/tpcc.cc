@@ -1590,7 +1590,7 @@ tpcc_worker::txn_order_status()
 
     // XXX: store last value from client so we don't have to scan
     // from the beginning
-    latest_key_callback c_oorder;
+    latest_key_callback c_oorder(str());
     const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
     const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
     {
