@@ -448,7 +448,8 @@ btree::search_range_at_layer(
   key_slice lower_slice = lower.slice();
   key_slice next_key = lower_slice;
   const size_t prefix_size = prefix.size();
-  prefix.reserve(prefix_size + 8); // allow for next layer
+  // NB: DON'T CALL RESERVE()
+  //prefix.reserve(prefix_size + 8); // allow for next layer
   const uint64_t upper_slice = upper ? upper->slice() : 0;
   string_restore restorer(prefix, prefix_size);
   while (!upper || next_key <= upper_slice) {
