@@ -329,7 +329,7 @@ public:
     size_t ngroups;
   };
 
-  typedef basic_px_queue<1024> px_queue;
+  typedef basic_px_queue<4096> px_queue;
 
   template <typename T>
   static inline void
