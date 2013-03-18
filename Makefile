@@ -122,19 +122,19 @@ benchmarks/masstree/%.o: benchmarks/masstree/%.cc $(BENCH_HEADERS)
 %.o: %.cc $(HEADERS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-test: test.cc $(OBJFILES)
+test: test.o $(OBJFILES)
 	$(CXX) $(CXXFLAGS) -o test $^ $(LDFLAGS)
 
 .PHONY: dbtest
 dbtest: benchmarks/dbtest
 
-benchmarks/dbtest: benchmarks/dbtest.cc $(OBJFILES) $(BENCH_OBJFILES)
+benchmarks/dbtest: benchmarks/dbtest.o $(OBJFILES) $(BENCH_OBJFILES)
 	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/dbtest $^ $(BENCH_LDFLAGS)
 
 .PHONY: kvtest
 kvtest: benchmarks/masstree/kvtest
 
-benchmarks/masstree/kvtest: benchmarks/masstree/kvtest.cc $(OBJFILES) $(BENCH_OBJFILES)
+benchmarks/masstree/kvtest: benchmarks/masstree/kvtest.o $(OBJFILES) $(BENCH_OBJFILES)
 	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/masstree/kvtest $^ $(BENCH_LDFLAGS)
 
 .PHONY: clean
