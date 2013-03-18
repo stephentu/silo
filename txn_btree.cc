@@ -19,7 +19,7 @@ using namespace util;
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
   inline bool
-  operator()(const string &k, const uint8_t *v, size_t sz) const
+  operator()(const string &k, const string &v) const
   {
     (*ctr)++;
     return true;
@@ -387,9 +387,9 @@ public:
   counting_scan_callback(uint64_t expect) : ctr(0), expect(expect) {}
 
   virtual bool
-  invoke(const string &k, const uint8_t * v, size_t sz)
+  invoke(const string &k, const string &v)
   {
-    AssertByteEquality(rec(expect), v, sz);
+    AssertByteEquality(rec(expect), v);
     ctr++;
     return true;
   }
@@ -592,10 +592,10 @@ namespace mp_test2_ns {
   public:
     counting_scan_callback() : ctr(0), has_last(false), last(0) {}
     virtual bool
-    invoke(const string &k, const uint8_t * v, size_t sz)
+    invoke(const string &k, const string &v)
     {
-      ALWAYS_ASSERT(sz == sizeof(rec));
-      rec *r = (rec *) v;
+      ALWAYS_ASSERT(v.size() == sizeof(rec));
+      rec *r = (rec *) v.data();
       VERBOSE(cerr << "counting_scan_callback: " << hexify(k) << " => " << r->v << endl);
       if (!has_last) {
         last = r->v;
@@ -820,9 +820,9 @@ namespace mp_test3_ns {
         }
       }
     }
-    virtual bool invoke(const string &k, const uint8_t * v, size_t)
+    virtual bool invoke(const string &k, const string &v)
     {
-      sum += ((rec *) v)->v;
+      sum += ((rec *) v.data())->v;
       return true;
     }
     volatile bool running;
@@ -987,10 +987,10 @@ namespace mp_test_simple_write_skew_ns {
         }
       }
     }
-    virtual bool invoke(const string &k, const uint8_t * v, size_t sz)
+    virtual bool invoke(const string &k, const string &v)
     {
-      INVARIANT(sz == sizeof(rec));
-      const rec *r = (const rec *) v;
+      INVARIANT(v.size() == sizeof(rec));
+      const rec *r = (const rec *) v.data();
       if (r->v)
         ctr++;
       return ctr < 2;
@@ -1107,10 +1107,10 @@ namespace mp_test_batch_processing_ns {
         }
       }
     }
-    virtual bool invoke(const string &k, const uint8_t * v, size_t sz)
+    virtual bool invoke(const string &k, const string &v)
     {
-      INVARIANT(sz == sizeof(rec));
-      const rec * const r = (const rec *) v;
+      INVARIANT(v.size() == sizeof(rec));
+      const rec * const r = (const rec *) v.data();
       sum += r->v;
       return true;
     }

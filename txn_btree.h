@@ -50,7 +50,7 @@ public:
   struct search_range_callback {
   public:
     virtual ~search_range_callback() {}
-    virtual bool invoke(const string_type &k, value_type v, size_type sz) = 0;
+    virtual bool invoke(const string_type &k, const string_type &v) = 0;
   };
 
 private:
@@ -59,9 +59,9 @@ private:
   public:
     type_callback_wrapper(T *callback) : callback(callback) {}
     virtual bool
-    invoke(const string_type &k, value_type v, size_type sz)
+    invoke(const string_type &k, const string_type &v)
     {
-      return callback->operator()(k, v, sz);
+      return callback->operator()(k, v);
     }
   private:
     T *const callback;
@@ -107,44 +107,57 @@ public:
     return search(t, to_string_type(k), v, max_bytes_read);
   }
 
-  template <typename Traits>
+  struct default_string_allocator {
+    inline ALWAYS_INLINE string_type *
+    operator()()
+    {
+      return nullptr;
+    }
+  };
+
+  // StringAllocator needs to be CopyConstructable
+  template <typename Traits, typename StringAllocator = default_string_allocator>
   void
   search_range_call(Transaction<Traits> &t,
                     const string_type &lower,
                     const string_type *upper,
-                    search_range_callback &callback);
+                    search_range_callback &callback,
+                    const StringAllocator &sa = StringAllocator());
 
-  template <typename Traits>
+  template <typename Traits, typename StringAllocator = default_string_allocator>
   inline void
   search_range_call(Transaction<Traits> &t,
                     const key_type &lower,
                     const key_type *upper,
-                    search_range_callback &callback)
+                    search_range_callback &callback,
+                    const StringAllocator &sa = StringAllocator())
   {
     string_type s;
     if (upper)
       s = to_string_type(*upper);
-    search_range_call(t, to_string_type(lower), upper ? &s : NULL, callback);
+    search_range_call(t, to_string_type(lower), upper ? &s : NULL, callback, sa);
   }
 
-  template <typename Traits, typename T>
+  template <typename Traits, typename T, typename StringAllocator = default_string_allocator>
   inline void
   search_range(
       Transaction<Traits> &t, const string_type &lower,
-      const string_type *upper, T callback)
+      const string_type *upper, T callback,
+      const StringAllocator &sa = StringAllocator())
   {
     type_callback_wrapper<T> w(&callback);
-    search_range_call(t, lower, upper, w);
+    search_range_call(t, lower, upper, w, sa);
   }
 
-  template <typename Traits, typename T>
+  template <typename Traits, typename T, typename StringAllocator = default_string_allocator>
   inline void
   search_range(
       Transaction<Traits> &t, const key_type &lower,
-      const key_type *upper, T callback)
+      const key_type *upper, T callback,
+      const StringAllocator &sa = StringAllocator())
   {
     type_callback_wrapper<T> w(&callback);
-    search_range_call(t, lower, upper, w);
+    search_range_call(t, lower, upper, w, sa);
   }
 
   template <typename Traits>
@@ -284,15 +297,16 @@ private:
     std::vector< std::pair<btree::value_type, bool> > spec_values;
   };
 
-  template <typename Traits>
+  template <typename Traits, typename StringAllocator>
   struct txn_search_range_callback : public btree::low_level_search_range_callback {
     txn_search_range_callback(Transaction<Traits> *t,
                               typename Transaction<Traits>::txn_context *ctx,
                               const key_type &lower,
-                              search_range_callback *caller_callback)
+                              search_range_callback *caller_callback,
+                              const StringAllocator &sa)
       : t(t), ctx(ctx), lower(lower), prev_key(),
         invoked(false), caller_callback(caller_callback),
-        caller_stopped(false) {}
+        caller_stopped(false), sa(sa) {}
     virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
     virtual bool invoke(const btree::string_type &k, btree::value_type v,
                         const btree::node_opaque_t *n, uint64_t version);
@@ -303,6 +317,9 @@ private:
     bool invoked;
     search_range_callback *const caller_callback;
     bool caller_stopped;
+    StringAllocator sa;
+    string_type temp_buf0;
+    string_type temp_buf1;
   };
 
   template <typename Traits>

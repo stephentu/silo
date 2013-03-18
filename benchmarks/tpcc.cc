@@ -320,8 +320,7 @@ public:
               uint warehouse_id)
     : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
       tpcc_worker_mixin(open_tables),
-      warehouse_id(warehouse_id),
-      obj_put_strs_n(0)
+      warehouse_id(warehouse_id)
   {
     INVARIANT(warehouse_id >= 1);
     INVARIANT(warehouse_id <= NumWarehouses());
@@ -395,23 +394,14 @@ public:
     return w;
   }
 
-  struct str_allocator {
-    str_allocator(tpcc_worker *w) : w(w) {}
-    inline string & operator()() const { return w->str(); }
-    tpcc_worker *w;
-  };
-
-  inline str_allocator
-  get_str_allocator()
-  {
-    return str_allocator(this);
-  }
-
 protected:
 
   inline ALWAYS_INLINE string &
   str() {
-    return obj_put_strs[obj_put_strs_n++ % ARRAY_NELEMS(obj_put_strs)];
+    // XXX: hacky for now
+    string *px = arena.next();
+    ALWAYS_ASSERT(px);
+    return *px;
   }
 
 private:
@@ -419,13 +409,9 @@ private:
   int32_t last_no_o_ids[10]; // XXX(stephentu): hack
 
   // some scratch buffer space
-
   string obj_key0;
   string obj_key1;
   string obj_v;
-
-  string obj_put_strs[512];
-  unsigned obj_put_strs_n;
 };
 
 class tpcc_warehouse_loader : public bench_loader, public tpcc_worker_mixin {
@@ -1029,6 +1015,7 @@ tpcc_worker::txn_new_order()
   //   max_write_set_size : 15
   //   num_txn_contexts : 9
   void *txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+  scoped_str_arena s_arena(arena);
   try {
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
@@ -1174,11 +1161,11 @@ class new_order_scan_callback : public abstract_ordered_index::scan_callback {
 public:
   new_order_scan_callback() : k_no(0) {}
   virtual bool invoke(
-      const char *key, size_t key_len,
-      const char *value, size_t value_len)
+      const string &key,
+      const string &value)
   {
-    INVARIANT(key_len == sizeof(new_order::key));
-    INVARIANT(value_len == 1);
+    INVARIANT(key.size() == sizeof(new_order::key));
+    INVARIANT(value.size() == 1);
     k_no = Decode(key, k_no_temp);
 #ifdef CHECK_INVARIANTS
     new_order::value v_no_temp;
@@ -1224,6 +1211,7 @@ tpcc_worker::txn_delivery()
   //   max_write_set_size : 133
   //   num_txn_contexts : 4
   void *txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_TPCC_DELIVERY);
+  scoped_str_arena s_arena(arena);
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -1232,7 +1220,7 @@ tpcc_worker::txn_delivery()
       new_order_scan_callback new_order_c;
       {
         ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
-        tbl_new_order->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c);
+        tbl_new_order->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c, s_arena.get());
       }
 
       const new_order::key *k_no = new_order_c.get_key();
@@ -1246,12 +1234,12 @@ tpcc_worker::txn_delivery()
       const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
       checker::SanityCheckOOrder(&k_oo, v_oo);
 
-      static_limit_callback<15, str_allocator> c(get_str_allocator()); // never more than 15 order_lines per order
+      static_limit_callback<15> c; // never more than 15 order_lines per order
       const order_line::key k_oo_0(warehouse_id, d, k_no->no_o_id, 0);
       const order_line::key k_oo_1(warehouse_id, d, k_no->no_o_id, numeric_limits<int32_t>::max());
 
       // XXX(stephentu): mutable scans would help here
-      tbl_order_line->scan(txn, Encode(obj_key0, k_oo_0), &Encode(obj_key1, k_oo_1), c);
+      tbl_order_line->scan(txn, Encode(obj_key0, k_oo_0), &Encode(obj_key1, k_oo_1), c, s_arena.get());
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
         order_line::value v_ol_temp;
@@ -1330,6 +1318,7 @@ tpcc_worker::txn_payment()
   //   max_write_set_size : 1
   //   num_txn_contexts : 5
   void *txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_TPCC_PAYMENT);
+  scoped_str_arena s_arena(arena);
   try {
     ssize_t ret = 0;
 
@@ -1377,8 +1366,8 @@ tpcc_worker::txn_payment()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<NMaxCustomerIdxScanElems, str_allocator> c(get_str_allocator()); // probably a safe bet for now
-      tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c);
+      static_limit_callback<NMaxCustomerIdxScanElems> c; // probably a safe bet for now
+      tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
@@ -1458,10 +1447,10 @@ class order_line_nop_callback : public abstract_ordered_index::scan_callback {
 public:
   order_line_nop_callback() : n(0) {}
   virtual bool invoke(
-      const char *key, size_t key_len,
-      const char *value, size_t value_len)
+      const string &key,
+      const string &value)
   {
-    INVARIANT(key_len == sizeof(order_line::key));
+    INVARIANT(key.size() == sizeof(order_line::key));
     order_line::value v_ol_temp;
     const order_line::value *v_ol UNUSED = Decode(value, v_ol_temp);
 #ifdef CHECK_INVARIANTS
@@ -1491,6 +1480,7 @@ tpcc_worker::txn_order_status()
   //   max_write_set_size : 0
   //   num_txn_contexts : 4
   void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf(), abstract_db::HINT_TPCC_ORDER_STATUS);
+  scoped_str_arena s_arena(arena);
   try {
 
     customer::key k_c;
@@ -1517,8 +1507,8 @@ tpcc_worker::txn_order_status()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<NMaxCustomerIdxScanElems, str_allocator> c(get_str_allocator()); // probably a safe bet for now
-      tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c);
+      static_limit_callback<NMaxCustomerIdxScanElems> c; // probably a safe bet for now
+      tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
@@ -1547,12 +1537,12 @@ tpcc_worker::txn_order_status()
 
     // XXX: store last value from client so we don't have to scan
     // from the beginning
-    latest_key_callback<str_allocator> c_oorder(get_str_allocator());
+    latest_key_callback c_oorder;
     const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
     const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
     {
       ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
-      tbl_oorder_c_id_idx->scan(txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder);
+      tbl_oorder_c_id_idx->scan(txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder, s_arena.get());
     }
     INVARIANT(c_oorder.size());
     evt_avg_order_status_oorder_scan_size.offer(c_oorder.size());
@@ -1564,7 +1554,7 @@ tpcc_worker::txn_order_status()
     order_line_nop_callback c_order_line;
     const order_line::key k_ol_0(warehouse_id, districtID, o_id, 0);
     const order_line::key k_ol_1(warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
-    tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line);
+    tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line, s_arena.get());
     INVARIANT(c_order_line.n >= 5 && c_order_line.n <= 15);
 
     measure_txn_counters(txn, "txn_order_status");
@@ -1583,10 +1573,10 @@ class order_line_scan_callback : public abstract_ordered_index::scan_callback {
 public:
   order_line_scan_callback() : n(0) {}
   virtual bool invoke(
-      const char *key, size_t key_len,
-      const char *value, size_t value_len)
+      const string &key,
+      const string &value)
   {
-    INVARIANT(key_len == sizeof(order_line::key));
+    INVARIANT(key.size() == sizeof(order_line::key));
     order_line::value v_ol_temp;
     const order_line::value *v_ol = Decode(value, v_ol_temp);
 
@@ -1626,6 +1616,7 @@ tpcc_worker::txn_stock_level()
   //   n_read_set_large_instances : 2
   //   num_txn_contexts : 3
   void *txn = db->new_txn(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, txn_buf(), abstract_db::HINT_TPCC_STOCK_LEVEL);
+  scoped_str_arena s_arena(arena);
   try {
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ASSERT(tbl_district->get(txn, Encode(obj_key0, k_d), obj_v));
@@ -1640,7 +1631,7 @@ tpcc_worker::txn_stock_level()
     const order_line::key k_ol_1(warehouse_id, districtID, v_d->d_next_o_id, 0);
     {
       ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
-      tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c);
+      tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c, s_arena.get());
     }
     {
       set<uint> s_i_ids_distinct;

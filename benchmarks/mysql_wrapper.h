@@ -58,7 +58,8 @@ public:
       void *txn,
       const std::string &key,
       const std::string *value,
-      scan_callback &callback)
+      scan_callback &callback,
+      str_arena *arena)
   {
     NDB_UNIMPLEMENTED("scan");
   }

@@ -100,9 +100,9 @@ txn_btree<Transaction>::search(
 }
 
 template <template <typename> class Transaction>
-template <typename Traits>
+template <typename Traits, typename StringAllocator>
 void
-txn_btree<Transaction>::txn_search_range_callback<Traits>::on_resp_node(
+txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::on_resp_node(
     const btree::node_opaque_t *n, uint64_t version)
 {
   VERBOSE(std::cerr << "on_resp_node(): <node=0x" << util::hexify(intptr_t(n))
@@ -124,9 +124,9 @@ txn_btree<Transaction>::txn_search_range_callback<Traits>::on_resp_node(
 }
 
 template <template <typename> class Transaction>
-template <typename Traits>
+template <typename Traits, typename StringAllocator>
 bool
-txn_btree<Transaction>::txn_search_range_callback<Traits>::invoke(
+txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::invoke(
     const btree::string_type &k, btree::value_type v,
     const btree::node_opaque_t *n, uint64_t version)
 {
@@ -144,20 +144,28 @@ txn_btree<Transaction>::txn_search_range_callback<Traits>::invoke(
     prev_key = k;
   }
   invoked = true;
-  // XXX(stephentu): FIX! we are allocating a buffer here every time!
-  string_type local_v;
+
+  string_type *local_v_ptr = sa();
+  if (!local_v_ptr)
+    local_v_ptr = &temp_buf0;
+  string_type &local_v(*local_v_ptr);
+  local_v.clear();
+
   bool local_read = ctx->local_search_str(*t, k, local_v);
   bool ret = true; // true means keep going, false means stop
   if (local_read && !local_v.empty()) {
     // found locally non-deleted copy, so let client read own writes
-    ret = caller_callback->invoke(
-        k, (const value_type) local_v.data(), local_v.size());
+    ret = caller_callback->invoke(k, local_v);
   }
   const dbtuple * const ln = (dbtuple *) v;
   if (ctx->read_set.find(ln) == ctx->read_set.end()) {
     INVARIANT(ln);
     transaction_base::tid_t start_t = 0;
-    string_type r;
+    string_type *r_ptr = sa();
+    if (!r_ptr)
+      r_ptr = &temp_buf1;
+    string_type &r(*r_ptr);
+    r.clear();
     const std::pair<bool, transaction_base::tid_t> snapshot_tid_t =
       t->consistent_snapshot_tid();
     const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
@@ -191,8 +199,7 @@ txn_btree<Transaction>::txn_search_range_callback<Traits>::invoke(
                  << "> (local_read="
                  << (local_read ? "Y" : "N") << ")" << std::endl);
     if (!local_read && !r.empty())
-      ret = caller_callback->invoke(
-          k, (const value_type) r.data(), r.size());
+      ret = caller_callback->invoke(k, r);
   }
   if (!ret)
     caller_stopped = true;
@@ -200,12 +207,14 @@ txn_btree<Transaction>::txn_search_range_callback<Traits>::invoke(
 }
 
 template <template <typename> class Transaction>
-template <typename Traits>
+template <typename Traits, typename StringAllocator>
 void
-txn_btree<Transaction>::search_range_call(Transaction<Traits> &t,
-                             const string_type &lower,
-                             const string_type *upper,
-                             search_range_callback &callback)
+txn_btree<Transaction>::search_range_call(
+    Transaction<Traits> &t,
+    const string_type &lower,
+    const string_type *upper,
+    search_range_callback &callback,
+    const StringAllocator &sa)
 {
   t.ensure_active();
   typename Transaction<Traits>::txn_context &ctx = t.ctx_map[this];
@@ -234,7 +243,7 @@ txn_btree<Transaction>::search_range_call(Transaction<Traits> &t,
 
   key_type lower_k(lower);
   key_type upper_k(upper ? key_type(*upper) : key_type());
-  txn_search_range_callback<Traits> c(&t, &ctx, lower_k, &callback);
+  txn_search_range_callback<Traits, StringAllocator> c(&t, &ctx, lower_k, &callback, sa);
   underlying_btree.search_range_call(lower_k, upper ? &upper_k : NULL, c);
   if (c.caller_stopped)
     return;

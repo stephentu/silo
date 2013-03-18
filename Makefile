@@ -98,6 +98,7 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/mysql_wrapper.h \
 	benchmarks/ndb_wrapper.h \
 	benchmarks/ndb_wrapper_impl.h \
+	benchmarks/str_arena.h \
 	benchmarks/tpcc.h
 BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/bench.cc \

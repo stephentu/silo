@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "../macros.h"
+#include "str_arena.h"
 
 /**
  * The underlying index manages memory for keys/values, but
@@ -30,23 +31,20 @@ public:
   class scan_callback {
   public:
     virtual ~scan_callback() {}
-
-    // caller manages memory of key/value
-    virtual bool invoke(const char *key, size_t key_len,
-                        const char *value, size_t value_len) = 0;
+    virtual bool invoke(const std::string &key,
+                        const std::string &value) = 0;
   };
 
   /**
    * Search [start_key, end_key) if has_end_key is true, otherwise
    * search [start_key, +infty)
-   *
-   * Caller manages memory of start_key/end_key
    */
   virtual void scan(
       void *txn,
       const std::string &start_key,
       const std::string *end_key,
-      scan_callback &callback) = 0;
+      scan_callback &callback,
+      str_arena *arena = nullptr) = 0;
 
   /**
    * Put a key of length keylen, with mapping of length valuelen.

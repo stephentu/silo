@@ -28,7 +28,6 @@ public:
               spin_barrier *barrier_a, spin_barrier *barrier_b)
     : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
       tbl(open_tables.at("USERTABLE")),
-      obj_put_strs_n(0),
       computation_n(0)
   {
   }
@@ -37,6 +36,7 @@ public:
   txn_read()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
+    scoped_str_arena s_arena(arena);
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
@@ -60,6 +60,7 @@ public:
   txn_write()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
+    scoped_str_arena s_arena(arena);
     try {
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'b'));
       measure_txn_counters(txn, "txn_write");
@@ -82,6 +83,7 @@ public:
   txn_rmw()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_RMW);
+    scoped_str_arena s_arena(arena);
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
@@ -106,10 +108,9 @@ public:
   public:
     worker_scan_callback() : n(0) {}
     virtual bool
-    invoke(const char *key, size_t key_len,
-           const char *value, size_t value_len)
+    invoke(const string &key, const string &value)
     {
-      n += value_len;
+      n += value.size();
       return true;
     }
     size_t n;
@@ -119,6 +120,7 @@ public:
   txn_scan()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_SCAN);
+    scoped_str_arena s_arena(arena);
     const size_t kstart = r.next() % nkeys;
     const string &kbegin = u64_varkey(kstart).str(obj_key0);
     const string &kend = u64_varkey(kstart + 100).str(obj_key1);
@@ -162,7 +164,10 @@ protected:
 
   inline ALWAYS_INLINE string &
   str() {
-    return obj_put_strs[obj_put_strs_n++ % ARRAY_NELEMS(obj_put_strs)];
+    // XXX: hacky for now
+    string *px = arena.next();
+    ALWAYS_ASSERT(px);
+    return *px;
   }
 
 private:
@@ -171,9 +176,6 @@ private:
   string obj_key0;
   string obj_key1;
   string obj_v;
-
-  string obj_put_strs[32];
-  unsigned obj_put_strs_n;
 
   uint64_t computation_n;
 };

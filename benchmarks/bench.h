@@ -181,6 +181,7 @@ protected:
   ssize_t size_delta; // how many logical bytes (of values) did the worker add to the DB
 
   std::string txn_obj_buf;
+  str_arena arena;
 };
 
 class bench_runner : private util::noncopyable {
@@ -213,13 +214,11 @@ public:
   }
 
   virtual bool invoke(
-      const char *key, size_t key_len,
-      const char *value, size_t value_len)
+      const std::string &key,
+      const std::string &value)
   {
     INVARIANT(limit == -1 || n < size_t(limit));
-    values.push_back(
-        std::make_pair(
-          std::string(key, key_len), std::string(value, value_len)));
+    values.emplace_back(key, value);
     return (limit == -1) || (++n < size_t(limit));
   }
 
@@ -231,49 +230,42 @@ private:
   size_t n;
 };
 
-template <typename StrAllocator>
 class latest_key_callback : public abstract_ordered_index::scan_callback {
 public:
-  latest_key_callback(const StrAllocator &alloc)
-    : n(0), k(&alloc())
-  { }
+  latest_key_callback() : n(0) { }
 
   virtual bool invoke(
-      const char *key, size_t key_len,
-      const char *value, size_t value_len)
+      const std::string &key,
+      const std::string &value)
   {
     n++;
-    k->assign(key, key_len);
+    k = key;
     return true;
   }
 
   inline size_t size() const { return n; }
-  inline std::string &kstr() { return *k; }
+  inline std::string &kstr() { return k; }
 
 private:
   size_t n;
-  std::string *k;
+  std::string k;
 };
 
-template <size_t N, typename StrAllocator>
+template <size_t N>
 class static_limit_callback : public abstract_ordered_index::scan_callback {
 public:
-  static_limit_callback(StrAllocator alloc)
-    : n(0), alloc(alloc)
+  static_limit_callback()
+    : n(0)
   {
     _static_assert(N > 0);
   }
 
   virtual bool invoke(
-      const char *key, size_t key_len,
-      const char *value, size_t value_len)
+      const std::string &key,
+      const std::string &value)
   {
     INVARIANT(n < N);
-    std::string &k = alloc();
-    std::string &v = alloc();
-    k.assign(key, key_len);
-    v.assign(value, value_len);
-    values.emplace_back(k, v);
+    values.emplace_back(key, value);
     return ++n < N;
   }
 
@@ -288,7 +280,6 @@ public:
 
 private:
   size_t n;
-  StrAllocator alloc;
 };
 
 #endif /* _NDB_BENCH_H_ */

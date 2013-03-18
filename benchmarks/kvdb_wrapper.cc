@@ -314,25 +314,30 @@ kvdb_ordered_index::insert(void *txn,
 
 class kvdb_wrapper_search_range_callback : public btree::search_range_callback {
 public:
-  kvdb_wrapper_search_range_callback(kvdb_ordered_index::scan_callback &upcall)
-    : upcall(&upcall) {}
+  kvdb_wrapper_search_range_callback(
+      kvdb_ordered_index::scan_callback &upcall,
+      str_arena *arena)
+    : upcall(&upcall), arena(arena) {}
 
   virtual bool
   invoke(const btree::string_type &k, btree::value_type v)
   {
-    const char * const key = (const char *) k.data();
-    const size_t keylen = k.size();
-
     const struct kvdb_record * const r = (const struct kvdb_record *) v;
-    // XXX(stephentu): FIX! THIS IS BAD
-    string s;
+
+    string *s_px = likely(arena) ? arena->next() : nullptr;
+    if (!s_px)
+      s_px = &s_buf;
+    string &s(*s_px);
+    s.clear();
     r->prefetch();
     r->do_read(s, numeric_limits<size_t>::max());
-    return upcall->invoke(key, keylen, s.data(), s.size());
+    return upcall->invoke(k, s);
   }
 
 private:
   kvdb_ordered_index::scan_callback *upcall;
+  str_arena *arena;
+  string s_buf;
 };
 
 void
@@ -340,9 +345,10 @@ kvdb_ordered_index::scan(
     void *txn,
     const string &start_key,
     const string *end_key,
-    scan_callback &callback)
+    scan_callback &callback,
+    str_arena *arena)
 {
-  kvdb_wrapper_search_range_callback c(callback);
+  kvdb_wrapper_search_range_callback c(callback, arena);
   const varkey end(end_key ? varkey(*end_key) : varkey());
   btr.search_range_call(varkey(start_key), end_key ? &end : 0, c);
 }

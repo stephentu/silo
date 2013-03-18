@@ -349,20 +349,25 @@ public:
 
   virtual bool
   invoke(const typename txn_btree<Transaction>::string_type &k,
-         const typename txn_btree<Transaction>::value_type v,
-         const typename txn_btree<Transaction>::size_type sz)
+         const typename txn_btree<Transaction>::string_type &v)
   {
-    const char * const key = (const char *) k.data();
-    const size_t keylen = k.size();
-
-    const char * const value = (const char *) v;
-    const size_t valuelen = sz;
-
-    return upcall->invoke(key, keylen, value, valuelen);
+    return upcall->invoke(k, v);
   }
 
 private:
   abstract_ordered_index::scan_callback *upcall;
+};
+
+struct ndb_str_allocator {
+public:
+  ndb_str_allocator(str_arena *arena) : arena(arena) {}
+  inline std::string *
+  operator()()
+  {
+    return likely(arena) ? arena->next() : nullptr;
+  }
+private:
+  str_arena *arena;
 };
 
 template <template <typename> class Transaction>
@@ -371,7 +376,8 @@ ndb_ordered_index<Transaction>::scan(
     void *txn,
     const std::string &start_key,
     const std::string *end_key,
-    scan_callback &callback)
+    scan_callback &callback,
+    str_arena *arena)
 {
   ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
   ndb_wrapper_search_range_callback<Transaction> c(callback);
@@ -380,7 +386,7 @@ ndb_ordered_index<Transaction>::scan(
   case a: \
     { \
       auto t = cast< b >()(p); \
-      btr.search_range_call(*t, start_key, end_key, c); \
+      btr.search_range_call(*t, start_key, end_key, c, ndb_str_allocator(arena)); \
       return; \
     }
     switch (p->hint) {
