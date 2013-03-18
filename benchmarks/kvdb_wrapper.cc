@@ -10,6 +10,7 @@
 #include "../lockguard.h"
 #include "../prefetch.h"
 #include "../scopedperf.hh"
+#include "../counter.h"
 
 using namespace std;
 using namespace util;
@@ -23,6 +24,10 @@ kvdb_wrapper::open_index(const string &name, size_t value_size_hint, bool mostly
 }
 
 #ifdef MUTABLE_RECORDS
+
+static event_avg_counter evt_avg_kvdb_stable_version_spins("avg_kvdb_stable_version_spins");
+static event_avg_counter evt_avg_kvdb_lock_acquire_spins("avg_kvdb_lock_acquire_spins");
+static event_avg_counter evt_avg_kvdb_read_retries("avg_kvdb_read_retries");
 
 struct kvdb_record {
   volatile uint32_t hdr;
@@ -76,13 +81,22 @@ struct kvdb_record {
   inline void
   lock()
   {
+#ifdef ENABLE_EVENT_COUNTERS
+    unsigned long nspins = 0;
+#endif
     uint32_t v = hdr;
     while (IsLocked(v) ||
            !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
       nop_pause();
       v = hdr;
+#ifdef ENABLE_EVENT_COUNTERS
+      ++nspins;
+#endif
     }
     COMPILER_MEMORY_FENCE;
+#ifdef ENABLE_EVENT_COUNTERS
+    evt_avg_kvdb_lock_acquire_spins.offer(nspins);
+#endif
   }
 
   inline void
@@ -132,11 +146,18 @@ struct kvdb_record {
   stable_version() const
   {
     uint32_t v = hdr;
+#ifdef ENABLE_EVENT_COUNTERS
+    unsigned long nspins = 0;
+#endif
     while (IsLocked(v)) {
       nop_pause();
       v = hdr;
+      ++nspins;
     }
     COMPILER_MEMORY_FENCE;
+#ifdef ENABLE_EVENT_COUNTERS
+    evt_avg_kvdb_stable_version_spins.offer(nspins);
+#endif
     return v;
   }
 
@@ -150,12 +171,22 @@ struct kvdb_record {
   inline void
   do_read(string &s, size_t max_bytes_read) const
   {
+#ifdef ENABLE_EVENT_COUNTERS
+    unsigned long nretries = 0;
+#endif
   retry:
     const uint32_t v = stable_version();
     const size_t sz = min(Size(v), max_bytes_read);
     s.assign(&data[0], sz);
-    if (unlikely(!check_version(v)))
+    if (unlikely(!check_version(v))) {
+#ifdef ENABLE_EVENT_COUNTERS
+      ++nretries;
+#endif
       goto retry;
+    }
+#ifdef ENABLE_EVENT_COUNTERS
+    evt_avg_kvdb_read_retries.offer(nretries);
+#endif
   }
 
   inline bool
