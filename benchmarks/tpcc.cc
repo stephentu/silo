@@ -1639,12 +1639,12 @@ public:
     checker::SanityCheckOrderLine(k_ol, v_ol);
 #endif
 
-    s_i_ids.insert(v_ol->ol_i_id);
+    s_i_ids[v_ol->ol_i_id] = 1;
     n++;
     return true;
   }
   size_t n;
-  set<uint> s_i_ids;
+  small_unordered_map<uint, bool, 256> s_i_ids;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
@@ -1687,16 +1687,15 @@ tpcc_worker::txn_stock_level()
       tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c, s_arena.get());
     }
     {
-      set<uint> s_i_ids_distinct;
-      for (set<uint>::iterator it = c.s_i_ids.begin();
-           it != c.s_i_ids.end(); ++it) {
+      small_unordered_map<uint, bool, 256> s_i_ids_distinct;
+      for (auto &p : c.s_i_ids) {
         ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
 
         const serializer<int16_t, true> i16s;
         const size_t nbytesread = i16s.max_nbytes();
 
-        const stock::key k_s(warehouse_id, *it);
-        INVARIANT(*it >= 1 && *it <= NumItems());
+        const stock::key k_s(warehouse_id, p.first);
+        INVARIANT(p.first >= 1 && p.first <= NumItems());
         {
           ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
           ALWAYS_ASSERT(tbl_stock->get(txn, Encode(obj_key0, k_s), obj_v, nbytesread));
@@ -1706,7 +1705,7 @@ tpcc_worker::txn_stock_level()
         int16_t i16tmp;
         ptr = i16s.read(ptr, &i16tmp);
         if (i16tmp < int(threshold))
-          s_i_ids_distinct.insert(*it);
+          s_i_ids_distinct[p.first] = 1;
       }
       evt_avg_stock_level_loop_join_lookups.offer(c.s_i_ids.size());
       // NB(stephentu): s_i_ids_distinct.size() is the computed result of this txn
