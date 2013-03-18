@@ -36,10 +36,12 @@ DO_STRUCT(encstress_rec, ENCSTRESS_REC_KEY_FIELDS, ENCSTRESS_REC_VALUE_FIELDS)
 
 class encstress_worker : public bench_worker {
 public:
-  encstress_worker(unsigned long seed, abstract_db *db,
-              const map<string, abstract_ordered_index *> &open_tables,
-              spin_barrier *barrier_a, spin_barrier *barrier_b)
-    : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
+  encstress_worker(
+      unsigned int worker_id,
+      unsigned long seed, abstract_db *db,
+      const map<string, abstract_ordered_index *> &open_tables,
+      spin_barrier *barrier_a, spin_barrier *barrier_b)
+    : bench_worker(worker_id, seed, db, open_tables, barrier_a, barrier_b),
       tbl(open_tables.at("table"))
   {
   }
@@ -162,7 +164,7 @@ protected:
     for (size_t i = 0; i < nthreads; i++)
       ret.push_back(
         new encstress_worker(
-          r.next(), db, open_tables,
+          i, r.next(), db, open_tables,
           &barrier_a, &barrier_b));
     return ret;
   }

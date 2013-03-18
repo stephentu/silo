@@ -29,6 +29,7 @@ extern uint64_t txn_flags;
 extern double scale_factor;
 extern uint64_t runtime;
 extern int enable_parallel_loading;
+extern int pin_cpus;
 
 class scoped_db_thread_ctx : private util::noncopyable {
 public:
@@ -86,10 +87,11 @@ protected:
 class bench_worker : public ndb_thread {
 public:
 
-  bench_worker(unsigned long seed, abstract_db *db,
+  bench_worker(unsigned int worker_id,
+               unsigned long seed, abstract_db *db,
                const std::map<std::string, abstract_ordered_index *> &open_tables,
                spin_barrier *barrier_a, spin_barrier *barrier_b)
-    : r(seed), db(db), open_tables(open_tables),
+    : worker_id(worker_id), r(seed), db(db), open_tables(open_tables),
       barrier_a(barrier_a), barrier_b(barrier_b),
       // the ntxn_* numbers are per worker
       ntxn_commits(0), ntxn_aborts(0), size_delta(0)
@@ -117,29 +119,7 @@ public:
   typedef std::vector<workload_desc> workload_desc_vec;
   virtual workload_desc_vec get_workload() const = 0;
 
-  virtual void
-  run()
-  {
-    { // XXX(stephentu): this is a hack
-      scoped_rcu_region r; // register this thread in rcu region
-    }
-    scoped_db_thread_ctx ctx(db);
-    const workload_desc_vec workload = get_workload();
-    txn_counts.resize(workload.size());
-    barrier_a->count_down();
-    barrier_b->wait_for();
-    while (running) {
-      double d = r.next_uniform();
-      for (size_t i = 0; i < workload.size(); i++) {
-        if ((i + 1) == workload.size() || d < workload[i].frequency) {
-          size_delta += workload[i].fn(this);
-          txn_counts[i]++;
-          break;
-        }
-        d -= workload[i].frequency;
-      }
-    }
-  }
+  virtual void run();
 
   inline size_t get_ntxn_commits() const { return ntxn_commits; }
   inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
@@ -160,8 +140,12 @@ public:
   inline ssize_t get_size_delta() const { return size_delta; }
 
 protected:
+
+  virtual void on_run_setup() {}
+
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
+  unsigned int worker_id;
   util::fast_random r;
   abstract_db *const db;
   std::map<std::string, abstract_ordered_index *> open_tables;

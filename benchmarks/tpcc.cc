@@ -5,6 +5,7 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <sched.h>
 
 #include <set>
 #include <vector>
@@ -29,19 +30,19 @@ NumWarehouses()
   return (size_t) scale_factor;
 }
 
-static inline ALWAYS_INLINE size_t
+static constexpr inline ALWAYS_INLINE size_t
 NumItems()
 {
   return 100000;
 }
 
-static inline ALWAYS_INLINE size_t
+static constexpr inline ALWAYS_INLINE size_t
 NumDistrictsPerWarehouse()
 {
   return 10;
 }
 
-static inline ALWAYS_INLINE size_t
+static constexpr inline ALWAYS_INLINE size_t
 NumCustomersPerDistrict()
 {
   return 3000;
@@ -152,6 +153,37 @@ protected:
   abstract_ordered_index *tbl_order_line;
   abstract_ordered_index *tbl_stock;
   abstract_ordered_index *tbl_warehouse;
+
+  // only TPCC loaders need to call this- workers are automatically
+  // pinned by their worker id (which corresponds to warehouse id
+  // in TPCC)
+  //
+  // pins the *calling* thread
+  static void
+  PinToWarehouseId(unsigned int wid)
+  {
+    ALWAYS_ASSERT(CPU_SETSIZE >= coreid::num_cpus_online());
+    ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
+    const unsigned long pinid = (wid - 1) % coreid::num_cpus_online();
+    cpu_set_t cs;
+    CPU_ZERO(&cs);
+    CPU_SET(pinid, &cs);
+    ALWAYS_ASSERT(sched_setaffinity(0, sizeof(cs), &cs) == 0);
+    INVARIANT(IsPinnedToWarehouseId(wid));
+  }
+
+  // checks the *calling* thread
+  static bool
+  IsPinnedToWarehouseId(unsigned int wid)
+  {
+    ALWAYS_ASSERT(CPU_SETSIZE >= coreid::num_cpus_online());
+    ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
+    const unsigned long pinid = (wid - 1) % coreid::num_cpus_online();
+    cpu_set_t cs;
+    CPU_ZERO(&cs);
+    ALWAYS_ASSERT(sched_getaffinity(0, sizeof(cs), &cs) == 0);
+    return CPU_ISSET(pinid, &cs);
+  }
 
 public:
 
@@ -314,11 +346,12 @@ STATIC_COUNTER_DECL(scopedperf::tod_ctr, tpcc_txn_tod, tpcc_txn_cg)
 
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
-  tpcc_worker(unsigned long seed, abstract_db *db,
+  tpcc_worker(unsigned int worker_id,
+              unsigned long seed, abstract_db *db,
               const map<string, abstract_ordered_index *> &open_tables,
               spin_barrier *barrier_a, spin_barrier *barrier_b,
               uint warehouse_id)
-    : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
+    : bench_worker(worker_id, seed, db, open_tables, barrier_a, barrier_b),
       tpcc_worker_mixin(open_tables),
       warehouse_id(warehouse_id)
   {
@@ -396,6 +429,13 @@ public:
 
 protected:
 
+  virtual void
+  on_run_setup() OVERRIDE
+  {
+    if (pin_cpus)
+      ALWAYS_ASSERT(IsPinnedToWarehouseId(warehouse_id));
+  }
+
   inline ALWAYS_INLINE string &
   str() {
     // XXX: hacky for now
@@ -433,6 +473,12 @@ protected:
     try {
       vector<warehouse::value> warehouses;
       for (uint i = 1; i <= NumWarehouses(); i++) {
+        // seems kind of silly to change affinity to insert 1 data item, but
+        // whatever we'll live
+
+        if (pin_cpus)
+          PinToWarehouseId(i);
+
         const warehouse::key k(i);
 
         const string w_name = RandomStr(r, RandomNumber(r, 6, 10));
@@ -504,6 +550,7 @@ protected:
     uint64_t total_sz = 0;
     try {
       for (uint i = 1; i <= NumItems(); i++) {
+        // items don't "belong" to a certain warehouse, so no pinning
         const item::key k(i);
 
         item::value v;
@@ -573,14 +620,14 @@ protected:
 
     for (uint w = w_start; w <= w_end; w++) {
       const size_t NBatches = 1000;
-
-      // laziness-
-      // want to _static_assert() these, but we don't have
-      // constexpr (not C++11 yet)
-      ALWAYS_ASSERT(NumItems() % NBatches == 0);
-      ALWAYS_ASSERT(NumItems() >= NBatches);
-
       const size_t NItemsPerBatch = NumItems();
+
+      static_assert(NumItems() % NBatches == 0, "xx");
+      static_assert(NumItems() >= NBatches, "xx");
+
+      if (pin_cpus)
+        PinToWarehouseId(w);
+
       for (uint b = 0; b < NItemsPerBatch;) {
         void * const txn = db->new_txn(txn_flags, txn_buf());
         try {
@@ -670,6 +717,8 @@ protected:
     try {
       uint cnt = 0;
       for (uint w = 1; w <= NumWarehouses(); w++) {
+        if (pin_cpus)
+          PinToWarehouseId(w);
         for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++, cnt++) {
           const district::key k(w, d);
 
@@ -738,6 +787,8 @@ protected:
     uint64_t total_sz = 0;
 
     for (uint w = w_start; w <= w_end; w++) {
+      if (pin_cpus)
+        PinToWarehouseId(w);
       for (uint d = 1; d <= NumDistrictsPerWarehouse();) {
         void * const txn = db->new_txn(txn_flags, txn_buf());
         try {
@@ -867,6 +918,8 @@ protected:
       NumWarehouses() : static_cast<uint>(warehouse_id);
 
     for (uint w = w_start; w <= w_end; w++) {
+      if (pin_cpus)
+        PinToWarehouseId(w);
       for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
         set<uint> c_ids_s;
         while (c_ids_s.size() != NumCustomersPerDistrict())
@@ -1728,7 +1781,7 @@ protected:
     for (size_t i = 0; i < nthreads; i++)
       ret.push_back(
         new tpcc_worker(
-          r.next(), db, open_tables,
+          i, r.next(), db, open_tables,
           &barrier_a, &barrier_b,
           (i % NumWarehouses()) + 1));
     return ret;

@@ -35,6 +35,7 @@ main(int argc, char **argv)
     {
       {"verbose"          , no_argument       , &verbose                 , 1}   ,
       {"parallel-loading" , no_argument       , &enable_parallel_loading , 1}   ,
+      {"pin-cpus"         , no_argument       , &pin_cpus                , 1}   ,
       {"bench"            , required_argument , 0                        , 'b'} ,
       {"scale-factor"     , required_argument , 0                        , 's'} ,
       {"num-threads"      , required_argument , 0                        , 't'} ,
@@ -45,7 +46,7 @@ main(int argc, char **argv)
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "vpb:s:t:d:B:f:r:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -129,10 +130,13 @@ main(int argc, char **argv)
 #endif
 
   if (verbose) {
+    const unsigned long ncpus = coreid::num_cpus_online();
     cerr << "settings:"                                   << endl;
     cerr << "  par-loading : " << enable_parallel_loading << endl;
+    cerr << "  pin-cpus    : " << pin_cpus                << endl;
     cerr << "  bench       : " << bench_type              << endl;
     cerr << "  scale       : " << scale_factor            << endl;
+    cerr << "  num-cpus    : " << ncpus                   << endl;
     cerr << "  num-threads : " << nthreads                << endl;
     cerr << "  db-type     : " << db_type                 << endl;
     cerr << "  basedir     : " << basedir                 << endl;

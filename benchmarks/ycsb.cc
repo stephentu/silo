@@ -23,10 +23,11 @@ static const size_t YCSBRecordSize = 1000;
 
 class ycsb_worker : public bench_worker {
 public:
-  ycsb_worker(unsigned long seed, abstract_db *db,
+  ycsb_worker(unsigned int worker_id,
+              unsigned long seed, abstract_db *db,
               const map<string, abstract_ordered_index *> &open_tables,
               spin_barrier *barrier_a, spin_barrier *barrier_b)
-    : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
+    : bench_worker(worker_id, seed, db, open_tables, barrier_a, barrier_b),
       tbl(open_tables.at("USERTABLE")),
       computation_n(0)
   {
@@ -315,7 +316,7 @@ protected:
     for (size_t i = 0; i < nthreads; i++)
       ret.push_back(
         new ycsb_worker(
-          r.next(), db, open_tables,
+          i, r.next(), db, open_tables,
           &barrier_a, &barrier_b));
     return ret;
   }

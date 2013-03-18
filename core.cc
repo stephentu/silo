@@ -1,4 +1,5 @@
 #include "core.h"
+#include "unistd.h"
 
 size_t
 coreid::core_id()
@@ -10,6 +11,14 @@ coreid::core_id()
     ALWAYS_ASSERT(size_t(tl_core_id) < NMaxCores);
   }
   return tl_core_id;
+}
+
+size_t
+coreid::num_cpus_online()
+{
+  const long nprocs = sysconf(_SC_NPROCESSORS_ONLN);
+  ALWAYS_ASSERT(nprocs >= 1);
+  return nprocs;
 }
 
 __thread ssize_t coreid::tl_core_id = -1;

@@ -87,4 +87,11 @@
 #define GCC_AT_LEAST_47 0
 #endif
 
+// g++-4.6 does not support override
+#if GCC_AT_LEAST_47
+#define OVERRIDE override
+#else
+#define OVERRIDE
+#endif
+
 #endif /* _MACROS_H_ */

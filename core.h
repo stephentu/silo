@@ -13,6 +13,10 @@ public:
   {
     return g_core_count;
   }
+
+  // actual number of CPUs online for the system
+  static size_t num_cpus_online();
+
 private:
   // the core ID of this core: -1 if not set
   static __thread ssize_t tl_core_id;

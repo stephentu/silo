@@ -418,7 +418,7 @@ struct vec {
 #endif
 };
 
-}
+} // namespace util
 
 // pretty printer for std::pair<A, B>
 template <typename A, typename B>

@@ -35,11 +35,12 @@ static const string queue_values("ABCDEFGH");
 
 class queue_worker : public bench_worker {
 public:
-  queue_worker(unsigned long seed, abstract_db *db,
+  queue_worker(unsigned int worker_id,
+               unsigned long seed, abstract_db *db,
                const map<string, abstract_ordered_index *> &open_tables,
                spin_barrier *barrier_a, spin_barrier *barrier_b,
                uint64_t id, bool consumer)
-    : bench_worker(seed, db, open_tables, barrier_a, barrier_b),
+    : bench_worker(worker_id, seed, db, open_tables, barrier_a, barrier_b),
       tbl(open_tables.at("table")), id(id), consumer(consumer),
       ctr(consumer ? 0 : nkeys)
   {
@@ -277,7 +278,7 @@ protected:
       for (size_t i = 0; i < nthreads; i++)
         ret.push_back(
           new queue_worker(
-            r.next(), db, open_tables,
+            i, r.next(), db, open_tables,
             &barrier_a, &barrier_b, i, false));
     } else {
       ALWAYS_ASSERT(nthreads >= 2);
@@ -286,11 +287,11 @@ protected:
       for (size_t i = 0; i < nthreads / 2; i++) {
         ret.push_back(
           new queue_worker(
-            r.next(), db, open_tables,
+            i, r.next(), db, open_tables,
             &barrier_a, &barrier_b, i, true));
         ret.push_back(
           new queue_worker(
-            r.next(), db, open_tables,
+            i + 1, r.next(), db, open_tables,
             &barrier_a, &barrier_b, i, false));
       }
     }
