@@ -34,6 +34,7 @@ public:
   {
     if (n < NStrs)
       return &strs[n++];
+    ALWAYS_ASSERT(false); // for now, to catch inefficiencies
     return nullptr;
   }
 

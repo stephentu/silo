@@ -235,11 +235,17 @@ private:
   std::string k;
 };
 
+// explicitly copies keys, because btree::search_range_call() interally
+// re-uses a single string to pass keys (so using standard string assignment
+// will force a re-allocation b/c of shared ref-counting)
+//
+// this isn't done for values, because each value has a distinct string from
+// the string allocator, so there are no mutations while holding > 1 ref-count
 template <size_t N>
 class static_limit_callback : public abstract_ordered_index::scan_callback {
 public:
-  static_limit_callback()
-    : n(0)
+  static_limit_callback(str_arena *arena)
+    : n(0), arena(arena)
   {
     _static_assert(N > 0);
   }
@@ -249,7 +255,12 @@ public:
       const std::string &value)
   {
     INVARIANT(n < N);
-    values.emplace_back(key, value);
+    // see note above
+    std::string *s_px = likely(arena) ? arena->next() : nullptr;
+    if (unlikely(!s_px))
+      s_px = &tmp_buf;
+    s_px->assign(key.data(), key.size());
+    values.emplace_back(*s_px, value);
     return ++n < N;
   }
 
@@ -264,6 +275,8 @@ public:
 
 private:
   size_t n;
+  str_arena *arena;
+  std::string tmp_buf;
 };
 
 #endif /* _NDB_BENCH_H_ */

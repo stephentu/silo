@@ -1287,7 +1287,7 @@ tpcc_worker::txn_delivery()
       const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
       checker::SanityCheckOOrder(&k_oo, v_oo);
 
-      static_limit_callback<15> c; // never more than 15 order_lines per order
+      static_limit_callback<15> c(s_arena.get()); // never more than 15 order_lines per order
       const order_line::key k_oo_0(warehouse_id, d, k_no->no_o_id, 0);
       const order_line::key k_oo_1(warehouse_id, d, k_no->no_o_id, numeric_limits<int32_t>::max());
 
@@ -1419,7 +1419,7 @@ tpcc_worker::txn_payment()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<NMaxCustomerIdxScanElems> c; // probably a safe bet for now
+      static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get()); // probably a safe bet for now
       tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
@@ -1560,7 +1560,7 @@ tpcc_worker::txn_order_status()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<NMaxCustomerIdxScanElems> c; // probably a safe bet for now
+      static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get()); // probably a safe bet for now
       tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
