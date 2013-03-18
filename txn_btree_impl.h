@@ -244,7 +244,7 @@ txn_btree<Transaction>::search_range_call(
   key_type lower_k(lower);
   key_type upper_k(upper ? key_type(*upper) : key_type());
   txn_search_range_callback<Traits, StringAllocator> c(&t, &ctx, lower_k, &callback, sa);
-  underlying_btree.search_range_call(lower_k, upper ? &upper_k : NULL, c);
+  underlying_btree.search_range_call(lower_k, upper ? &upper_k : NULL, c, c.sa());
   if (c.caller_stopped)
     return;
   if (!(t.get_flags() & transaction_base::TXN_FLAG_LOW_LEVEL_SCAN)) {

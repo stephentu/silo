@@ -350,7 +350,7 @@ kvdb_ordered_index::scan(
 {
   kvdb_wrapper_search_range_callback c(callback, arena);
   const varkey end(end_key ? varkey(*end_key) : varkey());
-  btr.search_range_call(varkey(start_key), end_key ? &end : 0, c);
+  btr.search_range_call(varkey(start_key), end_key ? &end : 0, c, arena->next());
 }
 
 void

@@ -501,7 +501,9 @@ btree::search_range_at_layer(
            (buf[i].key == last_keyslice && buf[i].length <= last_keyslice_len)))
         continue;
       const size_t ncpy = min(buf[i].length, size_t(8));
-      prefix.replace(prefix.begin() + prefix_size, prefix.end(), buf[i].keyslice(), ncpy);
+      // XXX: prefix.end() calls _M_leak()
+      //prefix.replace(prefix.begin() + prefix_size, prefix.end(), buf[i].keyslice(), ncpy);
+      prefix.replace(prefix_size, string_type::npos, buf[i].keyslice(), ncpy);
       if (buf[i].layer) {
         // recurse into layer
         leaf_node *const next_layer = leftmost_descend_layer(buf[i].vn.n);
@@ -561,8 +563,10 @@ btree::search_range_at_layer(
 }
 
 void
-btree::search_range_call(const key_type &lower, const key_type *upper,
-                         low_level_search_range_callback &callback) const
+btree::search_range_call(const key_type &lower,
+                         const key_type *upper,
+                         low_level_search_range_callback &callback,
+                         string_type *buf) const
 {
   if (unlikely(upper && *upper <= lower))
     return;
@@ -571,9 +575,16 @@ btree::search_range_call(const key_type &lower, const key_type *upper,
   scoped_rcu_region rcu_region;
   search_impl(lower, v, leaf_nodes);
   INVARIANT(!leaf_nodes.empty());
-  //cerr << "search_range_call(): leaf_nodes.size() = " << leaf_nodes.size() << endl;
   bool first = true;
-  string_type prefix((const char *) lower.data(), 8 * (leaf_nodes.size() - 1));
+  string_type prefix_tmp, *prefix_px;
+  if (buf) {
+    buf->clear();
+    prefix_px = buf;
+  } else {
+    prefix_px = &prefix_tmp;
+  }
+  string_type &prefix(*prefix_px);
+  prefix.assign((const char *) lower.data(), 8 * (leaf_nodes.size() - 1));
   while (!leaf_nodes.empty()) {
     leaf_node *cur = leaf_nodes.back();
     leaf_nodes.pop_back();

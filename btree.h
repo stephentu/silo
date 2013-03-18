@@ -931,11 +931,18 @@ public:
    * XXX: add other modes which provide better consistency:
    * A) locking mode
    * B) optimistic validation mode
+   *
+   * the last string parameter is an optional string buffer to use:
+   * if null, a stack allocated string will be used. if not null, must
+   * ensure:
+   *   A) no concurrent mutation of string-
+   *   B) string contents upon return are arbitrary
    */
   void
   search_range_call(const key_type &lower,
                     const key_type *upper,
-                    low_level_search_range_callback &callback) const;
+                    low_level_search_range_callback &callback,
+                    string_type *buf = nullptr) const;
 
   /**
    * Callback is expected to implement bool operator()(key_slice k, value_type v),
@@ -944,7 +951,10 @@ public:
    */
   template <typename T>
   inline void
-  search_range(const key_type &lower, const key_type *upper, T callback) const
+  search_range(const key_type &lower,
+               const key_type *upper,
+               T callback,
+               string_type *buf = nullptr) const
   {
     type_callback_wrapper<T> w(&callback);
     search_range_call(lower, upper, w);
