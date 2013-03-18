@@ -266,8 +266,8 @@ kvdb_ordered_index::put(
   if (btr.search(varkey(key), v)) {
     // easy
     struct kvdb_record * const r = (struct kvdb_record *) v;
-    lock_guard<kvdb_record> guard(*r);
     r->prefetch();
+    lock_guard<kvdb_record> guard(*r);
     if (r->do_write(value))
       return 0;
     // replace
