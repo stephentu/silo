@@ -23,6 +23,11 @@ template <typename T>
 struct aligned_padded_elem {
   aligned_padded_elem() : elem() {}
   T elem;
+  // syntactic sugar- can treat like a pointer
+  inline T & operator*() { return elem; }
+  inline const T & operator*() const { return elem; }
+  inline T * operator->() { return &elem; }
+  inline const T * operator->() const { return &elem; }
   CACHE_PADOUT;
 } CACHE_ALIGNED;
 
