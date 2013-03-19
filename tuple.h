@@ -1,5 +1,5 @@
-#ifndef _NDB_dbtuple_H_
-#define _NDB_dbtuple_H_
+#ifndef _NDB_TUPLE_H_
+#define _NDB_TUPLE_H_
 
 #include <vector>
 #include <string>
@@ -56,6 +56,7 @@ private:
   static const version_t HDR_DELETING_SHIFT = 2;
   static const version_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
 
+  // enqueued is currently un-used
   static const version_t HDR_ENQUEUED_SHIFT = 3;
   static const version_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
 
@@ -86,26 +87,6 @@ public:
   node_size_type size; // actual size of record (0 implies absent record)
   node_size_type alloc_size; // max size record allowed. is the space
                              // available for the record buf
-
-  enum QueueType {
-    QUEUE_TYPE_NONE,
-    QUEUE_TYPE_DELETE,
-    QUEUE_TYPE_GC,
-    QUEUE_TYPE_LOCAL,
-  };
-
-#ifdef dbtuple_QUEUE_TRACKING
-  QueueType last_queue_type;
-  struct op_hist_rec {
-    op_hist_rec(bool enqueued, QueueType type, uint64_t tid)
-      : enqueued(enqueued), type(type), tid(tid) {}
-    bool enqueued;
-    QueueType type;
-    uint64_t tid;
-  };
-  std::vector<op_hist_rec> op_hist;
-#endif
-
   // must be last field
   union {
     struct {
@@ -134,9 +115,6 @@ private:
       version(MIN_TID),
       size(0),
       alloc_size(CheckBounds(alloc_size))
-#ifdef dbtuple_QUEUE_TRACKING
-    , last_queue_type(QUEUE_TYPE_NONE)
-#endif
   {
     // each logical node starts with one "deleted" entry at MIN_TID
     // (this is indicated by size = 0)
@@ -157,9 +135,6 @@ private:
       version(version),
       size(CheckBounds(size)),
       alloc_size(CheckBounds(alloc_size))
-#ifdef dbtuple_QUEUE_TRACKING
-    , last_queue_type(QUEUE_TYPE_NONE)
-#endif
   {
     INVARIANT(size <= alloc_size);
     d->big.next = next;
@@ -180,12 +155,16 @@ private:
     return sizeof(*this);
   }
 
+  static event_avg_counter g_evt_avg_dbtuple_stable_version_spins;
+  static event_avg_counter g_evt_avg_dbtuple_lock_acquire_spins;
+  static event_avg_counter g_evt_avg_dbtuple_read_retries;
+
 public:
 
   inline void
   prefetch() const
   {
-#ifdef dbtuple_PREFETCH
+#ifdef TUPLE_PREFETCH
     prefetch_bytes(this, base_size() + alloc_size);
 #endif
   }
@@ -209,14 +188,23 @@ public:
   inline version_t
   lock()
   {
+#ifdef ENABLE_EVENT_COUNTERS
+    unsigned long nspins = 0;
+#endif
     version_t v = hdr;
     while (IsLocked(v) ||
            !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
       nop_pause();
       v = hdr;
+#ifdef ENABLE_EVENT_COUNTERS
+      ++nspins;
+#endif
     }
     COMPILER_MEMORY_FENCE;
     INVARIANT(IsLocked(hdr));
+#ifdef ENABLE_EVENT_COUNTERS
+    g_evt_avg_dbtuple_lock_acquire_spins.offer(nspins);
+#endif
     return hdr;
   }
 
@@ -286,41 +274,6 @@ public:
     return v & HDR_ENQUEUED_MASK;
   }
 
-#ifdef dbtuple_QUEUE_TRACKING
-  inline void
-  set_enqueued(bool enqueued, QueueType type)
-  {
-    INVARIANT(type != QUEUE_TYPE_NONE);
-    INVARIANT(is_locked());
-    INVARIANT(!is_deleting());
-    if (enqueued) {
-      INVARIANT(!is_enqueued());
-      hdr |= HDR_ENQUEUED_MASK;
-    } else {
-      // can only dequeue off of same queue type
-      INVARIANT(type == last_queue_type);
-      INVARIANT(is_enqueued());
-      hdr &= ~HDR_ENQUEUED_MASK;
-    }
-    last_queue_type = type;
-    op_hist.push_back(op_hist_rec(enqueued, type, coreid::core_id()));
-  }
-#else
-  inline void
-  set_enqueued(bool enqueued, QueueType type)
-  {
-    INVARIANT(is_locked());
-    INVARIANT(!is_deleting());
-    if (enqueued) {
-      INVARIANT(!is_enqueued());
-      hdr |= HDR_ENQUEUED_MASK;
-    } else {
-      INVARIANT(is_enqueued());
-      hdr &= ~HDR_ENQUEUED_MASK;
-    }
-  }
-#endif
-
   inline bool
   is_latest() const
   {
@@ -353,11 +306,20 @@ public:
   stable_version() const
   {
     version_t v = hdr;
+#ifdef ENABLE_EVENT_COUNTERS
+    unsigned long nspins = 0;
+#endif
     while (IsLocked(v)) {
       nop_pause();
       v = hdr;
+#ifdef ENABLE_EVENT_COUNTERS
+      ++nspins;
+#endif
     }
     COMPILER_MEMORY_FENCE;
+#ifdef ENABLE_EVENT_COUNTERS
+    g_evt_avg_dbtuple_stable_version_spins.offer(nspins);
+#endif
     return v;
   }
 
@@ -457,10 +419,26 @@ private:
     return version <= t;
   }
 
+#ifdef ENABLE_EVENT_COUNTERS
+  struct scoped_recorder {
+    scoped_recorder(unsigned long &n) : n(&n) {}
+    ~scoped_recorder()
+    {
+      g_evt_avg_dbtuple_read_retries.offer(*n);
+    }
+  private:
+    unsigned long *n;
+  };
+#endif
+
   bool
   record_at(tid_t t, tid_t &start_t, string_type &r, size_t max_len,
             bool require_latest) const
   {
+#ifdef ENABLE_EVENT_COUNTERS
+    unsigned long nretries = 0;
+    scoped_recorder rec(nretries);
+#endif
   retry:
     const version_t v = stable_version();
     const struct dbtuple *p = get_next(v);
@@ -472,8 +450,12 @@ private:
       const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
       r.assign(get_value_start(v), read_sz);
     }
-    if (unlikely(!check_version(v)))
+    if (unlikely(!check_version(v))) {
+#ifdef ENABLE_EVENT_COUNTERS
+      ++nretries;
+#endif
       goto retry;
+    }
     if (found)
       return true;
     if (p)
@@ -502,6 +484,8 @@ private:
   static event_counter g_evt_dbtuple_bytes_allocated;
   static event_counter g_evt_dbtuple_bytes_freed;
   static event_counter g_evt_dbtuple_spills;
+  static event_counter g_evt_dbtuple_inplace_buf_insufficient;
+  static event_counter g_evt_dbtuple_inplace_buf_insufficient_on_spill;
   static event_avg_counter g_evt_avg_record_spill_len;
 
 public:
@@ -603,6 +587,7 @@ public:
       dbtuple * const rep = alloc(t, r, sz, this, true);
       INVARIANT(rep->is_latest());
       set_latest(false);
+      ++g_evt_dbtuple_inplace_buf_insufficient;
       return write_record_ret(false, rep);
     }
 
@@ -625,6 +610,7 @@ public:
     dbtuple * const rep = alloc(t, r, sz, this, true);
     INVARIANT(rep->is_latest());
     set_latest(false);
+    ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
     return write_record_ret(true, rep);
   }
 
@@ -705,9 +691,7 @@ public:
   VersionInfoStr(version_t v);
 
 }
-#ifndef dbtuple_QUEUE_TRACKING
 PACKED
-#endif
 ;
 
-#endif /* _NDB_dbtuple_H_ */
+#endif /* _NDB_TUPLE_H_ */

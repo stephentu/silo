@@ -7,11 +7,7 @@
 using namespace std;
 using namespace util;
 
-
-static event_counter evt_local_cleanup_reschedules("local_cleanup_reschedules");
 static event_counter evt_local_chain_cleanups("local_chain_cleanups");
-static event_counter evt_try_delete_revivals("try_delete_revivals");
-static event_counter evt_try_delete_reschedules("try_delete_reschedules");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
 static inline bool
@@ -105,7 +101,8 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
     // latest version is a deleted entry, so try to delete
     // from the tree
     const uint64_t v = EpochId(tuple->version);
-    if (g_reads_finished_epoch < v || chain_contains_enqueued(tuple)) {
+    INVARIANT(!chain_contains_enqueued(tuple));
+    if (g_reads_finished_epoch < v) {
       ret = true;
     } else {
       btree::value_type removed = 0;
@@ -118,19 +115,9 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
   } else {
     ret = tuple->get_next();
   }
-  if (ret)
-    ++evt_local_cleanup_reschedules;
+
   return ret;
 }
-
-#ifdef TUPLE_QUEUE_TRACKING
-static ostream &
-operator<<(ostream &o, const dbtuple::op_hist_rec &h)
-{
-  o << "[enq=" << h.enqueued << ", type=" << h.type << ", tid=" << h.tid << "]";
-  return o;
-}
-#endif
 
 bool
 transaction_proto2_static::InitEpochScheme()
@@ -262,13 +249,6 @@ txn_walker_loop::run()
       bool include_kmin = true;
       while (!q.empty()) {
       descend:
-
-        //cerr << "on descend: " << endl
-        //     << "  q.size(): " << q.size() << endl
-        //     << "  s: " << hexify(s) << endl
-        //     << "  depth: " << depth << endl
-        //     ;
-
         const btree::key_slice kmin =
           host_endian_trfm<btree::key_slice>()(
               *reinterpret_cast<const btree::key_slice *>(
@@ -289,15 +269,6 @@ txn_walker_loop::run()
           if (++nnodes == nodesperrun)
             goto recalc;
         process:
-          //cerr << "processing node: " << hexify(cur) << endl
-          //     << "  prefix: " << hexify(s) << endl
-          //     << "  prefix_size: " << s.size() << endl
-          //     << "  kmin: " << kmin << endl
-          //     << "  include_kmin: " << include_kmin << endl
-          //     << "  depth: " << depth << endl
-          //     << "  q.size(): " << q.size() << endl
-          //     ;
-
           INVARIANT(depth == q.size());
 
           const uint64_t version = cur->stable_version();
@@ -336,10 +307,6 @@ txn_walker_loop::run()
               s.resize(8 * q.size() + klen);
               NDB_MEMCPY((char *) s.data() + 8 * q.size(), values[i].keyslice(), klen);
             }
-
-            //cerr << "klen: " << klen << endl;
-            //cerr << "values[i].key: " << values[i].key << endl;
-            //cerr << "s0: " << hexify(s) << endl;
             transaction_proto2_static::try_dbtuple_cleanup(btr, s, tuple);
           }
 
@@ -381,11 +348,9 @@ txn_walker_loop::run()
 
         // finished this layer
         include_kmin = false;
-        //cout << "finished layer at depth: " << q.size() << endl;
         depth--;
       }
 
-    //cerr << "full tree scan" << endl;
     s.clear();
 
   } // end RCU region

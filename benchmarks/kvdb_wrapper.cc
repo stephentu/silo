@@ -61,7 +61,7 @@ struct kvdb_record {
   inline void
   prefetch() const
   {
-#ifdef LOGICAL_NODE_PREFETCH
+#ifdef TUPLE_PREFETCH
     prefetch_bytes(this, sizeof(*this) + size());
 #endif
   }
@@ -253,7 +253,7 @@ struct kvdb_record {
   inline void
   prefetch() const
   {
-#ifdef LOGICAL_NODE_PREFETCH
+#ifdef TUPLE_PREFETCH
     prefetch_bytes(this, sizeof(*this) + size);
 #endif
   }
