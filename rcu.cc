@@ -67,7 +67,7 @@ rcu::unregister_sync(pthread_t p)
 
 #ifdef CHECK_INVARIANTS
   const epoch_t local_epoch = s->local_epoch;
-  const epoch_t local_cleaning_epoch = s->local_epoch - 1;
+  //const epoch_t local_cleaning_epoch = s->local_epoch - 1;
   const epoch_t my_cleaning_epoch = cleaning_epoch;
   const epoch_t my_global_epoch = global_epoch;
   INVARIANT(my_global_epoch == local_epoch ||
@@ -75,12 +75,12 @@ rcu::unregister_sync(pthread_t p)
   INVARIANT(my_global_epoch == (my_cleaning_epoch + 1) ||
             my_global_epoch == (my_cleaning_epoch + 2));
   INVARIANT(my_cleaning_epoch != local_epoch);
-  if (local_cleaning_epoch != my_cleaning_epoch) {
-    cerr << "my_cleaning_epoch: " << my_cleaning_epoch << endl;
-    cerr << "local_epoch: " << local_epoch << endl;
-    cerr << "local_cleaning_epoch: " << local_cleaning_epoch << endl;
-    cerr << "my_global_epoch: " << my_global_epoch << endl;
-  }
+  //if (local_cleaning_epoch != my_cleaning_epoch) {
+  //  cerr << "my_cleaning_epoch: " << my_cleaning_epoch << endl;
+  //  cerr << "local_epoch: " << local_epoch << endl;
+  //  cerr << "local_cleaning_epoch: " << local_cleaning_epoch << endl;
+  //  cerr << "my_global_epoch: " << my_global_epoch << endl;
+  //}
   INVARIANT(cleaning_epoch == my_cleaning_epoch);
   global_queues[0].sanity_check();
   global_queues[1].sanity_check();
