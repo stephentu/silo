@@ -56,28 +56,27 @@ private:
   static const version_t HDR_DELETING_SHIFT = 2;
   static const version_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
 
-  // enqueued is currently un-used
-  static const version_t HDR_ENQUEUED_SHIFT = 3;
-  static const version_t HDR_ENQUEUED_MASK = 0x1 << HDR_ENQUEUED_SHIFT;
+  static const version_t HDR_WRITE_INTENT_SHIFT = 3;
+  static const version_t HDR_WRITE_INTENT_MASK = 0x1 << HDR_WRITE_INTENT_SHIFT;
 
-  static const version_t HDR_LATEST_SHIFT = 4;
+  static const version_t HDR_MODIFYING_SHIFT = 4;
+  static const version_t HDR_MODIFYING_MASK = 0x1 << HDR_MODIFYING_SHIFT;
+
+  static const version_t HDR_LATEST_SHIFT = 5;
   static const version_t HDR_LATEST_MASK = 0x1 << HDR_LATEST_SHIFT;
 
-  static const version_t HDR_VERSION_SHIFT = 5;
+  static const version_t HDR_VERSION_SHIFT = 6;
   static const version_t HDR_VERSION_MASK = ((version_t)-1) << HDR_VERSION_SHIFT;
 
 public:
 
   // NB(stephentu): ABA problem happens after some multiple of
-  // 2^(NBits(version_t)-5) concurrent modifications- somewhat low probability
+  // 2^(NBits(version_t)-6) concurrent modifications- somewhat low probability
   // event, so we let it happen
   //
-  // constraints:
-  //   * enqueued => !deleted
-  //   * deleted  => !enqueued
-  //
-  // [ locked |  type  | deleted | enqueued | latest | version ]
-  // [  0..1  |  1..2  |  2..3   |   3..4   |  4..5  |  5..32  ]
+  // <-- low bits
+  // [ locked |  type  | deleting | write_intent | modifying | latest | version ]
+  // [  0..1  |  1..2  |   2..3   |    3..4      |   4..5    |  5..6  |  6..32  ]
   volatile version_t hdr;
 
   // uninterpreted TID
@@ -119,6 +118,7 @@ private:
     // each logical node starts with one "deleted" entry at MIN_TID
     // (this is indicated by size = 0)
     INVARIANT(((char *)this) + sizeof(*this) == (char *) &d[0]);
+    INVARIANT(is_latest());
     if (do_big_type)
       d->big.next = 0;
     ++g_evt_dbtuple_creates;
@@ -137,6 +137,7 @@ private:
       alloc_size(CheckBounds(alloc_size))
   {
     INVARIANT(size <= alloc_size);
+    INVARIANT(set_latest == is_latest());
     d->big.next = next;
     NDB_MEMCPY(&d->big.value_start[0], r, size);
     ++g_evt_dbtuple_creates;
@@ -186,14 +187,17 @@ public:
   }
 
   inline version_t
-  lock()
+  lock(bool write_intent)
   {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nspins = 0;
 #endif
     version_t v = hdr;
+    const version_t lockmask = write_intent ?
+      (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) :
+      (HDR_LOCKED_MASK);
     while (IsLocked(v) ||
-           !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
+           !__sync_bool_compare_and_swap(&hdr, v, v | lockmask)) {
       nop_pause();
       v = hdr;
 #ifdef ENABLE_EVENT_COUNTERS
@@ -202,6 +206,8 @@ public:
     }
     COMPILER_MEMORY_FENCE;
     INVARIANT(IsLocked(hdr));
+    INVARIANT(!write_intent || IsWriteIntent(hdr));
+    INVARIANT(!IsModifying(hdr));
 #ifdef ENABLE_EVENT_COUNTERS
     g_evt_avg_dbtuple_lock_acquire_spins.offer(nspins);
 #endif
@@ -212,12 +218,23 @@ public:
   unlock()
   {
     version_t v = hdr;
+    bool newv = false;
     INVARIANT(IsLocked(v));
-    const version_t n = Version(v);
-    v &= ~HDR_VERSION_MASK;
-    v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
-    v &= ~HDR_LOCKED_MASK;
+    if (IsModifying(v) || IsWriteIntent(v)) {
+      newv = true;
+      const version_t n = Version(v);
+      v &= ~HDR_VERSION_MASK;
+      v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
+    }
+    // clear locked + modifying bits
+    v &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK | HDR_WRITE_INTENT_MASK);
+    if (newv) {
+      INVARIANT(!reader_check_version(v));
+      INVARIANT(!writer_check_version(v));
+    }
     INVARIANT(!IsLocked(v));
+    INVARIANT(!IsModifying(v));
+    INVARIANT(!IsWriteIntent(v));
     COMPILER_MEMORY_FENCE;
     hdr = v;
   }
@@ -257,21 +274,44 @@ public:
   {
     // the lock on the latest version guards non-latest versions
     INVARIANT(!is_latest() || is_locked());
-    INVARIANT(!is_enqueued());
     INVARIANT(!is_deleting());
     hdr |= HDR_DELETING_MASK;
   }
 
   inline bool
-  is_enqueued() const
+  is_modifying() const
   {
-    return IsEnqueued(hdr);
+    return IsModifying(hdr);
+  }
+
+  inline void
+  mark_modifying()
+  {
+    version_t v = hdr;
+    INVARIANT(IsLocked(v));
+    INVARIANT(!IsModifying(v));
+    v |= HDR_MODIFYING_MASK;
+    COMPILER_MEMORY_FENCE; // XXX: is this fence necessary?
+    hdr = v;
+    COMPILER_MEMORY_FENCE;
   }
 
   static inline bool
-  IsEnqueued(version_t v)
+  IsModifying(version_t v)
   {
-    return v & HDR_ENQUEUED_MASK;
+    return v & HDR_MODIFYING_MASK;
+  }
+
+  inline bool
+  is_write_intent() const
+  {
+    return IsWriteIntent(hdr);
+  }
+
+  static inline bool
+  IsWriteIntent(version_t v)
+  {
+    return v & HDR_WRITE_INTENT_MASK;
   }
 
   inline bool
@@ -287,13 +327,11 @@ public:
   }
 
   inline void
-  set_latest(bool latest)
+  clear_latest()
   {
     INVARIANT(is_locked());
-    if (latest)
-      hdr |= HDR_LATEST_MASK;
-    else
-      hdr &= ~HDR_LATEST_MASK;
+    INVARIANT(is_latest());
+    hdr &= ~HDR_LATEST_MASK;
   }
 
   static inline version_t
@@ -303,13 +341,14 @@ public:
   }
 
   inline version_t
-  stable_version() const
+  reader_stable_version(bool allow_write_intent) const
   {
     version_t v = hdr;
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nspins = 0;
 #endif
-    while (IsLocked(v)) {
+    while (IsModifying(v) ||
+           (!allow_write_intent && IsWriteIntent(v))) {
       nop_pause();
       v = hdr;
 #ifdef ENABLE_EVENT_COUNTERS
@@ -327,16 +366,19 @@ public:
    * returns true if succeeded, false otherwise
    */
   inline bool
-  try_stable_version(version_t &v, unsigned int spins) const
+  try_writer_stable_version(version_t &v, unsigned int spins) const
   {
     v = hdr;
-    while (IsLocked(v) && spins) {
+    while (IsWriteIntent(v) && spins--) {
+      INVARIANT(IsLocked(v));
       nop_pause();
       v = hdr;
-      spins--;
     }
+    const bool ret = !IsWriteIntent(v);
     COMPILER_MEMORY_FENCE;
-    return !IsLocked(v);
+    INVARIANT(ret || IsLocked(v));
+    INVARIANT(!ret || !IsModifying(v));
+    return ret;
   }
 
   inline version_t
@@ -346,7 +388,19 @@ public:
   }
 
   inline bool
-  check_version(version_t version) const
+  reader_check_version(version_t version) const
+  {
+    COMPILER_MEMORY_FENCE;
+    // are the versions the same, modulo the
+    // {locked, deleting, write_intent, latest} bits?
+    const version_t MODULO_BITS =
+      (HDR_LOCKED_MASK | HDR_DELETING_MASK |
+       HDR_WRITE_INTENT_MASK | HDR_LATEST_MASK);
+    return (hdr & ~MODULO_BITS) == (version & ~MODULO_BITS);
+  }
+
+  inline bool
+  writer_check_version(version_t version) const
   {
     COMPILER_MEMORY_FENCE;
     return hdr == version;
@@ -432,15 +486,16 @@ private:
 #endif
 
   bool
-  record_at(tid_t t, tid_t &start_t, string_type &r, size_t max_len,
-            bool require_latest) const
+  record_at(tid_t t, tid_t &start_t, string_type &r,
+            size_t max_len, bool require_latest,
+            bool allow_write_intent) const
   {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
     scoped_recorder rec(nretries);
 #endif
   retry:
-    const version_t v = stable_version();
+    const version_t v = reader_stable_version(allow_write_intent);
     const struct dbtuple *p = get_next(v);
     const bool found = is_not_behind(t);
     if (found) {
@@ -450,7 +505,7 @@ private:
       const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
       r.assign(get_value_start(v), read_sz);
     }
-    if (unlikely(!check_version(v))) {
+    if (unlikely(!reader_check_version(v))) {
 #ifdef ENABLE_EVENT_COUNTERS
       ++nretries;
 #endif
@@ -459,7 +514,7 @@ private:
     if (found)
       return true;
     if (p)
-      return p->record_at(t, start_t, r, max_len, false);
+      return p->record_at(t, start_t, r, max_len, false, allow_write_intent);
     // NB(stephentu): if we reach the end of a chain then we assume that
     // the record exists as a deleted record.
     //
@@ -500,10 +555,11 @@ public:
    */
   inline bool
   stable_read(tid_t t, tid_t &start_t, string_type &r,
+              bool allow_write_intent,
               size_t max_len = string_type::npos) const
   {
     INVARIANT(max_len > 0); // otherwise something will probably break
-    return record_at(t, start_t, r, max_len, true);
+    return record_at(t, start_t, r, max_len, true, allow_write_intent);
   }
 
   inline bool
@@ -516,13 +572,15 @@ public:
   stable_is_latest_version(tid_t t) const
   {
     version_t v = 0;
-    if (!try_stable_version(v, 16))
+    if (!try_writer_stable_version(v, 16))
       return false;
     // now v is a stable version
+    INVARIANT(!IsWriteIntent(v));
+    INVARIANT(!IsModifying(v));
     const bool ret = IsLatest(v) && is_not_behind(t);
     // only check_version() if the answer would be true- otherwise,
     // no point in doing a version check
-    if (ret && check_version(v))
+    if (ret && writer_check_version(v))
       return true;
     else
       // no point in retrying, since we know it will fail (since we had a
@@ -540,10 +598,12 @@ public:
   stable_latest_value_is_nil() const
   {
     version_t v = 0;
-    if (!try_stable_version(v, 16))
+    if (!try_writer_stable_version(v, 16))
       return false;
+    INVARIANT(!IsWriteIntent(v));
+    INVARIANT(!IsModifying(v));
     const bool ret = IsLatest(v) && size == 0;
-    if (ret && check_version(v))
+    if (ret && writer_check_version(v))
       return true;
     else
       return false;
@@ -564,6 +624,8 @@ public:
   {
     INVARIANT(is_locked());
     INVARIANT(is_latest());
+    INVARIANT(is_write_intent());
+    INVARIANT(!is_deleting());
 
     const version_t v = unstable_version();
 
@@ -576,6 +638,7 @@ public:
 
       if (likely(sz <= alloc_size)) {
         // directly update in place
+        mark_modifying();
         version = t;
         size = sz;
         NDB_MEMCPY(get_value_start(v), r, sz);
@@ -586,7 +649,7 @@ public:
       // so that cleanup is easier
       dbtuple * const rep = alloc(t, r, sz, this, true);
       INVARIANT(rep->is_latest());
-      set_latest(false);
+      clear_latest();
       ++g_evt_dbtuple_inplace_buf_insufficient;
       return write_record_ret(false, rep);
     }
@@ -600,6 +663,7 @@ public:
     if (IsBigType(v) && sz <= alloc_size) {
       dbtuple * const spill = alloc(version, (const_record_type) vstart, size, d->big.next, false);
       INVARIANT(!spill->is_latest());
+      mark_modifying();
       set_next(spill);
       version = t;
       size = sz;
@@ -609,7 +673,7 @@ public:
 
     dbtuple * const rep = alloc(t, r, sz, this, true);
     INVARIANT(rep->is_latest());
-    set_latest(false);
+    clear_latest();
     ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
     return write_record_ret(true, rep);
   }
@@ -660,6 +724,7 @@ public:
     dbtuple * const n = (dbtuple *) p;
     INVARIANT(n->is_deleting());
     INVARIANT(!n->is_locked());
+    INVARIANT(!n->is_modifying());
     n->~dbtuple();
     free(n);
   }
@@ -679,7 +744,7 @@ public:
     if (unlikely(!n))
       return;
 #ifdef CHECK_INVARIANTS
-    n->lock();
+    n->lock(false);
     n->mark_deleting();
     n->unlock();
 #endif

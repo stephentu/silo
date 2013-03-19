@@ -10,22 +10,11 @@ using namespace util;
 static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
-static inline bool
-chain_contains_enqueued(const dbtuple *p)
-{
-  const dbtuple *cur = p;
-  while (cur) {
-    if (cur->is_enqueued())
-      return true;
-    cur = cur->get_next();
-  }
-  return false;
-}
-
 void
 transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
 {
   // try to clean up the chain
+  INVARIANT(ln->is_locked());
   INVARIANT(ln->is_latest());
   struct dbtuple *p = ln, *pprev = 0;
   const bool has_chain = ln->get_next();
@@ -41,21 +30,9 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
     p = p->get_next();
   }
   if (p) {
-    INVARIANT(pprev);
-    // can only GC a continous chain of not-enqueued.
-    dbtuple *last_enq = NULL, *cur = p;
-    while (cur) {
-      if (cur->is_enqueued())
-        last_enq = cur;
-      cur = cur->get_next();
-    }
-    p = last_enq ? last_enq->get_next() : p;
-  }
-  if (p) {
     INVARIANT(p != ln);
     INVARIANT(pprev);
     INVARIANT(!p->is_latest());
-    INVARIANT(!chain_contains_enqueued(p));
     pprev->set_next(NULL);
     p->gc_chain();
   }
@@ -89,10 +66,10 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
     return true;
 
   bool ret = false;
-  lock_guard<dbtuple> lock(tuple);
+  lock_guard<dbtuple> lock(tuple, false); // not for write (just for cleanup)
 
   if (!tuple->is_latest())
-    // was replaced, so let the newer handlers do the work
+    // was replaced, so get it the next time around
     return false;
 
   do_dbtuple_chain_cleanup(tuple);
@@ -101,7 +78,6 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
     // latest version is a deleted entry, so try to delete
     // from the tree
     const uint64_t v = EpochId(tuple->version);
-    INVARIANT(!chain_contains_enqueued(tuple));
     if (g_reads_finished_epoch < v) {
       ret = true;
     } else {
@@ -109,7 +85,7 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
       bool did_remove = btr->remove(varkey(key), &removed);
       if (!did_remove) INVARIANT(false);
       INVARIANT(removed == (btree::value_type) tuple);
-      dbtuple::release(tuple);
+      dbtuple::release(tuple); // release() marks deleted
       ++evt_try_delete_unlinks;
     }
   } else {

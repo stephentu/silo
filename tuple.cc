@@ -24,9 +24,10 @@ event_avg_counter dbtuple::g_evt_avg_record_spill_len("avg_record_spill_len");
 
 dbtuple::~dbtuple()
 {
-  INVARIANT(is_deleting());
-  INVARIANT(!is_enqueued());
   INVARIANT(!is_locked());
+  INVARIANT(is_deleting());
+  INVARIANT(!is_write_intent());
+  INVARIANT(!is_modifying());
 
   VERBOSE(cerr << "dbtuple: " << hexify(intptr_t(this)) << " is being deleted" << endl);
 
@@ -36,7 +37,6 @@ dbtuple::~dbtuple()
   struct dbtuple *cur = get_next();
   while (cur) {
     struct dbtuple *tmp = cur->get_next();
-    INVARIANT(!cur->is_enqueued());
     cur->clear_next(); // so cur's dtor doesn't attempt to double free
     release_no_rcu(cur); // just a wrapper for ~dbtuple() + free()
     cur = tmp;
@@ -52,7 +52,6 @@ dbtuple::gc_chain()
 {
   INVARIANT(rcu::in_rcu_region());
   INVARIANT(!is_latest());
-  INVARIANT(!is_enqueued());
   release(this); // ~dbtuple() takes care of all reachable ptrs
 }
 
@@ -64,7 +63,8 @@ dbtuple::VersionInfoStr(version_t v)
   buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
   buf << (IsBigType(v) ? "BIG" : "SMALL") << " | ";
   buf << (IsDeleting(v) ? "DEL" : "-") << " | ";
-  buf << (IsEnqueued(v) ? "ENQ" : "-") << " | ";
+  buf << (IsWriteIntent(v) ? "WR" : "-") << " | ";
+  buf << (IsModifying(v) ? "MOD" : "-") << " | ";
   buf << (IsLatest(v) ? "LATEST" : "-") << " | ";
   buf << Version(v);
   buf << "]";

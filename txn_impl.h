@@ -204,14 +204,14 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           dbtuples.emplace_back(
               (dbtuple *) v,
               dbtuple_info(outer_it->first, it->first, false, it->second));
-          // mark that we hold lock in read set
+          // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
             outer_it->second.read_set.find((const dbtuple *) v);
           if (read_it != outer_it->second.read_set.end()) {
             INVARIANT(!read_it->second.holds_lock);
             read_it->second.holds_lock = true;
           }
-          // mark that we hold lock in absent set
+          // mark that we (will) hold lock in absent set
           typename absent_set_map::iterator absent_it =
             outer_it->second.absent_set.find(it->first);
           if (absent_it != outer_it->second.absent_set.end()) {
@@ -221,6 +221,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         } else {
           dbtuple *ln = dbtuple::alloc_first(
               !outer_it->first->is_mostly_append(), it->second.size());
+          INVARIANT(ln->is_latest());
           // XXX: underlying btree api should return the existing value if
           // insert fails- this would allow us to avoid having to do another search
           std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
@@ -249,14 +250,14 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           }
           dbtuples.emplace_back(
               ln, dbtuple_info(outer_it->first, it->first, false, it->second));
-          // mark that we hold lock in read set
+          // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
             outer_it->second.read_set.find(ln);
           if (read_it != outer_it->second.read_set.end()) {
             INVARIANT(!read_it->second.holds_lock);
             read_it->second.holds_lock = true;
           }
-          // mark that we hold lock in absent set
+          // mark that we (will) hold lock in absent set
           typename absent_set_map::iterator absent_it =
             outer_it->second.absent_set.find(it->first);
           if (absent_it != outer_it->second.absent_set.end()) {
@@ -278,7 +279,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       typename dbtuple_vec::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {
         VERBOSE(cerr << "locking node 0x" << util::hexify(intptr_t(it->first)) << endl);
-        const dbtuple::version_t v = it->first->lock();
+        const dbtuple::version_t v = it->first->lock(true); // lock for write
+        INVARIANT(dbtuple::IsLatest(v) == it->first->is_latest());
         it->second.locked = true; // we locked the node
         if (unlikely(dbtuple::IsDeleting(v) ||
                      !dbtuple::IsLatest(v) ||
@@ -401,7 +403,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         const dbtuple::write_record_ret ret = it->first->write_record_at(
             cast(), commit_tid.second,
             (const record_type) it->second.r.data(), it->second.r.size());
-        lock_guard<dbtuple> guard(ret.second);
+        lock_guard<dbtuple> guard(ret.second, true);
         if (unlikely(ret.second)) {
           // need to unlink it->first from underlying btree, replacing
           // with ret.second (atomically)
@@ -440,6 +442,8 @@ do_abort:
   for (typename dbtuple_vec::iterator it = dbtuples.begin();
        it != dbtuples.end(); ++it)
     if (it->second.locked)
+      // XXX: potential optimization: on unlock() for abort, we don't
+      // technically need to change the version number
       it->first->unlock();
   state = TXN_ABRT;
   if (commit_tid.first)

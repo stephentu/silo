@@ -296,6 +296,9 @@ public:
       typename dbtuple_vec::const_iterator it_end = write_nodes.end();
       for (; it != it_end; ++it) {
         INVARIANT(it->first->is_locked());
+        INVARIANT(!it->first->is_deleting());
+        INVARIANT(it->first->is_write_intent());
+        INVARIANT(!it->first->is_modifying());
         INVARIANT(it->first->is_latest());
         const tid_t t = it->first->version;
         // XXX(stephentu): we are overly conservative for now- technically this
@@ -321,6 +324,7 @@ public:
   on_dbtuple_spill(txn_btree<transaction_proto2> *btr, const string_type &key, dbtuple *ln)
   {
     INVARIANT(ln->is_locked());
+    INVARIANT(ln->is_write_intent());
     INVARIANT(ln->is_latest());
     INVARIANT(rcu::in_rcu_region());
     do_dbtuple_chain_cleanup(ln);

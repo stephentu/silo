@@ -206,7 +206,8 @@ private:
     lock()
     {
       uint64_t v = hdr;
-      while (IsLocked(v) || !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
+      while (IsLocked(v) ||
+             !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
         nop_pause();
         v = hdr;
       }
@@ -214,8 +215,6 @@ private:
       lock_owner = pthread_self();
 #endif
       COMPILER_MEMORY_FENCE;
-      //std::cerr << "0x" << util::hexify(this) << ": lock acquired: "
-      //          << VersionInfoStr(v | HDR_LOCKED_MASK) << std::endl;
     }
 
     inline void
@@ -227,7 +226,7 @@ private:
       INVARIANT(is_lock_owner());
       if (IsModifying(v) || IsDeleting(v)) {
         newv = true;
-        uint64_t n = Version(v);
+        const uint64_t n = Version(v);
         v &= ~HDR_VERSION_MASK;
         v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
       }
@@ -238,8 +237,6 @@ private:
       INVARIANT(!IsModifying(v));
       COMPILER_MEMORY_FENCE;
       hdr = v;
-      //std::cerr << "0x" << util::hexify(this) << ":lock released: "
-      //          << VersionInfoStr(v) << std::endl;
     }
 
     inline bool
@@ -286,7 +283,7 @@ private:
       INVARIANT(is_lock_owner());
       INVARIANT(!IsModifying(v));
       v |= HDR_MODIFYING_MASK;
-      COMPILER_MEMORY_FENCE;
+      COMPILER_MEMORY_FENCE; // XXX: is this fence necessary?
       hdr = v;
       COMPILER_MEMORY_FENCE;
     }

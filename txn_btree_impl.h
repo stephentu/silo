@@ -66,7 +66,8 @@ txn_btree<Transaction>::search(
     ln->prefetch();
     {
       //IV(ANON_REGION("txn_btree::search:process:extract:", &txn_btree_search_probe3_cg));
-      if (unlikely(!ln->stable_read(snapshot_tid, start_t, v, max_bytes_read))) {
+      const bool is_read_only_txn = t.get_flags() & transaction_base::TXN_FLAG_READ_ONLY;
+      if (unlikely(!ln->stable_read(snapshot_tid, start_t, v, is_read_only_txn, max_bytes_read))) {
         const transaction_base::abort_reason r =
           transaction_base::ABORT_REASON_UNSTABLE_READ;
         t.abort_impl(r);
@@ -174,8 +175,9 @@ txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::invo
       t->consistent_snapshot_tid();
     const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
       snapshot_tid_t.second : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
+    const bool is_read_only_txn = t->get_flags() & transaction_base::TXN_FLAG_READ_ONLY;
     ln->prefetch();
-    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r))) {
+    if (unlikely(!ln->stable_read(snapshot_tid, start_t, r, is_read_only_txn))) {
       const transaction_base::abort_reason r =
         transaction_base::ABORT_REASON_UNSTABLE_READ;
       t->abort_impl(r);
@@ -348,7 +350,7 @@ txn_btree<Transaction>::purge_tree_walker::on_node_success()
 #endif
     if (txn_btree_handler<Transaction>::has_background_task) {
 #ifdef CHECK_INVARIANTS
-      lock_guard<dbtuple> l(ln);
+      lock_guard<dbtuple> l(ln, false);
 #endif
       dbtuple::release(ln);
     } else {
