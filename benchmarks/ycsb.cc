@@ -12,6 +12,7 @@
 #include "../thread.h"
 #include "../util.h"
 #include "../spinbarrier.h"
+#include "../core.h"
 
 #include "bench.h"
 
@@ -255,6 +256,7 @@ protected:
       10000 : db->txn_max_batch_size();
     ALWAYS_ASSERT(batchsize > 0);
     const size_t nkeys = keyend - keystart;
+    ALWAYS_ASSERT(nkeys > 0);
     const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
     for (size_t batchid = 0; batchid < nbatches;) {
       void * const txn = db->new_txn(txn_flags, txn_buf());
@@ -298,9 +300,10 @@ protected:
   make_loaders()
   {
     vector<bench_loader *> ret;
-    if (enable_parallel_loading && nkeys >= nthreads) {
-      const size_t nkeysperthd = nkeys / nthreads;
-      for (size_t i = 0; i < nthreads; i++)
+    const unsigned long ncpus = coreid::num_cpus_online();
+    if (enable_parallel_loading && nkeys >= ncpus) {
+      const size_t nkeysperthd = nkeys / ncpus;
+      for (size_t i = 0; i < ncpus; i++)
         ret.push_back(new ycsb_parallel_usertable_loader(0, db, open_tables, i * nkeysperthd, min((i + 1) * nkeysperthd, nkeys)));
     } else {
       ret.push_back(new ycsb_usertable_loader(0, db, open_tables));
