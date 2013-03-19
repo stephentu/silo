@@ -1141,7 +1141,8 @@ private:
   ssize_t warehouse_id;
 };
 
-static event_counter evt_tpcc_cross_partition_txns("tpcc_cross_partition_txns");
+static event_counter evt_tpcc_cross_partition_new_order_txns("tpcc_cross_partition_new_order_txns");
+static event_counter evt_tpcc_cross_partition_payment_txns("tpcc_cross_partition_payment_txns");
 
 ssize_t
 tpcc_worker::txn_new_order()
@@ -1167,7 +1168,7 @@ tpcc_worker::txn_new_order()
   }
   INVARIANT(!g_disable_xpartition_txn || allLocal);
   if (!allLocal)
-    ++evt_tpcc_cross_partition_txns;
+    ++evt_tpcc_cross_partition_new_order_txns;
 
   // XXX(stephentu): implement rollback
   //
@@ -1523,7 +1524,7 @@ tpcc_worker::txn_payment()
     mlock.multilock();
   }
   if (customerWarehouseID != warehouse_id)
-    ++evt_tpcc_cross_partition_txns;
+    ++evt_tpcc_cross_partition_payment_txns;
   try {
     ssize_t ret = 0;
 
