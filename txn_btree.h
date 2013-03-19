@@ -78,15 +78,16 @@ public:
   txn_btree(size_type value_size_hint = 128,
             bool mostly_append = false)
     : value_size_hint(value_size_hint),
-      mostly_append(mostly_append)
+      mostly_append(mostly_append),
+      been_destructed(false)
   {
     handler.on_construct(&underlying_btree);
   }
 
   ~txn_btree()
   {
-    handler.on_destruct();
-    unsafe_purge(false);
+    if (!been_destructed)
+      unsafe_purge(false);
   }
 
   // either returns false or v is set to not-empty with value
@@ -264,6 +265,10 @@ public:
   /**
    * only call when you are sure there are no concurrent modifications on the
    * tree. is neither threadsafe nor transactional
+   *
+   * Note that when you call unsafe_purge(), this txn_btree becomes
+   * completely invalidated and un-usable. Any further operations
+   * (other than calling the destructor) are undefined
    */
   void unsafe_purge(bool dump_stats = false);
 
@@ -357,6 +362,7 @@ private:
   btree underlying_btree;
   size_type value_size_hint;
   bool mostly_append;
+  bool been_destructed;
   txn_btree_handler<Transaction> handler;
 };
 

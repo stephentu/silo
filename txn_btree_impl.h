@@ -299,6 +299,9 @@ template <template <typename> class Transaction>
 void
 txn_btree<Transaction>::unsafe_purge(bool dump_stats)
 {
+  ALWAYS_ASSERT(!been_destructed);
+  been_destructed = true;
+  handler.on_destruct(); // stop background tasks
   purge_tree_walker w;
   underlying_btree.tree_walk(w);
   underlying_btree.clear();
