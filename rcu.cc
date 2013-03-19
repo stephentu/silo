@@ -279,9 +279,12 @@ rcu::gc_thread_loop(void *p)
   struct timespec t;
   NDB_MEMSET(&t, 0, sizeof(t));
   timer loop_timer;
-  static gc_reaper_thread reaper_loops[NGCReapers];
-  for (unsigned int i = 0; i < NGCReapers; i++)
-    reaper_loops[i].start();
+  // ptrs so we don't have to deal w/ static destructors
+  static gc_reaper_thread *reaper_loops[NGCReapers];
+  for (unsigned int i = 0; i < NGCReapers; i++) {
+    reaper_loops[i] = new gc_reaper_thread;
+    reaper_loops[i]->start();
+  }
   unsigned int rr = 0;
   for (;;) {
 
@@ -320,7 +323,7 @@ rcu::gc_thread_loop(void *p)
           // reap
           px_queue &q = s->local_queues[global_epoch % 2];
           if (!q.empty()) {
-            reaper_loops[rr++ % NGCReapers].reap(q);
+            reaper_loops[rr++ % NGCReapers]->reap(q);
             ++evt_rcu_incomplete_local_reaps;
           }
           s->local_epoch = global_epoch;
@@ -353,7 +356,7 @@ rcu::gc_thread_loop(void *p)
       rcu::px_queue &q = global_queues[new_cleaning_epoch % 2];
       if (!q.empty()) {
         evt_rcu_global_queue_reaps += q.get_ngroups();
-        reaper_loops[rr++ % NGCReapers].reap(q);
+        reaper_loops[rr++ % NGCReapers]->reap(q);
       }
     }
   }
