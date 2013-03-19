@@ -311,8 +311,7 @@ public:
       ret = MakeTid(my_core_id, NumId(ret) + 1, current_epoch);
     }
 
-    // XXX(stephentu): document why we need this memory fence
-    __sync_synchronize();
+    COMPILER_MEMORY_FENCE;
 
     // XXX(stephentu): this txn hasn't actually been commited yet,
     // and could potentially be aborted - but it's ok to increase this #, since
