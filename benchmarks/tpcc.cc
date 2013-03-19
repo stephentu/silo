@@ -1653,7 +1653,7 @@ public:
     return true;
   }
   size_t n;
-  small_unordered_map<uint, bool, 256> s_i_ids;
+  small_unordered_map<uint, bool, 512> s_i_ids;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
@@ -1696,7 +1696,7 @@ tpcc_worker::txn_stock_level()
       tbl_order_line->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c, s_arena.get());
     }
     {
-      small_unordered_map<uint, bool, 256> s_i_ids_distinct;
+      small_unordered_map<uint, bool, 512> s_i_ids_distinct;
       for (auto &p : c.s_i_ids) {
         ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
 

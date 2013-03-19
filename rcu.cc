@@ -335,22 +335,22 @@ rcu::gc_thread_loop(void *p)
       cleaning_epoch = new_cleaning_epoch;
       __sync_synchronize();
 
-      //// reap the new cleaning epoch
-      //for (map<pthread_t, sync *>::iterator it = sync_map.begin();
-      //     it != sync_map.end(); ++it) {
-      //  sync * const s = it->second;
-      //  INVARIANT(s->local_epoch == global_epoch);
-      //  INVARIANT(new_cleaning_epoch != s->local_epoch);
+      // reap the new cleaning epoch
+      for (map<pthread_t, sync *>::iterator it = sync_map.begin();
+           it != sync_map.end(); ++it) {
+        sync * const s = it->second;
+        INVARIANT(s->local_epoch == global_epoch);
+        INVARIANT(new_cleaning_epoch != s->local_epoch);
 
-      //  lock_guard<spinlock> l0(s->local_critical_mutex);
-      //  // need a lock here because a thread-local cleanup could
-      //  // be happening concurrently
-      //  px_queue &q = s->local_queues[new_cleaning_epoch % 2];
-      //  if (!q.empty()) {
-      //    reaper_loops[rr++ % NGCReapers].reap(q);
-      //    ++evt_rcu_loop_reaps;
-      //  }
-      //}
+        lock_guard<spinlock> l0(s->local_critical_mutex);
+        // need a lock here because a thread-local cleanup could
+        // be happening concurrently
+        px_queue &q = s->local_queues[new_cleaning_epoch % 2];
+        if (!q.empty()) {
+          reaper_loops[rr++ % NGCReapers]->reap(q);
+          ++evt_rcu_loop_reaps;
+        }
+      }
 
       // pull the ones from the global queue
       rcu::px_queue &q = global_queues[new_cleaning_epoch % 2];
