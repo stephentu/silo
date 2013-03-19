@@ -152,7 +152,9 @@ struct kvdb_record {
     while (IsLocked(v)) {
       nop_pause();
       v = hdr;
+#ifdef ENABLE_EVENT_COUNTERS
       ++nspins;
+#endif
     }
     COMPILER_MEMORY_FENCE;
 #ifdef ENABLE_EVENT_COUNTERS

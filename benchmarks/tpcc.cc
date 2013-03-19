@@ -1287,7 +1287,7 @@ tpcc_worker::txn_delivery()
       const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
       checker::SanityCheckOOrder(&k_oo, v_oo);
 
-      static_limit_callback<15> c(s_arena.get()); // never more than 15 order_lines per order
+      static_limit_callback<15> c(s_arena.get(), false); // never more than 15 order_lines per order
       const order_line::key k_oo_0(warehouse_id, d, k_no->no_o_id, 0);
       const order_line::key k_oo_1(warehouse_id, d, k_no->no_o_id, numeric_limits<int32_t>::max());
 
@@ -1345,6 +1345,8 @@ tpcc_worker::txn_delivery()
   }
   return 0;
 }
+
+static event_avg_counter evt_avg_cust_name_idx_scan_size("avg_cust_name_idx_scan_size");
 
 ssize_t
 tpcc_worker::txn_payment()
@@ -1419,13 +1421,14 @@ tpcc_worker::txn_payment()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get()); // probably a safe bet for now
+      static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get(), true); // probably a safe bet for now
       tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
       if (c.size() % 2 == 0)
         index--;
+      evt_avg_cust_name_idx_scan_size.offer(c.size());
 
       customer_name_idx::value v_c_idx_temp;
       const customer_name_idx::value *v_c_idx = Decode(c.values[index].second, v_c_idx_temp);
@@ -1518,7 +1521,6 @@ public:
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0_cg)
-static event_avg_counter evt_avg_order_status_oorder_scan_size("avg_order_status_oorder_scan_size");
 
 ssize_t
 tpcc_worker::txn_order_status()
@@ -1560,13 +1562,14 @@ tpcc_worker::txn_order_status()
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
 
-      static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get()); // probably a safe bet for now
+      static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get(), true); // probably a safe bet for now
       tbl_customer_name_idx->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
       INVARIANT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
       if (c.size() % 2 == 0)
         index--;
+      evt_avg_cust_name_idx_scan_size.offer(c.size());
 
       customer_name_idx::value v_c_idx_temp;
       const customer_name_idx::value *v_c_idx = Decode(c.values[index].second, v_c_idx_temp);
@@ -1588,9 +1591,16 @@ tpcc_worker::txn_order_status()
     }
     checker::SanityCheckCustomer(&k_c, &v_c);
 
-    // XXX: store last value from client so we don't have to scan
-    // from the beginning
-    latest_key_callback c_oorder(str());
+    // XXX(stephentu): HACK- we bound the # of elems returned by this scan to
+    // 15- this is because we don't have reverse scans. In an ideal system, a
+    // reverse scan would only need to read 1 btree node. We could simulate a
+    // lookup by only reading the first element- but then we would *always*
+    // read the first order by any customer.  To make this more interesting, we
+    // randomly select which elem to pick within the 1st or 2nd btree nodes.
+    // This is obviously a deviation from TPC-C, but it shouldn't make that
+    // much of a difference in terms of performance numbers (in fact we are
+    // making it worse for us)
+    latest_key_callback c_oorder(str(), (r.next() % 15) + 1);
     const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
     const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
     {
@@ -1598,7 +1608,6 @@ tpcc_worker::txn_order_status()
       tbl_oorder_c_id_idx->scan(txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder, s_arena.get());
     }
     INVARIANT(c_oorder.size());
-    evt_avg_order_status_oorder_scan_size.offer(c_oorder.size());
 
     oorder_c_id_idx::key k_oo_idx_temp;
     const oorder_c_id_idx::key *k_oo_idx = Decode(c_oorder.kstr(), k_oo_idx_temp);

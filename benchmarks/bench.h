@@ -231,7 +231,8 @@ public:
     // see the note in static_limit_callback for why we explicitly
     // copy over regular (ref-counting) assignment
     k->assign(key.data(), key.size());
-    return (limit == -1) || (++n < size_t(limit));
+    ++n;
+    return (limit == -1) || (n < size_t(limit));
   }
 
   inline size_t size() const { return n; }
@@ -252,8 +253,9 @@ private:
 template <size_t N>
 class static_limit_callback : public abstract_ordered_index::scan_callback {
 public:
-  static_limit_callback(str_arena *arena)
-    : n(0), arena(arena)
+  // XXX: push ignore_key into lower layer
+  static_limit_callback(str_arena *arena, bool ignore_key)
+    : n(0), arena(arena), ignore_key(ignore_key)
   {
     _static_assert(N > 0);
   }
@@ -263,11 +265,15 @@ public:
       const std::string &value)
   {
     INVARIANT(n < N);
-    // see note above
-    std::string * const s_px = likely(arena) ? arena->next() : nullptr;
-    INVARIANT(s_px && s_px->empty());
-    s_px->assign(key.data(), key.size());
-    values.emplace_back(*s_px, value);
+    if (ignore_key) {
+      values.emplace_back(std::string(), value);
+    } else {
+      // see note above
+      std::string * const s_px = likely(arena) ? arena->next() : nullptr;
+      INVARIANT(s_px && s_px->empty());
+      s_px->assign(key.data(), key.size());
+      values.emplace_back(*s_px, value);
+    }
     return ++n < N;
   }
 
@@ -283,6 +289,7 @@ public:
 private:
   size_t n;
   str_arena *arena;
+  bool ignore_key;
 };
 
 #endif /* _NDB_BENCH_H_ */
