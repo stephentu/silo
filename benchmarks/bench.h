@@ -16,10 +16,10 @@
 #include "../spinbarrier.h"
 #include "../rcu.h"
 
-extern void ycsb_do_test(abstract_db *db);
-extern void tpcc_do_test(abstract_db *db);
-extern void queue_do_test(abstract_db *db);
-extern void encstress_do_test(abstract_db *db);
+extern void ycsb_do_test(abstract_db *db, int argc, char **argv);
+extern void tpcc_do_test(abstract_db *db, int argc, char **argv);
+extern void queue_do_test(abstract_db *db, int argc, char **argv);
+extern void encstress_do_test(abstract_db *db, int argc, char **argv);
 
 // benchmark global variables
 extern size_t nthreads;

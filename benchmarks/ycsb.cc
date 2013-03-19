@@ -326,7 +326,7 @@ protected:
 };
 
 void
-ycsb_do_test(abstract_db *db)
+ycsb_do_test(abstract_db *db, int argc, char **argv)
 {
   nkeys = size_t(scale_factor * 1000.0);
   ALWAYS_ASSERT(nkeys > 0);

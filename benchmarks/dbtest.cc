@@ -20,15 +20,27 @@
 using namespace std;
 using namespace util;
 
+static vector<string>
+split_ws(const string &s)
+{
+  vector<string> r;
+  istringstream iss(s);
+  copy(istream_iterator<string>(iss),
+       istream_iterator<string>(),
+       back_inserter<vector<string>>(r));
+  return r;
+}
+
 int
 main(int argc, char **argv)
 {
   abstract_db *db = NULL;
-  void (*test_fn)(abstract_db *) = NULL;
+  void (*test_fn)(abstract_db *, int argc, char **argv) = NULL;
   string bench_type = "ycsb";
   string db_type = "ndb-proto2";
   char *curdir = get_current_dir_name();
   string basedir = curdir;
+  string bench_opts;
   free(curdir);
   while (1) {
     static struct option long_options[] =
@@ -43,6 +55,7 @@ main(int argc, char **argv)
       {"basedir"          , required_argument , 0                        , 'B'} ,
       {"txn-flags"        , required_argument , 0                        , 'f'} ,
       {"runtime"          , required_argument , 0                        , 'r'} ,
+      {"bench-opts"       , required_argument , 0                        , 'o'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
@@ -86,6 +99,10 @@ main(int argc, char **argv)
     case 'r':
       runtime = strtoul(optarg, NULL, 10);
       ALWAYS_ASSERT(runtime > 0);
+      break;
+
+    case 'o':
+      bench_opts = optarg;
       break;
 
     case '?':
@@ -142,10 +159,11 @@ main(int argc, char **argv)
     cerr << "  basedir     : " << basedir                 << endl;
     cerr << "  txn-flags   : " << hexify(txn_flags)       << endl;
     cerr << "  runtime     : " << runtime                 << endl;
+
 #ifdef USE_VARINT_ENCODING
-    cerr << "  var-encode  : 1"                           << endl;
+    cerr << "  var-encode  : yes"                         << endl;
 #else
-    cerr << "  var-encode  : 0"                           << endl;
+    cerr << "  var-encode  : no"                          << endl;
 #endif
 
 #ifdef USE_JEMALLOC
@@ -161,10 +179,28 @@ main(int argc, char **argv)
     cerr << "system properties:" << endl;
     cerr << "  btree_internal_node_size: " << btree::InternalNodeSize() << endl;
     cerr << "  btree_leaf_node_size    : " << btree::LeafNodeSize() << endl;
+
+#ifdef TUPLE_PREFETCH
+    cerr << "  tuple_prefetch          : yes" << endl;
+#else
+    cerr << "  tuple_prefetch          : no" << endl;
+#endif
+
+#ifdef BTREE_NODE_PREFETCH
+    cerr << "  btree_node_prefetch     : yes" << endl;
+#else
+    cerr << "  btree_node_prefetch     : no" << endl;
+#endif
+
   }
 
-  test_fn(db);
-
+  vector<string> bench_toks = split_ws(bench_opts);
+  int argc = 1 + bench_toks.size();
+  char *argv[argc];
+  argv[0] = (char *) bench_type.c_str();
+  for (size_t i = 1; i <= bench_toks.size(); i++)
+    argv[i] = (char *) bench_toks[i - 1].c_str();
+  test_fn(db, argc, argv);
   delete db;
   return 0;
 }

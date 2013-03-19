@@ -36,6 +36,13 @@ public:
     COMPILER_MEMORY_FENCE;
   }
 
+  // just for debugging
+  inline bool
+  is_locked() const
+  {
+    return value;
+  }
+
 private:
   volatile uint32_t value;
 };
