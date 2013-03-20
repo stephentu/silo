@@ -333,7 +333,7 @@ public:
     INVARIANT(ln->is_write_intent());
     INVARIANT(ln->is_latest());
     INVARIANT(rcu::in_rcu_region());
-    do_dbtuple_chain_cleanup(ln);
+    //do_dbtuple_chain_cleanup(ln);
   }
 
   inline ALWAYS_INLINE void
