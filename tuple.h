@@ -520,8 +520,18 @@ private:
       if (unlikely(require_latest && !IsLatest(v)))
         return false;
       start_t = version;
-      const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
-      r.assign(get_value_start(v), read_sz);
+      if (start_t == MAX_TID) {
+        // XXX(stephentu): HACK! we use MAX_TID to indicate a tentative
+        // "insert"- the actual latest value is empty.
+        //
+        // since our system is screwed anyways if we ever reach MAX_TID, this
+        // is OK for now, but a real solution should exist at some point
+        start_t = MIN_TID;
+        r.clear();
+      } else {
+        const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
+        r.assign(get_value_start(v), read_sz);
+      }
     }
     if (unlikely(!reader_check_version(v))) {
 #ifdef ENABLE_EVENT_COUNTERS

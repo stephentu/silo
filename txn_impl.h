@@ -231,6 +231,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
               (dbtuple::const_record_type) writerec.r.data(),
               writerec.r.size());
           INVARIANT(tuple->is_latest());
+          INVARIANT(tuple->version == dbtuple::MAX_TID);
           tuple->lock(true);
           // XXX: underlying btree api should return the existing value if
           // insert fails- this would allow us to avoid having to do another search
@@ -437,7 +438,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
                           << " at commit_tid " << g_proto_version_str(commit_tid.second)
                           << std::endl);
         if (it->second.insert) {
-          it->first->mark_modifying(); // not sure if we really need to do this
+          INVARIANT(it->first->version == dbtuple::MAX_TID);
           it->first->version = commit_tid.second;
           INVARIANT(it->first->size == it->second.r.size());
           INVARIANT(memcmp(it->first->get_value_start(), it->second.r.data(), it->first->size) == 0);
@@ -485,10 +486,17 @@ do_abort:
     VERBOSE(cerr << "aborting txn" << endl);
   for (typename dbtuple_vec::iterator it = dbtuples.begin();
        it != dbtuples.end(); ++it)
-    if (it->second.locked)
+    if (it->second.locked) {
+      if (it->second.insert) {
+        INVARIANT(it->first->version == dbtuple::MAX_TID);
+        // clear tuple
+        it->first->version = dbtuple::MIN_TID;
+        it->first->size = 0;
+      }
       // XXX: potential optimization: on unlock() for abort, we don't
       // technically need to change the version number
       it->first->unlock();
+    }
   state = TXN_ABRT;
   if (commit_tid.first)
     cast()->on_tid_finish(commit_tid.second);
