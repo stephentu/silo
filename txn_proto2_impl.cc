@@ -105,7 +105,11 @@ transaction_proto2_static::InitEpochScheme()
 
 transaction_proto2_static::epoch_loop transaction_proto2_static::g_epoch_loop;
 
-static const uint64_t txn_epoch_us = 1000 * 1000; /* 1 s */
+#ifdef CHECK_INVARIANTS
+static const uint64_t txn_epoch_us = 10 * 1000; /* 10 ms */
+#else
+static const uint64_t txn_epoch_us = 1000 * 1000; /* 1 sec */
+#endif
 
 void
 transaction_proto2_static::epoch_loop::run()

@@ -159,10 +159,10 @@ protected:
 
   struct write_record_t {
     write_record_t() {}
-    write_record_t(const string_type &r, bool insert)
-      : r(r), insert(insert) {}
+    write_record_t(const string_type &r, dbtuple *tuple)
+      : r(r), tuple(tuple) {}
     string_type r;
-    bool insert;
+    dbtuple *tuple;
   };
 
   friend std::ostream &
@@ -217,7 +217,7 @@ operator<<(std::ostream &o, const transaction_base::read_record_t &r)
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::write_record_t &r)
 {
-  o << "[r=" << r.r << ", insert=" << r.insert << "]";
+  o << "[r=" << r.r << ", tuple=" << util::hexify(r.tuple) << "]";
   return o;
 }
 
@@ -369,6 +369,36 @@ public:
 
 protected:
   void abort_impl(abort_reason r);
+
+  // precondition: tuple != nullptr
+  void mark_write_tuple(
+      txn_context &ctx, const std::string &key,
+      dbtuple *tuple, bool did_insert);
+
+  // low-level API for txn_btree
+
+  // try to insert a new "tentative" tuple into the underlying
+  // btree associated with the given context.
+  //
+  // if return.first is not null, then this function will mutate
+  // the txn_context such that the node_scan flag is aware of any
+  // mutating changes made to the underlying btree. if return.second
+  // is true, then this txn should abort, because a conflict was
+  // detected w/ the node scan set.
+  //
+  // if return.first is not null, the returned tuple is locked()!
+  // it is the responsibility of the caller to release the lock
+  //
+  // if the return value is null, then this function has no side effects.
+  //
+  // NOTE: !ret.first => !ret.second
+  std::pair< dbtuple *, bool >
+  try_insert_new_tuple(
+      btree &btr,
+      txn_context &ctx,
+      bool expect_mutation,
+      const std::string &key,
+      const std::string &value);
 
 public:
   // expected public overrides

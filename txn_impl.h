@@ -50,6 +50,78 @@ transaction<Protocol, Traits>::abort_impl(abort_reason reason)
   clear();
 }
 
+template <template <typename> class Protocol, typename Traits>
+std::pair< dbtuple *, bool >
+transaction<Protocol, Traits>::try_insert_new_tuple(
+    btree &btr,
+    txn_context &ctx,
+    bool expect_mutation,
+    const std::string &key,
+    const std::string &value)
+{
+  // perf: ~900 tsc/alloc on istc11.csail.mit.edu
+  dbtuple * const tuple = dbtuple::alloc_first(
+      expect_mutation,
+      (dbtuple::const_record_type) value.data(), value.size());
+  INVARIANT(tuple->is_latest());
+  INVARIANT(tuple->version == dbtuple::MAX_TID);
+  tuple->lock(true);
+  // XXX: underlying btree api should return the existing value if
+  // insert fails- this would allow us to avoid having to do another search
+  std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
+  if (unlikely(!btr.insert_if_absent(varkey(key), (btree::value_type) tuple, &insert_info))) {
+    VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(key) << std::endl);
+    tuple->unlock();
+    dbtuple::release_no_rcu(tuple);
+    ++transaction_base::g_evt_dbtuple_write_insert_failed;
+    return std::pair< dbtuple *, bool >(nullptr, false);
+  }
+  VERBOSE(std::cerr << "insert_if_absent suceeded for key: " << util::hexify(key) << std::endl
+                    << "  new dbtuple is " << util::hexify(tuple) << std::endl);
+  if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
+    // update node #s
+    INVARIANT(insert_info.first);
+    typename node_scan_map::iterator nit = ctx.node_scan.find(insert_info.first);
+    if (nit != ctx.node_scan.end()) {
+      if (unlikely(nit->second != insert_info.second)) {
+        abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+        return std::make_pair(tuple, true);
+      }
+      VERBOSE(std::cerr << "bump node=" << util::hexify(nit->first) << " from v=" << (nit->second)
+                        << " -> v=" << (nit->second + 1) << std::endl);
+      // otherwise, bump the version by 1
+      nit->second++; // XXX(stephentu): this doesn't properly handle wrap-around
+      // but we're probably F-ed on a wrap around anyways for now
+      SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
+    }
+  }
+  return std::make_pair(tuple, false);
+}
+
+template <template <typename> class Protocol, typename Traits>
+void
+transaction<Protocol, Traits>::mark_write_tuple(
+    txn_context &ctx, const std::string &key,
+    dbtuple *tuple, bool did_insert)
+{
+  INVARIANT(tuple);
+  // mark that we (will) hold lock in read set
+  typename read_set_map::iterator read_it = ctx.read_set.find(tuple);
+  if (read_it != ctx.read_set.end()) {
+    INVARIANT(!read_it->second.holds_lock);
+    read_it->second.holds_lock = true;
+  }
+  // mark that we (will) hold lock in absent set
+  if (!ctx.absent_set.empty()) {
+    typename absent_set_map::iterator absent_it = ctx.absent_set.find(key);
+    if (absent_it != ctx.absent_set.end()) {
+      INVARIANT(absent_it->second.type == ABSENT_REC_READ);
+      absent_it->second.type = did_insert ? ABSENT_REC_INSERT : ABSENT_REC_WRITE;
+      absent_it->second.tuple = tuple;
+    }
+  }
+}
+
 namespace {
   inline const char *
   transaction_state_to_cstr(transaction_base::txn_state state)
@@ -199,94 +271,46 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       typename write_set_map::iterator it_end = outer_it->second.write_set.end();
       for (; it != it_end; ++it) {
         transaction_base::write_record_t &writerec = it->second;
-        bool try_insert_path = writerec.insert;
-      retry:
-        btree::value_type v = 0;
-        if (!try_insert_path && outer_it->first->underlying_btree.search(varkey(it->first), v)) {
-          VERBOSE(cerr << "key " << util::hexify(it->first) << " : dbtuple 0x" << util::hexify(intptr_t(v)) << endl);
-          const unsigned int idx = dbtuple_keys.size();
-          dbtuple_keys.emplace_back((dbtuple *) v, idx);
-          dbtuple_values.emplace_back(outer_it->first, it->first, false, writerec.r, false);
-          // mark that we (will) hold lock in read set
-          typename read_set_map::iterator read_it =
-            outer_it->second.read_set.find((const dbtuple *) v);
-          if (read_it != outer_it->second.read_set.end()) {
-            INVARIANT(!read_it->second.holds_lock);
-            read_it->second.holds_lock = true;
-          }
-          // mark that we (will) hold lock in absent set
-          if (!outer_it->second.absent_set.empty()) {
-            typename absent_set_map::iterator absent_it =
-              outer_it->second.absent_set.find(it->first);
-            if (absent_it != outer_it->second.absent_set.end()) {
-              INVARIANT(absent_it->second.type == ABSENT_REC_READ);
-              absent_it->second.type = ABSENT_REC_WRITE;
-              absent_it->second.tuple = (const dbtuple *) v;
-            }
-          }
-        } else {
-          if (!try_insert_path)
+        dbtuple *tuple = writerec.tuple;
+        bool did_insert = bool(tuple);
+        bool do_abort = false; // assumed if tuple != null, then
+                               // no abort on this tuple is necessary
+        if (!tuple) {
+        retry:
+          INVARIANT(!did_insert);
+          INVARIANT(!do_abort);
+          // treat as a put()
+          btree::value_type v = 0;
+          if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
+            VERBOSE(std::cerr << "key " << util::hexify(it->first)
+                              << " : dbtuple 0x" << util::hexify(intptr_t(v)) << endl);
+            tuple = reinterpret_cast<dbtuple *>(v);
+          } else {
+            // need to try as an insert()
             ++transaction_base::g_evt_dbtuple_write_search_failed;
-          // perf: ~900 tsc/alloc on istc11.csail.mit.edu
-          dbtuple * const tuple = dbtuple::alloc_first(
+            auto ret = try_insert_new_tuple(
+                outer_it->first->underlying_btree,
+                outer_it->second,
                 !outer_it->first->is_mostly_append(),
-                (dbtuple::const_record_type) writerec.r.data(),
-                writerec.r.size());
-          INVARIANT(tuple->is_latest());
-          INVARIANT(tuple->version == dbtuple::MAX_TID);
-          tuple->lock(true);
-          // XXX: underlying btree api should return the existing value if
-          // insert fails- this would allow us to avoid having to do another search
-          std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
-          if (unlikely(!outer_it->first->underlying_btree.insert_if_absent(
-                          varkey(it->first), (btree::value_type) tuple, &insert_info))) {
-            VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(it->first) << std::endl);
-            tuple->unlock();
-            dbtuple::release_no_rcu(tuple);
-            try_insert_path = false;
-            ++transaction_base::g_evt_dbtuple_write_insert_failed;
-            goto retry;
-          }
-          VERBOSE(std::cerr << "insert_if_absent suceeded for key: " << util::hexify(it->first) << std::endl
-                            << "  new dbtuple is " << util::hexify(tuple) << std::endl);
-          if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
-            // update node #s
-            INVARIANT(insert_info.first);
-            typename node_scan_map::iterator nit = outer_it->second.node_scan.find(insert_info.first);
-            if (nit != outer_it->second.node_scan.end()) {
-              if (unlikely(nit->second != insert_info.second)) {
-                abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
-                goto do_abort;
-              }
-              VERBOSE(cerr << "bump node=" << util::hexify(nit->first) << " from v=" << (nit->second)
-                           << " -> v=" << (nit->second + 1) << endl);
-              // otherwise, bump the version by 1
-              nit->second++; // XXX(stephentu): this doesn't properly handle wrap-around
-                             // but we're probably F-ed on a wrap around anyways for now
-              SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
-            }
-          }
-          const unsigned int idx = dbtuple_keys.size();
-          dbtuple_keys.emplace_back(tuple, idx);
-          dbtuple_values.emplace_back(outer_it->first, it->first, true, writerec.r, true);
-          // mark that we (will) hold lock in read set
-          typename read_set_map::iterator read_it =
-            outer_it->second.read_set.find(tuple);
-          if (read_it != outer_it->second.read_set.end()) {
-            INVARIANT(!read_it->second.holds_lock);
-            read_it->second.holds_lock = true;
-          }
-          // mark that we (will) hold lock in absent set
-          if (!outer_it->second.absent_set.empty()) {
-            typename absent_set_map::iterator absent_it =
-              outer_it->second.absent_set.find(it->first);
-            if (absent_it != outer_it->second.absent_set.end()) {
-              INVARIANT(absent_it->second.type == ABSENT_REC_READ);
-              absent_it->second.type = ABSENT_REC_INSERT;
-              absent_it->second.tuple = tuple;
-            }
+                it->first, writerec.r);
+            tuple = ret.first;
+            if (unlikely(!tuple))
+              // this should be really rare!
+              goto retry;
+            if (unlikely(ret.second))
+              do_abort = true;
+            did_insert = true;
           }
         }
+        INVARIANT(tuple);
+        INVARIANT(!did_insert || tuple->is_locked());
+        INVARIANT(!do_abort || did_insert);
+        const unsigned int idx = dbtuple_keys.size();
+        dbtuple_keys.emplace_back(tuple, idx);
+        dbtuple_values.emplace_back(outer_it->first, it->first, did_insert, writerec.r, did_insert);
+        if (unlikely(do_abort))
+          goto do_abort;
+        mark_write_tuple(outer_it->second, it->first, tuple, did_insert);
       }
     }
   }
