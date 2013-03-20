@@ -33,6 +33,9 @@ template <template <typename> class Protocol, typename Traits>
  * also contains the memory of the value
  */
 struct dbtuple : private util::noncopyable {
+  friend std::ostream &
+  operator<<(std::ostream &o, const dbtuple &tuple);
+
 public:
   // trying to save space by putting constraints
   // on node maximums

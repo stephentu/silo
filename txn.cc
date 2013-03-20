@@ -51,10 +51,14 @@ CLASS_STATIC_COUNTER_IMPL(transaction_base, scopedperf::tsc_ctr, g_txn_commit_pr
 ABORT_REASONS(EVENT_COUNTER_IMPL_X)
 #undef EVENT_COUNTER_IMPL_X
 
-event_counter transaction_base::g_evt_read_logical_deleted_node_search(
-    "read_logical_deleted_node_search");
-event_counter transaction_base::g_evt_read_logical_deleted_node_scan(
-    "read_logical_deleted_node_scan");
+event_counter transaction_base::g_evt_read_logical_deleted_node_search
+    ("read_logical_deleted_node_search");
+event_counter transaction_base::g_evt_read_logical_deleted_node_scan
+    ("read_logical_deleted_node_scan");
+event_counter transaction_base::g_evt_dbtuple_write_search_failed
+    ("dbtuple_write_search_failed");
+event_counter transaction_base::g_evt_dbtuple_write_insert_failed
+    ("dbtuple_write_insert_failed");
 
 //void
 //transaction_base::Test()

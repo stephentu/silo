@@ -85,6 +85,14 @@ public:
       void *txn,
       std::string &&key,
       std::string &&value);
+  virtual const char *
+  insert(void *txn,
+         const std::string &key,
+         const std::string &value);
+  virtual const char *
+  insert(void *txn,
+         std::string &&key,
+         std::string &&value);
   virtual void scan(
       void *txn,
       const std::string &start_key,

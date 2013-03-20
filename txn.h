@@ -157,8 +157,21 @@ protected:
   friend std::ostream &
   operator<<(std::ostream &o, const read_record_t &r);
 
+  struct write_record_t {
+    write_record_t() {}
+    write_record_t(const string_type &r, bool insert)
+      : r(r), insert(insert) {}
+    string_type r;
+    bool insert;
+  };
+
+  friend std::ostream &
+  operator<<(std::ostream &o, const write_record_t &r);
+
   static event_counter g_evt_read_logical_deleted_node_search;
   static event_counter g_evt_read_logical_deleted_node_scan;
+  static event_counter g_evt_dbtuple_write_search_failed;
+  static event_counter g_evt_dbtuple_write_insert_failed;
 
   static event_counter evt_local_search_lookups;
   static event_counter evt_local_search_write_set_hits;
@@ -181,6 +194,13 @@ operator<<(std::ostream &o, const transaction_base::read_record_t &r)
 {
   o << "[tid_read=" << g_proto_version_str(r.t)
     << ", locked=" << r.holds_lock << "]";
+  return o;
+}
+
+inline ALWAYS_INLINE std::ostream &
+operator<<(std::ostream &o, const transaction_base::write_record_t &r)
+{
+  o << "[r=" << r.r << ", insert=" << r.insert << "]";
   return o;
 }
 
@@ -217,13 +237,13 @@ protected:
 #ifdef USE_SMALL_CONTAINER_OPT
   typedef small_unordered_map<const dbtuple *, read_record_t, traits_type::read_set_expected_size> read_set_map;
   typedef small_unordered_map<string_type, bool, traits_type::absent_set_expected_size> absent_set_map;
-  typedef small_unordered_map<string_type, string_type, traits_type::write_set_expected_size> write_set_map;
+  typedef small_unordered_map<string_type, write_record_t, traits_type::write_set_expected_size> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef small_unordered_map<const btree::node_opaque_t *, uint64_t, traits_type::node_scan_expected_size> node_scan_map;
 #else
   typedef std::unordered_map<const dbtuple *, read_record_t> read_set_map;
   typedef std::unordered_map<string_type, bool> absent_set_map;
-  typedef std::unordered_map<string_type, string_type> write_set_map;
+  typedef std::unordered_map<string_type, write_record_t> write_set_map;
   typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
   typedef std::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
 #endif
@@ -233,16 +253,19 @@ protected:
     dbtuple_info(txn_btree<Protocol> *btr,
                  const string_type &key,
                  bool locked,
-                 const string_type &r)
+                 const string_type &r,
+                 bool insert)
       : btr(btr),
         key(key),
         locked(locked),
-        r(r)
+        r(r),
+        insert(insert)
     {}
     txn_btree<Protocol> *btr;
     string_type key;
     bool locked;
     string_type r;
+    bool insert;
   };
   typedef std::pair<dbtuple *, dbtuple_info> dbtuple_pair;
   typedef typename util::vec<dbtuple_pair, 512>::type dbtuple_vec;

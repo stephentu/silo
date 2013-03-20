@@ -81,7 +81,7 @@ format_tid_list(const vector<transaction_base::tid_t> &tids)
   return s;
 }
 
-inline ostream &
+ostream &
 operator<<(ostream &o, const dbtuple &ln)
 {
   vector<transaction_base::tid_t> tids;

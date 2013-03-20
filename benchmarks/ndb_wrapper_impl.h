@@ -275,9 +275,73 @@ ndb_ordered_index<Transaction>::get(
 
 //static event_counter evt_rec_inserts("record_inserts");
 
+// XXX: find way to remove code duplication below using C++ templates!
+
 template <template <typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::put(
+    void *txn,
+    const std::string &key,
+    const std::string &value)
+{
+  ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
+  try {
+#define MY_OP_X(a, b) \
+  case a: \
+    { \
+      auto t = cast< b >()(p); \
+      btr.put(*t, key, value); \
+      return 0; \
+    }
+    switch (p->hint) {
+      TXN_PROFILE_HINT_OP(MY_OP_X)
+    default:
+      ALWAYS_ASSERT(false);
+    }
+#undef MY_OP_X
+  } catch (transaction_abort_exception &ex) {
+    throw abstract_db::abstract_abort_exception();
+  }
+  //++evt_rec_inserts;
+  return 0;
+}
+
+template <template <typename> class Transaction>
+const char *
+ndb_ordered_index<Transaction>::put(
+    void *txn,
+    std::string &&key,
+    std::string &&value)
+{
+  ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
+  try {
+#define MY_OP_X(a, b) \
+  case a: \
+    { \
+      auto t = cast< b >()(p); \
+      btr.put(*t, std::move(key), std::move(value)); \
+      return 0; \
+    }
+    switch (p->hint) {
+      TXN_PROFILE_HINT_OP(MY_OP_X)
+    default:
+      ALWAYS_ASSERT(false);
+    }
+#undef MY_OP_X
+  } catch (transaction_abort_exception &ex) {
+    throw abstract_db::abstract_abort_exception();
+  }
+  //++evt_rec_inserts;
+  // XXX(stephentu): we currently can't return a stable pointer because we
+  // don't even know if the txn will commit (and even if it does, the value
+  // could get overwritten).  So that means our secondary index performance
+  // will suffer for now
+  return 0;
+}
+
+template <template <typename> class Transaction>
+const char *
+ndb_ordered_index<Transaction>::insert(
     void *txn,
     const std::string &key,
     const std::string &value)
@@ -301,16 +365,12 @@ ndb_ordered_index<Transaction>::put(
     throw abstract_db::abstract_abort_exception();
   }
   //++evt_rec_inserts;
-  // XXX(stephentu): we currently can't return a stable pointer because we
-  // don't even know if the txn will commit (and even if it does, the value
-  // could get overwritten).  So that means our secondary index performance
-  // will suffer for now
   return 0;
 }
 
 template <template <typename> class Transaction>
 const char *
-ndb_ordered_index<Transaction>::put(
+ndb_ordered_index<Transaction>::insert(
     void *txn,
     std::string &&key,
     std::string &&value)
@@ -334,10 +394,6 @@ ndb_ordered_index<Transaction>::put(
     throw abstract_db::abstract_abort_exception();
   }
   //++evt_rec_inserts;
-  // XXX(stephentu): we currently can't return a stable pointer because we
-  // don't even know if the txn will commit (and even if it does, the value
-  // could get overwritten).  So that means our secondary index performance
-  // will suffer for now
   return 0;
 }
 

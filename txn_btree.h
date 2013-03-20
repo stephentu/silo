@@ -163,10 +163,20 @@ public:
 
   template <typename Traits>
   inline void
+  put(Transaction<Traits> &t, const string_type &k, const string_type &v)
+  {
+    INVARIANT(!v.empty());
+    do_tree_put(t, k, v, false);
+  }
+
+  // XXX: other put variants
+
+  template <typename Traits>
+  inline void
   insert(Transaction<Traits> &t, const string_type &k, const string_type &v)
   {
     INVARIANT(!v.empty());
-    insert_impl(t, k, v);
+    do_tree_put(t, k, v, true);
   }
 
   template <typename Traits>
@@ -174,7 +184,7 @@ public:
   insert(Transaction<Traits> &t, string_type &&k, string_type &&v)
   {
     INVARIANT(!v.empty());
-    insert_impl(t, std::move(k), std::move(v));
+    do_tree_put(t, std::move(k), std::move(v), true);
   }
 
   // insert() methods below are for legacy use
@@ -185,7 +195,7 @@ public:
   {
     INVARIANT(v);
     INVARIANT(sz);
-    insert_impl(t, k, string_type((const char *) v, sz));
+    do_tree_put(t, k, string_type((const char *) v, sz), true);
   }
 
   template <typename Traits>
@@ -194,7 +204,7 @@ public:
   {
     INVARIANT(v);
     INVARIANT(sz);
-    insert_impl(t, to_string_type(k), string_type((const char *) v, sz));
+    do_tree_put(t, to_string_type(k), string_type((const char *) v, sz), true);
   }
 
   template <typename Traits, typename T>
@@ -215,21 +225,23 @@ public:
   inline void
   remove(Transaction<Traits> &t, const string_type &k)
   {
-    insert_impl(t, k, "");
+    // XXX: assume empty string is efficient to construct
+    do_tree_put(t, k, string_type(), false);
   }
 
   template <typename Traits>
   inline void
   remove(Transaction<Traits> &t, string_type &&k)
   {
-    insert_impl(t, std::move(k), "");
+    // XXX: assume empty string is efficient to construct
+    do_tree_put(t, std::move(k), string_type(), false);
   }
 
   template <typename Traits>
   inline void
   remove(Transaction<Traits> &t, const key_type &k)
   {
-    insert_impl(t, to_string_type(k), "");
+    do_tree_put(t, to_string_type(k), string_type(), false);
   }
 
   inline size_t
@@ -352,12 +364,16 @@ private:
     bool failed_flag;
   };
 
-  // remove() is just insert_impl() with NULL value
+  // remove() is just do_tree_put() with empty-string
+  // expect_new indicates if we expect the record to not exist in the tree-
+  // is just a hint that affects perf, not correctness
   template <typename Traits>
-  void insert_impl(Transaction<Traits> &t, const string_type &k, const string_type &v);
+  void do_tree_put(Transaction<Traits> &t, const string_type &k,
+                   const string_type &v, bool expect_new);
 
   template <typename Traits>
-  void insert_impl(Transaction<Traits> &t, string_type &&k, string_type &&v);
+  void do_tree_put(Transaction<Traits> &t, string_type &&k,
+                   string_type &&v, bool expect_new);
 
   btree underlying_btree;
   size_type value_size_hint;

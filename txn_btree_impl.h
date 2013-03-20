@@ -268,7 +268,9 @@ txn_btree<Transaction>::search_range_call(
 template <template <typename> class Transaction>
 template <typename Traits>
 void
-txn_btree<Transaction>::insert_impl(Transaction<Traits> &t, const string_type &k, const string_type &v)
+txn_btree<Transaction>::do_tree_put(
+    Transaction<Traits> &t, const string_type &k,
+    const string_type &v, bool expect_new)
 {
   t.ensure_active();
   typename Transaction<Traits>::txn_context &ctx = t.ctx_map[this];
@@ -277,13 +279,16 @@ txn_btree<Transaction>::insert_impl(Transaction<Traits> &t, const string_type &k
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  ctx.write_set[k] = v;
+  // emplace() didn't seem to help here
+  ctx.write_set[k] = transaction_base::write_record_t(v, expect_new);
 }
 
 template <template <typename> class Transaction>
 template <typename Traits>
 void
-txn_btree<Transaction>::insert_impl(Transaction<Traits> &t, string_type &&k, string_type &&v)
+txn_btree<Transaction>::do_tree_put(
+    Transaction<Traits> &t, string_type &&k,
+    string_type &&v, bool expect_new)
 {
   t.ensure_active();
   typename Transaction<Traits>::txn_context &ctx = t.ctx_map[this];
@@ -292,7 +297,7 @@ txn_btree<Transaction>::insert_impl(Transaction<Traits> &t, string_type &&k, str
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  swap(ctx.write_set[move(k)], v);
+  ctx.write_set[std::move(k)] = transaction_base::write_record_t(std::move(v), expect_new);
 }
 
 template <template <typename> class Transaction>

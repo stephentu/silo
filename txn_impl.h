@@ -113,8 +113,8 @@ transaction<Protocol, Traits>::dump_debug_info() const
     // write-set
     for (typename write_set_map::const_iterator ws_it = it->second.write_set.begin();
          ws_it != it->second.write_set.end(); ++ws_it)
-      if (!ws_it->second.empty())
-        std::cerr << "      Key 0x" << util::hexify(ws_it->first) << " @ " << util::hexify(ws_it->second) << std::endl;
+      if (!ws_it->second.r.empty())
+        std::cerr << "      Key 0x" << util::hexify(ws_it->first) << " @ " << util::hexify(ws_it->second.r) << std::endl;
       else
         std::cerr << "      Key 0x" << util::hexify(ws_it->first) << " : remove" << std::endl;
 
@@ -197,13 +197,15 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       typename write_set_map::iterator it = outer_it->second.write_set.begin();
       typename write_set_map::iterator it_end = outer_it->second.write_set.end();
       for (; it != it_end; ++it) {
+        transaction_base::write_record_t &writerec = it->second;
+        bool try_insert_path = writerec.insert;
       retry:
         btree::value_type v = 0;
-        if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
+        if (!try_insert_path && outer_it->first->underlying_btree.search(varkey(it->first), v)) {
           VERBOSE(cerr << "key " << util::hexify(it->first) << " : dbtuple 0x" << util::hexify(intptr_t(v)) << endl);
           dbtuples.emplace_back(
               (dbtuple *) v,
-              dbtuple_info(outer_it->first, it->first, false, it->second));
+              dbtuple_info(outer_it->first, it->first, false, writerec.r, writerec.insert));
           // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
             outer_it->second.read_set.find((const dbtuple *) v);
@@ -212,25 +214,33 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             read_it->second.holds_lock = true;
           }
           // mark that we (will) hold lock in absent set
-          typename absent_set_map::iterator absent_it =
-            outer_it->second.absent_set.find(it->first);
-          if (absent_it != outer_it->second.absent_set.end()) {
-            INVARIANT(!absent_it->second);
-            absent_it->second = true;
+          if (!outer_it->second.absent_set.empty()) {
+            typename absent_set_map::iterator absent_it =
+              outer_it->second.absent_set.find(it->first);
+            if (absent_it != outer_it->second.absent_set.end()) {
+              INVARIANT(!absent_it->second);
+              absent_it->second = true;
+            }
           }
         } else {
-          dbtuple *ln = dbtuple::alloc_first(
-              !outer_it->first->is_mostly_append(), it->second.size());
-          INVARIANT(ln->is_latest());
+          if (!try_insert_path)
+            ++transaction_base::g_evt_dbtuple_write_search_failed;
+          dbtuple * const tuple = dbtuple::alloc_first(
+              !outer_it->first->is_mostly_append(), writerec.r.size());
+          INVARIANT(tuple->is_latest());
           // XXX: underlying btree api should return the existing value if
           // insert fails- this would allow us to avoid having to do another search
           std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
-          if (!outer_it->first->underlying_btree.insert_if_absent(
-                varkey(it->first), (btree::value_type) ln, &insert_info)) {
-            dbtuple::release_no_rcu(ln);
+          if (unlikely(!outer_it->first->underlying_btree.insert_if_absent(
+                          varkey(it->first), (btree::value_type) tuple, &insert_info))) {
+            VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(it->first) << std::endl);
+            dbtuple::release_no_rcu(tuple);
+            try_insert_path = false;
+            ++transaction_base::g_evt_dbtuple_write_insert_failed;
             goto retry;
           }
-          VERBOSE(cerr << "key " << util::hexify(it->first) << " : dbtuple 0x" << util::hexify(intptr_t(ln)) << endl);
+          VERBOSE(std::cerr << "insert_if_absent suceeded for key: " << util::hexify(it->first) << std::endl
+                            << "  new dbtuple is " << util::hexify(tuple) << std::endl);
           if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
             // update node #s
             INVARIANT(insert_info.first);
@@ -249,20 +259,22 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             }
           }
           dbtuples.emplace_back(
-              ln, dbtuple_info(outer_it->first, it->first, false, it->second));
+              tuple, dbtuple_info(outer_it->first, it->first, false, writerec.r, writerec.insert));
           // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
-            outer_it->second.read_set.find(ln);
+            outer_it->second.read_set.find(tuple);
           if (read_it != outer_it->second.read_set.end()) {
             INVARIANT(!read_it->second.holds_lock);
             read_it->second.holds_lock = true;
           }
           // mark that we (will) hold lock in absent set
-          typename absent_set_map::iterator absent_it =
-            outer_it->second.absent_set.find(it->first);
-          if (absent_it != outer_it->second.absent_set.end()) {
-            INVARIANT(!absent_it->second);
-            absent_it->second = true;
+          if (!outer_it->second.absent_set.empty()) {
+            typename absent_set_map::iterator absent_it =
+              outer_it->second.absent_set.find(it->first);
+            if (absent_it != outer_it->second.absent_set.end()) {
+              INVARIANT(!absent_it->second);
+              absent_it->second = true;
+            }
           }
         }
       }
@@ -312,19 +324,20 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           typename read_set_map::iterator it = outer_it->second.read_set.begin();
           typename read_set_map::iterator it_end = outer_it->second.read_set.end();
           for (; it != it_end; ++it) {
-            const dbtuple * const ln = it->first;
-            VERBOSE(cerr << "validating key " << util::hexify(it->first) << " @ dbtuple 0x"
-                         << util::hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << endl);
+            const dbtuple * const tuple = it->first;
+            VERBOSE(std::cerr << "validating dbtuple " << util::hexify(tuple) << " at snapshot_tid "
+                              << g_proto_version_str(snapshot_tid_t.second)
+                              << std::endl);
 
             if (likely(it->second.holds_lock ?
-                  ln->is_latest_version(it->second.t) :
-                  ln->stable_is_latest_version(it->second.t)))
+                  tuple->is_latest_version(it->second.t) :
+                  tuple->stable_is_latest_version(it->second.t)))
               continue;
 
-            VERBOSE(cerr << "validating key " << util::hexify(it->first) << " @ dbtuple 0x"
-                         << util::hexify(intptr_t(ln)) << " at snapshot_tid " << snapshot_tid_t.second << " FAILED" << endl
-                         << "  txn read version: " << g_proto_version_str(it->second.t) << endl
-                         << "  ln=" << *ln << endl);
+            VERBOSE(std::cerr << "validating dbtuple " << util::hexify(tuple) << " at snapshot_tid "
+                              << g_proto_version_str(snapshot_tid_t.second) << " FAILED" << std::endl
+                              << "  txn read version: " << g_proto_version_str(it->second.t) << std::endl
+                              << "  tuple=" << *tuple << std::endl);
 
             abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
             goto do_abort;
@@ -403,8 +416,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       typename dbtuple_vec::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {
         INVARIANT(it->second.locked);
-        VERBOSE(cerr << "writing dbtuple 0x" << util::hexify(intptr_t(it->first))
-                     << " at commit_tid " << commit_tid.second << endl);
+        VERBOSE(std::cerr << "writing dbtuple " << util::hexify(it->first)
+                          << " at commit_tid " << g_proto_version_str(commit_tid.second)
+                          << std::endl);
         it->first->prefetch();
         const dbtuple::write_record_ret ret = it->first->write_record_at(
             cast(), commit_tid.second,
@@ -475,8 +489,9 @@ transaction<Protocol, Traits>::txn_context::local_search_str(
       write_set.find(k);
     if (it != write_set.end()) {
       VERBOSE(cerr << "local_search_str: key " << util::hexify(k) << " found in write set"  << endl);
-      VERBOSE(cerr << "  value: " << util::hexify(it->second) << endl);
-      v = it->second;
+      VERBOSE(cerr << "  value: " << util::hexify(it->second.r) << endl);
+      // NB: explicity copy so we don't mess up v (v is probably an arena string)
+      v.assign(it->second.r.data(), it->second.r.size());
       ++evt_local_search_write_set_hits;
       return true;
     }
