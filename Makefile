@@ -1,5 +1,13 @@
 -include config.mk
-CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
+
+DEBUG ?= 0
+
+ifeq ($(strip $(DEBUG)),1)
+        CXXFLAGS := -Wall -Werror -g -fno-omit-frame-pointer --std=c++0x
+else
+        CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
+endif
+
 LDFLAGS := -lpthread
 
 # 0 = libc malloc
