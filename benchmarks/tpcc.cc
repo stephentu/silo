@@ -1956,13 +1956,13 @@ protected:
     vector<bench_loader *> ret;
     ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
     ret.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
-    if (enable_parallel_loading) {
-      fast_random r(89785943);
-      for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, i));
-    } else {
+    //if (enable_parallel_loading) {
+    //  fast_random r(89785943);
+    //  for (uint i = 1; i <= NumWarehouses(); i++)
+    //    ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, i));
+    //} else {
       ret.push_back(new tpcc_stock_loader(89785943, db, open_tables, partitions, -1));
-    }
+    //}
     ret.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
     if (enable_parallel_loading) {
       fast_random r(923587856425);
