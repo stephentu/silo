@@ -1,6 +1,7 @@
 #ifndef _SMALL_VECTOR_H_
 #define _SMALL_VECTOR_H_
 
+#include <algorithm>
 #include <vector>
 #include "macros.h"
 
@@ -166,6 +167,16 @@ public:
   // non-standard API
   inline bool is_small_type() const { return !large_elems; }
 
+  template <typename Compare = std::less<T>>
+  inline void
+  sort(Compare c = Compare())
+  {
+    if (unlikely(large_elems))
+      std::sort(large_elems->begin(), large_elems->end(), c);
+    else
+      std::sort(small_begin(), small_end(), c);
+  }
+
 private:
 
   void
@@ -182,15 +193,147 @@ private:
     n = 0;
   }
 
-  template <typename ObjType, typename LargeTypeIter>
+  template <typename ObjType>
+  class small_iterator_ : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
+    friend class small_vector;
+  public:
+    inline small_iterator_() : p(0) {}
+
+    template <typename O>
+    inline small_iterator_(const small_iterator_<O> &other)
+      : p(other.p)
+    {}
+
+    inline ObjType &
+    operator*() const
+    {
+      return *p;
+    }
+
+    inline ObjType *
+    operator->() const
+    {
+      return p;
+    }
+
+    inline bool
+    operator==(const small_iterator_ &o) const
+    {
+      return p == o.p;
+    }
+
+    inline bool
+    operator!=(const small_iterator_ &o) const
+    {
+      return !operator==(o);
+    }
+
+    inline bool
+    operator<(const small_iterator_ &o) const
+    {
+      return p < o.p;
+    }
+
+    inline bool
+    operator>=(const small_iterator_ &o) const
+    {
+      return !operator<(o);
+    }
+
+    inline bool
+    operator>(const small_iterator_ &o) const
+    {
+      return p > o.p;
+    }
+
+    inline bool
+    operator<=(const small_iterator_ &o) const
+    {
+      return !operator>(o);
+    }
+
+    inline small_iterator_ &
+    operator+=(int n)
+    {
+      p += n;
+      return *this;
+    }
+
+    inline small_iterator_ &
+    operator-=(int n)
+    {
+      p -= n;
+      return *this;
+    }
+
+    inline small_iterator_
+    operator+(int n) const
+    {
+      small_iterator_ cpy = *this;
+      return cpy += n;
+    }
+
+    inline small_iterator_
+    operator-(int n) const
+    {
+      small_iterator_ cpy = *this;
+      return cpy -= n;
+    }
+
+    inline intptr_t
+    operator-(const small_iterator_ &o) const
+    {
+      return p - o.p;
+    }
+
+    inline small_iterator_ &
+    operator++()
+    {
+      ++p;
+      return *this;
+    }
+
+    inline small_iterator_
+    operator++(int)
+    {
+      small_iterator_ cur = *this;
+      ++(*this);
+      return cur;
+    }
+
+    inline small_iterator_ &
+    operator--()
+    {
+      --p;
+      return *this;
+    }
+
+    inline small_iterator_
+    operator--(int)
+    {
+      small_iterator_ cur = *this;
+      --(*this);
+      return cur;
+    }
+
+  protected:
+    inline small_iterator_(ObjType *p) : p(p) {}
+
+  private:
+    ObjType *p;
+  };
+
+  template <typename ObjType, typename SmallTypeIter, typename LargeTypeIter>
   class iterator_ : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
     friend class small_vector;
   public:
-    inline iterator_() : large(false), p(0) {}
+    inline iterator_() : large(false) {}
 
-    template <typename O, typename L>
-    inline iterator_(const iterator_<O, L> &other)
-      : large(other.large), p(other.p)
+    template <typename O, typename S, typename L>
+    inline iterator_(const iterator_<O, S, L> &other)
+      : large(other.large),
+        small_it(other.small_it),
+        large_it(other.large_it)
     {}
 
     inline ObjType &
@@ -198,7 +341,7 @@ private:
     {
       if (unlikely(large))
         return *large_it;
-      return *p;
+      return *small_it;
     }
 
     inline ObjType *
@@ -206,18 +349,15 @@ private:
     {
       if (unlikely(large))
         return &(*large_it);
-      return p;
+      return &(*small_it);
     }
 
     inline bool
     operator==(const iterator_ &o) const
     {
-      if (likely(!large && !o.large))
-        return p == o.p;
-      if (likely(large && o.large))
+      if (unlikely(large))
         return large_it == o.large_it;
-      INVARIANT(false);
-      return false;
+      return small_it == o.small_it;
     }
 
     inline bool
@@ -229,12 +369,9 @@ private:
     inline bool
     operator<(const iterator_ &o) const
     {
-      if (likely(!large && !o.large))
-        return p < o.p;
-      if (likely(large && o.large))
+      if (unlikely(large))
         return large_it < o.large_it;
-      INVARIANT(false);
-      return false;
+      return small_it < o.small_it;
     }
 
     inline bool
@@ -246,12 +383,9 @@ private:
     inline bool
     operator>(const iterator_ &o) const
     {
-      if (likely(!large && !o.large))
-        return p > o.p;
-      if (likely(large && o.large))
+      if (unlikely(large))
         return large_it > o.large_it;
-      INVARIANT(false);
-      return false;
+      return small_it > o.small_it;
     }
 
     inline bool
@@ -263,22 +397,20 @@ private:
     inline iterator_ &
     operator+=(int n)
     {
-      if (unlikely(large)) {
+      if (unlikely(large))
         large_it += n;
-        return *this;
-      }
-      p += n;
+      else
+        small_it += n;
       return *this;
     }
 
     inline iterator_ &
     operator-=(int n)
     {
-      if (unlikely(large)) {
+      if (unlikely(large))
         large_it -= n;
-        return *this;
-      }
-      p -= n;
+      else
+        small_it -= n;
       return *this;
     }
 
@@ -299,22 +431,19 @@ private:
     inline intptr_t
     operator-(const iterator_ &o) const
     {
-      if (likely(!large && !o.large))
-        return p - o.p;
-      if (likely(large && o.large))
+      if (unlikely(large))
         return large_it - o.large_it;
-      INVARIANT(false);
-      return 0;
+      else
+        return small_it - o.small_it;
     }
 
     inline iterator_ &
     operator++()
     {
-      if (unlikely(large)) {
+      if (unlikely(large))
         ++large_it;
-        return *this;
-      }
-      ++p;
+      else
+        ++small_it;
       return *this;
     }
 
@@ -329,11 +458,10 @@ private:
     inline iterator_ &
     operator--()
     {
-      if (unlikely(large)) {
+      if (unlikely(large))
         --large_it;
-        return *this;
-      }
-      --p;
+      else
+        --small_it;
       return *this;
     }
 
@@ -346,27 +474,54 @@ private:
     }
 
   protected:
-    iterator_(ObjType *p)
-      : large(false), p(p) {}
+    iterator_(SmallTypeIter small_it)
+      : large(false), small_it(small_it), large_it() {}
     iterator_(LargeTypeIter large_it)
-      : large(true), p(0), large_it(large_it) {}
+      : large(true), small_it(), large_it(large_it) {}
 
   private:
     bool large;
-    ObjType *p;
+    SmallTypeIter small_it;
     LargeTypeIter large_it;
   };
 
-public:
-  typedef
-    iterator_<
-      T, typename large_vector_type::iterator>
-    iterator;
+  typedef small_iterator_<T> small_iterator;
+  typedef small_iterator_<const T> const_small_iterator;
+  typedef typename large_vector_type::iterator large_iterator;
+  typedef typename large_vector_type::const_iterator const_large_iterator;
 
-  typedef
-    iterator_<
-      const T, typename large_vector_type::const_iterator>
-    const_iterator;
+  inline small_iterator
+  small_begin()
+  {
+    INVARIANT(!large_elems);
+    return small_iterator(ptr());
+  }
+
+  inline const_small_iterator
+  small_begin() const
+  {
+    INVARIANT(!large_elems);
+    return const_small_iterator(ptr());
+  }
+
+  inline small_iterator
+  small_end()
+  {
+    INVARIANT(!large_elems);
+    return small_iterator(ptr() + n);
+  }
+
+  inline const_small_iterator
+  small_end() const
+  {
+    INVARIANT(!large_elems);
+    return const_small_iterator(ptr() + n);
+  }
+
+public:
+
+  typedef iterator_<T, small_iterator, large_iterator> iterator;
+  typedef iterator_<const T, const_small_iterator, const_large_iterator> const_iterator;
 
   typedef std::reverse_iterator<iterator> reverse_iterator;
   typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
@@ -376,7 +531,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->begin());
-    return iterator(ptr());
+    return iterator(small_begin());
   }
 
   inline const_iterator
@@ -384,7 +539,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->begin());
-    return const_iterator(ptr());
+    return const_iterator(small_begin());
   }
 
   inline iterator
@@ -392,7 +547,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->end());
-    return iterator(ptr() + n);
+    return iterator(small_end());
   }
 
   inline const_iterator
@@ -400,7 +555,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->end());
-    return const_iterator(ptr() + n);
+    return const_iterator(small_end());
   }
 
   inline reverse_iterator

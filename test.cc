@@ -451,6 +451,15 @@ Test()
     v.push_back(100);
     sort(v.begin(), v.end());
 
+    small_vector<int> v1;
+    v1.push_back(10);
+    v1.push_back(2);
+    v1.push_back(5);
+    v1.push_back(7);
+    v1.push_back(3);
+    v1.push_back(100);
+    v1.sort();
+
     vector<int> stl_v;
     stl_v.push_back(10);
     stl_v.push_back(2);
@@ -461,6 +470,7 @@ Test()
     sort(stl_v.begin(), stl_v.end());
 
     assert_vecs_equal(v, stl_v);
+    assert_vecs_equal(v1, stl_v);
   }
 
   {
@@ -473,6 +483,15 @@ Test()
     v.push_back(100);
     sort(v.begin(), v.end());
 
+    small_vector<int, 3> v1;
+    v1.push_back(10);
+    v1.push_back(2);
+    v1.push_back(5);
+    v1.push_back(7);
+    v1.push_back(3);
+    v1.push_back(100);
+    v1.sort();
+
     vector<int> stl_v;
     stl_v.push_back(10);
     stl_v.push_back(2);
@@ -483,6 +502,7 @@ Test()
     sort(stl_v.begin(), stl_v.end());
 
     assert_vecs_equal(v, stl_v);
+    assert_vecs_equal(v1, stl_v);
   }
 
   {
@@ -841,7 +861,7 @@ public:
     //UtilTest();
     //XbufTest();
     //varint::Test();
-    //small_vector_ns::Test();
+    small_vector_ns::Test();
     //small_map_ns::Test();
     //recordtest::Test();
     //btree::TestFast();

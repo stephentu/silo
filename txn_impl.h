@@ -304,7 +304,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         ANON_REGION(probe6_name.c_str(), &transaction_base::g_txn_commit_probe6_cg);
         // ~6955 tsc/sort for new order on istc11.csali.mit.edu, using a vector of
         // pair<dbtuple *, dbtuple_info>
-        std::sort(dbtuple_keys.begin(), dbtuple_keys.end(), TupleMapComp());
+        //std::sort(dbtuple_keys.begin(), dbtuple_keys.end(), TupleMapComp());
+        dbtuple_keys.sort(); // in-place
       }
       typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
       typename dbtuple_key_vec::iterator it_end = dbtuple_keys.end();
