@@ -48,6 +48,7 @@ HEADERS = amd64.h \
 	rcu.h \
 	record/encoder.h \
 	record/serializer.h \
+	scopedperf.hh \
 	small_unordered_map.h \
 	small_vector.h \
 	spinbarrier.h \
