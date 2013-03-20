@@ -123,7 +123,7 @@ make_pair(const A &a, const B &b)
 
 template<class T>
 struct vector {
-  T _buf[16];
+  T _buf[128];
   uint _cnt;
 
   vector() : _cnt(0) {}
@@ -765,6 +765,14 @@ killable_region(Perfsum *ps, getcpu_fn getcpu = sched_getcpu)
   static ctrtype ctrname; \
   static ::scopedperf::ctrgroup_chain< ctrtype > groupname(&ctrname);
 #define PERF_EXPR(expr) expr
+#define PERF_DECL(decl) decl
+
+#define CLASS_STATIC_COUNTER_DECL(ctrtype, ctrname, groupname) \
+  static ctrtype ctrname; \
+  static ::scopedperf::ctrgroup_chain< ctrtype > groupname;
+#define CLASS_STATIC_COUNTER_IMPL(clsname, ctrtype, ctrname, groupname) \
+  ctrtype clsname::ctrname; \
+  ::scopedperf::ctrgroup_chain< ctrtype > clsname::groupname(&ctrname) ;
 
 } /* namespace scopedperf */
 
@@ -776,6 +784,10 @@ killable_region(Perfsum *ps, getcpu_fn getcpu = sched_getcpu)
 
 #define STATIC_COUNTER_DECL(ctrtype, ctrname, groupname)
 #define PERF_EXPR(expr) ((void)0)
+#define PERF_DECL(decl)
+
+#define CLASS_STATIC_COUNTER_DECL(ctrtype, ctrname, groupname)
+#define CLASS_STATIC_COUNTER_IMPL(clsname, ctrtype, ctrname, groupname)
 
 #endif /* USE_PERF_CTRS */
 
