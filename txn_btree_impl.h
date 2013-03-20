@@ -279,16 +279,20 @@ txn_btree<Transaction>::do_tree_put(
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  auto ret = t.try_insert_new_tuple(
-        underlying_btree, ctx,
-        !is_mostly_append(), k, v);
-  INVARIANT(!ret.second || ret.first);
-  if (unlikely(ret.second)) {
-    transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
-    t.abort_impl(r);
-    throw transaction_abort_exception(r);
+  dbtuple *tuple = nullptr;
+  if (expect_new) {
+    auto ret = t.try_insert_new_tuple(
+          underlying_btree, ctx,
+          !is_mostly_append(), k, v);
+    INVARIANT(!ret.second || ret.first);
+    if (unlikely(ret.second)) {
+      transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
+      t.abort_impl(r);
+      throw transaction_abort_exception(r);
+    }
+    tuple = ret.first;
   }
-  ctx.write_set[k] = transaction_base::write_record_t(v, ret.first);
+  ctx.write_set[k] = transaction_base::write_record_t(v, tuple);
 
 }
 
@@ -306,16 +310,20 @@ txn_btree<Transaction>::do_tree_put(
     t.abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  auto ret = t.try_insert_new_tuple(
-        underlying_btree, ctx,
-        !is_mostly_append(), k, v);
-  INVARIANT(!ret.second || ret.first);
-  if (unlikely(ret.second)) {
-    transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
-    t.abort_impl(r);
-    throw transaction_abort_exception(r);
+  dbtuple *tuple = nullptr;
+  if (expect_new) {
+    auto ret = t.try_insert_new_tuple(
+          underlying_btree, ctx,
+          !is_mostly_append(), k, v);
+    INVARIANT(!ret.second || ret.first);
+    if (unlikely(ret.second)) {
+      transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
+      t.abort_impl(r);
+      throw transaction_abort_exception(r);
+    }
+    tuple = ret.first;
   }
-  ctx.write_set[std::move(k)] = transaction_base::write_record_t(std::move(v), ret.first);
+  ctx.write_set[std::move(k)] = transaction_base::write_record_t(std::move(v), tuple);
 }
 
 template <template <typename> class Transaction>
