@@ -83,7 +83,7 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
       ret = true;
     } else {
       btree::value_type removed = 0;
-      bool did_remove = btr->remove(varkey(key), &removed);
+      const bool did_remove = btr->remove(varkey(key), &removed);
       if (!did_remove) INVARIANT(false);
       INVARIANT(removed == (btree::value_type) tuple);
       dbtuple::release(tuple); // release() marks deleted

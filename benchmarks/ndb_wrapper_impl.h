@@ -516,7 +516,7 @@ void
 ndb_ordered_index<Transaction>::clear()
 {
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
-  cerr << "purging txn index: " << name << endl;
+  std::cerr << "purging txn index: " << name << std::endl;
 #endif
   return btr.unsafe_purge(true);
 }

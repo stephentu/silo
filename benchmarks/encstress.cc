@@ -46,7 +46,7 @@ public:
   {
   }
 
-  ssize_t
+  txn_result
   txn_read()
   {
     void *txn = db->new_txn(txn_flags, txn_buf());
@@ -54,16 +54,15 @@ public:
     try {
       string v;
       ALWAYS_ASSERT(tbl->get(txn, k, v));
-      if (db->commit_txn(txn))
-        ntxn_commits++;
+      if (likely(db->commit_txn(txn)))
+        return txn_result(true, 0);
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0;
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnRead(bench_worker *w)
   {
     return static_cast<encstress_worker *>(w)->txn_read();

@@ -21,6 +21,9 @@ extern void tpcc_do_test(abstract_db *db, int argc, char **argv);
 extern void queue_do_test(abstract_db *db, int argc, char **argv);
 extern void encstress_do_test(abstract_db *db, int argc, char **argv);
 
+enum { RUNMODE_TIME = 0,
+       RUNMODE_OPS  = 1};
+
 // benchmark global variables
 extern size_t nthreads;
 extern volatile bool running;
@@ -28,6 +31,8 @@ extern int verbose;
 extern uint64_t txn_flags;
 extern double scale_factor;
 extern uint64_t runtime;
+extern uint64_t ops_per_worker;
+extern int run_mode;
 extern int enable_parallel_loading;
 extern int pin_cpus;
 
@@ -101,8 +106,9 @@ public:
 
   virtual ~bench_worker() {}
 
-  // returns how many bytes (of values) changed by the txn
-  typedef ssize_t (*txn_fn_t)(bench_worker *);
+  // returns [did_commit?, size_increase_bytes]
+  typedef std::pair<bool, ssize_t> txn_result;
+  typedef txn_result (*txn_fn_t)(bench_worker *);
 
   struct workload_desc {
     workload_desc() {}
@@ -151,8 +157,12 @@ protected:
   std::map<std::string, abstract_ordered_index *> open_tables;
   spin_barrier *const barrier_a;
   spin_barrier *const barrier_b;
+
+private:
   size_t ntxn_commits;
   size_t ntxn_aborts;
+
+protected:
 
 #ifdef ENABLE_BENCH_TXN_COUNTERS
   txn_counter_map local_txn_counters;

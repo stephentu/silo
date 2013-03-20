@@ -476,45 +476,45 @@ public:
   // XXX(stephentu): tune this
   static const size_t NMaxCustomerIdxScanElems = 512;
 
-  ssize_t txn_new_order();
+  txn_result txn_new_order();
 
-  static ssize_t
+  static txn_result
   TxnNewOrder(bench_worker *w)
   {
     ANON_REGION("TxnNewOrder:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_new_order();
   }
 
-  ssize_t txn_delivery();
+  txn_result txn_delivery();
 
-  static ssize_t
+  static txn_result
   TxnDelivery(bench_worker *w)
   {
     ANON_REGION("TxnDelivery:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_delivery();
   }
 
-  ssize_t txn_payment();
+  txn_result txn_payment();
 
-  static ssize_t
+  static txn_result
   TxnPayment(bench_worker *w)
   {
     ANON_REGION("TxnPayment:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_payment();
   }
 
-  ssize_t txn_order_status();
+  txn_result txn_order_status();
 
-  static ssize_t
+  static txn_result
   TxnOrderStatus(bench_worker *w)
   {
     ANON_REGION("TxnOrderStatus:", &tpcc_txn_cg);
     return static_cast<tpcc_worker *>(w)->txn_order_status();
   }
 
-  ssize_t txn_stock_level();
+  txn_result txn_stock_level();
 
-  static ssize_t
+  static txn_result
   TxnStockLevel(bench_worker *w)
   {
     ANON_REGION("TxnStockLevel:", &tpcc_txn_cg);
@@ -532,11 +532,11 @@ public:
     //w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); // ~33k ops/sec
     //w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
 
-    w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
-    w.push_back(workload_desc("Payment", 0.43, TxnPayment));
-    w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
-    w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
-    w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
+    w.push_back(workload_desc("NewOrder", 1.0, TxnNewOrder));
+    //w.push_back(workload_desc("Payment", 0.43, TxnPayment));
+    //w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
+    //w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
+    //w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
     return w;
   }
 
@@ -1144,7 +1144,7 @@ private:
 static event_counter evt_tpcc_cross_partition_new_order_txns("tpcc_cross_partition_new_order_txns");
 static event_counter evt_tpcc_cross_partition_payment_txns("tpcc_cross_partition_payment_txns");
 
-ssize_t
+tpcc_worker::txn_result
 tpcc_worker::txn_new_order()
 {
   const uint districtID = RandomNumber(r, 1, 10);
@@ -1335,17 +1335,12 @@ tpcc_worker::txn_new_order()
     }
 
     measure_txn_counters(txn, "txn_new_order");
-    if (db->commit_txn(txn)) {
-      ntxn_commits++;
-      return ret;
-    } else {
-      ntxn_aborts++;
-    }
+    if (likely(db->commit_txn(txn)))
+      return txn_result(true, ret);
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
-    ntxn_aborts++;
   }
-  return 0;
+  return txn_result(false, 0);
 }
 
 class new_order_scan_callback : public abstract_ordered_index::scan_callback {
@@ -1377,7 +1372,7 @@ private:
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, delivery_probe0_tod, delivery_probe0_cg)
 
-ssize_t
+tpcc_worker::txn_result
 tpcc_worker::txn_delivery()
 {
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
@@ -1472,22 +1467,17 @@ tpcc_worker::txn_delivery()
       tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
     }
     measure_txn_counters(txn, "txn_delivery");
-    if (db->commit_txn(txn)) {
-      ntxn_commits++;
-      return ret;
-    } else {
-      ntxn_aborts++;
-    }
+    if (likely(db->commit_txn(txn)))
+      return txn_result(true, ret);
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
-    ntxn_aborts++;
   }
-  return 0;
+  return txn_result(false, 0);
 }
 
 static event_avg_counter evt_avg_cust_name_idx_scan_size("avg_cust_name_idx_scan_size");
 
-ssize_t
+tpcc_worker::txn_result
 tpcc_worker::txn_payment()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
@@ -1637,17 +1627,12 @@ tpcc_worker::txn_payment()
     ret += history_sz;
 
     measure_txn_counters(txn, "txn_payment");
-    if (db->commit_txn(txn)) {
-      ntxn_commits++;
-      return ret;
-    } else {
-      ntxn_aborts++;
-    }
+    if (likely(db->commit_txn(txn)))
+      return txn_result(true, ret);
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
-    ntxn_aborts++;
   }
-  return 0;
+  return txn_result(false, 0);
 }
 
 class order_line_nop_callback : public abstract_ordered_index::scan_callback {
@@ -1673,7 +1658,7 @@ public:
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0_cg)
 
-ssize_t
+tpcc_worker::txn_result
 tpcc_worker::txn_order_status()
 {
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
@@ -1775,15 +1760,12 @@ tpcc_worker::txn_order_status()
     ALWAYS_ASSERT(c_order_line.n >= 5 && c_order_line.n <= 15);
 
     measure_txn_counters(txn, "txn_order_status");
-    if (db->commit_txn(txn))
-      ntxn_commits++;
-    else
-      ntxn_aborts++;
+    if (likely(db->commit_txn(txn)))
+      return txn_result(true, 0);
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
-    ntxn_aborts++;
   }
-  return 0;
+  return txn_result(false, 0);
 }
 
 class order_line_scan_callback : public abstract_ordered_index::scan_callback {
@@ -1817,7 +1799,7 @@ STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe2_tod, stock_level_pro
 
 static event_avg_counter evt_avg_stock_level_loop_join_lookups("stock_level_loop_join_lookups");
 
-ssize_t
+tpcc_worker::txn_result
 tpcc_worker::txn_stock_level()
 {
   const uint threshold = RandomNumber(r, 10, 20);
@@ -1879,15 +1861,12 @@ tpcc_worker::txn_stock_level()
       // NB(stephentu): s_i_ids_distinct.size() is the computed result of this txn
     }
     measure_txn_counters(txn, "txn_stock_level");
-    if (db->commit_txn(txn))
-      ntxn_commits++;
-    else
-      ntxn_aborts++;
+    if (likely(db->commit_txn(txn)))
+      return txn_result(true, 0);
   } catch (abstract_db::abstract_abort_exception &ex) {
     db->abort_txn(txn);
-    ntxn_aborts++;
   }
-  return 0;
+  return txn_result(false, 0);
 }
 
 template <typename T>

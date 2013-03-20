@@ -46,34 +46,30 @@ public:
   {
   }
 
-  ssize_t
+  txn_result
   txn_produce()
   {
     void *txn = db->new_txn(txn_flags, txn_buf());
     try {
       const string k = queue_key(id, ctr);
       tbl->insert(txn, k, queue_values);
-      if (db->commit_txn(txn)) {
+      if (likely(db->commit_txn(txn))) {
         ctr++;
-        ntxn_commits++;
-        return queue_values.size();
-      } else {
-        ntxn_aborts++;
+        return txn_result(true, queue_values.size());
       }
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0;
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnProduce(bench_worker *w)
   {
     return static_cast<queue_worker *>(w)->txn_produce();
   }
 
-  ssize_t
+  txn_result
   txn_consume()
   {
     void *txn = db->new_txn(txn_flags, txn_buf());
@@ -89,26 +85,21 @@ public:
         tbl->remove(txn, k);
         ret = -queue_values.size();
       }
-      if (db->commit_txn(txn)) {
-        ntxn_commits++;
-        return ret;
-      } else {
-        ntxn_aborts++;
-      }
+      if (likely(db->commit_txn(txn)))
+        return txn_result(true, ret);
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0;
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnConsume(bench_worker *w)
   {
     return static_cast<queue_worker *>(w)->txn_consume();
   }
 
-  ssize_t
+  txn_result
   txn_consume_scanhint()
   {
     void *txn = db->new_txn(txn_flags, txn_buf());
@@ -125,27 +116,23 @@ public:
         tbl->remove(txn, k);
         ret = -queue_values.size();
       }
-      if (db->commit_txn(txn)) {
+      if (likely(db->commit_txn(txn))) {
         if (likely(found)) ctr++;
-        ntxn_commits++;
-        return ret;
-      } else {
-        ntxn_aborts++;
+        return txn_result(true, ret);
       }
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0;
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnConsumeScanHint(bench_worker *w)
   {
     return static_cast<queue_worker *>(w)->txn_consume_scanhint();
   }
 
-  ssize_t
+  txn_result
   txn_consume_noscan()
   {
     void *txn = db->new_txn(txn_flags, txn_buf());
@@ -158,21 +145,17 @@ public:
         tbl->remove(txn, k);
         ret = -queue_values.size();
       }
-      if (db->commit_txn(txn)) {
+      if (likely(db->commit_txn(txn))) {
         if (likely(found)) ctr++;
-        ntxn_commits++;
-        return ret;
-      } else {
-        ntxn_aborts++;
+        return txn_result(true, ret);
       }
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0;
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnConsumeNoScan(bench_worker *w)
   {
     return static_cast<queue_worker *>(w)->txn_consume_noscan();

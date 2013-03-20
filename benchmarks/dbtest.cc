@@ -42,6 +42,7 @@ main(int argc, char **argv)
   string basedir = curdir;
   string bench_opts;
   free(curdir);
+  int saw_run_spec = 0;
   while (1) {
     static struct option long_options[] =
     {
@@ -55,11 +56,12 @@ main(int argc, char **argv)
       {"basedir"          , required_argument , 0                        , 'B'} ,
       {"txn-flags"        , required_argument , 0                        , 'f'} ,
       {"runtime"          , required_argument , 0                        , 'r'} ,
+      {"ops-per-worker"   , required_argument , 0                        , 'n'} ,
       {"bench-opts"       , required_argument , 0                        , 'o'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -97,9 +99,19 @@ main(int argc, char **argv)
       break;
 
     case 'r':
+      ALWAYS_ASSERT(!saw_run_spec);
+      saw_run_spec = 1;
       runtime = strtoul(optarg, NULL, 10);
       ALWAYS_ASSERT(runtime > 0);
+      run_mode = RUNMODE_TIME;
       break;
+
+    case 'n':
+      ALWAYS_ASSERT(!saw_run_spec);
+      saw_run_spec = 1;
+      ops_per_worker = strtoul(optarg, NULL, 10);
+      ALWAYS_ASSERT(ops_per_worker > 0);
+      run_mode = RUNMODE_OPS;
 
     case 'o':
       bench_opts = optarg;
@@ -158,8 +170,10 @@ main(int argc, char **argv)
     cerr << "  db-type     : " << db_type                 << endl;
     cerr << "  basedir     : " << basedir                 << endl;
     cerr << "  txn-flags   : " << hexify(txn_flags)       << endl;
-    cerr << "  runtime     : " << runtime                 << endl;
-
+    if (run_mode == RUNMODE_TIME)
+      cerr << "  runtime     : " << runtime               << endl;
+    else
+      cerr << "  ops/worker  : " << ops_per_worker        << endl;
 #ifdef USE_VARINT_ENCODING
     cerr << "  var-encode  : yes"                         << endl;
 #else

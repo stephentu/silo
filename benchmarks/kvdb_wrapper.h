@@ -48,6 +48,8 @@ public:
 
 class kvdb_ordered_index : public abstract_ordered_index {
 public:
+  kvdb_ordered_index(const std::string &name)
+    : name(name) {}
   virtual bool get(
       void *txn,
       const std::string &key,
@@ -72,6 +74,7 @@ public:
   virtual size_t size() const;
   virtual void clear();
 private:
+  std::string name;
   btree btr;
 };
 

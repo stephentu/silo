@@ -34,6 +34,8 @@ int verbose = 0;
 uint64_t txn_flags = 0;
 double scale_factor = 1.0;
 uint64_t runtime = 30;
+uint64_t ops_per_worker = 0;
+int run_mode = RUNMODE_TIME;
 int enable_parallel_loading = false;
 int pin_cpus = 0;
 
@@ -117,11 +119,17 @@ bench_worker::run()
   txn_counts.resize(workload.size());
   barrier_a->count_down();
   barrier_b->wait_for();
-  while (running) {
+  while (running && (run_mode != RUNMODE_OPS || ntxn_commits < ops_per_worker)) {
     double d = r.next_uniform();
     for (size_t i = 0; i < workload.size(); i++) {
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
-        size_delta += workload[i].fn(this);
+        auto ret = workload[i].fn(this);
+        if (likely(ret.first)) {
+          ++ntxn_commits;
+        } else {
+          ++ntxn_aborts;
+        }
+        size_delta += ret.second;
         txn_counts[i]++;
         break;
       }
@@ -183,14 +191,17 @@ bench_runner::run()
   barrier_a.wait_for(); // wait for all threads to start up
   barrier_b.count_down(); // bombs away!
   timer t;
-  sleep(runtime);
-  running = false;
+  if (run_mode == RUNMODE_TIME) {
+    sleep(runtime);
+    running = false;
+  }
   __sync_synchronize();
+  for (size_t i = 0; i < nthreads; i++)
+    workers[i]->join();
   const unsigned long elapsed = t.lap();
   size_t n_commits = 0;
   size_t n_aborts = 0;
   for (size_t i = 0; i < nthreads; i++) {
-    workers[i]->join();
     n_commits += workers[i]->get_ntxn_commits();
     n_aborts += workers[i]->get_ntxn_aborts();
   }
@@ -239,6 +250,7 @@ bench_runner::run()
     }
 #endif
     cerr << "--- benchmark statistics ---" << endl;
+    cerr << "runtime: " << elapsed_sec << " sec" << endl;
     cerr << "memory delta: " << delta_mb  << " MB" << endl;
     cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
     cerr << "logical memory delta: " << size_delta_mb << " MB" << endl;

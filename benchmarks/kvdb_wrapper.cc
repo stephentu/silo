@@ -20,7 +20,7 @@ using namespace util;
 abstract_ordered_index *
 kvdb_wrapper::open_index(const string &name, size_t value_size_hint, bool mostly_append)
 {
-  return new kvdb_ordered_index;
+  return new kvdb_ordered_index(name);
 }
 
 #ifdef MUTABLE_RECORDS
@@ -398,6 +398,32 @@ kvdb_ordered_index::size() const
 }
 
 struct purge_tree_walker : public btree::tree_walk_callback {
+
+#ifdef TXN_BTREE_DUMP_PURGE_STATS
+  purge_tree_walker()
+    : purge_stats_nodes(0),
+      purge_stats_nosuffix_nodes(0) {}
+  std::vector<uint16_t> purge_stats_nkeys_node;
+  size_t purge_stats_nodes;
+  size_t purge_stats_nosuffix_nodes;
+
+  void
+  dump_stats()
+  {
+    size_t v = 0;
+    for (vector<uint16_t>::iterator it = purge_stats_nkeys_node.begin();
+        it != purge_stats_nkeys_node.end(); ++it)
+      v += *it;
+    const double avg_nkeys_node = double(v)/double(purge_stats_nkeys_node.size());
+    const double avg_fill_factor = avg_nkeys_node/double(btree::NKeysPerNode);
+    cerr << "btree node stats" << endl;
+    cerr << "    avg_nkeys_node: " << avg_nkeys_node << endl;
+    cerr << "    avg_fill_factor: " << avg_fill_factor << endl;
+    cerr << "    num_nodes: " << purge_stats_nodes << endl;
+    cerr << "    num_nosuffix_nodes: " << purge_stats_nosuffix_nodes << endl;
+  }
+#endif
+
   virtual void
   on_node_begin(const btree::node_opaque_t *n)
   {
@@ -412,6 +438,15 @@ struct purge_tree_walker : public btree::tree_walk_callback {
       struct kvdb_record * const r = (struct kvdb_record *) spec_values[i].first;
       free(r);
     }
+#ifdef TXN_BTREE_DUMP_PURGE_STATS
+    purge_stats_nkeys_node.push_back(spec_values.size());
+    purge_stats_nodes++;
+    for (size_t i = 0; i < spec_values.size(); i++)
+      if (spec_values[i].second)
+        goto done;
+    purge_stats_nosuffix_nodes++;
+done:
+#endif
     spec_values.clear();
   }
 
@@ -431,4 +466,8 @@ kvdb_ordered_index::clear()
   purge_tree_walker w;
   btr.tree_walk(w);
   btr.clear();
+#ifdef TXN_BTREE_DUMP_PURGE_STATS
+  cerr << "purging kvdb index: " << name << endl;
+  w.dump_stats();
+#endif
 }

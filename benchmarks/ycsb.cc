@@ -34,7 +34,7 @@ public:
   {
   }
 
-  ssize_t
+  txn_result
   txn_read()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
@@ -43,22 +43,21 @@ public:
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
       computation_n += obj_v.size();
       measure_txn_counters(txn, "txn_read");
-      if (db->commit_txn(txn))
-        ntxn_commits++;
+      if (likely(db->commit_txn(txn)))
+        return txn_result(true, 0);
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0;
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnRead(bench_worker *w)
   {
     return static_cast<ycsb_worker *>(w)->txn_read();
   }
 
-  ssize_t
+  txn_result
   txn_write()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
@@ -66,22 +65,21 @@ public:
     try {
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'b'));
       measure_txn_counters(txn, "txn_write");
-      if (db->commit_txn(txn))
-        ntxn_commits++;
+      if (likely(db->commit_txn(txn)))
+        return txn_result(true, 0);
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0; // key already exists
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnWrite(bench_worker *w)
   {
     return static_cast<ycsb_worker *>(w)->txn_write();
   }
 
-  ssize_t
+  txn_result
   txn_rmw()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_RMW);
@@ -91,16 +89,15 @@ public:
       computation_n += obj_v.size();
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'c'));
       measure_txn_counters(txn, "txn_rmw");
-      if (db->commit_txn(txn))
-        ntxn_commits++;
+      if (likely(db->commit_txn(txn)))
+        return txn_result(true, 0);
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0; // key already exists
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnRmw(bench_worker *w)
   {
     return static_cast<ycsb_worker *>(w)->txn_rmw();
@@ -118,7 +115,7 @@ public:
     size_t n;
   };
 
-  ssize_t
+  txn_result
   txn_scan()
   {
     void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_SCAN);
@@ -131,16 +128,15 @@ public:
       tbl->scan(txn, kbegin, &kend, c);
       computation_n += c.n;
       measure_txn_counters(txn, "txn_scan");
-      if (db->commit_txn(txn))
-        ntxn_commits++;
+      if (likely(db->commit_txn(txn)))
+        return txn_result(true, 0);
     } catch (abstract_db::abstract_abort_exception &ex) {
       db->abort_txn(txn);
-      ntxn_aborts++;
     }
-    return 0;
+    return txn_result(false, 0);
   }
 
-  static ssize_t
+  static txn_result
   TxnScan(bench_worker *w)
   {
     return static_cast<ycsb_worker *>(w)->txn_scan();

@@ -499,6 +499,7 @@ do_abort:
     VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
     VERBOSE(cerr << "aborting txn" << endl);
+
   for (typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
        it != dbtuple_keys.end(); ++it) {
     dbtuple_info &info = dbtuple_values[it->second];
@@ -508,12 +509,18 @@ do_abort:
         // clear tuple
         it->first->version = dbtuple::MIN_TID;
         it->first->size = 0;
+        // deal with it below, after we have released locks for non-inserted
+        // nodes
       }
       // XXX: potential optimization: on unlock() for abort, we don't
       // technically need to change the version number
       it->first->unlock();
+      info.locked = false;
+    } else {
+      INVARIANT(!info.insert);
     }
   }
+
   state = TXN_ABRT;
   if (commit_tid.first)
     cast()->on_tid_finish(commit_tid.second);

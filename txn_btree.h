@@ -309,7 +309,33 @@ private:
     std::vector<uint16_t> purge_stats_nkeys_node;
     size_t purge_stats_nodes;
     size_t purge_stats_nosuffix_nodes;
+
+    void
+    dump_stats()
+    {
+      size_t v = 0;
+      for (std::vector<uint16_t>::iterator it = purge_stats_nkeys_node.begin();
+          it != purge_stats_nkeys_node.end(); ++it)
+        v += *it;
+      const double avg_nkeys_node = double(v)/double(purge_stats_nkeys_node.size());
+      const double avg_fill_factor = avg_nkeys_node/double(btree::NKeysPerNode);
+      std::cerr << "btree node stats" << std::endl;
+      std::cerr << "    avg_nkeys_node: " << avg_nkeys_node << std::endl;
+      std::cerr << "    avg_fill_factor: " << avg_fill_factor << std::endl;
+      std::cerr << "    num_nodes: " << purge_stats_nodes << std::endl;
+      std::cerr << "    num_nosuffix_nodes: " << purge_stats_nosuffix_nodes << std::endl;
+      std::cerr << "record size stats (nbytes => count)" << std::endl;
+      for (std::map<size_t, size_t>::iterator it = purge_stats_ln_record_size_counts.begin();
+          it != purge_stats_ln_record_size_counts.end(); ++it)
+        std::cerr << "    " << it->first << " => " << it->second << std::endl;
+      std::cerr << "alloc size stats  (nbytes => count)" << std::endl;
+      for (std::map<size_t, size_t>::iterator it = purge_stats_ln_alloc_size_counts.begin();
+          it != purge_stats_ln_alloc_size_counts.end(); ++it)
+        std::cerr << "    " << (it->first + sizeof(dbtuple)) << " => " << it->second << std::endl;
+
+    }
 #endif
+
   private:
     std::vector< std::pair<btree::value_type, bool> > spec_values;
   };
