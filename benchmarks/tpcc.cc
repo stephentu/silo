@@ -454,7 +454,7 @@ string tpcc_worker_mixin::NameTokens[] =
     string("EING"),
   };
 
-STATIC_COUNTER_DECL(scopedperf::tod_ctr, tpcc_txn_tod, tpcc_txn_cg)
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
