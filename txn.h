@@ -31,6 +31,7 @@
 #include "prefetch.h"
 #include "keyrange.h"
 #include "tuple.h"
+#include "scopedperf.hh"
 
 // forward decl
 template <template <typename> class Transaction> class txn_btree;
@@ -163,6 +164,12 @@ protected:
   static event_counter evt_local_search_write_set_hits;
   static event_counter evt_local_search_absent_set_hits;
   static event_counter evt_dbtuple_latest_replacement;
+
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe0, g_txn_commit_probe0_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe1, g_txn_commit_probe1_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe2, g_txn_commit_probe2_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe3, g_txn_commit_probe3_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe4, g_txn_commit_probe4_cg);
 
   txn_state state;
   abort_reason reason;

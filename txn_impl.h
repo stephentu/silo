@@ -165,10 +165,8 @@ template <template <typename> class Protocol, typename Traits>
 bool
 transaction<Protocol, Traits>::commit(bool doThrow)
 {
-  // XXX(stephentu): specific abort counters, to see which
-  // case we are aborting the most on (could integrate this with
-  // abort_trap())
-  //ANON_REGION("transaction::commit:", &txn_commit_probe0_cg);
+  PERF_DECL(static std::string probe0_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  ANON_REGION(probe0_name.c_str(), &transaction_base::g_txn_commit_probe0_cg);
 
   switch (state) {
   case TXN_EMBRYO:
@@ -188,6 +186,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
   std::pair<bool, tid_t> commit_tid(false, 0);
 
   {
+    PERF_DECL(static std::string probe1_name((__PRETTY_FUNCTION__) + std::string(":find_write_nodes:")));
+    ANON_REGION(probe1_name.c_str(), &transaction_base::g_txn_commit_probe1_cg);
     typename ctx_map_type::iterator outer_it = ctx_map.begin();
     typename ctx_map_type::iterator outer_it_end = ctx_map.end();
     for (; outer_it != outer_it_end; ++outer_it) {
@@ -273,6 +273,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     // we don't have consistent tids, or not a read-only txn
 
     if (!dbtuples.empty()) {
+      PERF_DECL(static std::string probe2_name(std::string(__PRETTY_FUNCTION__) + std::string(":lock_write_nodes:")));
+      ANON_REGION(probe2_name.c_str(), &transaction_base::g_txn_commit_probe2_cg);
       // lock the logical nodes in sort order
       std::sort(dbtuples.begin(), dbtuples.end(), LNodeComp());
       typename dbtuple_vec::iterator it = dbtuples.begin();
@@ -299,6 +301,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
 
     // do read validation
     {
+      PERF_DECL(static std::string probe3_name(std::string(__PRETTY_FUNCTION__) + std::string(":read_validation:")));
+      ANON_REGION(probe3_name.c_str(), &transaction_base::g_txn_commit_probe3_cg);
       typename ctx_map_type::iterator outer_it = ctx_map.begin();
       typename ctx_map_type::iterator outer_it_end = ctx_map.end();
       for (; outer_it != outer_it_end; ++outer_it) {
@@ -393,6 +397,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
 
     // commit actual records
     if (!dbtuples.empty()) {
+      PERF_DECL(static std::string probe4_name(std::string(__PRETTY_FUNCTION__) + std::string(":write_records:")));
+      ANON_REGION(probe4_name.c_str(), &transaction_base::g_txn_commit_probe4_cg);
       typename dbtuple_vec::iterator it = dbtuples.begin();
       typename dbtuple_vec::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {

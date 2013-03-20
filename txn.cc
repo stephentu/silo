@@ -40,8 +40,11 @@ proto2_version_str(uint64_t v)
 // XXX(stephentu): hacky!
 string (*g_proto_version_str)(uint64_t v) = proto2_version_str;
 
-
-//STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_commit_probe0_tsc, txn_commit_probe0_cg);
+CLASS_STATIC_COUNTER_IMPL(transaction_base, scopedperf::tsc_ctr, g_txn_commit_probe0, g_txn_commit_probe0_cg);
+CLASS_STATIC_COUNTER_IMPL(transaction_base, scopedperf::tsc_ctr, g_txn_commit_probe1, g_txn_commit_probe1_cg);
+CLASS_STATIC_COUNTER_IMPL(transaction_base, scopedperf::tsc_ctr, g_txn_commit_probe2, g_txn_commit_probe2_cg);
+CLASS_STATIC_COUNTER_IMPL(transaction_base, scopedperf::tsc_ctr, g_txn_commit_probe3, g_txn_commit_probe3_cg);
+CLASS_STATIC_COUNTER_IMPL(transaction_base, scopedperf::tsc_ctr, g_txn_commit_probe4, g_txn_commit_probe4_cg);
 
 #define EVENT_COUNTER_IMPL_X(x) \
   event_counter transaction_base::g_ ## x ## _ctr(#x);
