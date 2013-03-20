@@ -107,7 +107,7 @@ transaction<Protocol, Traits>::dump_debug_info() const
     // absent-set
     for (typename absent_set_map::const_iterator as_it = it->second.absent_set.begin();
          as_it != it->second.absent_set.end(); ++as_it)
-      std::cerr << "      Key 0x" << util::hexify(as_it->first) << " : locked=" << as_it->second << std::endl;
+      std::cerr << "      Key 0x" << util::hexify(as_it->first) << " : " << as_it->second << std::endl;
 
     std::cerr << "      === Write Set ===" << std::endl;
     // write-set
@@ -205,7 +205,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           VERBOSE(cerr << "key " << util::hexify(it->first) << " : dbtuple 0x" << util::hexify(intptr_t(v)) << endl);
           dbtuples.emplace_back(
               (dbtuple *) v,
-              dbtuple_info(outer_it->first, it->first, false, writerec.r, writerec.insert));
+              dbtuple_info(outer_it->first, it->first, false, writerec.r, false));
           // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
             outer_it->second.read_set.find((const dbtuple *) v);
@@ -218,22 +218,27 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             typename absent_set_map::iterator absent_it =
               outer_it->second.absent_set.find(it->first);
             if (absent_it != outer_it->second.absent_set.end()) {
-              INVARIANT(!absent_it->second);
-              absent_it->second = true;
+              INVARIANT(absent_it->second.type == ABSENT_REC_READ);
+              absent_it->second.type = ABSENT_REC_WRITE;
+              absent_it->second.tuple = (const dbtuple *) v;
             }
           }
         } else {
           if (!try_insert_path)
             ++transaction_base::g_evt_dbtuple_write_search_failed;
           dbtuple * const tuple = dbtuple::alloc_first(
-              !outer_it->first->is_mostly_append(), writerec.r.size());
+              !outer_it->first->is_mostly_append(),
+              (dbtuple::const_record_type) writerec.r.data(),
+              writerec.r.size());
           INVARIANT(tuple->is_latest());
+          tuple->lock(true);
           // XXX: underlying btree api should return the existing value if
           // insert fails- this would allow us to avoid having to do another search
           std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
           if (unlikely(!outer_it->first->underlying_btree.insert_if_absent(
                           varkey(it->first), (btree::value_type) tuple, &insert_info))) {
             VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(it->first) << std::endl);
+            tuple->unlock();
             dbtuple::release_no_rcu(tuple);
             try_insert_path = false;
             ++transaction_base::g_evt_dbtuple_write_insert_failed;
@@ -259,7 +264,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             }
           }
           dbtuples.emplace_back(
-              tuple, dbtuple_info(outer_it->first, it->first, false, writerec.r, writerec.insert));
+              tuple, dbtuple_info(outer_it->first, it->first, true, writerec.r, true));
           // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
             outer_it->second.read_set.find(tuple);
@@ -272,8 +277,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             typename absent_set_map::iterator absent_it =
               outer_it->second.absent_set.find(it->first);
             if (absent_it != outer_it->second.absent_set.end()) {
-              INVARIANT(!absent_it->second);
-              absent_it->second = true;
+              INVARIANT(absent_it->second.type == ABSENT_REC_READ);
+              absent_it->second.type = ABSENT_REC_INSERT;
+              absent_it->second.tuple = tuple;
             }
           }
         }
@@ -292,6 +298,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       typename dbtuple_vec::iterator it = dbtuples.begin();
       typename dbtuple_vec::iterator it_end = dbtuples.end();
       for (; it != it_end; ++it) {
+        if (it->second.locked)
+          continue;
         VERBOSE(cerr << "locking node 0x" << util::hexify(intptr_t(it->first)) << endl);
         const dbtuple::version_t v = it->first->lock(true); // lock for write
         INVARIANT(dbtuple::IsLatest(v) == it->first->is_latest());
@@ -350,18 +358,27 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           typename absent_set_map::iterator it = outer_it->second.absent_set.begin();
           typename absent_set_map::iterator it_end = outer_it->second.absent_set.end();
           for (; it != it_end; ++it) {
-            btree::value_type v = 0;
-            if (likely(!outer_it->first->underlying_btree.search(varkey(it->first), v))) {
-              // done
-              VERBOSE(cerr << "absent key " << util::hexify(it->first) << " was not found in btree" << endl);
+            if (it->second.type == ABSENT_REC_INSERT)
+              // by inserting we guaranteed that it did not previously exist
               continue;
+            const dbtuple *tuple;
+            if (it->second.type == ABSENT_REC_WRITE) {
+              INVARIANT(it->second.tuple);
+              tuple = it->second.tuple;
+            } else {
+              INVARIANT(!it->second.tuple);
+              btree::value_type v = 0;
+              if (likely(!outer_it->first->underlying_btree.search(varkey(it->first), v))) {
+                // done
+                VERBOSE(cerr << "absent key " << util::hexify(it->first) << " was not found in btree" << endl);
+                continue;
+              }
+              tuple = (const dbtuple *) v;
             }
-            const dbtuple * const ln = (const dbtuple *) v;
-            if (it->second ? ln->latest_value_is_nil() :
-                             ln->stable_latest_value_is_nil()) {
-              // NB(stephentu): this seems like an optimization,
-              // but its actually necessary- otherwise a newly inserted
-              // key which we read first would always get aborted
+            INVARIANT(tuple);
+            if (it->second.type == ABSENT_REC_WRITE ?
+                  tuple->latest_value_is_nil() :
+                  tuple->stable_latest_value_is_nil()) {
               VERBOSE(cerr << "absent key " << util::hexify(it->first) << " @ dbtuple "
                            << util::hexify(ln) << " has latest value nil" << endl);
               continue;
@@ -395,7 +412,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
                it != outer_it->second.absent_range_set.end(); ++it) {
             VERBOSE(cerr << "checking absent range: " << *it << endl);
             typename txn_btree<Protocol>::template absent_range_validation_callback<Traits> c(
-                &outer_it->second, commit_tid.second);
+                &outer_it->second);
             varkey upper(it->b);
             outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
             if (unlikely(c.failed())) {
@@ -419,29 +436,36 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         VERBOSE(std::cerr << "writing dbtuple " << util::hexify(it->first)
                           << " at commit_tid " << g_proto_version_str(commit_tid.second)
                           << std::endl);
-        it->first->prefetch();
-        const dbtuple::write_record_ret ret = it->first->write_record_at(
-            cast(), commit_tid.second,
-            (const record_type) it->second.r.data(), it->second.r.size());
-        lock_guard<dbtuple> guard(ret.second, true);
-        if (unlikely(ret.second)) {
-          // need to unlink it->first from underlying btree, replacing
-          // with ret.second (atomically)
-          btree::value_type old_v = 0;
-          if (it->second.btr->underlying_btree.insert(
-                varkey(it->second.key), (btree::value_type) ret.second, &old_v, NULL))
-            // should already exist in tree
-            INVARIANT(false);
-          INVARIANT(old_v == (btree::value_type) it->first);
-          ++evt_dbtuple_latest_replacement;
+        if (it->second.insert) {
+          it->first->mark_modifying(); // not sure if we really need to do this
+          it->first->version = commit_tid.second;
+          INVARIANT(it->first->size == it->second.r.size());
+          INVARIANT(memcmp(it->first->get_value_start(), it->second.r.data(), it->first->size) == 0);
+        } else {
+          it->first->prefetch();
+          const dbtuple::write_record_ret ret = it->first->write_record_at(
+              cast(), commit_tid.second,
+              (const record_type) it->second.r.data(), it->second.r.size());
+          lock_guard<dbtuple> guard(ret.second, true);
+          if (unlikely(ret.second)) {
+            // need to unlink it->first from underlying btree, replacing
+            // with ret.second (atomically)
+            btree::value_type old_v = 0;
+            if (it->second.btr->underlying_btree.insert(
+                  varkey(it->second.key), (btree::value_type) ret.second, &old_v, NULL))
+              // should already exist in tree
+              INVARIANT(false);
+            INVARIANT(old_v == (btree::value_type) it->first);
+            ++evt_dbtuple_latest_replacement;
+          }
+          dbtuple * const latest = ret.second ? ret.second : it->first;
+          if (unlikely(ret.first))
+            // spill happened: signal for GC
+            cast()->on_dbtuple_spill(it->second.btr, it->second.key, latest);
+          if (it->second.r.empty())
+            // logical delete happened: schedule physical deletion
+            cast()->on_logical_delete(it->second.btr, it->second.key, latest);
         }
-        dbtuple * const latest = ret.second ? ret.second : it->first;
-        if (unlikely(ret.first))
-          // spill happened: signal for GC
-          cast()->on_dbtuple_spill(it->second.btr, it->second.key, latest);
-        if (it->second.r.empty())
-          // logical delete happened: schedule physical deletion
-          cast()->on_logical_delete(it->second.btr, it->second.key, latest);
         it->first->unlock();
       }
     }

@@ -111,19 +111,22 @@ private:
     return s;
   }
 
-  // creates a "small" type (type 0), with an empty (deleted) value
-  dbtuple(bool do_big_type, size_type alloc_size)
+  // creates a "small" type (type 0), with a tentative value at MAX_TID
+  dbtuple(bool do_big_type, const_record_type r,
+          size_type size, size_type alloc_size)
     : hdr((do_big_type ? HDR_TYPE_MASK : 0) | HDR_LATEST_MASK),
-      version(MIN_TID),
-      size(0),
+      version(MAX_TID),
+      size(CheckBounds(size)),
       alloc_size(CheckBounds(alloc_size))
   {
-    // each logical node starts with one "deleted" entry at MIN_TID
-    // (this is indicated by size = 0)
     INVARIANT(((char *)this) + sizeof(*this) == (char *) &d[0]);
     INVARIANT(is_latest());
-    if (do_big_type)
+    if (do_big_type) {
       d->big.next = 0;
+      NDB_MEMCPY(&d->big.value_start[0], r, size);
+    } else {
+      NDB_MEMCPY(&d->small.value_start[0], r, size);
+    }
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated +=
       (alloc_size + sizeof(dbtuple) +
@@ -132,8 +135,8 @@ private:
 
   // creates a "big" type (type 1), with a non-empty value
   dbtuple(tid_t version, const_record_type r,
-               size_type size, size_type alloc_size,
-               struct dbtuple *next, bool set_latest)
+          size_type size, size_type alloc_size,
+          struct dbtuple *next, bool set_latest)
     : hdr(HDR_TYPE_MASK | (set_latest ? HDR_LATEST_MASK : 0)),
       version(version),
       size(CheckBounds(size)),
@@ -462,10 +465,22 @@ public:
     return (char *) &d->small.value_start[0];
   }
 
+  inline char *
+  get_value_start()
+  {
+    return get_value_start(hdr);
+  }
+
   inline const char *
   get_value_start(version_t v) const
   {
     return const_cast<dbtuple *>(this)->get_value_start(v);
+  }
+
+  inline const char *
+  get_value_start() const
+  {
+    return get_value_start(hdr);
   }
 
 private:
@@ -686,22 +701,22 @@ public:
   // just internal vs external fragmentation)
 
   static inline dbtuple *
-  alloc_first(bool do_big_type, size_type alloc_sz)
+  alloc_first(bool do_big_type, const_record_type value, size_type sz)
   {
-    INVARIANT(alloc_sz <= std::numeric_limits<node_size_type>::max());
+    INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
     const size_t big_type_contrib_sz = do_big_type ? sizeof(dbtuple *) : 0;
-    const size_t max_actual_alloc_sz =
+    const size_t max_alloc_sz =
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple) + big_type_contrib_sz;
-    const size_t actual_alloc_sz =
+    const size_t alloc_sz =
       std::min(
-          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + big_type_contrib_sz + alloc_sz),
-          max_actual_alloc_sz);
-    char *p = (char *) malloc(actual_alloc_sz);
+          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + big_type_contrib_sz + sz),
+          max_alloc_sz);
+    char *p = (char *) malloc(alloc_sz);
     INVARIANT(p);
-    INVARIANT((actual_alloc_sz - sizeof(dbtuple) - big_type_contrib_sz) >= alloc_sz);
+    INVARIANT((alloc_sz - sizeof(dbtuple) - big_type_contrib_sz) >= sz);
     return new (p) dbtuple(
-        do_big_type,
-        actual_alloc_sz - sizeof(dbtuple) - big_type_contrib_sz);
+        do_big_type, value, sz,
+        alloc_sz - sizeof(dbtuple) - big_type_contrib_sz);
   }
 
   static inline dbtuple *

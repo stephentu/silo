@@ -300,6 +300,9 @@ public:
         INVARIANT(it->first->is_write_intent());
         INVARIANT(!it->first->is_modifying());
         INVARIANT(it->first->is_latest());
+        if (it->second.insert)
+          // we inserted this node, so we don't want to do the checks below
+          continue;
         const tid_t t = it->first->version;
         // XXX(stephentu): we are overly conservative for now- technically this
         // abort isn't necessary (we really should just write the value in the correct

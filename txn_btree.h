@@ -341,26 +341,31 @@ private:
 
   template <typename Traits>
   struct absent_range_validation_callback : public btree::search_range_callback {
-    absent_range_validation_callback(typename Transaction<Traits>::txn_context *ctx,
-                                     transaction_base::tid_t commit_tid)
-      : ctx(ctx), commit_tid(commit_tid), failed_flag(false) {}
+    absent_range_validation_callback(typename Transaction<Traits>::txn_context *ctx)
+      : ctx(ctx), failed_flag(false) {}
     inline bool failed() const { return failed_flag; }
     virtual bool
     invoke(const btree::string_type &k, btree::value_type v)
     {
-      dbtuple *ln = (dbtuple *) v;
-      INVARIANT(ln);
+      const dbtuple * const tuple = (const dbtuple *) v;
+      INVARIANT(tuple);
       VERBOSE(std::cerr << "absent_range_validation_callback: key " << util::hexify(k)
-          << " found dbtuple 0x" << util::hexify(ln) << std::endl);
+                        << " found dbtuple " << util::hexify(tuple) << std::endl);
+      // XXX: HACK! we use MAX_TID to indicate a tentatively inserted node.
+      // this works for now, but is very very broken. since we aren't really
+      // using this protocol, we don't realy care.
+      if (tuple->version == static_cast<dbtuple::tid_t>(dbtuple::MAX_TID)) {
+        failed_flag = false;
+        return true;
+      }
       const bool did_write = ctx->write_set.find(k) != ctx->write_set.end();
-      failed_flag = did_write ? !ln->latest_value_is_nil() : !ln->stable_latest_value_is_nil();
+      failed_flag = did_write ? !tuple->latest_value_is_nil() : !tuple->stable_latest_value_is_nil();
       if (failed_flag)
         VERBOSE(std::cerr << "absent_range_validation_callback: key " << util::hexify(k)
-            << " found dbtuple 0x" << util::hexify(ln) << std::endl);
+                          << " found dbtuple " << util::hexify(tuple) << std::endl);
       return !failed_flag;
     }
     typename Transaction<Traits>::txn_context *const ctx;
-    const transaction_base::tid_t commit_tid;
     bool failed_flag;
   };
 

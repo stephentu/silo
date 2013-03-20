@@ -50,7 +50,7 @@ txn_btree<Transaction>::search(
   if (!underlying_btree.search(varkey(k), underlying_v)) {
     // all records exist in the system at MIN_TID with no value
     INVARIANT(ctx.absent_set.find(k) == ctx.absent_set.end());
-    ctx.absent_set[k] = false;
+    ctx.absent_set[k].type = transaction_base::ABSENT_REC_READ;
     return false;
   } else {
     //IV(ANON_REGION("txn_btree::search:process:", &txn_btree_search_probe2_cg));
