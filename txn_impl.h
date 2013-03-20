@@ -180,11 +180,12 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     return false;
   }
 
-  // fetch dbtuples for insert
-  dbtuple_vec dbtuples;
+  dbtuple_key_vec dbtuple_keys;
+  dbtuple_value_vec dbtuple_values;
   const std::pair<bool, tid_t> snapshot_tid_t = cast()->consistent_snapshot_tid();
   std::pair<bool, tid_t> commit_tid(false, 0);
 
+  // fetch dbtuples for insert
   {
     PERF_DECL(static std::string probe1_name((__PRETTY_FUNCTION__) + std::string(":find_write_nodes:")));
     ANON_REGION(probe1_name.c_str(), &transaction_base::g_txn_commit_probe1_cg);
@@ -203,9 +204,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         btree::value_type v = 0;
         if (!try_insert_path && outer_it->first->underlying_btree.search(varkey(it->first), v)) {
           VERBOSE(cerr << "key " << util::hexify(it->first) << " : dbtuple 0x" << util::hexify(intptr_t(v)) << endl);
-          dbtuples.emplace_back(
-              (dbtuple *) v,
-              dbtuple_info(outer_it->first, it->first, false, writerec.r, false));
+          const unsigned int idx = dbtuple_keys.size();
+          dbtuple_keys.emplace_back((dbtuple *) v, idx);
+          dbtuple_values.emplace_back(outer_it->first, it->first, false, writerec.r, false);
           // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
             outer_it->second.read_set.find((const dbtuple *) v);
@@ -226,10 +227,11 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         } else {
           if (!try_insert_path)
             ++transaction_base::g_evt_dbtuple_write_search_failed;
+          // perf: ~900 tsc/alloc on istc11.csail.mit.edu
           dbtuple * const tuple = dbtuple::alloc_first(
-              !outer_it->first->is_mostly_append(),
-              (dbtuple::const_record_type) writerec.r.data(),
-              writerec.r.size());
+                !outer_it->first->is_mostly_append(),
+                (dbtuple::const_record_type) writerec.r.data(),
+                writerec.r.size());
           INVARIANT(tuple->is_latest());
           INVARIANT(tuple->version == dbtuple::MAX_TID);
           tuple->lock(true);
@@ -264,8 +266,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
               SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
             }
           }
-          dbtuples.emplace_back(
-              tuple, dbtuple_info(outer_it->first, it->first, true, writerec.r, true));
+          const unsigned int idx = dbtuple_keys.size();
+          dbtuple_keys.emplace_back(tuple, idx);
+          dbtuple_values.emplace_back(outer_it->first, it->first, true, writerec.r, true);
           // mark that we (will) hold lock in read set
           typename read_set_map::iterator read_it =
             outer_it->second.read_set.find(tuple);
@@ -288,23 +291,31 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     }
   }
 
-  if (!snapshot_tid_t.first || !dbtuples.empty()) {
+  INVARIANT(dbtuple_keys.size() == dbtuple_values.size());
+  if (!snapshot_tid_t.first || !dbtuple_keys.empty()) {
     // we don't have consistent tids, or not a read-only txn
 
-    if (!dbtuples.empty()) {
+    if (!dbtuple_keys.empty()) {
       PERF_DECL(static std::string probe2_name(std::string(__PRETTY_FUNCTION__) + std::string(":lock_write_nodes:")));
       ANON_REGION(probe2_name.c_str(), &transaction_base::g_txn_commit_probe2_cg);
       // lock the logical nodes in sort order
-      std::sort(dbtuples.begin(), dbtuples.end(), LNodeComp());
-      typename dbtuple_vec::iterator it = dbtuples.begin();
-      typename dbtuple_vec::iterator it_end = dbtuples.end();
+      {
+        PERF_DECL(static std::string probe6_name(std::string(__PRETTY_FUNCTION__) + std::string(":sort_write_nodes:")));
+        ANON_REGION(probe6_name.c_str(), &transaction_base::g_txn_commit_probe6_cg);
+        // ~6955 tsc/sort for new order on istc11.csali.mit.edu, using a vector of
+        // pair<dbtuple *, dbtuple_info>
+        std::sort(dbtuple_keys.begin(), dbtuple_keys.end(), TupleMapComp());
+      }
+      typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
+      typename dbtuple_key_vec::iterator it_end = dbtuple_keys.end();
       for (; it != it_end; ++it) {
-        if (it->second.locked)
+        dbtuple_info &info = dbtuple_values[it->second];
+        if (info.locked)
           continue;
-        VERBOSE(cerr << "locking node 0x" << util::hexify(intptr_t(it->first)) << endl);
+        VERBOSE(std::cerr << "locking node " << util::hexify(it->first) << std::endl);
         const dbtuple::version_t v = it->first->lock(true); // lock for write
         INVARIANT(dbtuple::IsLatest(v) == it->first->is_latest());
-        it->second.locked = true; // we locked the node
+        info.locked = true; // we locked the node
         if (unlikely(dbtuple::IsDeleting(v) ||
                      !dbtuple::IsLatest(v) ||
                      !cast()->can_read_tid(it->first->version))) {
@@ -314,7 +325,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         }
       }
       commit_tid.first = true;
-      commit_tid.second = cast()->gen_commit_tid(dbtuples);
+      PERF_DECL(static std::string probe5_name((__PRETTY_FUNCTION__) + std::string(":gen_commit_tid:")));
+      ANON_REGION(probe5_name.c_str(), &transaction_base::g_txn_commit_probe5_cg);
+      commit_tid.second = cast()->gen_commit_tid(dbtuple_keys, dbtuple_values);
       VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
     } else {
       VERBOSE(cerr << "commit tid: <read-only>" << endl);
@@ -427,33 +440,34 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     }
 
     // commit actual records
-    if (!dbtuples.empty()) {
+    if (!dbtuple_keys.empty()) {
       PERF_DECL(static std::string probe4_name(std::string(__PRETTY_FUNCTION__) + std::string(":write_records:")));
       ANON_REGION(probe4_name.c_str(), &transaction_base::g_txn_commit_probe4_cg);
-      typename dbtuple_vec::iterator it = dbtuples.begin();
-      typename dbtuple_vec::iterator it_end = dbtuples.end();
+      typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
+      typename dbtuple_key_vec::iterator it_end = dbtuple_keys.end();
       for (; it != it_end; ++it) {
-        INVARIANT(it->second.locked);
+        dbtuple_info &info = dbtuple_values[it->second];
+        INVARIANT(info.locked);
         VERBOSE(std::cerr << "writing dbtuple " << util::hexify(it->first)
                           << " at commit_tid " << g_proto_version_str(commit_tid.second)
                           << std::endl);
-        if (it->second.insert) {
+        if (info.insert) {
           INVARIANT(it->first->version == dbtuple::MAX_TID);
           it->first->version = commit_tid.second;
-          INVARIANT(it->first->size == it->second.r.size());
-          INVARIANT(memcmp(it->first->get_value_start(), it->second.r.data(), it->first->size) == 0);
+          INVARIANT(it->first->size == info.r.size());
+          INVARIANT(memcmp(it->first->get_value_start(), info.r.data(), it->first->size) == 0);
         } else {
           it->first->prefetch();
           const dbtuple::write_record_ret ret = it->first->write_record_at(
               cast(), commit_tid.second,
-              (const record_type) it->second.r.data(), it->second.r.size());
+              (const record_type) info.r.data(), info.r.size());
           lock_guard<dbtuple> guard(ret.second, true);
           if (unlikely(ret.second)) {
             // need to unlink it->first from underlying btree, replacing
             // with ret.second (atomically)
             btree::value_type old_v = 0;
-            if (it->second.btr->underlying_btree.insert(
-                  varkey(it->second.key), (btree::value_type) ret.second, &old_v, NULL))
+            if (info.btr->underlying_btree.insert(
+                  varkey(info.key), (btree::value_type) ret.second, &old_v, NULL))
               // should already exist in tree
               INVARIANT(false);
             INVARIANT(old_v == (btree::value_type) it->first);
@@ -462,10 +476,10 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           dbtuple * const latest = ret.second ? ret.second : it->first;
           if (unlikely(ret.first))
             // spill happened: signal for GC
-            cast()->on_dbtuple_spill(it->second.btr, it->second.key, latest);
-          if (it->second.r.empty())
+            cast()->on_dbtuple_spill(info.btr, info.key, latest);
+          if (info.r.empty())
             // logical delete happened: schedule physical deletion
-            cast()->on_logical_delete(it->second.btr, it->second.key, latest);
+            cast()->on_logical_delete(info.btr, info.key, latest);
         }
         it->first->unlock();
       }
@@ -484,10 +498,11 @@ do_abort:
     VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
   else
     VERBOSE(cerr << "aborting txn" << endl);
-  for (typename dbtuple_vec::iterator it = dbtuples.begin();
-       it != dbtuples.end(); ++it)
-    if (it->second.locked) {
-      if (it->second.insert) {
+  for (typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
+       it != dbtuple_keys.end(); ++it) {
+    dbtuple_info &info = dbtuple_values[it->second];
+    if (info.locked) {
+      if (info.insert) {
         INVARIANT(it->first->version == dbtuple::MAX_TID);
         // clear tuple
         it->first->version = dbtuple::MIN_TID;
@@ -497,6 +512,7 @@ do_abort:
       // technically need to change the version number
       it->first->unlock();
     }
+  }
   state = TXN_ABRT;
   if (commit_tid.first)
     cast()->on_tid_finish(commit_tid.second);

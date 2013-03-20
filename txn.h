@@ -198,6 +198,8 @@ protected:
   CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe2, g_txn_commit_probe2_cg);
   CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe3, g_txn_commit_probe3_cg);
   CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe4, g_txn_commit_probe4_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe5, g_txn_commit_probe5_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe6, g_txn_commit_probe6_cg);
 
   txn_state state;
   abort_reason reason;
@@ -289,12 +291,17 @@ protected:
     string_type r;
     bool insert;
   };
-  typedef std::pair<dbtuple *, dbtuple_info> dbtuple_pair;
-  typedef typename util::vec<dbtuple_pair, 512>::type dbtuple_vec;
 
-  struct LNodeComp {
+  // NB: maintain two separate vectors, so we can sort faster (w/o swapping
+  // elems). logically, we want a map from dbtuple -> dbtuple_info, but this
+  // method is faster
+  typedef std::pair<dbtuple *, unsigned int> dbtuple_mapping;
+  typedef typename util::vec<dbtuple_mapping, 512>::type dbtuple_key_vec;
+  typedef typename util::vec<dbtuple_info, 512>::type    dbtuple_value_vec;
+
+  struct TupleMapComp {
     inline ALWAYS_INLINE bool
-    operator()(const dbtuple_pair &lhs, const dbtuple_pair &rhs) const
+    operator()(const dbtuple_mapping &lhs, const dbtuple_mapping &rhs) const
     {
       return lhs.first < rhs.first;
     }
@@ -382,7 +389,9 @@ protected:
    * it still has not been decided whether or not this txn will commit
    * successfully
    */
-  tid_t gen_commit_tid(const dbtuple_vec &write_nodes);
+  tid_t gen_commit_tid(
+      const dbtuple_key_vec &write_node_keys,
+      const dbtuple_value_vec &write_node_values);
 
   bool can_read_tid(tid_t t) const;
 

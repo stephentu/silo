@@ -180,8 +180,9 @@ public:
   typedef Traits traits_type;
   typedef transaction_base::tid_t tid_t;
   typedef transaction_base::string_type string_type;
-  typedef typename super_type::dbtuple_pair dbtuple_pair;
-  typedef typename super_type::dbtuple_vec dbtuple_vec;
+  typedef typename super_type::dbtuple_info dbtuple_info;
+  typedef typename super_type::dbtuple_key_vec dbtuple_key_vec;
+  typedef typename super_type::dbtuple_value_vec dbtuple_value_vec;
   typedef typename super_type::read_set_map read_set_map;
   typedef typename super_type::absent_set_map absent_set_map;
   typedef typename super_type::write_set_map write_set_map;
@@ -261,7 +262,9 @@ public:
   }
 
   transaction_base::tid_t
-  gen_commit_tid(const dbtuple_vec &write_nodes)
+  gen_commit_tid(
+      const dbtuple_key_vec &write_node_keys,
+      const dbtuple_value_vec &write_node_values)
   {
     const size_t my_core_id = coreid::core_id();
     const tid_t l_last_commit_tid = tl_last_commit_tid;
@@ -292,15 +295,16 @@ public:
     }
 
     {
-      typename dbtuple_vec::const_iterator it = write_nodes.begin();
-      typename dbtuple_vec::const_iterator it_end = write_nodes.end();
+      typename dbtuple_key_vec::const_iterator it = write_node_keys.begin();
+      typename dbtuple_key_vec::const_iterator it_end = write_node_keys.end();
       for (; it != it_end; ++it) {
+        const dbtuple_info &info = write_node_values[it->second];
         INVARIANT(it->first->is_locked());
         INVARIANT(!it->first->is_deleting());
         INVARIANT(it->first->is_write_intent());
         INVARIANT(!it->first->is_modifying());
         INVARIANT(it->first->is_latest());
-        if (it->second.insert)
+        if (info.insert)
           // we inserted this node, so we don't want to do the checks below
           continue;
         const tid_t t = it->first->version;
