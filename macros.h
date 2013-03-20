@@ -94,4 +94,7 @@
 #define OVERRIDE
 #endif
 
+// number of nanoseconds in 1 second (1e9)
+#define ONE_SECOND_NS 1000000000
+
 #endif /* _MACROS_H_ */

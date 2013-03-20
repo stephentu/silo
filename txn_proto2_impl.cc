@@ -51,7 +51,8 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
   // easy checks
   if (!dbtuple::IsLatest(vcheck) ||
       dbtuple::IsDeleting(vcheck) ||
-      tuple->version == dbtuple::MIN_TID)
+      tuple->version == dbtuple::MIN_TID ||
+      tuple->version == dbtuple::MAX_TID)
     return true;
 
   // check to see if theres a chain to remove
@@ -105,21 +106,21 @@ transaction_proto2_static::InitEpochScheme()
 transaction_proto2_static::epoch_loop transaction_proto2_static::g_epoch_loop;
 
 static const uint64_t txn_epoch_us = 1000 * 1000; /* 1 s */
-//static const uint64_t txn_epoch_ns = txn_epoch_us * 1000;
 
 void
 transaction_proto2_static::epoch_loop::run()
 {
   // runs as daemon thread
   struct timespec t;
-  NDB_MEMSET(&t, 0, sizeof(t));
   timer loop_timer;
   for (;;) {
 
     const uint64_t last_loop_usec = loop_timer.lap();
     const uint64_t delay_time_usec = txn_epoch_us;
     if (last_loop_usec < delay_time_usec) {
-      t.tv_nsec = (delay_time_usec - last_loop_usec) * 1000;
+      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
+      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&t, NULL);
     }
 
@@ -194,7 +195,6 @@ txn_walker_loop::run()
   string s; // the starting key of the scan
   timer loop_timer;
   struct timespec ts;
-  NDB_MEMSET(&ts, 0, sizeof(ts));
   typename vec<btree::leaf_node *>::type q;
 
   while (running) {
@@ -344,7 +344,8 @@ txn_walker_loop::run()
     evt_avg_txn_walker_loop_iter_us.offer(us);
 
     // sleep
-    ts.tv_nsec = rcu::EpochTimeNsec;
+    ts.tv_sec  = rcu::EpochTimeNsec / ONE_SECOND_NS;
+    ts.tv_nsec = rcu::EpochTimeNsec % ONE_SECOND_NS;
     nanosleep(&ts, NULL);
   }
 }

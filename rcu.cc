@@ -228,8 +228,8 @@ public:
   run()
   {
     struct timespec t;
-    NDB_MEMSET(&t, 0, sizeof(t));
-    t.tv_nsec = rcu_epoch_ns / 10; // these go a factor of 10 faster
+    t.tv_sec  = rcu_epoch_ns % ONE_SECOND_NS;
+    t.tv_nsec = (rcu_epoch_ns / 10) % ONE_SECOND_NS; // these go a factor of 10 faster
     rcu::px_queue stack_queue;
     for (;;) {
       // see if any elems to process
@@ -277,7 +277,6 @@ rcu::gc_thread_loop(void *p)
 {
   // runs as daemon thread
   struct timespec t;
-  NDB_MEMSET(&t, 0, sizeof(t));
   timer loop_timer;
   // ptrs so we don't have to deal w/ static destructors
   static gc_reaper_thread *reaper_loops[NGCReapers];
@@ -291,7 +290,9 @@ rcu::gc_thread_loop(void *p)
     const uint64_t last_loop_usec = loop_timer.lap();
     const uint64_t delay_time_usec = rcu_epoch_us;
     if (last_loop_usec < delay_time_usec) {
-      t.tv_nsec = (delay_time_usec - last_loop_usec) * 1000;
+      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
+      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&t, NULL);
     }
 
