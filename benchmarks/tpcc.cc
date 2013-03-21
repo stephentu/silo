@@ -2020,7 +2020,6 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
     int c = getopt_long(argc, argv, "r:", long_options, &option_index);
     if (c == -1)
       break;
-    cerr << int(c) << endl;
     switch (c) {
     case 0:
       if (long_options[option_index].flag != 0)
