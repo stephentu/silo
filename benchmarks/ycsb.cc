@@ -151,10 +151,15 @@ public:
     //w.push_back(workload_desc("Write", 0.01, TxnWrite));
 
     //w.push_back(workload_desc("Read", 1.0, TxnRead));
+    //w.push_back(workload_desc("Write", 1.0, TxnWrite));
 
     // YCSB workload "A" - 50/50 read/write
-    w.push_back(workload_desc("Read", 0.5, TxnRead));
-    w.push_back(workload_desc("Write", 0.5, TxnWrite));
+    //w.push_back(workload_desc("Read", 0.5, TxnRead));
+    //w.push_back(workload_desc("Write", 0.5, TxnWrite));
+
+    // YCSB workload custom - 80/20 read/write
+    w.push_back(workload_desc("Read",  0.8, TxnRead));
+    w.push_back(workload_desc("Write", 0.2, TxnWrite));
     return w;
   }
 
@@ -202,7 +207,7 @@ protected:
         for (size_t j = 0; j < nkeys; j++) {
           string k = u64_varkey(j).str();
           string v(YCSBRecordSize, 'a');
-          tbl->insert(txn, move(k), move(v));
+          tbl->insert(txn, k, v);
         }
         if (verbose)
           cerr << "batch 1/1 done" << endl;
@@ -214,7 +219,7 @@ protected:
           for (size_t j = i * batchsize; j < keyend; j++) {
             string k = u64_varkey(j).str();
             string v(YCSBRecordSize, 'a');
-            tbl->insert(txn, move(k), move(v));
+            tbl->insert(txn, k, v);
           }
           if (verbose)
             cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
@@ -257,11 +262,13 @@ protected:
     for (size_t batchid = 0; batchid < nbatches;) {
       void * const txn = db->new_txn(txn_flags, txn_buf());
       try {
-        for (size_t i = batchid * batchsize + keystart;
-             i < min((batchid + 1) * batchsize + keystart, keyend); i++) {
+        const size_t rend = (batchid + 1 == nbatches) ?
+          keyend : keystart + ((batchid + 1) * batchsize);
+        for (size_t i = batchid * batchsize + keystart; i < rend; i++) {
+          ALWAYS_ASSERT(i >= keystart && i < keyend);
           const string k = u64_varkey(i).str();
           const string v(YCSBRecordSize, 'a');
-          tbl->insert(txn, move(k), move(v));
+          tbl->insert(txn, k, v);
         }
         if (db->commit_txn(txn))
           batchid++;
@@ -273,7 +280,7 @@ protected:
     }
     if (verbose)
       cerr << "[INFO] finished loading USERTABLE range [kstart="
-           << keystart << ", kend=" << keyend << ")" << endl;
+           << keystart << ", kend=" << keyend << ") - nkeys: " << nkeys << endl;
   }
 
 private:
