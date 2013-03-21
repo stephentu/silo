@@ -331,26 +331,42 @@ txn_walker_loop::run()
         depth--;
       }
 
+    // finished an entire scan of the tree
     s.clear();
+    goto waitepoch;
 
   } // end RCU region
 
   recalc:
-    // very simple heuristic
-    const uint64_t us = loop_timer.lap();
-    const double actual_rate = double(nodesperrun) / double(us); // nodes/usec
-    nodesperrun = size_t(actual_rate * double(rcu::EpochTimeUsec));
-    // lower and upper bounds
-    const size_t nlowerbound = 10;
-    const size_t nupperbound = 1000;
-    nodesperrun = max(nlowerbound, nodesperrun);
-    nodesperrun = min(nupperbound, nodesperrun);
-    evt_avg_txn_walker_loop_iter_us.offer(us);
+    {
+      // very simple heuristic
+      const uint64_t us = loop_timer.lap();
+      const double actual_rate = double(nodesperrun) / double(us); // nodes/usec
+      nodesperrun = size_t(actual_rate * double(rcu::EpochTimeUsec));
+      // lower and upper bounds
+      const size_t nlowerbound = 10;
+      const size_t nupperbound = 1000;
+      nodesperrun = max(nlowerbound, nodesperrun);
+      nodesperrun = min(nupperbound, nodesperrun);
+      evt_avg_txn_walker_loop_iter_us.offer(us);
 
-    // sleep
-    ts.tv_sec  = rcu::EpochTimeNsec / ONE_SECOND_NS;
-    ts.tv_nsec = rcu::EpochTimeNsec % ONE_SECOND_NS;
-    nanosleep(&ts, NULL);
+      // sleep
+      ts.tv_sec  = rcu::EpochTimeNsec / ONE_SECOND_NS;
+      ts.tv_nsec = rcu::EpochTimeNsec % ONE_SECOND_NS;
+      nanosleep(&ts, NULL);
+      continue;
+    }
+
+  waitepoch:
+    {
+      // since nothing really changes within an epoch, we sleep for an epoch's
+      // worth of time
+      const uint64_t sleep_ns = txn_epoch_us * 1000;
+      ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      ts.tv_nsec = sleep_ns % ONE_SECOND_NS;
+      nanosleep(&ts, NULL);
+      continue;
+    }
   }
 }
 
