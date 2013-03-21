@@ -145,6 +145,7 @@ static int g_disable_xpartition_txn = 0;
 static int g_disable_read_only_scans = 0;
 static int g_enable_partition_locks = 0;
 static int g_enable_separate_tree_per_partition = 0;
+static int g_new_order_remote_item_pct = 1;
 
 static aligned_padded_elem<spinlock> *g_partition_locks = 0;
 
@@ -1156,7 +1157,7 @@ tpcc_worker::txn_new_order()
     itemIDs[i] = GetItemId(r);
     if (likely(g_disable_xpartition_txn ||
                NumWarehouses() == 1 ||
-               RandomNumber(r, 1, 100) > 1)) {
+               RandomNumber(r, 1, 100) > g_new_order_remote_item_pct)) {
       supplierWarehouseIDs[i] = warehouse_id;
     } else {
       do {
@@ -2004,17 +2005,19 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
 {
   // parse options
   optind = 1;
+  bool did_spec_remote_pct = false;
   while (1) {
     static struct option long_options[] =
     {
-      {"disable-cross-partition-transactions" , no_argument , &g_disable_xpartition_txn             , 1} ,
-      {"disable-read-only-snapshots"          , no_argument , &g_disable_read_only_scans            , 1} ,
-      {"enable-partition-locks"               , no_argument , &g_enable_partition_locks             , 1} ,
-      {"enable-separate-tree-per-partition"   , no_argument , &g_enable_separate_tree_per_partition , 1} ,
+      {"disable-cross-partition-transactions" , no_argument       , &g_disable_xpartition_txn             , 1}   ,
+      {"disable-read-only-snapshots"          , no_argument       , &g_disable_read_only_scans            , 1}   ,
+      {"enable-partition-locks"               , no_argument       , &g_enable_partition_locks             , 1}   ,
+      {"enable-separate-tree-per-partition"   , no_argument       , &g_enable_separate_tree_per_partition , 1}   ,
+      {"new-order-remote-item-pct"            , required_argument , 0                                     , 'r'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "", long_options, &option_index);
+    int c = getopt_long(argc, argv, "r:", long_options, &option_index);
     if (c == -1)
       break;
     cerr << int(c) << endl;
@@ -2023,6 +2026,12 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
       if (long_options[option_index].flag != 0)
         break;
       abort();
+      break;
+
+    case 'r':
+      g_new_order_remote_item_pct = strtoul(optarg, NULL, 10);
+      ALWAYS_ASSERT(g_new_order_remote_item_pct >= 0 && g_new_order_remote_item_pct <= 100);
+      did_spec_remote_pct = true;
       break;
 
     case '?':
@@ -2034,12 +2043,18 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
     }
   }
 
+  if (did_spec_remote_pct && g_disable_xpartition_txn) {
+    cerr << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
+    cerr << "  --new-order-remote-item-pct will have no effect" << endl;
+  }
+
   if (verbose) {
     cerr << "tpcc settings:" << endl;
     cerr << "  cross_partition_transactions : " << !g_disable_xpartition_txn << endl;
     cerr << "  read_only_snapshots          : " << !g_disable_read_only_scans << endl;
     cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
     cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
+    cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
   }
 
   tpcc_bench_runner r(db);
