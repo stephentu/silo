@@ -269,7 +269,12 @@ struct kvdb_record {
 
 #endif
 
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe0_tsc, kvdb_get_probe0_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe0, kvdb_get_probe0_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe1, kvdb_get_probe1_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_put_probe0, kvdb_put_probe0_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_insert_probe0, kvdb_insert_probe0_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_scan_probe0, kvdb_scan_probe0_cg);
+STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_remove_probe0, kvdb_remove_probe0_cg);
 
 bool
 kvdb_ordered_index::get(
@@ -280,6 +285,7 @@ kvdb_ordered_index::get(
   ANON_REGION("kvdb_ordered_index::get:", &kvdb_get_probe0_cg);
   btree::value_type v = 0;
   if (btr.search(varkey(key), v)) {
+    ANON_REGION("kvdb_ordered_index::get:do_read:", &kvdb_get_probe1_cg);
     const struct kvdb_record * const r = (const struct kvdb_record *) v;
     r->prefetch();
     r->do_read(value, max_bytes_read);
@@ -294,6 +300,7 @@ kvdb_ordered_index::put(
     const string &key,
     const string &value)
 {
+  ANON_REGION("kvdb_ordered_index::put:", &kvdb_put_probe0_cg);
 #ifdef MUTABLE_RECORDS
   btree::value_type v = 0, v_old = 0;
   if (btr.search(varkey(key), v)) {
@@ -332,6 +339,7 @@ kvdb_ordered_index::insert(void *txn,
                            const std::string &key,
                            const std::string &value)
 {
+  ANON_REGION("kvdb_ordered_index::insert:", &kvdb_insert_probe0_cg);
 #ifdef MUTABLE_RECORDS
   struct kvdb_record * const rnew = kvdb_record::alloc(value);
   btree::value_type v_old = 0;
@@ -376,6 +384,7 @@ kvdb_ordered_index::scan(
     scan_callback &callback,
     str_arena *arena)
 {
+  ANON_REGION("kvdb_ordered_index::scan:", &kvdb_scan_probe0_cg);
   kvdb_wrapper_search_range_callback c(callback, arena);
   const varkey end(end_key ? varkey(*end_key) : varkey());
   btr.search_range_call(varkey(start_key), end_key ? &end : 0, c, arena->next());
@@ -384,6 +393,7 @@ kvdb_ordered_index::scan(
 void
 kvdb_ordered_index::remove(void *txn, const string &key)
 {
+  ANON_REGION("kvdb_ordered_index::remove:", &kvdb_remove_probe0_cg);
   btree::value_type v = 0;
   if (btr.remove(varkey(key), &v)) {
     struct kvdb_record * const r = (struct kvdb_record *) v;

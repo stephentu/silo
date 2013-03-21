@@ -8,14 +8,10 @@
 #include "txn_btree.h"
 #include "lockguard.h"
 
-//#define IV(expr) expr
-//#define IV(expr)
-
-//IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe0_tsc, txn_btree_search_probe0_cg));
-//IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe1_tsc, txn_btree_search_probe1_cg));
-//IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe2_tsc, txn_btree_search_probe2_cg));
-//IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe3_tsc, txn_btree_search_probe3_cg));
-//IV(STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe4_tsc, txn_btree_search_probe4_cg));
+namespace private_ {
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe0, txn_btree_search_probe0_cg)
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe1, txn_btree_search_probe1_cg)
+}
 
 template <template <typename> class Transaction>
 template <typename Traits>
@@ -38,7 +34,6 @@ txn_btree<Transaction>::search(
   // note (1)-(3) are served by transaction::local_search()
 
   {
-    //IV(ANON_REGION("txn_btree::search:local_search:", &txn_btree_search_probe1_cg));
     if (ctx.local_search_str(t, k, v)) {
       if (v.size() > max_bytes_read)
         v.resize(max_bytes_read);
@@ -53,7 +48,6 @@ txn_btree<Transaction>::search(
     ctx.absent_set[k].type = transaction_base::ABSENT_REC_READ;
     return false;
   } else {
-    //IV(ANON_REGION("txn_btree::search:process:", &txn_btree_search_probe2_cg));
     const dbtuple * const ln = (const dbtuple *) underlying_v;
     INVARIANT(ln);
     transaction_base::tid_t start_t = 0;
@@ -63,9 +57,10 @@ txn_btree<Transaction>::search(
     const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
       snapshot_tid_t.second : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
 
-    ln->prefetch();
     {
-      //IV(ANON_REGION("txn_btree::search:process:extract:", &txn_btree_search_probe3_cg));
+      PERF_DECL(static std::string probe0_name(std::string(__PRETTY_FUNCTION__) + std::string(":do_read:")));
+      ANON_REGION(probe0_name.c_str(), &private_::txn_btree_search_probe0_cg);
+      ln->prefetch();
       const bool is_read_only_txn = t.get_flags() & transaction_base::TXN_FLAG_READ_ONLY;
       if (unlikely(!ln->stable_read(snapshot_tid, start_t, v, is_read_only_txn, max_bytes_read))) {
         const transaction_base::abort_reason r =
@@ -85,7 +80,8 @@ txn_btree<Transaction>::search(
     const bool v_empty = v.empty();
     if (v_empty)
       ++transaction_base::g_evt_read_logical_deleted_node_search;
-    //IV(ANON_REGION("txn_btree::search:process:readset:", &txn_btree_search_probe4_cg));
+    PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":readset:")));
+    ANON_REGION(probe1_name.c_str(), &private_::txn_btree_search_probe1_cg);
     transaction_base::read_record_t &read_rec = ctx.read_set[ln];
     if (!read_rec.t) {
       // XXX(stephentu): this doesn't work if we allow wrap around

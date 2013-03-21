@@ -132,6 +132,8 @@ template <typename T>
 static inline ALWAYS_INLINE void
 Destroy(T *t)
 {
+  PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  ANON_REGION(probe1_name.c_str(), &private_::ndb_dtor_probe0_cg);
   t->~T();
 }
 
@@ -240,8 +242,6 @@ ndb_ordered_index<Transaction>::ndb_ordered_index(const std::string &name, size_
   btr.set_mostly_append(mostly_append);
 }
 
-//STATIC_COUNTER_DECL(scopedperf::tsc_ctr, ndb_get_probe0_tsc, ndb_get_probe0_cg);
-
 template <template <typename> class Transaction>
 bool
 ndb_ordered_index<Transaction>::get(
@@ -249,7 +249,8 @@ ndb_ordered_index<Transaction>::get(
     const std::string &key,
     std::string &value, size_t max_bytes_read)
 {
-  //ANON_REGION("ndb_ordered_index::get:", &ndb_get_probe0_cg);
+  PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  ANON_REGION(probe1_name.c_str(), &private_::ndb_get_probe0_cg);
   ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
   try {
 #define MY_OP_X(a, b) \
@@ -273,8 +274,6 @@ ndb_ordered_index<Transaction>::get(
   }
 }
 
-//static event_counter evt_rec_inserts("record_inserts");
-
 // XXX: find way to remove code duplication below using C++ templates!
 
 template <template <typename> class Transaction>
@@ -284,6 +283,8 @@ ndb_ordered_index<Transaction>::put(
     const std::string &key,
     const std::string &value)
 {
+  PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  ANON_REGION(probe1_name.c_str(), &private_::ndb_put_probe0_cg);
   ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
   try {
 #define MY_OP_X(a, b) \
@@ -302,7 +303,6 @@ ndb_ordered_index<Transaction>::put(
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
-  //++evt_rec_inserts;
   return 0;
 }
 
@@ -331,11 +331,6 @@ ndb_ordered_index<Transaction>::put(
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
-  //++evt_rec_inserts;
-  // XXX(stephentu): we currently can't return a stable pointer because we
-  // don't even know if the txn will commit (and even if it does, the value
-  // could get overwritten).  So that means our secondary index performance
-  // will suffer for now
   return 0;
 }
 
@@ -346,6 +341,8 @@ ndb_ordered_index<Transaction>::insert(
     const std::string &key,
     const std::string &value)
 {
+  PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  ANON_REGION(probe1_name.c_str(), &private_::ndb_insert_probe0_cg);
   ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
   try {
 #define MY_OP_X(a, b) \
@@ -364,7 +361,6 @@ ndb_ordered_index<Transaction>::insert(
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
-  //++evt_rec_inserts;
   return 0;
 }
 
@@ -393,7 +389,6 @@ ndb_ordered_index<Transaction>::insert(
   } catch (transaction_abort_exception &ex) {
     throw abstract_db::abstract_abort_exception();
   }
-  //++evt_rec_inserts;
   return 0;
 }
 
@@ -435,6 +430,8 @@ ndb_ordered_index<Transaction>::scan(
     scan_callback &callback,
     str_arena *arena)
 {
+  PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  ANON_REGION(probe1_name.c_str(), &private_::ndb_scan_probe0_cg);
   ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
   ndb_wrapper_search_range_callback<Transaction> c(callback);
   try {
@@ -460,6 +457,8 @@ template <template <typename> class Transaction>
 void
 ndb_ordered_index<Transaction>::remove(void *txn, const std::string &key)
 {
+  PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  ANON_REGION(probe1_name.c_str(), &private_::ndb_remove_probe0_cg);
   ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
   try {
 #define MY_OP_X(a, b) \
