@@ -514,7 +514,7 @@ private:
 #endif
   retry:
     const version_t v = reader_stable_version(allow_write_intent);
-    const struct dbtuple *p = get_next(v);
+    const struct dbtuple *p = nullptr;
     const bool found = is_not_behind(t);
     if (found) {
       if (unlikely(require_latest && !IsLatest(v)))
@@ -532,6 +532,8 @@ private:
         const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
         r.assign(get_value_start(v), read_sz);
       }
+    } else {
+      p = get_next(v);
     }
     if (unlikely(!reader_check_version(v))) {
 #ifdef ENABLE_EVENT_COUNTERS
