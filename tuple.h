@@ -53,22 +53,19 @@ public:
 private:
   static const version_t HDR_LOCKED_MASK = 0x1;
 
-  static const version_t HDR_TYPE_SHIFT = 1;
-  static const version_t HDR_TYPE_MASK = 0x1 << HDR_TYPE_SHIFT;
-
-  static const version_t HDR_DELETING_SHIFT = 2;
+  static const version_t HDR_DELETING_SHIFT = 1;
   static const version_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
 
-  static const version_t HDR_WRITE_INTENT_SHIFT = 3;
+  static const version_t HDR_WRITE_INTENT_SHIFT = 2;
   static const version_t HDR_WRITE_INTENT_MASK = 0x1 << HDR_WRITE_INTENT_SHIFT;
 
-  static const version_t HDR_MODIFYING_SHIFT = 4;
+  static const version_t HDR_MODIFYING_SHIFT = 3;
   static const version_t HDR_MODIFYING_MASK = 0x1 << HDR_MODIFYING_SHIFT;
 
-  static const version_t HDR_LATEST_SHIFT = 5;
+  static const version_t HDR_LATEST_SHIFT = 4;
   static const version_t HDR_LATEST_MASK = 0x1 << HDR_LATEST_SHIFT;
 
-  static const version_t HDR_VERSION_SHIFT = 6;
+  static const version_t HDR_VERSION_SHIFT = 5;
   static const version_t HDR_VERSION_MASK = ((version_t)-1) << HDR_VERSION_SHIFT;
 
 public:
@@ -78,8 +75,8 @@ public:
   // event, so we let it happen
   //
   // <-- low bits
-  // [ locked |  type  | deleting | write_intent | modifying | latest | version ]
-  // [  0..1  |  1..2  |   2..3   |    3..4      |   4..5    |  5..6  |  6..32  ]
+  // [ locked | deleting | write_intent | modifying | latest | version ]
+  // [  0..1  |   1..2   |    2..3      |   3..4    |  4..5  |  5..32  ]
   volatile version_t hdr;
 
   // uninterpreted TID
@@ -89,16 +86,11 @@ public:
   node_size_type size; // actual size of record (0 implies absent record)
   node_size_type alloc_size; // max size record allowed. is the space
                              // available for the record buf
+
+  dbtuple *next;
+
   // must be last field
-  union {
-    struct {
-      struct dbtuple *next;
-      uint8_t value_start[0];
-    } big;
-    struct {
-      uint8_t value_start[0];
-    } small;
-  } d[0];
+  uint8_t value_start[0];
 
 private:
   // private ctor/dtor b/c we do some special memory stuff
@@ -111,56 +103,41 @@ private:
     return s;
   }
 
-  // creates a "small" type (type 0), with a tentative value at MAX_TID
-  dbtuple(bool do_big_type, const_record_type r,
+  // creates a record with a tentative value at MAX_TID
+  dbtuple(const_record_type r,
           size_type size, size_type alloc_size)
-    : hdr((do_big_type ? HDR_TYPE_MASK : 0) | HDR_LATEST_MASK),
+    : hdr(HDR_LATEST_MASK),
       version(MAX_TID),
       size(CheckBounds(size)),
-      alloc_size(CheckBounds(alloc_size))
+      alloc_size(CheckBounds(alloc_size)),
+      next(nullptr)
   {
-    INVARIANT(((char *)this) + sizeof(*this) == (char *) &d[0]);
+    INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
     INVARIANT(is_latest());
-    if (do_big_type) {
-      d->big.next = 0;
-      NDB_MEMCPY(&d->big.value_start[0], r, size);
-    } else {
-      NDB_MEMCPY(&d->small.value_start[0], r, size);
-    }
+    NDB_MEMCPY(&value_start[0], r, size);
     ++g_evt_dbtuple_creates;
-    g_evt_dbtuple_bytes_allocated +=
-      (alloc_size + sizeof(dbtuple) +
-       (do_big_type ? sizeof(dbtuple *) : 0));
+    g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
   }
 
-  // creates a "big" type (type 1), with a non-empty value
+  // creates a record with a non-empty, non tentative value
   dbtuple(tid_t version, const_record_type r,
           size_type size, size_type alloc_size,
           struct dbtuple *next, bool set_latest)
-    : hdr(HDR_TYPE_MASK | (set_latest ? HDR_LATEST_MASK : 0)),
+    : hdr(set_latest ? HDR_LATEST_MASK : 0),
       version(version),
       size(CheckBounds(size)),
-      alloc_size(CheckBounds(alloc_size))
+      alloc_size(CheckBounds(alloc_size)),
+      next(next)
   {
     INVARIANT(size <= alloc_size);
     INVARIANT(set_latest == is_latest());
-    d->big.next = next;
-    NDB_MEMCPY(&d->big.value_start[0], r, size);
+    NDB_MEMCPY(&value_start[0], r, size);
     ++g_evt_dbtuple_creates;
-    g_evt_dbtuple_bytes_allocated +=
-      (alloc_size + sizeof(dbtuple) + sizeof(next));
+    g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
   }
 
   friend class rcu;
   ~dbtuple();
-
-  inline size_t
-  base_size() const
-  {
-    if (is_big_type())
-      return sizeof(*this) + sizeof(this);
-    return sizeof(*this);
-  }
 
   static event_avg_counter g_evt_avg_dbtuple_stable_version_spins;
   static event_avg_counter g_evt_avg_dbtuple_lock_acquire_spins;
@@ -243,24 +220,6 @@ public:
     INVARIANT(!IsWriteIntent(v));
     COMPILER_MEMORY_FENCE;
     hdr = v;
-  }
-
-  inline bool
-  is_big_type() const
-  {
-    return IsBigType(hdr);
-  }
-
-  inline bool
-  is_small_type() const
-  {
-    return !is_big_type();
-  }
-
-  static inline bool
-  IsBigType(version_t v)
-  {
-    return v & HDR_TYPE_MASK;
   }
 
   inline bool
@@ -412,75 +371,40 @@ public:
     return hdr == version;
   }
 
-  inline struct dbtuple *
+  inline ALWAYS_INLINE struct dbtuple *
   get_next()
   {
-    if (is_big_type())
-      return d->big.next;
-    return NULL;
-  }
-
-  inline struct dbtuple *
-  get_next(version_t v)
-  {
-    INVARIANT(IsBigType(v) == IsBigType(hdr));
-    if (IsBigType(v))
-      return d->big.next;
-    return NULL;
+    return next;
   }
 
   inline const struct dbtuple *
   get_next() const
   {
-    return const_cast<dbtuple *>(this)->get_next();
+    return next;
   }
 
-  inline const struct dbtuple *
-  get_next(version_t v) const
-  {
-    return const_cast<dbtuple *>(this)->get_next(v);
-  }
-
-  // precondition: only big types can call
-  inline void
+  inline ALWAYS_INLINE void
   set_next(struct dbtuple *next)
   {
-    INVARIANT(is_big_type());
-    d->big.next = next;
+    this->next = next;
   }
 
   inline void
   clear_next()
   {
-    if (is_big_type())
-      d->big.next = NULL;
+    this->next = nullptr;
   }
 
-  inline char *
-  get_value_start(version_t v)
-  {
-    INVARIANT(IsBigType(v) == IsBigType(hdr));
-    if (IsBigType(v))
-      return (char *) &d->big.value_start[0];
-    return (char *) &d->small.value_start[0];
-  }
-
-  inline char *
+  inline ALWAYS_INLINE char *
   get_value_start()
   {
-    return get_value_start(hdr);
+    return (char *) &value_start[0];
   }
 
-  inline const char *
-  get_value_start(version_t v) const
-  {
-    return const_cast<dbtuple *>(this)->get_value_start(v);
-  }
-
-  inline const char *
+  inline ALWAYS_INLINE const char *
   get_value_start() const
   {
-    return get_value_start(hdr);
+    return (const char *) &value_start[0];
   }
 
 private:
@@ -530,10 +454,10 @@ private:
         r.clear();
       } else {
         const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
-        r.assign(get_value_start(v), read_sz);
+        r.assign(get_value_start(), read_sz);
       }
     } else {
-      p = get_next(v);
+      p = get_next();
     }
     if (unlikely(!reader_check_version(v))) {
 #ifdef ENABLE_EVENT_COUNTERS
@@ -657,8 +581,6 @@ public:
     INVARIANT(is_write_intent());
     INVARIANT(!is_deleting());
 
-    const version_t v = unstable_version();
-
     if (!sz)
       ++g_evt_dbtuple_logical_deletes;
 
@@ -671,7 +593,7 @@ public:
         mark_modifying();
         version = t;
         size = sz;
-        NDB_MEMCPY(get_value_start(v), r, sz);
+        NDB_MEMCPY(get_value_start(), r, sz);
         return write_record_ret(false, NULL);
       }
 
@@ -688,10 +610,10 @@ public:
     ++g_evt_dbtuple_spills;
     g_evt_avg_record_spill_len.offer(size);
 
-    char * const vstart = get_value_start(v);
+    char * const vstart = get_value_start();
 
-    if (IsBigType(v) && sz <= alloc_size) {
-      dbtuple * const spill = alloc(version, (const_record_type) vstart, size, d->big.next, false);
+    if (sz <= alloc_size) {
+      dbtuple * const spill = alloc(version, (const_record_type) vstart, size, get_next(), false);
       INVARIANT(!spill->is_latest());
       mark_modifying();
       set_next(spill);
@@ -713,22 +635,20 @@ public:
   // just internal vs external fragmentation)
 
   static inline dbtuple *
-  alloc_first(bool do_big_type, const_record_type value, size_type sz)
+  alloc_first(const_record_type value, size_type sz)
   {
     INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
-    const size_t big_type_contrib_sz = do_big_type ? sizeof(dbtuple *) : 0;
     const size_t max_alloc_sz =
-      std::numeric_limits<node_size_type>::max() + sizeof(dbtuple) + big_type_contrib_sz;
+      std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
       std::min(
-          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + big_type_contrib_sz + sz),
+          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + sz),
           max_alloc_sz);
     char *p = (char *) malloc(alloc_sz);
     INVARIANT(p);
-    INVARIANT((alloc_sz - sizeof(dbtuple) - big_type_contrib_sz) >= sz);
+    INVARIANT((alloc_sz - sizeof(dbtuple)) >= sz);
     return new (p) dbtuple(
-        do_big_type, value, sz,
-        alloc_sz - sizeof(dbtuple) - big_type_contrib_sz);
+        value, sz, alloc_sz - sizeof(dbtuple));
   }
 
   static inline dbtuple *
@@ -736,16 +656,16 @@ public:
   {
     INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
     const size_t max_alloc_sz =
-      std::numeric_limits<node_size_type>::max() + sizeof(dbtuple) + sizeof(next);
+      std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
       std::min(
-          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + sizeof(next) + sz),
+          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + sz),
           max_alloc_sz);
     char *p = (char *) malloc(alloc_sz);
     INVARIANT(p);
     return new (p) dbtuple(
         version, value, sz,
-        alloc_sz - sizeof(dbtuple) - sizeof(next), next, set_latest);
+        alloc_sz - sizeof(dbtuple), next, set_latest);
   }
 
   static void

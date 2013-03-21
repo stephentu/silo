@@ -277,9 +277,7 @@ txn_btree<Transaction>::do_tree_put(
   }
   dbtuple *tuple = nullptr;
   if (expect_new) {
-    auto ret = t.try_insert_new_tuple(
-          underlying_btree, ctx,
-          !is_mostly_append(), k, v);
+    auto ret = t.try_insert_new_tuple(underlying_btree, ctx, k, v);
     INVARIANT(!ret.second || ret.first);
     if (unlikely(ret.second)) {
       transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
@@ -308,9 +306,7 @@ txn_btree<Transaction>::do_tree_put(
   }
   dbtuple *tuple = nullptr;
   if (expect_new) {
-    auto ret = t.try_insert_new_tuple(
-          underlying_btree, ctx,
-          !is_mostly_append(), k, v);
+    auto ret = t.try_insert_new_tuple(underlying_btree, ctx, k, v);
     INVARIANT(!ret.second || ret.first);
     if (unlikely(ret.second)) {
       transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;

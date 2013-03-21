@@ -55,13 +55,11 @@ std::pair< dbtuple *, bool >
 transaction<Protocol, Traits>::try_insert_new_tuple(
     btree &btr,
     txn_context &ctx,
-    bool expect_mutation,
     const std::string &key,
     const std::string &value)
 {
   // perf: ~900 tsc/alloc on istc11.csail.mit.edu
   dbtuple * const tuple = dbtuple::alloc_first(
-      expect_mutation,
       (dbtuple::const_record_type) value.data(), value.size());
   INVARIANT(tuple->is_latest());
   INVARIANT(tuple->version == dbtuple::MAX_TID);
@@ -291,7 +289,6 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             auto ret = try_insert_new_tuple(
                 outer_it->first->underlying_btree,
                 outer_it->second,
-                !outer_it->first->is_mostly_append(),
                 it->first, writerec.r);
             tuple = ret.first;
             if (unlikely(!tuple))

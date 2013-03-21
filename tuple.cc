@@ -61,7 +61,6 @@ dbtuple::VersionInfoStr(version_t v)
   ostringstream buf;
   buf << "[";
   buf << (IsLocked(v) ? "LOCKED" : "-") << " | ";
-  buf << (IsBigType(v) ? "BIG" : "SMALL") << " | ";
   buf << (IsDeleting(v) ? "DEL" : "-") << " | ";
   buf << (IsWriteIntent(v) ? "WR" : "-") << " | ";
   buf << (IsModifying(v) ? "MOD" : "-") << " | ";

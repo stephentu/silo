@@ -396,7 +396,6 @@ protected:
   try_insert_new_tuple(
       btree &btr,
       txn_context &ctx,
-      bool expect_mutation,
       const std::string &key,
       const std::string &value);
 
