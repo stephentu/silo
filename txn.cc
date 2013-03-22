@@ -91,5 +91,4 @@ event_counter transaction_base::g_evt_dbtuple_write_insert_failed
 
 event_counter transaction_base::evt_local_search_lookups("local_search_lookups");
 event_counter transaction_base::evt_local_search_write_set_hits("local_search_write_set_hits");
-event_counter transaction_base::evt_local_search_absent_set_hits("local_search_absent_set_hits");
 event_counter transaction_base::evt_dbtuple_latest_replacement("dbtuple_latest_replacement");

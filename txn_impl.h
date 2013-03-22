@@ -457,6 +457,7 @@ transaction<Protocol, Traits>::do_tuple_read(
   if (!write_set.empty()) {
     auto write_set_it = write_set.find(const_cast<dbtuple *>(tuple));
     if (unlikely(write_set_it != write_set.end())) {
+      ++evt_local_search_write_set_hits;
       v.assign(write_set_it->second.get_value().data(),
                std::min(write_set_it->second.get_value().size(), max_bytes_read));
       return !v.empty();

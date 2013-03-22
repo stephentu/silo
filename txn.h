@@ -371,7 +371,6 @@ protected:
 
   static event_counter evt_local_search_lookups;
   static event_counter evt_local_search_write_set_hits;
-  static event_counter evt_local_search_absent_set_hits;
   static event_counter evt_dbtuple_latest_replacement;
 
   CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe0, g_txn_commit_probe0_cg);
