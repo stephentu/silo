@@ -242,6 +242,23 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     typename write_set_map::iterator it_end = write_set.end();
     for (; it != it_end; ++it) {
       INVARIANT(!it->second.is_insert() || it->first->is_locked());
+      dbtuple * const tuple = it->first;
+      write_record_t &wr = it->second;
+      if (unlikely(
+            tuple->version == dbtuple::MAX_TID &&
+            !wr.is_insert())) {
+        // if we race to put/insert w/ another txn which has inserted a new
+        // record, we *must* abort b/c the other txn could try to put/insert
+        // into a new record which we hold the lock on, so we must abort
+        // we could *not* abort if this txn did not insert any new records.
+        // we could also release our insert locks and try to acquire them
+        // again in sorted order
+        const transaction_base::abort_reason r = transaction_base::ABORT_REASON_INSERT_NODE_INTERFERENCE;
+        abort_impl(r);
+        if (doThrow)
+          throw transaction_abort_exception(r);
+        return false;
+      }
       write_dbtuples.emplace_back(it->first, it->second.is_insert());
     }
   }
