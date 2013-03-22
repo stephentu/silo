@@ -139,7 +139,7 @@ retry:
     if (it != t.read_set.end())
       // mark that this element in the read set is
       // also in the write set
-      it->second.write_set = true;
+      it->second.mark_write_set();
   }
   INVARIANT(px);
   if (!insert) {

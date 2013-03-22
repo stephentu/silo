@@ -27,10 +27,10 @@ template <template <typename> class Protocol, typename Traits>
 inline void
 transaction<Protocol, Traits>::clear()
 {
-  // don't clear for debugging purposes
-  //read_set.clear();
-  //write_set.clear();
-  //absent_set.clear();
+  // it's actually *more* efficient to not call clear explicitly on the
+  // read/write/absent sets, and let the destructors do the clearing- this is
+  // because the destructors can take shortcuts since it knows the obj doesn't
+  // have to end in a valid state
 }
 
 template <template <typename> class Protocol, typename Traits>
@@ -308,15 +308,15 @@ transaction<Protocol, Traits>::commit(bool doThrow)
                             << g_proto_version_str(snapshot_tid_t.second)
                             << std::endl);
 
-          if (likely(it->second.write_set ?
-                it->first->is_latest_version(it->second.t) :
-                it->first->stable_is_latest_version(it->second.t)))
+          if (likely(it->second.get_write_set() ?
+                it->first->is_latest_version(it->second.get_tid()) :
+                it->first->stable_is_latest_version(it->second.get_tid())))
             continue;
 
           VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->first) << " at snapshot_tid "
                             << g_proto_version_str(snapshot_tid_t.second) << " FAILED" << std::endl
-                            << "  txn read version: " << g_proto_version_str(it->second.t) << std::endl
-                            << "  tuple=" << **it->first << std::endl);
+                            << "  txn read version: " << g_proto_version_str(it->second.get_tid()) << std::endl
+                            << "  tuple=" << *it->first << std::endl);
 
           abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
           goto do_abort;
@@ -464,7 +464,7 @@ transaction<Protocol, Traits>::do_tuple_read(
   }
 
   transaction_base::read_record_t &read_rec = read_set[tuple];
-  INVARIANT(!read_rec.write_set);
+  INVARIANT(!read_rec.get_write_set());
   // do the actual tuple read
   {
     PERF_DECL(static std::string probe0_name(std::string(__PRETTY_FUNCTION__) + std::string(":do_read:")));
@@ -486,10 +486,10 @@ transaction<Protocol, Traits>::do_tuple_read(
     ++transaction_base::g_evt_read_logical_deleted_node_search;
   PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":readset:")));
   ANON_REGION(probe1_name.c_str(), &private_::txn_btree_search_probe1_cg);
-  if (!read_rec.t) {
+  if (!read_rec.get_tid()) {
     // XXX(stephentu): this doesn't work if we allow wrap around
-    read_rec.t = start_t;
-  } else if (unlikely(read_rec.t != start_t)) {
+    read_rec.set_tid(start_t);
+  } else if (unlikely(read_rec.get_tid() != start_t)) {
     const transaction_base::abort_reason r =
       transaction_base::ABORT_REASON_READ_NODE_INTEREFERENCE;
     abort_impl(r);

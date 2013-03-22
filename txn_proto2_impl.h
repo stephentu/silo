@@ -32,9 +32,11 @@ class transaction_proto2_static {
 public:
 
   // in this protocol, the version number is:
+  // (note that for tid_t's, the top bit is reserved and
+  // *must* be set to zero
   //
-  // [ core  | number |  epoch ]
-  // [ 0..10 | 10..27 | 27..64 ]
+  // [ core  | number |  epoch | reserved ]
+  // [ 0..9  | 9..33  | 33..63 |  63..64  ]
 
   static inline ALWAYS_INLINE
   uint64_t CoreId(uint64_t v)
@@ -65,6 +67,8 @@ public:
     COMPILER_MEMORY_FENCE;
   }
 
+  static const uint64_t NBitsNumber = 24;
+
   // XXX(stephentu): need to implement core ID recycling
   static const size_t CoreBits = NMAXCOREBITS; // allow 2^CoreShift distinct threads
   static const size_t NMaxCores = NMAXCORES;
@@ -72,18 +76,19 @@ public:
   static const uint64_t CoreMask = (NMaxCores - 1);
 
   static const uint64_t NumIdShift = CoreBits;
-  static const uint64_t NumIdMask = ((((uint64_t)1) << 27) - 1) << NumIdShift;
+  static const uint64_t NumIdMask = ((((uint64_t)1) << NBitsNumber) - 1) << NumIdShift;
 
-  static const uint64_t EpochShift = NumIdShift + 27;
+  static const uint64_t EpochShift = CoreBits + NBitsNumber;
+  // since the reserve bit is always zero, we don't need a special mask
   static const uint64_t EpochMask = ((uint64_t)-1) << EpochShift;
 
   static inline ALWAYS_INLINE
   uint64_t MakeTid(uint64_t core_id, uint64_t num_id, uint64_t epoch_id)
   {
     // some sanity checking
-    _static_assert((CoreMask | NumIdMask | EpochMask) == ((uint64_t)-1));
-    _static_assert((CoreMask & NumIdMask) == 0);
-    _static_assert((NumIdMask & EpochMask) == 0);
+    static_assert((CoreMask | NumIdMask | EpochMask) == ((uint64_t)-1), "xx");
+    static_assert((CoreMask & NumIdMask) == 0, "xx");
+    static_assert((NumIdMask & EpochMask) == 0, "xx");
     return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
   }
 
@@ -214,7 +219,7 @@ public:
   inline bool
   can_overwrite_record_tid(tid_t prev, tid_t cur) const
   {
-    INVARIANT(prev < cur);
+    INVARIANT(prev <= cur);
     INVARIANT(EpochId(cur) >= g_consistent_epoch);
 
     // XXX(stephentu): the !prev check is a *bit* of a hack-
@@ -278,9 +283,9 @@ public:
       typename read_set_map::const_iterator it_end = this->read_set.end();
       for (; it != it_end; ++it) {
         // NB: we don't allow ourselves to do reads in future epochs
-        INVARIANT(EpochId(it->second.t) <= current_epoch);
-        if (it->second.t > ret)
-          ret = it->second.t;
+        INVARIANT(EpochId(it->second.get_tid()) <= current_epoch);
+        if (it->second.get_tid() > ret)
+          ret = it->second.get_tid();
       }
     }
 

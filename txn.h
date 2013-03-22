@@ -185,11 +185,83 @@ protected:
   // the read set is a mapping from (tuple -> tid_read).
   // "write_set" is used to indicate if this read tuple
   // also belongs in the write set.
+
+#define USE_SMALL_READ_RECORD
+
+#ifndef USE_SMALL_READ_RECORD
   struct read_record_t {
-    inline read_record_t() : t(dbtuple::MIN_TID), write_set(false) {}
+    read_record_t() : t(dbtuple::MIN_TID), write_set(false) {}
+
+    inline tid_t
+    get_tid() const
+    {
+      return t;
+    }
+
+    inline void
+    set_tid(tid_t t)
+    {
+      this->t = t;
+    }
+
+    inline bool
+    get_write_set() const
+    {
+      return write_set;
+    }
+
+    inline void
+    mark_write_set()
+    {
+      write_set = true;
+    }
+
+  private:
     tid_t t;
-    bool write_set; // XXX: steal bit from tid
+    bool write_set;
   };
+#else
+  struct read_record_t {
+    inline tid_t
+    get_tid() const
+    {
+      return u.datum.t;
+    }
+
+    inline void
+    set_tid(tid_t t)
+    {
+      INVARIANT(!(t & (static_cast<tid_t>(0x1) << (sizeof(tid_t) * 8 - 1))));
+      INVARIANT(!get_tid());
+      INVARIANT(!get_write_set());
+      u.datum.t = t;
+    }
+
+    inline bool
+    get_write_set() const
+    {
+      return u.datum.b;
+    }
+
+    inline void
+    mark_write_set()
+    {
+      u.datum.b = true;
+    }
+
+  private:
+    union U {
+      U() : v(0) {}
+      tid_t v;
+      struct {
+        tid_t t : sizeof(tid_t) * 8 - 1;
+        bool  b : 1;
+      } datum;
+    } u;
+
+  };
+  static_assert(sizeof(read_record_t) == sizeof(tid_t), "xx");
+#endif
 
   friend std::ostream &
   operator<<(std::ostream &o, const read_record_t &r);
@@ -318,7 +390,8 @@ protected:
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::read_record_t &r)
 {
-  o << "[tid_read=" << g_proto_version_str(r.t) << ", write_set=" << r.write_set << "]";
+  o << "[tid_read=" << g_proto_version_str(r.get_tid())
+    << ", write_set=" << r.get_write_set() << "]";
   return o;
 }
 
