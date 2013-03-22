@@ -109,7 +109,7 @@ txn_btree<Transaction>::do_tree_put(
 {
   typedef typename transaction<Transaction, Traits>::write_record_t write_record_t;
   t.ensure_active();
-  if (unlikely(t.get_flags() & transaction_base::TXN_FLAG_READ_ONLY)) {
+  if (unlikely(t.is_read_only())) {
     const transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
     t.abort_impl(r);
     throw transaction_abort_exception(r);

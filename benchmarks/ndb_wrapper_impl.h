@@ -40,6 +40,13 @@ struct hint_kv_scan_traits {
 
 // tpcc profiles
 
+struct hint_read_only_traits {
+  static const size_t read_set_expected_size = 1;
+  static const size_t write_set_expected_size = 1;
+  static const size_t absent_set_expected_size = 1;
+  static const bool stable_input_memory = true;
+};
+
 struct hint_tpcc_new_order_traits {
   static const size_t read_set_expected_size = 35;
   static const size_t write_set_expected_size = 35;
@@ -68,12 +75,16 @@ struct hint_tpcc_order_status_traits {
   static const bool stable_input_memory = true;
 };
 
+struct hint_tpcc_order_status_read_only_traits : public hint_read_only_traits {};
+
 struct hint_tpcc_stock_level_traits {
   static const size_t read_set_expected_size = 500;
   static const size_t write_set_expected_size = 1;
   static const size_t absent_set_expected_size = 25;
   static const bool stable_input_memory = true;
 };
+
+struct hint_tpcc_stock_level_read_only_traits : public hint_read_only_traits {};
 
 #define TXN_PROFILE_HINT_OP(x) \
   x(abstract_db::HINT_DEFAULT, default_transaction_traits) \
@@ -84,7 +95,9 @@ struct hint_tpcc_stock_level_traits {
   x(abstract_db::HINT_TPCC_PAYMENT, hint_tpcc_payment_traits) \
   x(abstract_db::HINT_TPCC_DELIVERY, hint_tpcc_delivery_traits) \
   x(abstract_db::HINT_TPCC_ORDER_STATUS, hint_tpcc_order_status_traits) \
-  x(abstract_db::HINT_TPCC_STOCK_LEVEL, hint_tpcc_stock_level_traits)
+  x(abstract_db::HINT_TPCC_ORDER_STATUS_READ_ONLY, hint_tpcc_order_status_read_only_traits) \
+  x(abstract_db::HINT_TPCC_STOCK_LEVEL, hint_tpcc_stock_level_traits) \
+  x(abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY, hint_tpcc_stock_level_read_only_traits)
 
 template <template <typename> class Transaction>
 size_t

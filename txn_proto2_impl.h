@@ -269,6 +269,7 @@ public:
     const tid_t l_last_commit_tid = tl_last_commit_tid;
     INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
               CoreId(l_last_commit_tid) == my_core_id);
+    INVARIANT(!this->is_read_only());
 
     // XXX(stephentu): wrap-around messes this up
     INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);

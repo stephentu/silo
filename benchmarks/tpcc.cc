@@ -1683,7 +1683,11 @@ tpcc_worker::txn_order_status()
   //   num_txn_contexts : 4
   const uint64_t read_only_mask =
     g_disable_read_only_scans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
-  void *txn = db->new_txn(txn_flags | read_only_mask, txn_buf(), abstract_db::HINT_TPCC_ORDER_STATUS);
+  const abstract_db::TxnProfileHint hint =
+    g_disable_read_only_scans ?
+      abstract_db::HINT_TPCC_ORDER_STATUS :
+      abstract_db::HINT_TPCC_ORDER_STATUS_READ_ONLY;
+  void *txn = db->new_txn(txn_flags | read_only_mask, txn_buf(), hint);
   scoped_str_arena s_arena(arena);
   // NB: since txn_order_status() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
@@ -1827,9 +1831,13 @@ tpcc_worker::txn_stock_level()
   //   num_txn_contexts : 3
   const uint64_t read_only_mask =
     g_disable_read_only_scans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
-  void *txn = db->new_txn(txn_flags | read_only_mask, txn_buf(), abstract_db::HINT_TPCC_STOCK_LEVEL);
+  const abstract_db::TxnProfileHint hint =
+    g_disable_read_only_scans ?
+      abstract_db::HINT_TPCC_STOCK_LEVEL :
+      abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY;
+  void *txn = db->new_txn(txn_flags | read_only_mask, txn_buf(), hint);
   scoped_str_arena s_arena(arena);
-  // NB: since txn_order_status() is a RO txn, we assume that
+  // NB: since txn_stock_level() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
   try {
     const district::key k_d(warehouse_id, districtID);
