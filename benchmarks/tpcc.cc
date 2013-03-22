@@ -146,6 +146,7 @@ static int g_disable_read_only_scans = 0;
 static int g_enable_partition_locks = 0;
 static int g_enable_separate_tree_per_partition = 0;
 static int g_new_order_remote_item_pct = 1;
+static unsigned g_txn_workload_mix[] = { 45, 43, 4, 4, 4 }; // default TPC-C workload mix
 
 static aligned_padded_elem<spinlock> *g_partition_locks = 0;
 
@@ -532,14 +533,20 @@ public:
     //w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k ops/sec
     //w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); // ~33k ops/sec
     //w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
-
-    w.push_back(workload_desc("NewOrder", 1.0, TxnNewOrder));
-
-    //w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
-    //w.push_back(workload_desc("Payment", 0.43, TxnPayment));
-    //w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
-    //w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
-    //w.push_back(workload_desc("StockLevel", 0.04, TxnStockLevel));
+    unsigned m = 0;
+    for (size_t i = 0; i < ARRAY_NELEMS(g_txn_workload_mix); i++)
+      m += g_txn_workload_mix[i];
+    ALWAYS_ASSERT(m == 100);
+    if (g_txn_workload_mix[0])
+      w.push_back(workload_desc("NewOrder", double(g_txn_workload_mix[0])/100.0, TxnNewOrder));
+    if (g_txn_workload_mix[1])
+      w.push_back(workload_desc("Payment", double(g_txn_workload_mix[1])/100.0, TxnPayment));
+    if (g_txn_workload_mix[2])
+      w.push_back(workload_desc("Delivery", double(g_txn_workload_mix[2])/100.0, TxnDelivery));
+    if (g_txn_workload_mix[3])
+      w.push_back(workload_desc("OrderStatus", double(g_txn_workload_mix[3])/100.0, TxnOrderStatus));
+    if (g_txn_workload_mix[4])
+      w.push_back(workload_desc("StockLevel", double(g_txn_workload_mix[4])/100.0, TxnStockLevel));
     return w;
   }
 
@@ -2002,6 +2009,17 @@ private:
   map<string, vector<abstract_ordered_index *>> partitions;
 };
 
+static vector<string>
+split(const string &s, char delim)
+{
+  vector<string> elems;
+  stringstream ss(s);
+  string item;
+  while (getline(ss, item, delim))
+    elems.push_back(item);
+  return elems;
+}
+
 void
 tpcc_do_test(abstract_db *db, int argc, char **argv)
 {
@@ -2016,6 +2034,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
       {"enable-partition-locks"               , no_argument       , &g_enable_partition_locks             , 1}   ,
       {"enable-separate-tree-per-partition"   , no_argument       , &g_enable_separate_tree_per_partition , 1}   ,
       {"new-order-remote-item-pct"            , required_argument , 0                                     , 'r'} ,
+      {"workload-mix"                         , required_argument , 0                                     , 'w'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
@@ -2033,6 +2052,21 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
       g_new_order_remote_item_pct = strtoul(optarg, NULL, 10);
       ALWAYS_ASSERT(g_new_order_remote_item_pct >= 0 && g_new_order_remote_item_pct <= 100);
       did_spec_remote_pct = true;
+      break;
+
+    case 'w':
+      {
+        const vector<string> toks = split(optarg, ',');
+        ALWAYS_ASSERT(toks.size() == ARRAY_NELEMS(g_txn_workload_mix));
+        unsigned s = 0;
+        for (size_t i = 0; i < toks.size(); i++) {
+          unsigned p = strtoul(toks[i].c_str(), nullptr, 10);
+          ALWAYS_ASSERT(p >= 0 && p <= 100);
+          s += p;
+          g_txn_workload_mix[i] = p;
+        }
+        ALWAYS_ASSERT(s == 100);
+      }
       break;
 
     case '?':
@@ -2056,6 +2090,8 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
     cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
     cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
     cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
+    cerr << "  workload_mix                 : " << format_list(g_txn_workload_mix,
+                                                               g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
   }
 
   tpcc_bench_runner r(db);
