@@ -275,14 +275,16 @@ public:
       const std::string &value)
   {
     INVARIANT(n < N);
+    INVARIANT(arena->manages(&key));
+    INVARIANT(arena->manages(&value));
     if (ignore_key) {
-      values.emplace_back(std::string(), value);
+      values.emplace_back(nullptr, &value);
     } else {
       // see note above
       std::string * const s_px = likely(arena) ? arena->next() : nullptr;
       INVARIANT(s_px && s_px->empty());
       s_px->assign(key.data(), key.size());
-      values.emplace_back(*s_px, value);
+      values.emplace_back(s_px, &value);
     }
     return ++n < N;
   }
@@ -293,7 +295,7 @@ public:
     return values.size();
   }
 
-  typedef std::pair<std::string, std::string> kv_pair;
+  typedef std::pair<const std::string *, const std::string *> kv_pair;
   typename util::vec<kv_pair, N>::type values;
 
 private:

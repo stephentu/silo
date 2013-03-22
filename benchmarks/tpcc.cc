@@ -1440,18 +1440,19 @@ tpcc_worker::txn_delivery()
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
         order_line::value v_ol_temp;
-        const order_line::value *v_ol = Decode(c.values[i].second, v_ol_temp);
+        const order_line::value *v_ol = Decode(*c.values[i].second, v_ol_temp);
 
 #ifdef CHECK_INVARIANTS
         order_line::key k_ol_temp;
-        const order_line::key *k_ol = Decode(c.values[i].first, k_ol_temp);
+        const order_line::key *k_ol = Decode(*c.values[i].first, k_ol_temp);
         checker::SanityCheckOrderLine(k_ol, v_ol);
 #endif
 
         sum += v_ol->ol_amount;
         order_line::value v_ol_new(*v_ol);
         v_ol_new.ol_delivery_d = ts;
-        tbl_order_line(warehouse_id)->put(txn, c.values[i].first, Encode(str(), v_ol_new));
+        INVARIANT(s_arena.get()->manages(c.values[i].first));
+        tbl_order_line(warehouse_id)->put(txn, *c.values[i].first, Encode(str(), v_ol_new));
       }
 
       // delete new order
@@ -1582,7 +1583,7 @@ tpcc_worker::txn_payment()
       evt_avg_cust_name_idx_scan_size.offer(c.size());
 
       customer_name_idx::value v_c_idx_temp;
-      const customer_name_idx::value *v_c_idx = Decode(c.values[index].second, v_c_idx_temp);
+      const customer_name_idx::value *v_c_idx = Decode(*c.values[index].second, v_c_idx_temp);
 
       k_c.c_w_id = customerWarehouseID;
       k_c.c_d_id = customerDistrictID;
@@ -1722,7 +1723,7 @@ tpcc_worker::txn_order_status()
       evt_avg_cust_name_idx_scan_size.offer(c.size());
 
       customer_name_idx::value v_c_idx_temp;
-      const customer_name_idx::value *v_c_idx = Decode(c.values[index].second, v_c_idx_temp);
+      const customer_name_idx::value *v_c_idx = Decode(*c.values[index].second, v_c_idx_temp);
 
       k_c.c_w_id = warehouse_id;
       k_c.c_d_id = districtID;

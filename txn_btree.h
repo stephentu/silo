@@ -4,6 +4,8 @@
 #include "btree.h"
 #include "txn.h"
 
+#include <type_traits>
+
 // XXX: hacky
 extern void txn_btree_test();
 
@@ -178,7 +180,8 @@ public:
 
   // insert() methods below are for legacy use
 
-  template <typename Traits>
+  template <typename Traits,
+            class = typename std::enable_if<!Traits::stable_input_memory>::type>
   inline void
   insert(Transaction<Traits> &t, const string_type &k, value_type v, size_type sz)
   {
@@ -187,7 +190,8 @@ public:
     do_tree_put(t, k, string_type((const char *) v, sz), true);
   }
 
-  template <typename Traits>
+  template <typename Traits,
+            class = typename std::enable_if<!Traits::stable_input_memory>::type>
   inline void
   insert(Transaction<Traits> &t, const key_type &k, value_type v, size_type sz)
   {
@@ -214,11 +218,14 @@ public:
   inline void
   remove(Transaction<Traits> &t, const string_type &k)
   {
-    // XXX: assume empty string is efficient to construct
-    do_tree_put(t, k, string_type(), false);
+    // use static empty string so stable_input_memory can take
+    // address of the value
+    static const std::string s_empty;
+    do_tree_put(t, k, s_empty, false);
   }
 
-  template <typename Traits>
+  template <typename Traits,
+            class = typename std::enable_if<!Traits::stable_input_memory>::type>
   inline void
   remove(Transaction<Traits> &t, const key_type &k)
   {

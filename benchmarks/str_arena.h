@@ -36,10 +36,22 @@ public:
     if (n < NStrs) {
       std::string * const px = &strs[n++];
       px->clear();
+      INVARIANT(manages(px));
       return px;
     }
     ALWAYS_ASSERT(false); // for now, to catch inefficiencies
     return nullptr;
+  }
+
+  bool
+  manages(const std::string *px) const
+  {
+    if (px < &strs[0])
+      return false;
+    if (px >= &strs[NStrs])
+      return false;
+    return 0 == ((reinterpret_cast<const char *>(px) -
+                  reinterpret_cast<const char *>(&strs[0])) % sizeof(std::string));
   }
 
 private:
