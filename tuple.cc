@@ -45,7 +45,9 @@ dbtuple::~dbtuple()
     cur->clear_next(); // so cur's dtor doesn't attempt to double free
     release_no_rcu(cur); // just a wrapper for ~dbtuple() + free()
     cur = tmp;
+#ifdef ENABLE_EVENT_COUNTERS
     len++;
+#endif
   }
 
   // stats-keeping
