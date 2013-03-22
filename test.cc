@@ -861,7 +861,7 @@ public:
     //UtilTest();
     //XbufTest();
     //varint::Test();
-    small_vector_ns::Test();
+    //small_vector_ns::Test();
     //small_map_ns::Test();
     //recordtest::Test();
     //btree::TestFast();

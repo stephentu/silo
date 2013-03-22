@@ -28,7 +28,9 @@ inline void
 transaction<Protocol, Traits>::clear()
 {
   // don't clear for debugging purposes
-  //ctx_map.clear();
+  //read_set.clear();
+  //write_set.clear();
+  //absent_set.clear();
 }
 
 template <template <typename> class Protocol, typename Traits>
@@ -47,6 +49,23 @@ transaction<Protocol, Traits>::abort_impl(abort_reason reason)
   }
   state = TXN_ABRT;
   this->reason = reason;
+
+  // on abort, we need to go over all insert nodes and
+  // release the locks
+  typename write_set_map::iterator it     = write_set.begin();
+  typename write_set_map::iterator it_end = write_set.end();
+  for (; it != it_end; ++it) {
+    dbtuple * const tuple = it->first;
+    if (it->second.is_insert()) {
+      INVARIANT(tuple->version == dbtuple::MAX_TID);
+      INVARIANT(tuple->is_locked());
+      // clear tuple, and let background reaper clean up
+      tuple->version = dbtuple::MIN_TID;
+      tuple->size = 0;
+      tuple->unlock();
+    }
+  }
+
   clear();
 }
 
@@ -54,13 +73,13 @@ template <template <typename> class Protocol, typename Traits>
 std::pair< dbtuple *, bool >
 transaction<Protocol, Traits>::try_insert_new_tuple(
     btree &btr,
-    txn_context &ctx,
     const std::string &key,
     const std::string &value)
 {
   // perf: ~900 tsc/alloc on istc11.csail.mit.edu
   dbtuple * const tuple = dbtuple::alloc_first(
       (dbtuple::const_record_type) value.data(), value.size());
+  INVARIANT(read_set.find(tuple) == read_set.end());
   INVARIANT(tuple->is_latest());
   INVARIANT(tuple->version == dbtuple::MAX_TID);
   tuple->lock(true);
@@ -76,48 +95,27 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
   }
   VERBOSE(std::cerr << "insert_if_absent suceeded for key: " << util::hexify(key) << std::endl
                     << "  new dbtuple is " << util::hexify(tuple) << std::endl);
-  if (get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) {
-    // update node #s
-    INVARIANT(insert_info.first);
-    typename node_scan_map::iterator nit = ctx.node_scan.find(insert_info.first);
-    if (nit != ctx.node_scan.end()) {
-      if (unlikely(nit->second != insert_info.second)) {
-        abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
-        return std::make_pair(tuple, true);
-      }
-      VERBOSE(std::cerr << "bump node=" << util::hexify(nit->first) << " from v=" << (nit->second)
-                        << " -> v=" << (nit->second + 1) << std::endl);
-      // otherwise, bump the version by 1
-      nit->second++; // XXX(stephentu): this doesn't properly handle wrap-around
-      // but we're probably F-ed on a wrap around anyways for now
-      SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(nit->first) == nit->second);
+  // update write_set
+  INVARIANT(read_set.find(tuple) == read_set.end());
+  INVARIANT(write_set.find(tuple) == write_set.end());
+  write_set[tuple] = write_record_t(key, value, &btr, true);
+
+  // update node #s
+  INVARIANT(insert_info.first);
+  auto it = absent_set.find(insert_info.first);
+  if (it != absent_set.end()) {
+    if (unlikely(it->second.version != insert_info.second)) {
+      abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+      return std::make_pair(tuple, true);
     }
+    VERBOSE(std::cerr << "bump node=" << util::hexify(it->first) << " from v=" << (it->second.version)
+                      << " -> v=" << (it->second.version + 1) << std::endl);
+    // otherwise, bump the version by 1
+    it->second.version++; // XXX(stephentu): this doesn't properly handle wrap-around
+    // but we're probably F-ed on a wrap around anyways for now
+    SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(it->first) == it->second);
   }
   return std::make_pair(tuple, false);
-}
-
-template <template <typename> class Protocol, typename Traits>
-void
-transaction<Protocol, Traits>::mark_write_tuple(
-    txn_context &ctx, const std::string &key,
-    dbtuple *tuple, bool did_insert)
-{
-  INVARIANT(tuple);
-  // mark that we (will) hold lock in read set
-  typename read_set_map::iterator read_it = ctx.read_set.find(tuple);
-  if (read_it != ctx.read_set.end()) {
-    INVARIANT(!read_it->second.holds_lock);
-    read_it->second.holds_lock = true;
-  }
-  // mark that we (will) hold lock in absent set
-  if (!ctx.absent_set.empty()) {
-    typename absent_set_map::iterator absent_it = ctx.absent_set.find(key);
-    if (absent_it != ctx.absent_set.end()) {
-      INVARIANT(absent_it->second.type == ABSENT_REC_READ);
-      absent_it->second.type = did_insert ? ABSENT_REC_INSERT : ABSENT_REC_WRITE;
-      absent_it->second.tuple = tuple;
-    }
-  }
 }
 
 namespace {
@@ -163,37 +161,28 @@ transaction<Protocol, Traits>::dump_debug_info() const
   std::cerr << "  Abort Reason: " << AbortReasonStr(reason) << std::endl;
   std::cerr << "  Flags: " << transaction_flags_to_str(flags) << std::endl;
   std::cerr << "  Read/Write sets:" << std::endl;
-  for (typename ctx_map_type::const_iterator it = ctx_map.begin();
-       it != ctx_map.end(); ++it) {
-    std::cerr << "    Btree @ " << util::hexify(it->first) << ":" << std::endl;
 
-    std::cerr << "      === Read Set ===" << std::endl;
-    // read-set
-    for (typename read_set_map::const_iterator rs_it = it->second.read_set.begin();
-         rs_it != it->second.read_set.end(); ++rs_it)
-      std::cerr << "      Node " << util::hexify(rs_it->first) << " @ " << rs_it->second << std::endl;
+  std::cerr << "      === Read Set ===" << std::endl;
+  // read-set
+  for (typename read_set_map::const_iterator rs_it = read_set.begin();
+       rs_it != read_set.end(); ++rs_it)
+    std::cerr << "      Node " << util::hexify(rs_it->first) << " @ " << rs_it->second << std::endl;
 
-    std::cerr << "      === Absent Set ===" << std::endl;
-    // absent-set
-    for (typename absent_set_map::const_iterator as_it = it->second.absent_set.begin();
-         as_it != it->second.absent_set.end(); ++as_it)
-      std::cerr << "      Key 0x" << util::hexify(as_it->first) << " : " << as_it->second << std::endl;
+  std::cerr << "      === Absent Set ===" << std::endl;
+  // absent-set
+  for (typename absent_set_map::const_iterator as_it = absent_set.begin();
+       as_it != absent_set.end(); ++as_it)
+    std::cerr << "      B-tree Node " << util::hexify(as_it->first) << " : " << as_it->second << std::endl;
 
-    std::cerr << "      === Write Set ===" << std::endl;
-    // write-set
-    for (typename write_set_map::const_iterator ws_it = it->second.write_set.begin();
-         ws_it != it->second.write_set.end(); ++ws_it)
-      if (!ws_it->second.r.empty())
-        std::cerr << "      Key 0x" << util::hexify(ws_it->first) << " @ " << util::hexify(ws_it->second.r) << std::endl;
-      else
-        std::cerr << "      Key 0x" << util::hexify(ws_it->first) << " : remove" << std::endl;
+  std::cerr << "      === Write Set ===" << std::endl;
+  // write-set
+  for (typename write_set_map::const_iterator ws_it = write_set.begin();
+       ws_it != write_set.end(); ++ws_it)
+    if (!ws_it->second.get_value().empty())
+      std::cerr << "      Node " << util::hexify(ws_it->first) << " @ " << util::hexify(ws_it->second.get_value()) << std::endl;
+    else
+      std::cerr << "      Node " << util::hexify(ws_it->first) << " : remove" << std::endl;
 
-    // XXX: node set + absent ranges
-    std::cerr << "      === Absent Ranges ===" << std::endl;
-    for (typename absent_range_vec::const_iterator ar_it = it->second.absent_range_set.begin();
-         ar_it != it->second.absent_range_set.end(); ++ar_it)
-      std::cerr << "      " << *ar_it << std::endl;
-  }
 }
 
 template <template <typename> class Protocol, typename Traits>
@@ -201,33 +190,19 @@ std::map<std::string, uint64_t>
 transaction<Protocol, Traits>::get_txn_counters() const
 {
   std::map<std::string, uint64_t> ret;
-  // num_txn_contexts:
-  ret["num_txn_contexts"] = ctx_map.size();
-  for (typename ctx_map_type::const_iterator it = ctx_map.begin();
-       it != ctx_map.end(); ++it) {
-    // max_read_set_size
-    ret["max_read_set_size"] = std::max(ret["max_read_set_size"], it->second.read_set.size());
-    if (!it->second.read_set.is_small_type())
-      ret["n_read_set_large_instances"]++;
 
-    // max_absent_set_size
-    ret["max_absent_set_size"] = std::max(ret["max_absent_set_size"], it->second.absent_set.size());
-    if (!it->second.absent_set.is_small_type())
-      ret["n_absent_set_large_instances"]++;
+  // max_read_set_size
+  ret["read_set_size"] = read_set.size();;
+  ret["read_set_is_large?"] = !read_set.is_small_type();
 
-    // max_write_set_size
-    ret["max_write_set_size"] = std::max(ret["max_write_set_size"], it->second.write_set.size());
-    if (!it->second.write_set.is_small_type())
-      ret["n_write_set_large_instances"]++;
+  // max_absent_set_size
+  ret["absent_set_size"] = absent_set.size();
+  ret["absent_set_is_large?"] = !absent_set.is_small_type();
 
-    // max_absent_range_set_size
-    ret["max_absent_range_set_size"] = std::max(ret["max_absent_range_set_size"], it->second.absent_range_set.size());
+  // max_write_set_size
+  ret["write_set_size"] = write_set.size();
+  ret["write_set_is_large?"] = !write_set.is_small_type();
 
-    // max_node_scan_size
-    ret["max_node_scan_size"] = std::max(ret["max_node_scan_size"], it->second.node_scan.size());
-    if (!it->second.node_scan.is_small_type())
-      ret["n_node_scan_large_instances"]++;
-  }
   return ret;
 }
 
@@ -235,7 +210,9 @@ template <template <typename> class Protocol, typename Traits>
 bool
 transaction<Protocol, Traits>::commit(bool doThrow)
 {
-  PERF_DECL(static std::string probe0_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
+  PERF_DECL(
+      static std::string probe0_name(
+        std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
   ANON_REGION(probe0_name.c_str(), &transaction_base::g_txn_commit_probe0_cg);
 
   switch (state) {
@@ -250,106 +227,65 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     return false;
   }
 
-  dbtuple_key_vec dbtuple_keys;
-  dbtuple_value_vec dbtuple_values;
+  dbtuple_write_info_vec write_dbtuples;
   const std::pair<bool, tid_t> snapshot_tid_t = cast()->consistent_snapshot_tid();
   std::pair<bool, tid_t> commit_tid(false, 0);
 
-  // fetch dbtuples for insert
-  {
-    PERF_DECL(static std::string probe1_name((__PRETTY_FUNCTION__) + std::string(":find_write_nodes:")));
+  // copy write tuples to vector for sorting
+  if (!write_set.empty()) {
+    PERF_DECL(
+        static std::string probe1_name(
+          std::string(__PRETTY_FUNCTION__) + std::string(":lock_write_nodes:")));
     ANON_REGION(probe1_name.c_str(), &transaction_base::g_txn_commit_probe1_cg);
-    typename ctx_map_type::iterator outer_it = ctx_map.begin();
-    typename ctx_map_type::iterator outer_it_end = ctx_map.end();
-    for (; outer_it != outer_it_end; ++outer_it) {
-      INVARIANT(!(get_flags() & TXN_FLAG_READ_ONLY) || outer_it->second.write_set.empty());
-      if (outer_it->second.write_set.empty())
-        continue;
-      typename write_set_map::iterator it = outer_it->second.write_set.begin();
-      typename write_set_map::iterator it_end = outer_it->second.write_set.end();
-      for (; it != it_end; ++it) {
-        transaction_base::write_record_t &writerec = it->second;
-        dbtuple *tuple = writerec.tuple;
-        bool did_insert = bool(tuple);
-        bool do_abort = false; // assumed if tuple != null, then
-                               // no abort on this tuple is necessary
-        if (!tuple) {
-        retry:
-          INVARIANT(!did_insert);
-          INVARIANT(!do_abort);
-          // treat as a put()
-          btree::value_type v = 0;
-          if (outer_it->first->underlying_btree.search(varkey(it->first), v)) {
-            VERBOSE(std::cerr << "key " << util::hexify(it->first)
-                              << " : dbtuple 0x" << util::hexify(intptr_t(v)) << endl);
-            tuple = reinterpret_cast<dbtuple *>(v);
-          } else {
-            // need to try as an insert()
-            ++transaction_base::g_evt_dbtuple_write_search_failed;
-            auto ret = try_insert_new_tuple(
-                outer_it->first->underlying_btree,
-                outer_it->second,
-                it->first, writerec.r);
-            tuple = ret.first;
-            if (unlikely(!tuple))
-              // this should be really rare!
-              goto retry;
-            if (unlikely(ret.second))
-              do_abort = true;
-            did_insert = true;
-          }
-        }
-        INVARIANT(tuple);
-        INVARIANT(!did_insert || tuple->is_locked());
-        INVARIANT(!do_abort || did_insert);
-        const unsigned int idx = dbtuple_keys.size();
-        dbtuple_keys.emplace_back(tuple, idx);
-        dbtuple_values.emplace_back(outer_it->first, it->first, did_insert, writerec.r, did_insert);
-        if (unlikely(do_abort))
-          goto do_abort;
-        mark_write_tuple(outer_it->second, it->first, tuple, did_insert);
-      }
+    INVARIANT(!(get_flags() & TXN_FLAG_READ_ONLY));
+    typename write_set_map::iterator it     = write_set.begin();
+    typename write_set_map::iterator it_end = write_set.end();
+    for (; it != it_end; ++it) {
+      INVARIANT(!it->second.is_insert() || it->first->is_locked());
+      write_dbtuples.emplace_back(it->first, it->second.is_insert());
     }
   }
 
-  INVARIANT(dbtuple_keys.size() == dbtuple_values.size());
-  if (!snapshot_tid_t.first || !dbtuple_keys.empty()) {
+  if (!snapshot_tid_t.first || !write_dbtuples.empty()) {
     // we don't have consistent tids, or not a read-only txn
 
-    if (!dbtuple_keys.empty()) {
-      PERF_DECL(static std::string probe2_name(std::string(__PRETTY_FUNCTION__) + std::string(":lock_write_nodes:")));
+    // lock write nodes
+    if (!write_dbtuples.empty()) {
+      PERF_DECL(
+          static std::string probe2_name(
+            std::string(__PRETTY_FUNCTION__) + std::string(":lock_write_nodes:")));
       ANON_REGION(probe2_name.c_str(), &transaction_base::g_txn_commit_probe2_cg);
       // lock the logical nodes in sort order
       {
-        PERF_DECL(static std::string probe6_name(std::string(__PRETTY_FUNCTION__) + std::string(":sort_write_nodes:")));
+        PERF_DECL(
+            static std::string probe6_name(
+              std::string(__PRETTY_FUNCTION__) + std::string(":sort_write_nodes:")));
         ANON_REGION(probe6_name.c_str(), &transaction_base::g_txn_commit_probe6_cg);
-        // ~6955 tsc/sort for new order on istc11.csali.mit.edu, using a vector of
-        // pair<dbtuple *, dbtuple_info>
-        //std::sort(dbtuple_keys.begin(), dbtuple_keys.end(), TupleMapComp());
-        dbtuple_keys.sort(); // in-place
+        write_dbtuples.sort(); // in-place
       }
-      typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
-      typename dbtuple_key_vec::iterator it_end = dbtuple_keys.end();
+      typename dbtuple_write_info_vec::iterator it     = write_dbtuples.begin();
+      typename dbtuple_write_info_vec::iterator it_end = write_dbtuples.end();
       for (; it != it_end; ++it) {
-        dbtuple_info &info = dbtuple_values[it->second];
-        if (info.locked)
+        if (it->is_insert())
           continue;
-        VERBOSE(std::cerr << "locking node " << util::hexify(it->first) << std::endl);
-        const dbtuple::version_t v = it->first->lock(true); // lock for write
-        INVARIANT(dbtuple::IsLatest(v) == it->first->is_latest());
-        info.locked = true; // we locked the node
+        VERBOSE(std::cerr << "locking node " << util::hexify(it->tuple) << std::endl);
+        const dbtuple::version_t v = it->tuple->lock(true); // lock for write
+        INVARIANT(dbtuple::IsLatest(v) == it->tuple->is_latest());
+        it->mark_locked();
         if (unlikely(dbtuple::IsDeleting(v) ||
                      !dbtuple::IsLatest(v) ||
-                     !cast()->can_read_tid(it->first->version))) {
+                     !cast()->can_read_tid(it->tuple->version))) {
           // XXX(stephentu): overly conservative (with the can_read_tid() check)
           abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
           goto do_abort;
         }
       }
       commit_tid.first = true;
-      PERF_DECL(static std::string probe5_name((__PRETTY_FUNCTION__) + std::string(":gen_commit_tid:")));
+      PERF_DECL(
+          static std::string probe5_name(
+            std::string(__PRETTY_FUNCTION__) + std::string(":gen_commit_tid:")));
       ANON_REGION(probe5_name.c_str(), &transaction_base::g_txn_commit_probe5_cg);
-      commit_tid.second = cast()->gen_commit_tid(dbtuple_keys, dbtuple_values);
+      commit_tid.second = cast()->gen_commit_tid(write_dbtuples);
       VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
     } else {
       VERBOSE(cerr << "commit tid: <read-only>" << endl);
@@ -357,153 +293,106 @@ transaction<Protocol, Traits>::commit(bool doThrow)
 
     // do read validation
     {
-      PERF_DECL(static std::string probe3_name(std::string(__PRETTY_FUNCTION__) + std::string(":read_validation:")));
+      PERF_DECL(
+          static std::string probe3_name(
+            std::string(__PRETTY_FUNCTION__) + std::string(":read_validation:")));
       ANON_REGION(probe3_name.c_str(), &transaction_base::g_txn_commit_probe3_cg);
-      typename ctx_map_type::iterator outer_it = ctx_map.begin();
-      typename ctx_map_type::iterator outer_it_end = ctx_map.end();
-      for (; outer_it != outer_it_end; ++outer_it) {
 
-        // check the nodes we actually read are still the latest version
-        if (!outer_it->second.read_set.empty()) {
-          typename read_set_map::iterator it = outer_it->second.read_set.begin();
-          typename read_set_map::iterator it_end = outer_it->second.read_set.end();
-          for (; it != it_end; ++it) {
-            const dbtuple * const tuple = it->first;
-            VERBOSE(std::cerr << "validating dbtuple " << util::hexify(tuple) << " at snapshot_tid "
-                              << g_proto_version_str(snapshot_tid_t.second)
-                              << std::endl);
+      // check the nodes we actually read are still the latest version
+      if (!read_set.empty()) {
+        typename read_set_map::iterator it     = read_set.begin();
+        typename read_set_map::iterator it_end = read_set.end();
+        for (; it != it_end; ++it) {
+          VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->first)
+                            << " at snapshot_tid "
+                            << g_proto_version_str(snapshot_tid_t.second)
+                            << std::endl);
 
-            if (likely(it->second.holds_lock ?
-                  tuple->is_latest_version(it->second.t) :
-                  tuple->stable_is_latest_version(it->second.t)))
-              continue;
+          if (likely(it->second.write_set ?
+                it->first->is_latest_version(it->second.t) :
+                it->first->stable_is_latest_version(it->second.t)))
+            continue;
 
-            VERBOSE(std::cerr << "validating dbtuple " << util::hexify(tuple) << " at snapshot_tid "
-                              << g_proto_version_str(snapshot_tid_t.second) << " FAILED" << std::endl
-                              << "  txn read version: " << g_proto_version_str(it->second.t) << std::endl
-                              << "  tuple=" << *tuple << std::endl);
+          VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->first) << " at snapshot_tid "
+                            << g_proto_version_str(snapshot_tid_t.second) << " FAILED" << std::endl
+                            << "  txn read version: " << g_proto_version_str(it->second.t) << std::endl
+                            << "  tuple=" << **it->first << std::endl);
 
-            abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
+          abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
+          goto do_abort;
+        }
+      }
+
+      // check btree versions have not changed
+      if (!absent_set.empty()) {
+        typename absent_set_map::iterator it     = absent_set.begin();
+        typename absent_set_map::iterator it_end = absent_set.end();
+        for (; it != it_end; ++it) {
+          const uint64_t v = btree::ExtractVersionNumber(it->first);
+          if (unlikely(v != it->second.version)) {
+            VERBOSE(std::cerr << "expected node " << util::hexify(it->first) << " at v="
+                              << it->second.verison << ", got v=" << v << std::endl);
+            abort_trap((reason = ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED));
             goto do_abort;
           }
         }
-
-        // check the nodes we read as absent are actually absent
-        if (!outer_it->second.absent_set.empty()) {
-          VERBOSE(cerr << "absent_set.size(): " << outer_it->second.absent_set.size() << endl);
-          typename absent_set_map::iterator it = outer_it->second.absent_set.begin();
-          typename absent_set_map::iterator it_end = outer_it->second.absent_set.end();
-          for (; it != it_end; ++it) {
-            if (it->second.type == ABSENT_REC_INSERT)
-              // by inserting we guaranteed that it did not previously exist
-              continue;
-            const dbtuple *tuple;
-            if (it->second.type == ABSENT_REC_WRITE) {
-              INVARIANT(it->second.tuple);
-              tuple = it->second.tuple;
-            } else {
-              INVARIANT(!it->second.tuple);
-              btree::value_type v = 0;
-              if (likely(!outer_it->first->underlying_btree.search(varkey(it->first), v))) {
-                // done
-                VERBOSE(cerr << "absent key " << util::hexify(it->first) << " was not found in btree" << endl);
-                continue;
-              }
-              tuple = (const dbtuple *) v;
-            }
-            INVARIANT(tuple);
-            if (it->second.type == ABSENT_REC_WRITE ?
-                  tuple->latest_value_is_nil() :
-                  tuple->stable_latest_value_is_nil()) {
-              VERBOSE(cerr << "absent key " << util::hexify(it->first) << " @ dbtuple "
-                           << util::hexify(ln) << " has latest value nil" << endl);
-              continue;
-            }
-            abort_trap((reason = ABORT_REASON_READ_ABSENCE_INTEREFERENCE));
-            goto do_abort;
-          }
-        }
-
-        // check the nodes we scanned are still the same
-        if (likely(get_flags() & TXN_FLAG_LOW_LEVEL_SCAN)) {
-          // do it the fast way
-          INVARIANT(outer_it->second.absent_range_set.empty());
-          if (!outer_it->second.node_scan.empty()) {
-            typename node_scan_map::iterator it = outer_it->second.node_scan.begin();
-            typename node_scan_map::iterator it_end = outer_it->second.node_scan.end();
-            for (; it != it_end; ++it) {
-              const uint64_t v = btree::ExtractVersionNumber(it->first);
-              if (unlikely(v != it->second)) {
-                VERBOSE(cerr << "expected node " << util::hexify(it->first) << " at v="
-                             << it->second << ", got v=" << v << endl);
-                abort_trap((reason = ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED));
-                goto do_abort;
-              }
-            }
-          }
-        } else {
-          // do it the slow way
-          INVARIANT(outer_it->second.node_scan.empty());
-          for (absent_range_vec::iterator it = outer_it->second.absent_range_set.begin();
-               it != outer_it->second.absent_range_set.end(); ++it) {
-            VERBOSE(cerr << "checking absent range: " << *it << endl);
-            typename txn_btree<Protocol>::template absent_range_validation_callback<Traits> c(
-                &outer_it->second);
-            varkey upper(it->b);
-            outer_it->first->underlying_btree.search_range_call(varkey(it->a), it->has_b ? &upper : NULL, c);
-            if (unlikely(c.failed())) {
-              abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
-              goto do_abort;
-            }
-          }
-        }
-
       }
     }
 
     // commit actual records
-    if (!dbtuple_keys.empty()) {
-      PERF_DECL(static std::string probe4_name(std::string(__PRETTY_FUNCTION__) + std::string(":write_records:")));
+    if (!write_dbtuples.empty()) {
+      PERF_DECL(
+          static std::string probe4_name(
+            std::string(__PRETTY_FUNCTION__) + std::string(":write_records:")));
       ANON_REGION(probe4_name.c_str(), &transaction_base::g_txn_commit_probe4_cg);
-      typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
-      typename dbtuple_key_vec::iterator it_end = dbtuple_keys.end();
+      typename write_set_map::iterator it     = write_set.begin();
+      typename write_set_map::iterator it_end = write_set.end();
       for (; it != it_end; ++it) {
-        dbtuple_info &info = dbtuple_values[it->second];
-        INVARIANT(info.locked);
-        VERBOSE(std::cerr << "writing dbtuple " << util::hexify(it->first)
+        dbtuple * const tuple = it->first;
+        INVARIANT(tuple->is_locked());
+        VERBOSE(std::cerr << "writing dbtuple " << util::hexify(tuple)
                           << " at commit_tid " << g_proto_version_str(commit_tid.second)
                           << std::endl);
-        if (info.insert) {
-          INVARIANT(it->first->version == dbtuple::MAX_TID);
-          it->first->version = commit_tid.second;
-          INVARIANT(it->first->size == info.r.size());
-          INVARIANT(memcmp(it->first->get_value_start(), info.r.data(), it->first->size) == 0);
-        } else {
-          it->first->prefetch();
-          const dbtuple::write_record_ret ret = it->first->write_record_at(
+        write_record_t &wr = it->second;
+        INVARIANT(!wr.needs_overwrite() || wr.is_insert());
+        if (wr.is_insert()) {
+          INVARIANT(tuple->version == dbtuple::MAX_TID);
+          tuple->version = commit_tid.second; // allows write_record_ret() to succeed
+                                              // w/o creating a new chain
+          if (!wr.needs_overwrite()) {
+            INVARIANT(tuple->size == wr.get_value().size());
+            INVARIANT(memcmp(tuple->get_value_start(), wr.get_value().data(), tuple->size) == 0);
+          }
+        }
+        if (!wr.is_insert() || wr.needs_overwrite()) {
+          tuple->prefetch();
+          const dbtuple::write_record_ret ret = tuple->write_record_at(
               cast(), commit_tid.second,
-              (const record_type) info.r.data(), info.r.size());
+              (const record_type) wr.get_value().data(), wr.get_value().size());
           lock_guard<dbtuple> guard(ret.second, true);
           if (unlikely(ret.second)) {
-            // need to unlink it->first from underlying btree, replacing
+            // need to unlink tuple from underlying btree, replacing
             // with ret.second (atomically)
             btree::value_type old_v = 0;
-            if (info.btr->underlying_btree.insert(
-                  varkey(info.key), (btree::value_type) ret.second, &old_v, NULL))
+            if (wr.get_btree()->insert(
+                  varkey(wr.get_key()), (btree::value_type) ret.second, &old_v, NULL))
               // should already exist in tree
               INVARIANT(false);
-            INVARIANT(old_v == (btree::value_type) it->first);
+            INVARIANT(old_v == (btree::value_type) tuple);
+            // we don't RCU free this, because it is now part of the chain
+            // (the cleaners will take care of this)
             ++evt_dbtuple_latest_replacement;
           }
-          dbtuple * const latest = ret.second ? ret.second : it->first;
+          dbtuple * const latest = ret.second ? ret.second : tuple;
           if (unlikely(ret.first))
             // spill happened: signal for GC
-            cast()->on_dbtuple_spill(info.btr, info.key, latest);
-          if (info.r.empty())
+            cast()->on_dbtuple_spill(latest);
+          if (wr.get_value().empty())
             // logical delete happened: schedule physical deletion
-            cast()->on_logical_delete(info.btr, info.key, latest);
+            cast()->on_logical_delete(latest);
         }
-        it->first->unlock();
+        tuple->unlock();
+        VERBOSE(std::cerr << "dbtuple " << util::hexify(tuple) << " is_locked? " << tuple->is_locked() << std::endl);
       }
     }
   }
@@ -521,24 +410,20 @@ do_abort:
   else
     VERBOSE(cerr << "aborting txn" << endl);
 
-  for (typename dbtuple_key_vec::iterator it = dbtuple_keys.begin();
-       it != dbtuple_keys.end(); ++it) {
-    dbtuple_info &info = dbtuple_values[it->second];
-    if (info.locked) {
-      if (info.insert) {
-        INVARIANT(it->first->version == dbtuple::MAX_TID);
-        // clear tuple
-        it->first->version = dbtuple::MIN_TID;
-        it->first->size = 0;
-        // deal with it below, after we have released locks for non-inserted
-        // nodes
+  for (typename dbtuple_write_info_vec::iterator it = write_dbtuples.begin();
+       it != write_dbtuples.end(); ++it) {
+    if (it->is_locked()) {
+      if (it->is_insert()) {
+        INVARIANT(it->tuple->version == dbtuple::MAX_TID);
+        // clear tuple, and let background reaper clean up
+        it->tuple->version = dbtuple::MIN_TID;
+        it->tuple->size = 0;
       }
       // XXX: potential optimization: on unlock() for abort, we don't
       // technically need to change the version number
-      it->first->unlock();
-      info.locked = false;
+      it->tuple->unlock();
     } else {
-      INVARIANT(!info.insert);
+      INVARIANT(!it->is_insert());
     }
   }
 
@@ -553,143 +438,81 @@ do_abort:
 
 template <template <typename> class Protocol, typename Traits>
 bool
-transaction<Protocol, Traits>::txn_context::local_search_str(
-    const transaction &t, const string_type &k, string_type &v) const
+transaction<Protocol, Traits>::do_tuple_read(
+    const dbtuple *tuple,
+    string_type &v,
+    size_t max_bytes_read)
 {
+  INVARIANT(tuple);
+  INVARIANT(max_bytes_read > 0);
   ++evt_local_search_lookups;
 
-  // XXX(stephentu): we should merge the write_set and the absent_set, so we
-  // can only need to do a hash table lookup once
+  const std::pair<bool, transaction_base::tid_t> snapshot_tid_t =
+    cast()->consistent_snapshot_tid();
+  const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
+    snapshot_tid_t.second : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
+  const bool is_read_only_txn = get_flags() & transaction_base::TXN_FLAG_READ_ONLY;
+  transaction_base::tid_t start_t = 0;
 
   if (!write_set.empty()) {
-    typename transaction<Protocol, Traits>::write_set_map::const_iterator it =
-      write_set.find(k);
-    if (it != write_set.end()) {
-      VERBOSE(cerr << "local_search_str: key " << util::hexify(k) << " found in write set"  << endl);
-      VERBOSE(cerr << "  value: " << util::hexify(it->second.r) << endl);
-      // NB: explicity copy so we don't mess up v (v is probably an arena string)
-      v.assign(it->second.r.data(), it->second.r.size());
-      ++evt_local_search_write_set_hits;
-      return true;
+    auto write_set_it = write_set.find(const_cast<dbtuple *>(tuple));
+    if (unlikely(write_set_it != write_set.end())) {
+      v.assign(write_set_it->second.get_value().data(),
+               std::min(write_set_it->second.get_value().size(), max_bytes_read));
+      return !v.empty();
     }
   }
 
-  if (!absent_set.empty()) {
-    typename transaction<Protocol, Traits>::absent_set_map::const_iterator it =
-      absent_set.find(k);
-    if (it != absent_set.end()) {
-      VERBOSE(cerr << "local_search_str: key " << util::hexify(k) << " found in absent set"  << endl);
-      v.clear();
-      ++evt_local_search_absent_set_hits;
-      return true;
+  transaction_base::read_record_t &read_rec = read_set[tuple];
+  INVARIANT(!read_rec.write_set);
+  // do the actual tuple read
+  {
+    PERF_DECL(static std::string probe0_name(std::string(__PRETTY_FUNCTION__) + std::string(":do_read:")));
+    ANON_REGION(probe0_name.c_str(), &private_::txn_btree_search_probe0_cg);
+    tuple->prefetch();
+    if (unlikely(!tuple->stable_read(snapshot_tid, start_t, v, is_read_only_txn, max_bytes_read))) {
+      const transaction_base::abort_reason r = transaction_base::ABORT_REASON_UNSTABLE_READ;
+      abort_impl(r);
+      throw transaction_abort_exception(r);
     }
   }
-
-  if (!(t.get_flags() & TXN_FLAG_LOW_LEVEL_SCAN) &&
-      key_in_absent_set(varkey(k))) {
-    VERBOSE(cerr << "local_search_str: key " << util::hexify(k) << " found in absent set" << endl);
-    v.clear();
-    return true;
+  if (unlikely(!cast()->can_read_tid(start_t))) {
+    const transaction_base::abort_reason r = transaction_base::ABORT_REASON_FUTURE_TID_READ;
+    abort_impl(r);
+    throw transaction_abort_exception(r);
   }
-
-  VERBOSE(cerr << "local_search_str: key " << util::hexify(k) << " not found locally" << endl);
-  return false;
-}
-
-template <template <typename> class Protocol, typename Traits>
-bool
-transaction<Protocol, Traits>::txn_context::key_in_absent_set(const key_type &k) const
-{
-  std::vector<key_range_t>::const_iterator it =
-    std::upper_bound(absent_range_set.begin(), absent_range_set.end(), k,
-                     key_range_search_less_cmp());
-  if (it == absent_range_set.end())
-    return false;
-  return it->key_in_range(k);
+  const bool v_empty = v.empty();
+  if (v_empty)
+    ++transaction_base::g_evt_read_logical_deleted_node_search;
+  PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":readset:")));
+  ANON_REGION(probe1_name.c_str(), &private_::txn_btree_search_probe1_cg);
+  if (!read_rec.t) {
+    // XXX(stephentu): this doesn't work if we allow wrap around
+    read_rec.t = start_t;
+  } else if (unlikely(read_rec.t != start_t)) {
+    const transaction_base::abort_reason r =
+      transaction_base::ABORT_REASON_READ_NODE_INTEREFERENCE;
+    abort_impl(r);
+    throw transaction_abort_exception(r);
+  }
+  return !v_empty;
 }
 
 template <template <typename> class Protocol, typename Traits>
 void
-transaction<Protocol, Traits>::txn_context::add_absent_range(const key_range_t &range)
+transaction<Protocol, Traits>::do_node_read(
+    const btree::node_opaque_t *n, uint64_t v)
 {
-  // add range, possibly merging overlapping ranges
-  if (range.is_empty_range())
-    return;
-
-  std::vector<key_range_t>::iterator it =
-    std::upper_bound(absent_range_set.begin(), absent_range_set.end(), varkey(range.a),
-                     key_range_search_less_cmp());
-
-  if (it == absent_range_set.end()) {
-    if (!absent_range_set.empty() && absent_range_set.back().b == range.a) {
-      INVARIANT(absent_range_set.back().has_b);
-      absent_range_set.back().has_b = range.has_b;
-      absent_range_set.back().b = range.b;
-    } else {
-      absent_range_set.push_back(range);
-    }
-    return;
+  INVARIANT(n);
+  auto it = absent_set.find(n);
+  if (it == absent_set.end()) {
+    absent_set[n] = v;
+  } else if (it->second.version != v) {
+    const transaction_base::abort_reason r =
+      transaction_base::ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED;
+    abort_impl(r);
+    throw transaction_abort_exception(r);
   }
-
-  if (it->contains(range))
-    return;
-
-  std::vector<key_range_t> new_absent_range_set;
-
-  // look to the left of it, and see if we need to merge with the
-  // left
-  bool merge_left = (it != absent_range_set.begin()) &&
-    (it - 1)->b == range.a;
-  new_absent_range_set.insert(
-      new_absent_range_set.end(),
-      absent_range_set.begin(),
-      merge_left ? (it - 1) : it);
-  string_type left_key = merge_left ? (it - 1)->a : min(it->a, range.a);
-
-  if (range.has_b) {
-    if (!it->has_b || it->b >= range.b) {
-      // no need to look right, since it's upper bound subsumes
-      if (range.b < it->a) {
-        new_absent_range_set.push_back(key_range_t(left_key, range.b));
-        new_absent_range_set.insert(
-            new_absent_range_set.end(),
-            it,
-            absent_range_set.end());
-      } else {
-        new_absent_range_set.push_back(key_range_t(left_key, it->has_b, it->b));
-        new_absent_range_set.insert(
-            new_absent_range_set.end(),
-            it + 1,
-            absent_range_set.end());
-      }
-    } else {
-      std::vector<key_range_t>::iterator it1;
-      for (it1 = it + 1; it1 != absent_range_set.end(); ++it1)
-        if (it1->a >= range.b || !it1->has_b || it1->b >= range.b)
-          break;
-      if (it1 == absent_range_set.end()) {
-        new_absent_range_set.push_back(key_range_t(left_key, range.b));
-      } else if (it1->a <= range.b) {
-        new_absent_range_set.push_back(key_range_t(left_key, it1->has_b, it1->b));
-        new_absent_range_set.insert(
-            new_absent_range_set.end(),
-            it1 + 1,
-            absent_range_set.end());
-      } else {
-        // it1->a > range.b
-        new_absent_range_set.push_back(key_range_t(left_key, range.b));
-        new_absent_range_set.insert(
-            new_absent_range_set.end(),
-            it1,
-            absent_range_set.end());
-      }
-    }
-  } else {
-    new_absent_range_set.push_back(key_range_t(left_key));
-  }
-
-  key_range_t::AssertValidRangeSet(new_absent_range_set);
-  std::swap(absent_range_set, new_absent_range_set);
 }
 
 #endif /* _NDB_TXN_IMPL_H_ */

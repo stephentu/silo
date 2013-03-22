@@ -93,20 +93,17 @@ public:
   // either returns false or v is set to not-empty with value
   // precondition: max_bytes_read > 0
   template <typename Traits>
-  bool search(Transaction<Traits> &t, const string_type &k, string_type &v,
-              size_t max_bytes_read = string_type::npos);
+  inline bool
+  search(Transaction<Traits> &t, const string_type &k, string_type &v,
+         size_t max_bytes_read = string_type::npos)
+  {
+    return search(t, key_type(k), v, max_bytes_read);
+  }
 
-  // memory:
-  // k - assumed to point to valid memory, *not* managed by btree
-  // v - if k is found, points to a region of (immutable) memory of size sz which
-  //     is guaranteed to be valid memory as long as transaction t is in scope
   template <typename Traits>
   inline bool
   search(Transaction<Traits> &t, const key_type &k, string_type &v,
-         size_t max_bytes_read = string_type::npos)
-  {
-    return search(t, to_string_type(k), v, max_bytes_read);
-  }
+         size_t max_bytes_read = string_type::npos);
 
   struct default_string_allocator {
     inline ALWAYS_INLINE string_type *
@@ -118,26 +115,26 @@ public:
 
   // StringAllocator needs to be CopyConstructable
   template <typename Traits, typename StringAllocator = default_string_allocator>
-  void
+  inline void
   search_range_call(Transaction<Traits> &t,
                     const string_type &lower,
                     const string_type *upper,
                     search_range_callback &callback,
-                    const StringAllocator &sa = StringAllocator());
+                    const StringAllocator &sa = StringAllocator())
+  {
+    key_type u;
+    if (upper)
+      u = key_type(*upper);
+    search_range_call(t, key_type(lower), upper ? &u : nullptr, callback, sa);
+  }
 
   template <typename Traits, typename StringAllocator = default_string_allocator>
-  inline void
+  void
   search_range_call(Transaction<Traits> &t,
                     const key_type &lower,
                     const key_type *upper,
                     search_range_callback &callback,
-                    const StringAllocator &sa = StringAllocator())
-  {
-    string_type s;
-    if (upper)
-      s = to_string_type(*upper);
-    search_range_call(t, to_string_type(lower), upper ? &s : NULL, callback, sa);
-  }
+                    const StringAllocator &sa = StringAllocator());
 
   template <typename Traits, typename T, typename StringAllocator = default_string_allocator>
   inline void
@@ -177,14 +174,6 @@ public:
   {
     INVARIANT(!v.empty());
     do_tree_put(t, k, v, true);
-  }
-
-  template <typename Traits>
-  inline void
-  insert(Transaction<Traits> &t, string_type &&k, string_type &&v)
-  {
-    INVARIANT(!v.empty());
-    do_tree_put(t, std::move(k), std::move(v), true);
   }
 
   // insert() methods below are for legacy use
@@ -227,14 +216,6 @@ public:
   {
     // XXX: assume empty string is efficient to construct
     do_tree_put(t, k, string_type(), false);
-  }
-
-  template <typename Traits>
-  inline void
-  remove(Transaction<Traits> &t, string_type &&k)
-  {
-    // XXX: assume empty string is efficient to construct
-    do_tree_put(t, std::move(k), string_type(), false);
   }
 
   template <typename Traits>
@@ -343,56 +324,16 @@ private:
   template <typename Traits, typename StringAllocator>
   struct txn_search_range_callback : public btree::low_level_search_range_callback {
     txn_search_range_callback(Transaction<Traits> *t,
-                              typename Transaction<Traits>::txn_context *ctx,
-                              const key_type &lower,
                               search_range_callback *caller_callback,
                               const StringAllocator &sa)
-      : t(t), ctx(ctx), lower(lower), prev_key(),
-        invoked(false), caller_callback(caller_callback),
-        caller_stopped(false), sa(sa) {}
+      : t(t), caller_callback(caller_callback), sa(sa) {}
     virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
     virtual bool invoke(const btree::string_type &k, btree::value_type v,
                         const btree::node_opaque_t *n, uint64_t version);
     Transaction<Traits> *const t;
-    typename Transaction<Traits>::txn_context *const ctx;
-    const key_type lower;
-    string_type prev_key;
-    bool invoked;
     search_range_callback *const caller_callback;
-    bool caller_stopped;
     StringAllocator sa;
-    string_type temp_buf0;
-    string_type temp_buf1;
-  };
-
-  template <typename Traits>
-  struct absent_range_validation_callback : public btree::search_range_callback {
-    absent_range_validation_callback(typename Transaction<Traits>::txn_context *ctx)
-      : ctx(ctx), failed_flag(false) {}
-    inline bool failed() const { return failed_flag; }
-    virtual bool
-    invoke(const btree::string_type &k, btree::value_type v)
-    {
-      const dbtuple * const tuple = (const dbtuple *) v;
-      INVARIANT(tuple);
-      VERBOSE(std::cerr << "absent_range_validation_callback: key " << util::hexify(k)
-                        << " found dbtuple " << util::hexify(tuple) << std::endl);
-      // XXX: HACK! we use MAX_TID to indicate a tentatively inserted node.
-      // this works for now, but is very very broken. since we aren't really
-      // using this protocol, we don't realy care.
-      if (tuple->version == static_cast<dbtuple::tid_t>(dbtuple::MAX_TID)) {
-        failed_flag = false;
-        return true;
-      }
-      const bool did_write = ctx->write_set.find(k) != ctx->write_set.end();
-      failed_flag = did_write ? !tuple->latest_value_is_nil() : !tuple->stable_latest_value_is_nil();
-      if (failed_flag)
-        VERBOSE(std::cerr << "absent_range_validation_callback: key " << util::hexify(k)
-                          << " found dbtuple " << util::hexify(tuple) << std::endl);
-      return !failed_flag;
-    }
-    typename Transaction<Traits>::txn_context *const ctx;
-    bool failed_flag;
+    string_type temp_buf;
   };
 
   // remove() is just do_tree_put() with empty-string
@@ -401,10 +342,6 @@ private:
   template <typename Traits>
   void do_tree_put(Transaction<Traits> &t, const string_type &k,
                    const string_type &v, bool expect_new);
-
-  template <typename Traits>
-  void do_tree_put(Transaction<Traits> &t, string_type &&k,
-                   string_type &&v, bool expect_new);
 
   btree underlying_btree;
   size_type value_size_hint;

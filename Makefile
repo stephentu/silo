@@ -52,6 +52,7 @@ HEADERS = amd64.h \
 	keyrange.h \
 	lockguard.h \
 	macros.h \
+	marked_ptr.h \
 	prefetch.h \
 	rcu.h \
 	record/encoder.h \

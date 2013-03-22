@@ -180,15 +180,11 @@ public:
   typedef Traits traits_type;
   typedef transaction_base::tid_t tid_t;
   typedef transaction_base::string_type string_type;
-  typedef typename super_type::dbtuple_info dbtuple_info;
-  typedef typename super_type::dbtuple_key_vec dbtuple_key_vec;
-  typedef typename super_type::dbtuple_value_vec dbtuple_value_vec;
+  typedef typename super_type::dbtuple_write_info dbtuple_write_info;
+  typedef typename super_type::dbtuple_write_info_vec dbtuple_write_info_vec;
   typedef typename super_type::read_set_map read_set_map;
   typedef typename super_type::absent_set_map absent_set_map;
   typedef typename super_type::write_set_map write_set_map;
-  typedef typename super_type::node_scan_map node_scan_map;
-  typedef typename super_type::txn_context txn_context;
-  typedef typename super_type::ctx_map_type ctx_map_type;
 
   transaction_proto2(uint64_t flags = 0)
     : transaction<transaction_proto2, Traits>(flags),
@@ -262,9 +258,7 @@ public:
   }
 
   transaction_base::tid_t
-  gen_commit_tid(
-      const dbtuple_key_vec &write_node_keys,
-      const dbtuple_value_vec &write_node_values)
+  gen_commit_tid(const dbtuple_write_info_vec &write_tuples)
   {
     const size_t my_core_id = coreid::core_id();
     const tid_t l_last_commit_tid = tl_last_commit_tid;
@@ -280,34 +274,29 @@ public:
     //const size_t my_core_id = 0;
     //tid_t ret = 0;
     {
-      typename ctx_map_type::const_iterator outer_it = this->ctx_map.begin();
-      typename ctx_map_type::const_iterator outer_it_end = this->ctx_map.end();
-      for (; outer_it != outer_it_end; ++outer_it) {
-        typename read_set_map::const_iterator it = outer_it->second.read_set.begin();
-        typename read_set_map::const_iterator it_end = outer_it->second.read_set.end();
-        for (; it != it_end; ++it) {
-          // NB: we don't allow ourselves to do reads in future epochs
-          INVARIANT(EpochId(it->second.t) <= current_epoch);
-          if (it->second.t > ret)
-            ret = it->second.t;
-        }
+      typename read_set_map::const_iterator it     = this->read_set.begin();
+      typename read_set_map::const_iterator it_end = this->read_set.end();
+      for (; it != it_end; ++it) {
+        // NB: we don't allow ourselves to do reads in future epochs
+        INVARIANT(EpochId(it->second.t) <= current_epoch);
+        if (it->second.t > ret)
+          ret = it->second.t;
       }
     }
 
     {
-      typename dbtuple_key_vec::const_iterator it = write_node_keys.begin();
-      typename dbtuple_key_vec::const_iterator it_end = write_node_keys.end();
+      typename dbtuple_write_info_vec::const_iterator it     = write_tuples.begin();
+      typename dbtuple_write_info_vec::const_iterator it_end = write_tuples.end();
       for (; it != it_end; ++it) {
-        const dbtuple_info &info = write_node_values[it->second];
-        INVARIANT(it->first->is_locked());
-        INVARIANT(!it->first->is_deleting());
-        INVARIANT(it->first->is_write_intent());
-        INVARIANT(!it->first->is_modifying());
-        INVARIANT(it->first->is_latest());
-        if (info.insert)
+        INVARIANT(it->tuple->is_locked());
+        INVARIANT(!it->tuple->is_deleting());
+        INVARIANT(it->tuple->is_write_intent());
+        INVARIANT(!it->tuple->is_modifying());
+        INVARIANT(it->tuple->is_latest());
+        if (it->is_insert())
           // we inserted this node, so we don't want to do the checks below
           continue;
-        const tid_t t = it->first->version;
+        const tid_t t = it->tuple->version;
         // XXX(stephentu): we are overly conservative for now- technically this
         // abort isn't necessary (we really should just write the value in the correct
         // position)
@@ -326,19 +315,20 @@ public:
     return (tl_last_commit_tid = ret);
   }
 
-  inline void
-  on_dbtuple_spill(txn_btree<transaction_proto2> *btr, const string_type &key, dbtuple *ln)
+  inline ALWAYS_INLINE void
+  on_dbtuple_spill(dbtuple *tuple)
   {
-    INVARIANT(ln->is_locked());
-    INVARIANT(ln->is_write_intent());
-    INVARIANT(ln->is_latest());
+    INVARIANT(tuple->is_locked());
+    INVARIANT(tuple->is_write_intent());
+    INVARIANT(tuple->is_latest());
     INVARIANT(rcu::in_rcu_region());
-    //do_dbtuple_chain_cleanup(ln);
+    // we let the background tree walker clean up the spills
   }
 
   inline ALWAYS_INLINE void
-  on_logical_delete(txn_btree<transaction_proto2> *btr, const string_type &key, dbtuple *ln)
+  on_logical_delete(dbtuple *tuple)
   {
+    // we let the background tree walker clean up the node
   }
 
 private:

@@ -766,6 +766,7 @@ public:
 
   // XXX(stephentu): trying out a very opaque node API for now
   typedef struct node node_opaque_t;
+  typedef std::pair< const node_opaque_t *, uint64_t > versioned_node_t;
 
   btree() : root(leaf_node::alloc())
   {
@@ -815,11 +816,12 @@ public:
   }
 
   inline bool
-  search(const key_type &k, value_type &v) const
+  search(const key_type &k, value_type &v,
+         versioned_node_t *search_info = nullptr) const
   {
     typename util::vec<leaf_node *>::type ns;
     scoped_rcu_region rcu_region;
-    return search_impl(k, v, ns);
+    return search_impl(k, v, ns, search_info);
   }
 
   /**
@@ -968,7 +970,7 @@ public:
   inline bool
   insert(const key_type &k, value_type v,
          value_type *old_v = NULL,
-         std::pair< const node_opaque_t *, uint64_t > *insert_info = NULL)
+         versioned_node_t *insert_info = NULL)
   {
     // XXX: not sure if this cast is safe
     return insert_impl((node **) &root, k, v, false, old_v, insert_info);
@@ -980,7 +982,7 @@ public:
    */
   inline bool
   insert_if_absent(const key_type &k, value_type v,
-                   std::pair< const node_opaque_t *, uint64_t > *insert_info = NULL)
+                   versioned_node_t *insert_info = NULL)
   {
     return insert_impl((node **) &root, k, v, true, NULL, insert_info);
   }
@@ -1160,10 +1162,11 @@ private:
    * Assumes RCU region scope is held
    */
   bool search_impl(const key_type &k, value_type &v,
-                   typename util::vec<leaf_node *>::type &leaf_nodes) const;
+                   typename util::vec<leaf_node *>::type &leaf_nodes,
+                   versioned_node_t *search_info = nullptr) const;
 
   bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent,
-                   value_type *old_v, std::pair< const node_opaque_t *, uint64_t > *insert_info);
+                   value_type *old_v, versioned_node_t *insert_info);
 
   bool remove_impl(node **root_location, const key_type &k, value_type *old_v);
 
@@ -1191,7 +1194,7 @@ private:
           value_type v,
           bool only_if_absent,
           value_type *old_v,
-          std::pair< const node_opaque_t *, uint64_t > *insert_info,
+          versioned_node_t *insert_info,
           key_slice &min_key,
           node *&new_node,
           typename util::vec<insert_parent_entry>::type &parents,

@@ -264,7 +264,8 @@ STATIC_COUNTER_DECL(scopedperf::tsc_ctr, btree_search_impl_tsc, btree_search_imp
 
 bool
 btree::search_impl(const key_type &k, value_type &v,
-                   typename vec<leaf_node *>::type &leaf_nodes) const
+                   typename vec<leaf_node *>::type &leaf_nodes,
+                   versioned_node_t *search_info) const
 {
   ANON_REGION("btree::search_impl:", &btree_search_impl_perf_cg);
   INVARIANT(leaf_nodes.empty());
@@ -299,6 +300,10 @@ process:
       goto retry;
     if (leaf_node *leaf = AsLeafCheck(cur, version)) {
       leaf->prefetch();
+      if (search_info) {
+        search_info->first = leaf;
+        search_info->second = node::Version(version);
+      }
       key_search_ret kret = leaf->key_search(kslice, kslicelen);
       ssize_t ret = kret.first;
       if (ret != -1) {
@@ -346,11 +351,11 @@ process:
         leaf_node *right_sibling = leaf->next;
         if (unlikely(!leaf->check_version(version)))
           goto process;
-        right_sibling->prefetch();
         if (unlikely(!right_sibling)) {
           leaf_nodes.push_back(leaf);
           return false;
         }
+        right_sibling->prefetch();
         uint64_t right_version = right_sibling->stable_version();
         key_slice right_min_key = right_sibling->min_key;
         if (unlikely(!right_sibling->check_version(right_version)))
@@ -616,7 +621,7 @@ btree::search_range_call(const key_type &lower,
 bool
 btree::insert_impl(node **root_location, const key_type &k, value_type v,
                    bool only_if_absent, value_type *old_v,
-                   pair< const node_opaque_t *, uint64_t > *insert_info)
+                   versioned_node_t *insert_info)
 {
 retry:
   key_slice mk;
@@ -796,7 +801,7 @@ btree::insert0(node *np,
                value_type v,
                bool only_if_absent,
                value_type *old_v,
-               pair< const node_opaque_t *, uint64_t > *insert_info,
+               versioned_node_t *insert_info,
                key_slice &min_key,
                node *&new_node,
                typename vec<insert_parent_entry>::type &parents,

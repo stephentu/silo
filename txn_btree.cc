@@ -594,7 +594,11 @@ namespace mp_test2_ns {
     virtual bool
     invoke(const string &k, const string &v)
     {
-      ALWAYS_ASSERT(v.size() == sizeof(rec));
+      if (v.size() != sizeof(rec)) {
+        cerr << "v.size(): " << v.size() << endl;
+        cerr << "sizeof rec: " << sizeof(rec) << endl;
+        ALWAYS_ASSERT(false);
+      }
       rec *r = (rec *) v.data();
       VERBOSE(cerr << "counting_scan_callback: " << hexify(k) << " => " << r->v << endl);
       if (!has_last) {

@@ -32,6 +32,7 @@
 #include "keyrange.h"
 #include "tuple.h"
 #include "scopedperf.hh"
+#include "marked_ptr.h"
 
 // forward decl
 template <template <typename> class Transaction> class txn_btree;
@@ -41,6 +42,29 @@ class transaction_read_only_exception {};
 
 // XXX: hacky
 extern std::string (*g_proto_version_str)(uint64_t v);
+
+template <bool enable, size_t N>
+struct string_container {};
+
+template <size_t N>
+struct string_container<true, N> {
+  inline void
+  assign_string(size_t i, const std::string &s)
+  {
+    strings[i] = s;
+  }
+  inline std::string *
+  get_string(size_t i)
+  {
+    return &strings[i];
+  }
+  inline const std::string *
+  get_string(size_t i) const
+  {
+    return &strings[i];
+  }
+  std::string strings[N];
+};
 
 // base class with very simple definitions- nothing too exciting yet
 class transaction_base : private util::noncopyable {
@@ -126,16 +150,13 @@ protected:
 
 public:
 
-  /**
-   * throws transaction_unusable_exception if already resolved (commited/aborted)
-   */
+  // only fires during invariant checking
   inline void
   ensure_active()
   {
     if (state == TXN_EMBRYO)
       state = TXN_ACTIVE;
-    else if (unlikely(state != TXN_ACTIVE))
-      throw transaction_unusable_exception();
+    INVARIANT(state == TXN_ACTIVE);
   }
 
   inline uint64_t
@@ -144,40 +165,113 @@ public:
     return flags;
   }
 
-  //static void Test();
-
 protected:
 
+  // the read set is a mapping from (tuple -> tid_read).
+  // "write_set" is used to indicate if this read tuple
+  // also belongs in the write set.
   struct read_record_t {
-    read_record_t() : t(0), holds_lock(false) {}
+    inline read_record_t() : t(dbtuple::MIN_TID), write_set(false) {}
     tid_t t;
-    bool holds_lock;
+    bool write_set; // XXX: steal bit from tid
   };
 
   friend std::ostream &
   operator<<(std::ostream &o, const read_record_t &r);
 
-  struct write_record_t {
-    write_record_t() {}
-    write_record_t(const string_type &r, dbtuple *tuple)
-      : r(r), tuple(tuple) {}
-    string_type r;
-    dbtuple *tuple;
+  // the write set is a mapping from (tuple -> value_to_write).
+  template <bool stable_strings>
+  struct basic_write_record_t {
+    enum {
+      FLAGS_INSERT = 0x1,
+      FLAGS_NEED_OVERWRITE = 0x1 << 1, // we need to overwrite the record *again*
+                                       // this is the case where we do an insert()
+                                       // followed by another insert() to the same
+                                       // key
+    };
+    inline basic_write_record_t() {}
+    inline basic_write_record_t(const string_type &k,
+                                const string_type &r,
+                                btree *btr,
+                                bool insert)
+      : k(stable_strings ? &k : nullptr),
+        r(stable_strings ? &r : nullptr),
+        btr(btr)
+    {
+      if (!stable_strings) {
+        // optimized away at compile time
+        container.assign_string(0, k);
+        container.assign_string(1, r);
+      }
+      this->btr.set_flags(insert ? FLAGS_INSERT : 0);
+    }
+    inline bool
+    is_insert() const
+    {
+      // don't need the mask
+      return btr.get_flags();
+    }
+    inline bool
+    needs_overwrite() const
+    {
+      return btr.get_flags() & FLAGS_NEED_OVERWRITE;
+    }
+    inline void
+    mark_needs_overwrite()
+    {
+      INVARIANT(is_insert());
+      btr.or_flags(FLAGS_NEED_OVERWRITE);
+    }
+    inline btree *
+    get_btree() const
+    {
+      return btr.get();
+    }
+
+    inline const string_type &
+    get_key() const
+    {
+      if (stable_strings)
+        return *k;
+      else
+        return *container.get_string(0);
+    }
+
+    inline const string_type &
+    get_value() const
+    {
+      if (stable_strings)
+        return *r;
+      else
+        return *container.get_string(1);
+    }
+
+    inline void
+    set_value(const string_type &v)
+    {
+      if (stable_strings)
+        r = &v;
+      else
+        container.assign_string(1, v);
+    }
+
+  private:
+    const string_type *k;
+    const string_type *r;
+    marked_ptr<btree> btr; // first bit for inserted
+    // for configurations which don't guarantee stable put strings
+    string_container<!stable_strings, 2> container;
   };
 
+  template <bool s>
   friend std::ostream &
-  operator<<(std::ostream &o, const write_record_t &r);
+  operator<<(std::ostream &o, const basic_write_record_t<s> &r);
 
-  enum AbsentRecordType {
-    ABSENT_REC_READ, // no lock held
-    ABSENT_REC_WRITE, // lock held, but did not do insert
-    ABSENT_REC_INSERT, // lock held + insert
-  };
-
+  // the absent set is a mapping from (btree_node -> version_number).
   struct absent_record_t {
-    absent_record_t() : type(ABSENT_REC_READ), tuple(nullptr) {}
-    AbsentRecordType type;
-    const dbtuple *tuple; // only set if type != ABSENT_REC_READ
+    absent_record_t() {}
+    absent_record_t(uint64_t version) : version(version) {}
+    uint64_t version;
   };
 
   friend std::ostream &
@@ -209,22 +303,22 @@ protected:
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::read_record_t &r)
 {
-  o << "[tid_read=" << g_proto_version_str(r.t)
-    << ", locked=" << r.holds_lock << "]";
+  o << "[tid_read=" << g_proto_version_str(r.t) << ", write_set=" << r.write_set << "]";
   return o;
 }
 
+template <bool s>
 inline ALWAYS_INLINE std::ostream &
-operator<<(std::ostream &o, const transaction_base::write_record_t &r)
+operator<<(std::ostream &o, const transaction_base::basic_write_record_t<s> &r)
 {
-  o << "[r=" << r.r << ", tuple=" << util::hexify(r.tuple) << "]";
+  o << "[r=" << util::hexify(r.get_value()) << ", " << r.get_btree() << "]";
   return o;
 }
 
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::absent_record_t &r)
 {
-  o << "[type=" << r.type << ", tuple=" << util::hexify(r.tuple) << "]";
+  o << "[v=" << r.version << "]";
   return o;
 }
 
@@ -232,8 +326,7 @@ struct default_transaction_traits {
   static const size_t read_set_expected_size = SMALL_SIZE_MAP;
   static const size_t absent_set_expected_size = EXTRA_SMALL_SIZE_MAP;
   static const size_t write_set_expected_size = SMALL_SIZE_MAP;
-  static const size_t node_scan_expected_size = EXTRA_SMALL_SIZE_MAP;
-  static const size_t context_set_expected_size = EXTRA_SMALL_SIZE_MAP;
+  static const bool stable_input_memory = false;
 };
 
 template <template <typename> class Protocol, typename Traits>
@@ -258,76 +351,73 @@ protected:
     return static_cast<const Protocol<Traits> *>(this);
   }
 
+  // XXX: we have baked in b-tree into the protocol- other indexes are possible
+  // but we would need to abstract it away. we don't bother for now.
+
+  typedef basic_write_record_t<traits_type::stable_input_memory> write_record_t;
+
 #ifdef USE_SMALL_CONTAINER_OPT
-  typedef small_unordered_map<const dbtuple *, read_record_t, traits_type::read_set_expected_size> read_set_map;
-  typedef small_unordered_map<string_type, absent_record_t, traits_type::absent_set_expected_size> absent_set_map;
-  typedef small_unordered_map<string_type, write_record_t, traits_type::write_set_expected_size> write_set_map;
-  typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
-  typedef small_unordered_map<const btree::node_opaque_t *, uint64_t, traits_type::node_scan_expected_size> node_scan_map;
+  typedef small_unordered_map<
+    const dbtuple *, read_record_t,
+    traits_type::read_set_expected_size> read_set_map;
+  typedef small_unordered_map<
+    dbtuple *, write_record_t,
+    traits_type::write_set_expected_size> write_set_map;
+  typedef small_unordered_map<
+    const btree::node_opaque_t *, absent_record_t,
+    traits_type::absent_set_expected_size> absent_set_map;
 #else
   typedef std::unordered_map<const dbtuple *, read_record_t> read_set_map;
-  typedef std::unordered_map<string_type, absent_record_t> absent_set_map;
-  typedef std::unordered_map<string_type, write_record_t> write_set_map;
-  typedef std::vector<key_range_t> absent_range_vec; // only for un-optimized scans
-  typedef std::unordered_map<const btree::node_opaque_t *, uint64_t> node_scan_map;
+  typedef std::unordered_map<dbtuple *, write_record_t> write_set_map;
+  typedef std::unordered_map<const btree::node_opaque_t *, absent_record_t> absent_set_map;
 #endif
 
-  struct dbtuple_info {
-    dbtuple_info() {}
-    dbtuple_info(txn_btree<Protocol> *btr,
-                 const string_type &key,
-                 bool locked,
-                 const string_type &r,
-                 bool insert)
-      : btr(btr),
-        key(key),
-        locked(locked),
-        r(r),
-        insert(insert)
-    {}
-    txn_btree<Protocol> *btr;
-    string_type key;
-    bool locked;
-    string_type r;
-    bool insert;
+  struct dbtuple_write_info {
+    enum {
+      FLAGS_LOCKED = 0x1,
+      FLAGS_INSERT = 0x1 << 1,
+    };
+    inline dbtuple_write_info() {}
+    inline dbtuple_write_info(dbtuple *tuple, bool insert)
+      : tuple(tuple)
+    {
+      this->tuple.set_flags(insert ? (FLAGS_LOCKED | FLAGS_INSERT) : 0);
+    }
+    inline ALWAYS_INLINE void
+    mark_locked()
+    {
+      INVARIANT(!is_locked());
+      tuple.or_flags(FLAGS_LOCKED);
+      INVARIANT(is_locked());
+    }
+    inline ALWAYS_INLINE bool
+    is_locked() const
+    {
+      return tuple.get_flags() & FLAGS_LOCKED;
+    }
+    inline ALWAYS_INLINE bool
+    is_insert() const
+    {
+      return tuple.get_flags() & FLAGS_INSERT;
+    }
+
+    // for sorting
+    inline ALWAYS_INLINE
+    bool operator<(const dbtuple_write_info &o) const
+    {
+      return tuple < o.tuple;
+    }
+
+    marked_ptr<dbtuple> tuple;
   };
 
   // NB: maintain two separate vectors, so we can sort faster (w/o swapping
   // elems). logically, we want a map from dbtuple -> dbtuple_info, but this
   // method is faster
-  typedef std::pair<dbtuple *, unsigned int> dbtuple_mapping;
-  typedef typename util::vec<dbtuple_mapping, 512>::type dbtuple_key_vec;
-  typedef typename util::vec<dbtuple_info, 512>::type    dbtuple_value_vec;
-
-  struct TupleMapComp {
-    inline ALWAYS_INLINE bool
-    operator()(const dbtuple_mapping &lhs, const dbtuple_mapping &rhs) const
-    {
-      return lhs.first < rhs.first;
-    }
-  };
-
-  struct txn_context {
-    read_set_map read_set;
-    absent_set_map absent_set;
-    write_set_map write_set;
-    absent_range_vec absent_range_set; // ranges do not overlap
-    node_scan_map node_scan; // we scanned these nodes at verison v
-
-    bool local_search_str(const transaction &t, const string_type &k, string_type &v) const;
-
-    inline bool
-    local_search(const transaction &t, const key_type &k, string_type &v) const
-    {
-      // XXX: we have to make an un-necessary copy of the key each time we search
-      // the write/read set- we need to find a way to avoid this
-      return local_search_str(t, k.str(), v);
-    }
-
-    bool key_in_absent_set(const key_type &k) const;
-
-    void add_absent_range(const key_range_t &range);
-  };
+  typedef
+    typename util::vec<
+      dbtuple_write_info, traits_type::write_set_expected_size>::type
+    dbtuple_write_info_vec;
 
 public:
 
@@ -370,34 +460,39 @@ public:
 protected:
   void abort_impl(abort_reason r);
 
-  // precondition: tuple != nullptr
-  void mark_write_tuple(
-      txn_context &ctx, const std::string &key,
-      dbtuple *tuple, bool did_insert);
-
   // low-level API for txn_btree
 
   // try to insert a new "tentative" tuple into the underlying
   // btree associated with the given context.
   //
-  // if return.first is not null, then this function will mutate
-  // the txn_context such that the node_scan flag is aware of any
-  // mutating changes made to the underlying btree. if return.second
-  // is true, then this txn should abort, because a conflict was
-  // detected w/ the node scan set.
+  // if return.first is not null, then this function will
+  //   1) mutate the transaction such that the absent_set is aware of any
+  //      mutating changes made to the underlying btree.
+  //   2) add the new tuple to the write_set
+  //
+  // if return.second is true, then this txn should abort, because a conflict
+  // was detected w/ the absent_set.
   //
   // if return.first is not null, the returned tuple is locked()!
-  // it is the responsibility of the caller to release the lock
   //
-  // if the return value is null, then this function has no side effects.
+  // if the return.first is null, then this function has no side effects.
   //
   // NOTE: !ret.first => !ret.second
   std::pair< dbtuple *, bool >
   try_insert_new_tuple(
       btree &btr,
-      txn_context &ctx,
       const std::string &key,
       const std::string &value);
+
+  // reads the contents of tuple into v
+  // within this transaction context
+  bool
+  do_tuple_read(const dbtuple *tuple, string_type &v,
+                size_t max_bytes_read = string_type::npos);
+
+  void
+  do_node_read(const btree::node_opaque_t *n,
+               uint64_t version);
 
 public:
   // expected public overrides
@@ -418,9 +513,7 @@ protected:
    * it still has not been decided whether or not this txn will commit
    * successfully
    */
-  tid_t gen_commit_tid(
-      const dbtuple_key_vec &write_node_keys,
-      const dbtuple_value_vec &write_node_values);
+  tid_t gen_commit_tid(const dbtuple_write_info_vec &write_tuples);
 
   bool can_read_tid(tid_t t) const;
 
@@ -428,14 +521,12 @@ protected:
   // with the lock on ln held, to simplify GC code
   //
   // Is also called within an RCU read region
-  void on_dbtuple_spill(
-      txn_btree<Protocol> *btr, const string_type &key, dbtuple *ln);
+  void on_dbtuple_spill(dbtuple *tuple);
 
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
   // the logical node for actual deletion
-  void on_logical_delete(
-      txn_btree<Protocol> *btr, const string_type &key, dbtuple *ln);
+  void on_logical_delete(dbtuple *tuple);
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called
   // with the commit tid. before on_tid_finish() is called, state is updated
@@ -445,13 +536,9 @@ protected:
 protected:
   inline void clear();
 
-#ifdef USE_SMALL_CONTAINER_OPT
-  typedef small_unordered_map<txn_btree<Protocol> *, txn_context, traits_type::context_set_expected_size> ctx_map_type;
-#else
-  typedef std::unordered_map<txn_btree<Protocol> *, txn_context> ctx_map_type;
-#endif
-
-  ctx_map_type ctx_map;
+  read_set_map read_set;
+  write_set_map write_set;
+  absent_set_map absent_set;
 };
 
 class transaction_abort_exception : public std::exception {

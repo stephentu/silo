@@ -31,9 +31,11 @@ public:
   typedef Traits traits_type;
   typedef transaction_base::tid_t tid_t;
   typedef transaction_base::string_type string_type;
-  typedef typename super_type::dbtuple_info dbtuple_info;
-  typedef typename super_type::dbtuple_key_vec dbtuple_key_vec;
-  typedef typename super_type::dbtuple_value_vec dbtuple_value_vec;
+  typedef typename super_type::dbtuple_write_info dbtuple_write_info;
+  typedef typename super_type::dbtuple_write_info_vec dbtuple_write_info_vec;
+  typedef typename super_type::read_set_map read_set_map;
+  typedef typename super_type::absent_set_map absent_set_map;
+  typedef typename super_type::write_set_map write_set_map;
 
   transaction_proto1(uint64_t flags)
     : transaction<transaction_proto1, Traits>(flags),
@@ -74,21 +76,17 @@ public:
 
 protected:
 
-  tid_t gen_commit_tid(
-      const dbtuple_key_vec &write_node_keys,
-      const dbtuple_value_vec &write_node_values)
+  tid_t gen_commit_tid(const dbtuple_write_info_vec &write_tuples)
   {
     return incr_and_get_global_tid();
   }
 
-  void on_dbtuple_spill(
-      txn_btree<transaction_proto1> *btr, const string_type &key, dbtuple *ln)
+  void on_dbtuple_spill(dbtuple *tuple)
   {
     NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   }
 
-  void on_logical_delete(
-      txn_btree<transaction_proto1> *btr, const string_type &key, dbtuple *ln)
+  void on_logical_delete(dbtuple *tuple)
   {
     NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   }

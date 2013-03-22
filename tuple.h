@@ -149,7 +149,7 @@ public:
   prefetch() const
   {
 #ifdef TUPLE_PREFETCH
-    prefetch_bytes(this, base_size() + alloc_size);
+    prefetch_bytes(this, sizeof(*this) + alloc_size);
 #endif
   }
 
@@ -436,6 +436,18 @@ private:
     unsigned long nretries = 0;
     scoped_recorder rec(nretries);
 #endif
+
+    if (version == MAX_TID) {
+      // XXX(stephentu): HACK! we use MAX_TID to indicate a tentative
+      // "insert"- the actual latest value is empty.
+      //
+      // since our system is screwed anyways if we ever reach MAX_TID, this
+      // is OK for now, but a real solution should exist at some point
+      start_t = MIN_TID;
+      r.clear();
+      return true;
+    }
+
   retry:
     const version_t v = reader_stable_version(allow_write_intent);
     const struct dbtuple *p = nullptr;
@@ -444,18 +456,8 @@ private:
       if (unlikely(require_latest && !IsLatest(v)))
         return false;
       start_t = version;
-      if (start_t == MAX_TID) {
-        // XXX(stephentu): HACK! we use MAX_TID to indicate a tentative
-        // "insert"- the actual latest value is empty.
-        //
-        // since our system is screwed anyways if we ever reach MAX_TID, this
-        // is OK for now, but a real solution should exist at some point
-        start_t = MIN_TID;
-        r.clear();
-      } else {
-        const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
-        r.assign(get_value_start(), read_sz);
-      }
+      const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
+      r.assign(get_value_start(), read_sz);
     } else {
       p = get_next();
     }
