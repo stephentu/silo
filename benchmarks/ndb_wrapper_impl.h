@@ -17,70 +17,62 @@
 //  static const size_t read_set_expected_size = SMALL_SIZE_MAP;
 //  static const size_t absent_set_expected_size = EXTRA_SMALL_SIZE_MAP;
 //  static const size_t write_set_expected_size = SMALL_SIZE_MAP;
-//  static const size_t node_scan_expected_size = EXTRA_SMALL_SIZE_MAP;
-//  static const size_t context_set_expected_size = EXTRA_SMALL_SIZE_MAP;
+//  static const bool stable_input_memory = false;
 //};
 
 // ycsb profiles
 
 struct hint_kv_get_put_traits {
   static const size_t read_set_expected_size = 1;
-  static const size_t absent_set_expected_size = 1;
   static const size_t write_set_expected_size = 1;
-  static const size_t node_scan_expected_size = 1;
-  static const size_t context_set_expected_size = 1;
+  static const size_t absent_set_expected_size = 1;
+  static const bool stable_input_memory = true;
 };
 
 struct hint_kv_rmw_traits : public hint_kv_get_put_traits {};
 
 struct hint_kv_scan_traits {
   static const size_t read_set_expected_size = 100;
-  static const size_t absent_set_expected_size = 1;
   static const size_t write_set_expected_size = 1;
-  static const size_t node_scan_expected_size = read_set_expected_size / 7 + 1;
-  static const size_t context_set_expected_size = 1;
+  static const size_t absent_set_expected_size = read_set_expected_size / 7 + 1;
+  static const bool stable_input_memory = true;
 };
 
 // tpcc profiles
 
 struct hint_tpcc_new_order_traits {
-  static const size_t read_set_expected_size = 15;
+  static const size_t read_set_expected_size = 35;
+  static const size_t write_set_expected_size = 35;
   static const size_t absent_set_expected_size = 1;
-  static const size_t write_set_expected_size = 15;
-  static const size_t node_scan_expected_size = 1;
-  static const size_t context_set_expected_size = 9;
+  static const bool stable_input_memory = true;
 };
 
 struct hint_tpcc_payment_traits {
-  static const size_t read_set_expected_size = 75;
-  static const size_t absent_set_expected_size = 1;
-  static const size_t write_set_expected_size = 1;
-  static const size_t node_scan_expected_size = 15;
-  static const size_t context_set_expected_size = 5;
+  static const size_t read_set_expected_size = 85;
+  static const size_t write_set_expected_size = 10;
+  static const size_t absent_set_expected_size = 15;
+  static const bool stable_input_memory = true;
 };
 
 struct hint_tpcc_delivery_traits {
-  static const size_t read_set_expected_size = 140;
-  static const size_t absent_set_expected_size = 1;
-  static const size_t write_set_expected_size = 140;
-  static const size_t node_scan_expected_size = 25;
-  static const size_t context_set_expected_size = 4;
+  static const size_t read_set_expected_size = 175;
+  static const size_t write_set_expected_size = 175;
+  static const size_t absent_set_expected_size = 35;
+  static const bool stable_input_memory = true;
 };
 
 struct hint_tpcc_order_status_traits {
-  static const size_t read_set_expected_size = 90;
-  static const size_t absent_set_expected_size = 1;
+  static const size_t read_set_expected_size = 95;
   static const size_t write_set_expected_size = 1;
-  static const size_t node_scan_expected_size = 15;
-  static const size_t context_set_expected_size = 4;
+  static const size_t absent_set_expected_size = 25;
+  static const bool stable_input_memory = true;
 };
 
 struct hint_tpcc_stock_level_traits {
-  static const size_t read_set_expected_size = 250;
-  static const size_t absent_set_expected_size = 1;
+  static const size_t read_set_expected_size = 500;
   static const size_t write_set_expected_size = 1;
-  static const size_t node_scan_expected_size = 21;
-  static const size_t context_set_expected_size = 3;
+  static const size_t absent_set_expected_size = 25;
+  static const bool stable_input_memory = true;
 };
 
 #define TXN_PROFILE_HINT_OP(x) \

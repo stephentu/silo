@@ -534,6 +534,8 @@ public:
     //w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
 
     w.push_back(workload_desc("NewOrder", 1.0, TxnNewOrder));
+
+    //w.push_back(workload_desc("NewOrder", 0.45, TxnNewOrder));
     //w.push_back(workload_desc("Payment", 0.43, TxnPayment));
     //w.push_back(workload_desc("Delivery", 0.04, TxnDelivery));
     //w.push_back(workload_desc("OrderStatus", 0.04, TxnOrderStatus));
