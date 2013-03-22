@@ -20,10 +20,6 @@
 #include "small_unordered_map.h"
 #include "prefetch.h"
 
-// just a debug option to help track down a particular
-// race condition
-//#define dbtuple_QUEUE_TRACKING
-
 template <template <typename> class Protocol, typename Traits>
   class transaction; // forward decl
 
@@ -427,17 +423,17 @@ private:
   };
 #endif
 
+  template <bool require_latest>
   bool
   record_at(tid_t t, tid_t &start_t, string_type &r,
-            size_t max_len, bool require_latest,
-            bool allow_write_intent) const
+            size_t max_len, bool allow_write_intent) const
   {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
     scoped_recorder rec(nretries);
 #endif
 
-    if (version == MAX_TID) {
+    if (unlikely(version == MAX_TID)) {
       // XXX(stephentu): HACK! we use MAX_TID to indicate a tentative
       // "insert"- the actual latest value is empty.
       //
@@ -453,7 +449,7 @@ private:
     const struct dbtuple *p = nullptr;
     const bool found = is_not_behind(t);
     if (found) {
-      if (unlikely(require_latest && !IsLatest(v)))
+      if (require_latest && unlikely(!IsLatest(v)))
         return false;
       start_t = version;
       const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
@@ -470,7 +466,7 @@ private:
     if (found)
       return true;
     if (p)
-      return p->record_at(t, start_t, r, max_len, false, allow_write_intent);
+      return p->record_at<false>(t, start_t, r, max_len, allow_write_intent);
     // NB(stephentu): if we reach the end of a chain then we assume that
     // the record exists as a deleted record.
     //
@@ -515,7 +511,7 @@ public:
               size_t max_len = string_type::npos) const
   {
     INVARIANT(max_len > 0); // otherwise something will probably break
-    return record_at(t, start_t, r, max_len, true, allow_write_intent);
+    return record_at<true>(t, start_t, r, max_len, allow_write_intent);
   }
 
   inline bool

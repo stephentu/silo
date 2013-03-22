@@ -51,6 +51,7 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
   // easy checks
   if (!dbtuple::IsLatest(vcheck) ||
       dbtuple::IsDeleting(vcheck) ||
+      dbtuple::IsWriteIntent(vcheck) ||
       tuple->version == dbtuple::MIN_TID ||
       tuple->version == dbtuple::MAX_TID)
     return true;
