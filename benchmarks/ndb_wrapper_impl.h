@@ -409,6 +409,12 @@ public:
   {
     return likely(arena) ? arena->next() : nullptr;
   }
+  inline void
+  return_last(std::string *px)
+  {
+    if (likely(arena))
+      arena->return_last(px);
+  }
 private:
   str_arena *arena;
 };

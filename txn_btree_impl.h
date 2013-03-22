@@ -61,6 +61,7 @@ txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::invo
                     << "  " << *((dbtuple *) v) << std::endl);
 
   string_type *r_px = sa();
+  string_type *r_px_orig = r_px;
   if (!r_px) {
     temp_buf.clear();
     r_px = &temp_buf;
@@ -70,6 +71,7 @@ txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::invo
   const dbtuple * const tuple = reinterpret_cast<const dbtuple *>(v);
   if (t->do_tuple_read(tuple, r))
     return caller_callback->invoke(k, r);
+  sa.return_last(r_px_orig);
   return true;
 }
 

@@ -113,6 +113,10 @@ public:
     {
       return nullptr;
     }
+    inline ALWAYS_INLINE void
+    return_last(string_type *px)
+    {
+    }
   };
 
   // StringAllocator needs to be CopyConstructable

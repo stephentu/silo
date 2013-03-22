@@ -43,6 +43,14 @@ public:
     return nullptr;
   }
 
+  void
+  return_last(std::string *px)
+  {
+    INVARIANT(n > 0);
+    INVARIANT(&strs[n - 1] == px);
+    --n;
+  }
+
   bool
   manages(const std::string *px) const
   {
