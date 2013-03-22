@@ -44,7 +44,22 @@ class transaction_read_only_exception {};
 extern std::string (*g_proto_version_str)(uint64_t v);
 
 template <bool enable, size_t N>
-struct string_container {};
+struct string_container {
+  inline ALWAYS_INLINE void
+  assign_string(size_t i, const std::string &s)
+  {
+  }
+  inline ALWAYS_INLINE std::string *
+  get_string(size_t i)
+  {
+    return nullptr;
+  }
+  inline ALWAYS_INLINE const std::string *
+  get_string(size_t i) const
+  {
+    return nullptr;
+  }
+};
 
 template <size_t N>
 struct string_container<true, N> {
