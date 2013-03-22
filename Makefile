@@ -104,6 +104,7 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/bench.h \
 	benchmarks/inline_str.h \
 	benchmarks/kvdb_wrapper.h \
+	benchmarks/kvdb_wrapper_impl.h \
 	benchmarks/masstree/kvrandom.hh \
 	benchmarks/mysql_wrapper.h \
 	benchmarks/ndb_wrapper.h \
@@ -113,7 +114,6 @@ BENCH_HEADERS = $(HEADERS) \
 BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/bench.cc \
 	benchmarks/encstress.cc \
-	benchmarks/kvdb_wrapper.cc \
 	benchmarks/masstree/kvrandom.cc \
 	benchmarks/mysql_wrapper.cc \
 	benchmarks/queue.cc \

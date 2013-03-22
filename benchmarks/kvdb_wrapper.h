@@ -5,6 +5,7 @@
 #include "../btree.h"
 #include "../rcu.h"
 
+template <bool UseConcurrencyControl>
 class kvdb_wrapper : public abstract_db {
 public:
 
@@ -46,6 +47,7 @@ public:
   }
 };
 
+template <bool UseConcurrencyControl>
 class kvdb_ordered_index : public abstract_ordered_index {
 public:
   kvdb_ordered_index(const std::string &name)

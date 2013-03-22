@@ -15,6 +15,7 @@
 #include "ndb_wrapper.h"
 #include "ndb_wrapper_impl.h"
 #include "kvdb_wrapper.h"
+#include "kvdb_wrapper_impl.h"
 #include "mysql_wrapper.h"
 
 using namespace std;
@@ -147,7 +148,9 @@ main(int argc, char **argv)
   } else if (db_type == "ndb-proto2") {
     db = new ndb_wrapper<transaction_proto2>;
   } else if (db_type == "kvdb") {
-    db = new kvdb_wrapper;
+    db = new kvdb_wrapper<true>;
+  } else if (db_type == "kvdb-st") {
+    db = new kvdb_wrapper<false>;
   } else if (db_type == "mysql") {
     string dbdir = basedir + "/mysql-db";
     db = new mysql_wrapper(dbdir, bench_type);
