@@ -228,8 +228,8 @@ public:
   run()
   {
     struct timespec t;
-    t.tv_sec  = rcu_epoch_ns % ONE_SECOND_NS;
-    t.tv_nsec = (rcu_epoch_ns / 10) % ONE_SECOND_NS; // these go a factor of 10 faster
+    t.tv_sec  = rcu_epoch_ns / ONE_SECOND_NS;
+    t.tv_nsec = rcu_epoch_ns % ONE_SECOND_NS;
     rcu::px_queue stack_queue;
     for (;;) {
       // see if any elems to process
