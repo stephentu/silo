@@ -12,7 +12,7 @@ if __name__ == '__main__':
   for f in files:
     execfile(f)
 
-    #benchmarks = set([d[0]['bench'] for d in RESULTS])
+    #names = ['scale', 'multipart:pct', 'multipart:cpu']
 
     def deal_with_pos0_res(x):
       if type(x) == list:
@@ -34,12 +34,34 @@ if __name__ == '__main__':
       def pn(n, p):
         return 1.0 - (1.0 - p)**n
       def ex(p):
-        return sum([.1*pn(n, p) for n in range(5, 16)])
+        import math
+        return math.fsum([(1.0/11.0)*pn(float(n), p) for n in range(5, 16)])
       return ex(p/100.0)
+
+    def extract_p(x):
+      m = RGX.search(x)
+      assert m
+      p = int(m.group(1))
+      assert p >= 0 and p <= 100
+      return p
+
+    def multipart_cpu_process(config):
+      assert config['db'] == 'ndb-proto2' or \
+             config['db'] == 'kvdb'
+      if config['db'] == 'ndb-proto2':
+        return config['scale_factor']
+      else:
+        return 8
+
+    def readonly_lines_func(config):
+      if 'disable-read-only-snapshots' in config['bench_opts']:
+        return 'no-read-only'
+      else:
+        return 'read-only'
 
     descs = [
       {
-        'bench' : 'ycsb',
+        'name' : 'scale',
         'x-axis' : 'threads',
         'x-axis-func' : lambda x: x,
         'y-axis' : deal_with_pos0_res,
@@ -47,10 +69,9 @@ if __name__ == '__main__':
         'x-label' : 'num threads',
         'y-label' : 'txns/sec',
         'title' : 'ycsb throughput graph',
-        'name' : 'throughput',
       },
       {
-        'bench' : 'tpcc',
+        'name' : 'multipart:pct',
         'x-axis' : 'bench_opts',
         'x-axis-func' : extract_pct,
         'y-axis' : deal_with_pos0_res,
@@ -58,24 +79,54 @@ if __name__ == '__main__':
         'x-label' : '% x-partition txn',
         'y-label' : 'txns/sec',
         'title' : 'tpcc new-order throughput graph',
-        'name' : 'throughput',
+        'legend' : 'upper right',
+      },
+      {
+        'name' : 'multipart:cpu',
+        'x-axis-process' : multipart_cpu_process,
+        'y-axis' : deal_with_pos0_res,
+        'lines' : ['db'], # each line holds this constant
+        'x-label' : 'num threads',
+        'y-label' : 'txns/sec',
+        'title' : 'tpcc full workload throughput graph',
+      },
+      {
+        'name' : 'readonly',
+        'x-axis' : 'bench_opts',
+        'x-axis-func' : extract_p,
+        'y-axis' : deal_with_pos0_res,
+        'lines-func' : readonly_lines_func,
+        'x-label' : 'tpcc new order p value',
+        'y-label' : 'txns/sec',
+        'title' : 'tpcc read only throughput graph',
+        'legend' : 'right',
       },
     ]
 
     for desc in descs:
-      bench = desc['bench']
-      bench_results = [d for d in RESULTS if d[0]['bench'] == bench]
+      bench = desc['name']
+      bench_results = [d for d in RESULTS if d[0]['name'] == bench]
       lines = {}
       for (config, result) in bench_results:
-        key = tuple(config[x] for x in desc['lines'])
+        if 'lines-func' in desc:
+          key = desc['lines-func'](config)
+        else:
+          key = tuple(config[x] for x in desc['lines'])
         pts = lines.get(key, {})
-        xpt = desc['x-axis-func'](config[desc['x-axis']])
+        if 'x-axis-process' in desc:
+          xpt = desc['x-axis-process'](config)
+        else:
+          xpt = desc['x-axis-func'](config[desc['x-axis']])
         assert xpt not in pts
         pts[xpt] = desc['y-axis'](result)
         lines[key] = pts
 
       def mean(x): return sum(x)/len(x)
       def median(x): return x[len(x)/2]
+
+      # find min/max of xpts
+      xmin = min([e for l in lines.values() for e in l])
+      xmax = max([e for l in lines.values() for e in l])
 
       labels = []
       for (name, pts) in lines.iteritems():
@@ -85,13 +136,29 @@ if __name__ == '__main__':
         ymaxs = np.array([max(x) for x in ypts])
         ymid = np.array([median(x) for x in ypts])
         yerr=np.array([ymid - ymins, ymaxs - ymid])
-        plt.errorbar([x[0] for x in spts], ymid, yerr=yerr)
-        labels.append('-'.join(name))
+        xpts = [x[0] for x in spts]
+        assert len(xpts)
+        if len(xpts) == 1:
+          xpts = range(xmin, xmax + 1)
+          assert len(ymins) == 1
+          assert len(ymaxs) == 1
+          assert len(ymid) == 1
+          ymins = np.array([ymins[0] for _ in xpts])
+          ymaxs = np.array([ymaxs[0] for _ in xpts])
+          ymid = np.array([ymid[0] for _ in xpts])
+          yerr=np.array([ymid - ymins, ymaxs - ymid])
+
+        plt.errorbar(xpts, ymid, yerr=yerr)
+        if type(name) == str:
+          labels.append(name)
+        else:
+          labels.append('-'.join(name))
 
       plt.xlabel(desc['x-label'])
       plt.ylabel(desc['y-label'])
       plt.title(desc['title'])
-      plt.legend(labels, loc='upper left')
+      placement = 'upper left' if not 'legend' in desc else desc['legend']
+      plt.legend(labels, loc=placement)
       bname = '.'.join(os.path.basename(f).split('.')[:-1])
-      plt.savefig('.'.join([bname + '-' + bench + '-' + desc['name'], 'pdf']))
+      plt.savefig('.'.join([bname + '-' + bench, 'pdf']))
       plt.close()
