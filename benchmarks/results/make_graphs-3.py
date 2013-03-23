@@ -49,7 +49,7 @@ if __name__ == '__main__':
       assert config['db'] == 'ndb-proto2' or \
              config['db'] == 'kvdb'
       if config['db'] == 'ndb-proto2':
-        return config['scale_factor']
+        return config['threads']
       else:
         return 8
 
@@ -106,6 +106,9 @@ if __name__ == '__main__':
     for desc in descs:
       bench = desc['name']
       bench_results = [d for d in RESULTS if d[0]['name'] == bench]
+      if not bench_results:
+        print >>sys.stderr, 'skipping bench %s' % bench
+        continue
       lines = {}
       for (config, result) in bench_results:
         if 'lines-func' in desc:
