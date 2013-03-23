@@ -47,6 +47,7 @@ NTRIALS = 3
 
 grids = [
   {
+    'name' : 'scale',
     'dbs' : DBS,
     'threads' : THREADS,
     'scale_factors' : [320000],
@@ -62,21 +63,76 @@ grids = [
 D_RANGE = range(0, 11)
 grids += [
   {
+    'name' : 'multipart:pct',
     'dbs' : ['ndb-proto2'],
     'threads' : [28],
     'scale_factors': [28],
     'benchmarks' : ['tpcc'],
-    'bench_opts' : ['--new-order-remote-item-pct %d' % d for d in D_RANGE],
+    'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
     'par_load' : [False],
   },
   {
-    'dbs' : ['kvdb'],
+    'name' : 'multipart:pct',
+    'dbs' : ['kvdb-st'],
     'threads' : [28],
     'scale_factors': [28],
     'benchmarks' : ['tpcc'],
     'bench_opts' :
-      ['--enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
+      ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
     'par_load' : [True],
+  },
+]
+
+# exp 3:
+#  * standard workload mix
+#  * fix the tpc-c scale factor at 8
+#  * for volt, do one run @ 8-threads
+#  * for ndb, vary threads [8, 12, 16, 20, 24, 28, 32]
+grids += [
+  {
+    'name' : 'multipart:cpu',
+    'dbs' : ['kvdb'],
+    'threads' : [8],
+    'scale_factors': [8],
+    'benchmarks' : ['tpcc'],
+    'bench_opts' : ['--enable-separate-tree-per-partition --enable-partition-locks'],
+    'par_load' : [True],
+  },
+  {
+    'name' : 'multipart:cpu',
+    'dbs' : ['ndb-proto2'],
+    'threads' : [8, 12, 16, 20, 24, 28, 32],
+    'scale_factors': [8],
+    'benchmarks' : ['tpcc'],
+    'bench_opts' : [''],
+    'par_load' : [False],
+  },
+]
+
+
+# exp 4:
+#  * 50% new order, 50% stock level
+#  * scale factor 8, n-threads 16
+#  * x-axis is --new-order-remote-item-pct from [0, 20, 40, 60, 80, 100]
+RO_DRANGE = [0, 20, 40, 60, 80, 100]
+grids += [
+  {
+    'name' : 'readonly',
+    'dbs' : ['ndb-proto2'],
+    'threads' : [16],
+    'scale_factors': [8],
+    'benchmarks' : ['tpcc'],
+    'bench_opts' : ['--workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
+    'par_load' : [False],
+  },
+  {
+    'name' : 'readonly',
+    'dbs' : ['ndb-proto2'],
+    'threads' : [16],
+    'scale_factors': [8],
+    'benchmarks' : ['tpcc'],
+    'bench_opts' : ['--disable-read-only-snapshots --workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
+    'par_load' : [False],
   },
 ]
 
@@ -110,6 +166,7 @@ if __name__ == '__main__':
         grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
         grid['threads'], grid['bench_opts'], grid['par_load']):
       config = {
+        'name'         : grid['name'],
         'db'           : db,
         'bench'        : bench,
         'scale_factor' : scale_factor,
@@ -123,6 +180,10 @@ if __name__ == '__main__':
         value = run_configuration(basedir, db, bench, scale_factor, threads, bench_opts, par_load)
         values.append(value)
       results.append((config, values))
+
+    # write intermediate results
+    with open(outfile + '.py', 'w') as fp:
+      print >>fp, 'RESULTS = %s' % (repr(results))
 
   # write results
   with open(outfile + '.py', 'w') as fp:
