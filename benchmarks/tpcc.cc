@@ -1426,7 +1426,13 @@ tpcc_worker::txn_delivery()
       last_no_o_ids[d] = k_no->no_o_id + 1; // XXX: update last seen
 
       const oorder::key k_oo(warehouse_id, d, k_no->no_o_id);
-      ALWAYS_ASSERT(tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k_oo), obj_v));
+      if (unlikely(!tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k_oo), obj_v))) {
+        // even if we read the new order entry, there's no guarantee
+        // we will read the oorder entry: in this case the txn will abort,
+        // but we're simply bailing out early
+        db->abort_txn(txn);
+        return txn_result(false, 0);
+      }
       oorder::value v_oo_temp;
       const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
       checker::SanityCheckOOrder(&k_oo, v_oo);
