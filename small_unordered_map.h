@@ -5,7 +5,7 @@
 #include <iterator>
 #include <stdint.h>
 #include <unordered_map>
-#include <tr1/unordered_map>
+#include <type_traits>
 
 #include "macros.h"
 
@@ -55,6 +55,11 @@ private:
   typedef typename large_table_type::iterator large_table_iterator;
   typedef typename large_table_type::const_iterator large_table_const_iterator;
 
+  // std::is_trivially_destructible not supported in g++-4.7
+  static const bool is_trivially_destructible =
+    std::is_scalar<key_type>::value &&
+    std::is_scalar<mapped_type>::value;
+
   //static_assert(SmallSize >= 1, "XXX");
   //static const size_t TableSize = (SmallSize == 1) ? 1 : SmallSize / 2;
   static const size_t TableSize = SmallSize;
@@ -85,17 +90,18 @@ private:
     }
 
     template <class... Args>
-    inline void
+    inline ALWAYS_INLINE void
     construct(size_t hash, Args &&... args)
     {
       h = hash;
       new (&ref()) bucket_value_type(std::forward<Args>(args)...);
     }
 
-    inline void
+    inline ALWAYS_INLINE void
     destroy()
     {
-      ref().~bucket_value_type();
+      if (!is_trivially_destructible)
+        ref().~bucket_value_type();
     }
 
     struct bucket *bnext;

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <vector>
+#include <type_traits>
 #include "macros.h"
 
 /**
@@ -13,6 +14,12 @@
 template <typename T, size_t SmallSize = SMALL_SIZE_VEC>
 class small_vector {
   typedef std::vector<T> large_vector_type;
+
+  // std::is_trivially_destructible not supported in g++-4.7
+  static const bool is_trivially_destructible = std::is_scalar<T>::value;
+  // std::is_trivially_copyable not supported in g++-4.7
+  static const bool is_trivially_copyable = std::is_scalar<T>::value;
+
 public:
 
   typedef T value_type;
@@ -200,8 +207,9 @@ private:
       large_elems = NULL;
       return;
     }
-    for (size_t i = 0; i < n; i++)
-      ptr()[i].~T();
+    if (!is_trivially_destructible)
+      for (size_t i = 0; i < n; i++)
+        ptr()[i].~T();
     n = 0;
   }
 
@@ -605,8 +613,12 @@ private:
       large_elems = new large_vector_type(*that.large_elems);
     } else {
       INVARIANT(that.n <= SmallSize);
-      for (size_t i = 0; i < that.n; i++)
-        new (&(ptr()[i])) T(that.ptr()[i]);
+      if (is_trivially_copyable) {
+        NDB_MEMCPY(ptr(), that.ptr(), that.n * sizeof(T));
+      } else {
+        for (size_t i = 0; i < that.n; i++)
+          new (&(ptr()[i])) T(that.ptr()[i]);
+      }
       n = that.n;
     }
   }
