@@ -42,10 +42,12 @@ NTRIALS = 3
 #
 #grids = [mk_grid(b, n) for b in BENCHMARKS for n in THREADS]
 
+grids = []
+
 # exp 1:
 #   scale graph: kvdb VS ndb on ycsb 80/20 w/ fixed scale factor 320000
 
-grids = [
+grids += [
   {
     'name' : 'scale',
     'dbs' : DBS,
