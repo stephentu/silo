@@ -32,6 +32,18 @@ public:
     assignFrom(that);
   }
 
+  // not efficient, don't use in performance critical parts
+  small_vector(std::initializer_list<T> l)
+    : n(0), large_elems(nullptr)
+  {
+    if (l.size() > SmallSize) {
+      large_elems = new large_vector_type(l);
+    } else {
+      for (auto &p : l)
+        push_back(p);
+    }
+  }
+
   small_vector &
   operator=(const small_vector &that)
   {
