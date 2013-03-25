@@ -11,8 +11,8 @@ template <typename T>
 class marked_ptr {
 public:
 
-  // can take the bottom 4 bits of a ptr
-  static const uintptr_t LowBitsMask = 0xF;
+  // can take the bottom 3 bits of a ptr [ptrs must be 8-byte aligned]
+  static const uintptr_t LowBitsMask = 0x7;
 
   inline marked_ptr() : px(0) {}
 
