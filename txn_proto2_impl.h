@@ -284,9 +284,9 @@ public:
       typename read_set_map::const_iterator it_end = this->read_set.end();
       for (; it != it_end; ++it) {
         // NB: we don't allow ourselves to do reads in future epochs
-        INVARIANT(EpochId(it->second.get_tid()) <= current_epoch);
-        if (it->second.get_tid() > ret)
-          ret = it->second.get_tid();
+        INVARIANT(EpochId(it->get_tid()) <= current_epoch);
+        if (it->get_tid() > ret)
+          ret = it->get_tid();
       }
     }
 

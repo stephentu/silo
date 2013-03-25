@@ -10,7 +10,7 @@
 #include "../util.h"
 #include "../scopedperf.hh"
 #include "../txn.h"
-#include "../txn_proto1_impl.h"
+//#include "../txn_proto1_impl.h"
 #include "../txn_proto2_impl.h"
 
 //struct default_transaction_traits {
@@ -19,6 +19,7 @@
 //  static const size_t write_set_expected_size = SMALL_SIZE_MAP;
 //  static const bool stable_input_memory = false;
 //  static const bool hard_expected_sizes = false;
+//  static const bool read_own_writes = true;
 //};
 
 // ycsb profiles
@@ -29,6 +30,7 @@ struct hint_kv_get_put_traits {
   static const size_t absent_set_expected_size = 1;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = true;
+  static const bool read_own_writes = false;
 };
 
 struct hint_kv_rmw_traits : public hint_kv_get_put_traits {};
@@ -39,6 +41,7 @@ struct hint_kv_scan_traits {
   static const size_t absent_set_expected_size = read_set_expected_size / 7 + 1;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
+  static const bool read_own_writes = false;
 };
 
 // tpcc profiles
@@ -49,6 +52,7 @@ struct hint_read_only_traits {
   static const size_t absent_set_expected_size = 1;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = true;
+  static const bool read_own_writes = false;
 };
 
 struct hint_tpcc_new_order_traits {
@@ -57,6 +61,7 @@ struct hint_tpcc_new_order_traits {
   static const size_t absent_set_expected_size = 1;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = true;
+  static const bool read_own_writes = false;
 };
 
 struct hint_tpcc_payment_traits {
@@ -65,6 +70,7 @@ struct hint_tpcc_payment_traits {
   static const size_t absent_set_expected_size = 15;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
+  static const bool read_own_writes = false;
 };
 
 struct hint_tpcc_delivery_traits {
@@ -73,6 +79,7 @@ struct hint_tpcc_delivery_traits {
   static const size_t absent_set_expected_size = 35;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
+  static const bool read_own_writes = false;
 };
 
 struct hint_tpcc_order_status_traits {
@@ -81,6 +88,7 @@ struct hint_tpcc_order_status_traits {
   static const size_t absent_set_expected_size = 25;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
+  static const bool read_own_writes = false;
 };
 
 struct hint_tpcc_order_status_read_only_traits : public hint_read_only_traits {};
@@ -91,6 +99,7 @@ struct hint_tpcc_stock_level_traits {
   static const size_t absent_set_expected_size = 25;
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
+  static const bool read_own_writes = false;
 };
 
 struct hint_tpcc_stock_level_read_only_traits : public hint_read_only_traits {};

@@ -143,8 +143,8 @@ main(int argc, char **argv)
     // XXX(stephentu): laziness
     int ret UNUSED = system(cmd.c_str());
     db = new bdb_wrapper("db", bench_type + ".db");
-  } else if (db_type == "ndb-proto1") {
-    db = new ndb_wrapper<transaction_proto1>;
+  //} else if (db_type == "ndb-proto1") {
+  //  db = new ndb_wrapper<transaction_proto1>;
   } else if (db_type == "ndb-proto2") {
     db = new ndb_wrapper<transaction_proto2>;
   } else if (db_type == "kvdb") {

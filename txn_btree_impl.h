@@ -137,35 +137,17 @@ retry:
       goto retry;
     }
     px = reinterpret_cast<dbtuple *>(bv);
-    auto it = t.read_set.find(px);
-    if (it != t.read_set.end())
-      // mark that this element in the read set is
-      // also in the write set
-      it->second.mark_write_set();
   }
   INVARIANT(px);
   if (!insert) {
-    auto check_it = t.write_set.find(px);
-    if (check_it != t.write_set.end()) {
-      INVARIANT(check_it->second.get_btree() == &underlying_btree);
-      if (unlikely(check_it->second.is_insert())) {
-        // if we did the insert, then we must overwrite node contents at commit
-        // time
-        INVARIANT(px->is_locked() && px->is_latest());
-        INVARIANT(px->version == dbtuple::MAX_TID);
-        check_it->second.mark_needs_overwrite();
-        check_it->second.set_value(v);
-      }
-    } else {
-      // add to write set normally, as non-insert
-      t.write_set[px] = write_record_t(k, v, &underlying_btree, false);
-    }
+    // add to write set normally, as non-insert
+    t.write_set.emplace_back(px, k, v, &underlying_btree, false);
   } else {
-    // add as insert
-    INVARIANT(t.write_set.find(px) != t.write_set.end());
-    INVARIANT(t.write_set.find(px)->second.is_insert());
+    // should already exist in write set as insert
+    // (because of try_insert_new_tuple())
+    INVARIANT(t.find_write_set(px) != t.write_set.end());
+    INVARIANT(t.find_write_set(px)->is_insert());
   }
-  INVARIANT(t.write_set.find(px) != t.write_set.end());
 }
 
 template <template <typename> class Transaction>

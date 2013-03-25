@@ -189,83 +189,24 @@ protected:
   // the read set is a mapping from (tuple -> tid_read).
   // "write_set" is used to indicate if this read tuple
   // also belongs in the write set.
-
-#define USE_SMALL_READ_RECORD
-
-#ifndef USE_SMALL_READ_RECORD
   struct read_record_t {
-    read_record_t() : t(dbtuple::MIN_TID), write_set(false) {}
-
+    read_record_t() = default;
+    read_record_t(const dbtuple *tuple, tid_t t)
+      : tuple(tuple), t(t) {}
+    inline const dbtuple *
+    get_tuple() const
+    {
+      return tuple;
+    }
     inline tid_t
     get_tid() const
     {
       return t;
     }
-
-    inline void
-    set_tid(tid_t t)
-    {
-      this->t = t;
-    }
-
-    inline bool
-    get_write_set() const
-    {
-      return write_set;
-    }
-
-    inline void
-    mark_write_set()
-    {
-      write_set = true;
-    }
-
   private:
+    const dbtuple *tuple;
     tid_t t;
-    bool write_set;
   };
-#else
-  struct read_record_t {
-    inline tid_t
-    get_tid() const
-    {
-      return u.datum.t;
-    }
-
-    inline void
-    set_tid(tid_t t)
-    {
-      INVARIANT(!(t & (static_cast<tid_t>(0x1) << (sizeof(tid_t) * 8 - 1))));
-      INVARIANT(!get_tid());
-      INVARIANT(!get_write_set());
-      u.datum.t = t;
-    }
-
-    inline bool
-    get_write_set() const
-    {
-      return u.datum.b;
-    }
-
-    inline void
-    mark_write_set()
-    {
-      u.datum.b = true;
-    }
-
-  private:
-    union U {
-      U() : v(0) {}
-      tid_t v;
-      struct {
-        tid_t t : sizeof(tid_t) * 8 - 1;
-        bool  b : 1;
-      } datum;
-    } u;
-
-  };
-  static_assert(sizeof(read_record_t) == sizeof(tid_t), "xx");
-#endif
 
   friend std::ostream &
   operator<<(std::ostream &o, const read_record_t &r);
@@ -273,19 +214,15 @@ protected:
   // the write set is a mapping from (tuple -> value_to_write).
   template <bool stable_strings>
   struct basic_write_record_t {
-    enum {
-      FLAGS_INSERT = 0x1,
-      FLAGS_NEED_OVERWRITE = 0x1 << 1, // we need to overwrite the record *again*
-                                       // this is the case where we do an insert()
-                                       // followed by another insert() to the same
-                                       // key
-    };
+    enum { FLAGS_INSERT = 0x1 };
     basic_write_record_t() = default;
-    inline basic_write_record_t(const string_type &k,
-                                const string_type &r,
-                                btree *btr,
-                                bool insert)
-      : k(stable_strings ? &k : nullptr),
+    basic_write_record_t(dbtuple *tuple,
+                         const string_type &k,
+                         const string_type &r,
+                         btree *btr,
+                         bool insert)
+      : tuple(tuple),
+        k(stable_strings ? &k : nullptr),
         r(stable_strings ? &r : nullptr),
         btr(btr)
     {
@@ -296,29 +233,27 @@ protected:
       }
       this->btr.set_flags(insert ? FLAGS_INSERT : 0);
     }
+    inline dbtuple *
+    get_tuple()
+    {
+      return tuple;
+    }
+    inline const dbtuple *
+    get_tuple() const
+    {
+      return tuple;
+    }
     inline bool
     is_insert() const
     {
       // don't need the mask
       return btr.get_flags();
     }
-    inline bool
-    needs_overwrite() const
-    {
-      return btr.get_flags() & FLAGS_NEED_OVERWRITE;
-    }
-    inline void
-    mark_needs_overwrite()
-    {
-      INVARIANT(is_insert());
-      btr.or_flags(FLAGS_NEED_OVERWRITE);
-    }
     inline btree *
     get_btree() const
     {
       return btr.get();
     }
-
     inline const string_type &
     get_key() const
     {
@@ -327,7 +262,6 @@ protected:
       else
         return *container.get_string(0);
     }
-
     inline const string_type &
     get_value() const
     {
@@ -336,20 +270,12 @@ protected:
       else
         return *container.get_string(1);
     }
-
-    inline void
-    set_value(const string_type &v)
-    {
-      if (stable_strings)
-        r = &v;
-      else
-        container.assign_string(1, v);
-    }
-
   private:
+    dbtuple *tuple;
     const string_type *k;
     const string_type *r;
     marked_ptr<btree> btr; // first bit for inserted
+
     // for configurations which don't guarantee stable put strings
     string_container<!stable_strings, 2> container;
   };
@@ -359,9 +285,7 @@ protected:
   operator<<(std::ostream &o, const basic_write_record_t<s> &r);
 
   // the absent set is a mapping from (btree_node -> version_number).
-  struct absent_record_t {
-    uint64_t version;
-  };
+  struct absent_record_t { uint64_t version; };
 
   friend std::ostream &
   operator<<(std::ostream &o, const absent_record_t &r);
@@ -391,8 +315,9 @@ protected:
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::read_record_t &r)
 {
-  o << "[tid_read=" << g_proto_version_str(r.get_tid())
-    << ", write_set=" << r.get_write_set() << "]";
+  o << "[tuple=" << util::hexify(r.get_tuple())
+    << ", tid_read=" << g_proto_version_str(r.get_tid())
+    << "]";
   return o;
 }
 
@@ -400,7 +325,11 @@ template <bool s>
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::basic_write_record_t<s> &r)
 {
-  o << "[r=" << util::hexify(r.get_value()) << ", " << r.get_btree() << "]";
+  o << "[tuple=" << util::hexify(r.get_tuple())
+    << ", key=" << util::hexify(r.get_key())
+    << ", value=" << util::hexify(r.get_value())
+    << ", insert=" << r.is_insert()
+    << "]";
   return o;
 }
 
@@ -417,6 +346,10 @@ struct default_transaction_traits {
   static const size_t write_set_expected_size = SMALL_SIZE_MAP;
   static const bool stable_input_memory = false;
   static const bool hard_expected_sizes = false; // true if the expected sizes are hard maximums
+  static const bool read_own_writes = true; // if we read a key which we previous put(), are we guaranteed
+                                            // to read our latest (uncommited) values? this comes at a
+                                            // performance penality [you should not need this behavior to
+                                            // write txns, since you *know* the values you inserted]
 };
 
 template <template <typename> class Protocol, typename Traits>
@@ -449,22 +382,22 @@ protected:
 #ifdef USE_SMALL_CONTAINER_OPT
 
   // small types
-  typedef small_unordered_map<
-    const dbtuple *, read_record_t,
+  typedef small_vector<
+    read_record_t,
     traits_type::read_set_expected_size> read_set_map_small;
-  typedef small_unordered_map<
-    dbtuple *, write_record_t,
+  typedef small_vector<
+    write_record_t,
     traits_type::write_set_expected_size> write_set_map_small;
   typedef small_unordered_map<
     const btree::node_opaque_t *, absent_record_t,
     traits_type::absent_set_expected_size> absent_set_map_small;
 
   // static types
-  typedef static_unordered_map<
-    const dbtuple *, read_record_t,
+  typedef static_vector<
+    read_record_t,
     traits_type::read_set_expected_size> read_set_map_static;
-  typedef static_unordered_map<
-    dbtuple *, write_record_t,
+  typedef static_vector<
+    write_record_t,
     traits_type::write_set_expected_size> write_set_map_static;
   typedef static_unordered_map<
     const btree::node_opaque_t *, absent_record_t,
@@ -485,9 +418,9 @@ protected:
       absent_set_map_static, absent_set_map_small>::type absent_set_map;
 
 #else
-  typedef std::unordered_map<const dbtuple *, read_record_t> read_set_map;
-  typedef std::unordered_map<dbtuple *, write_record_t> write_set_map;
-  typedef std::unordered_map<const btree::node_opaque_t *, absent_record_t> absent_set_map;
+  typedef std::vector<read_record_t> read_set_map;
+  typedef std::vector<write_record_t> write_set_map;
+  typedef std::vector<absent_record_t> absent_set_map;
 #endif
 
   struct dbtuple_write_info {
@@ -496,10 +429,23 @@ protected:
       FLAGS_INSERT = 0x1 << 1,
     };
     inline dbtuple_write_info() {}
+    inline dbtuple_write_info(dbtuple *tuple)
+      : tuple(tuple)
+    {}
     inline dbtuple_write_info(dbtuple *tuple, bool insert)
       : tuple(tuple)
     {
       this->tuple.set_flags(insert ? (FLAGS_LOCKED | FLAGS_INSERT) : 0);
+    }
+    inline dbtuple *
+    get_tuple()
+    {
+      return tuple.get();
+    }
+    inline const dbtuple *
+    get_tuple() const
+    {
+      return tuple.get();
     }
     inline ALWAYS_INLINE void
     mark_locked()
@@ -518,14 +464,14 @@ protected:
     {
       return tuple.get_flags() & FLAGS_INSERT;
     }
-
-    // for sorting
+    // for sorting- we want the tuples marked "inserted"
+    // to come first in the sort order [this simplifies the
+    // programming when acquiring locks and dealing with duplicates]
     inline ALWAYS_INLINE
     bool operator<(const dbtuple_write_info &o) const
     {
-      return tuple < o.tuple;
+      return tuple < o.tuple || (tuple == o.tuple && !is_insert() < !o.is_insert());
     }
-
     marked_ptr<dbtuple> tuple;
   };
 
@@ -547,6 +493,14 @@ protected:
       traits_type::hard_expected_sizes,
       dbtuple_write_info_vec_static, dbtuple_write_info_vec_small>::type
     dbtuple_write_info_vec;
+
+  static inline bool
+  sorted_dbtuples_contains(const dbtuple_write_info_vec &dbtuples, const dbtuple *tuple)
+  {
+    // XXX: skip binary search for small-sized dbtuples?
+    return std::binary_search(dbtuples.begin(), dbtuples.end(),
+        dbtuple_write_info(const_cast<dbtuple *>(tuple)));
+  }
 
 public:
 
@@ -670,6 +624,46 @@ protected:
 
 protected:
   inline void clear();
+
+  // SLOW accessor methods- used for invariant checking
+
+  typename read_set_map::iterator
+  find_read_set(const dbtuple *tuple)
+  {
+    // linear scan- returns the *first* entry found
+    // (a tuple can exist in the read_set more than once)
+    typename read_set_map::iterator it     = read_set.begin();
+    typename read_set_map::iterator it_end = read_set.end();
+    for (; it != it_end; ++it)
+      if (it->get_tuple() == tuple)
+        break;
+    return it;
+  }
+
+  inline typename read_set_map::const_iterator
+  find_read_set(const dbtuple *tuple) const
+  {
+    return const_cast<transaction *>(this)->find_read_set(tuple);
+  }
+
+  typename write_set_map::iterator
+  find_write_set(dbtuple *tuple)
+  {
+    // linear scan- returns the *first* entry found
+    // (a tuple can exist in the write_set more than once)
+    typename write_set_map::iterator it     = write_set.begin();
+    typename write_set_map::iterator it_end = write_set.end();
+    for (; it != it_end; ++it)
+      if (it->get_tuple() == tuple)
+        break;
+    return it;
+  }
+
+  inline typename write_set_map::const_iterator
+  find_write_set(const dbtuple *tuple) const
+  {
+    return const_cast<transaction *>(this)->find_write_set(tuple);
+  }
 
   read_set_map read_set;
   write_set_map write_set;
