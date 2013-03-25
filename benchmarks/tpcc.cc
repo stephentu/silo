@@ -95,7 +95,8 @@ public:
   multilock()
   {
     ALWAYS_ASSERT(!did_lock);
-    sort(locks.begin(), locks.end());
+    if (locks.size() > 1)
+      sort(locks.begin(), locks.end());
 #ifdef CHECK_INVARIANTS
     if (set<T *>(locks.begin(), locks.end()).size() != locks.size()) {
       for (auto &t : locks)
@@ -744,19 +745,18 @@ protected:
       NumWarehouses() : static_cast<uint>(warehouse_id);
 
     for (uint w = w_start; w <= w_end; w++) {
-      const size_t NBatches = 1000;
-      const size_t NItemsPerBatch = NumItems();
-
-      static_assert(NumItems() % NBatches == 0, "xx");
-      static_assert(NumItems() >= NBatches, "xx");
+      const size_t batchsize =
+        (db->txn_max_batch_size() == -1) ? NumItems() : db->txn_max_batch_size();
+      const size_t nbatches = (batchsize > NumItems()) ? 1 : (NumItems() / batchsize);
 
       if (pin_cpus)
         PinToWarehouseId(w);
 
-      for (uint b = 0; b < NItemsPerBatch;) {
+      for (uint b = 0; b < nbatches;) {
         void * const txn = db->new_txn(txn_flags, txn_buf());
         try {
-          for (uint i = (b * NItemsPerBatch + 1); i <= NItemsPerBatch; i++) {
+          const size_t iend = std::min((b + 1) * batchsize + 1, NumItems());
+          for (uint i = (b * batchsize + 1); i <= iend; i++) {
             const stock::key k(w, i);
 
             stock::value v;
@@ -1207,14 +1207,19 @@ tpcc_worker::txn_new_order()
   scoped_str_arena s_arena(arena);
   scoped_multilock<spinlock> mlock;
   if (g_enable_partition_locks) {
-    small_unordered_map<unsigned int, bool, 64> lockset;
-    mlock.enq(*LockForWarehouse(warehouse_id));
-    lockset[warehouse_id] = 1;
-    for (uint i = 0; i < numItems; i++)
-      if (lockset.find(supplierWarehouseIDs[i]) == lockset.end()) {
-        mlock.enq(*LockForWarehouse(supplierWarehouseIDs[i]));
-        lockset[supplierWarehouseIDs[i]] = 1;
+    if (allLocal) {
+      mlock.enq(*LockForWarehouse(warehouse_id));
+    } else {
+      small_unordered_map<unsigned int, bool, 64> lockset;
+      mlock.enq(*LockForWarehouse(warehouse_id));
+      lockset[warehouse_id] = 1;
+      for (uint i = 0; i < numItems; i++) {
+        if (lockset.find(supplierWarehouseIDs[i]) == lockset.end()) {
+          mlock.enq(*LockForWarehouse(supplierWarehouseIDs[i]));
+          lockset[supplierWarehouseIDs[i]] = 1;
+        }
       }
+    }
     mlock.multilock();
   }
   try {
