@@ -423,8 +423,55 @@ private:
   };
 #endif
 
-  template <bool require_latest>
-  bool
+  // written to be non-recursive
+  static bool
+  record_at_chain(const dbtuple *starting,
+                  tid_t t, tid_t &start_t, string_type &r,
+                  size_t max_len, bool allow_write_intent)
+  {
+#ifdef ENABLE_EVENT_COUNTERS
+    unsigned long nretries = 0;
+    scoped_recorder rec(nretries);
+#endif
+    const dbtuple *current = starting;
+  loop:
+    INVARIANT(current->version != MAX_TID);
+    const version_t v = current->reader_stable_version(allow_write_intent);
+    const struct dbtuple *p;
+    const bool found = current->is_not_behind(t);
+    if (found) {
+      start_t = current->version;
+      const size_t read_sz = std::min(static_cast<size_t>(current->size), max_len);
+      r.assign(current->get_value_start(), read_sz);
+      if (unlikely(!current->reader_check_version(v))) {
+#ifdef ENABLE_EVENT_COUNTERS
+        ++nretries;
+#endif
+        goto loop;
+      }
+      return true;
+    } else {
+      p = current->get_next();
+    }
+    if (unlikely(!current->reader_check_version(v))) {
+#ifdef ENABLE_EVENT_COUNTERS
+      ++nretries;
+#endif
+      goto loop;
+    }
+    if (p) {
+      current = p;
+      goto loop;
+    }
+    // see note in record_at()
+    start_t = MIN_TID;
+    r.clear();
+    return true;
+  }
+
+  // we force one level of inlining, but don't force record_at_chain()
+  // to be inlined
+  inline ALWAYS_INLINE bool
   record_at(tid_t t, tid_t &start_t, string_type &r,
             size_t max_len, bool allow_write_intent) const
   {
@@ -432,7 +479,6 @@ private:
     unsigned long nretries = 0;
     scoped_recorder rec(nretries);
 #endif
-
     if (unlikely(version == MAX_TID)) {
       // XXX(stephentu): HACK! we use MAX_TID to indicate a tentative
       // "insert"- the actual latest value is empty.
@@ -443,17 +489,23 @@ private:
       r.clear();
       return true;
     }
-
   retry:
     const version_t v = reader_stable_version(allow_write_intent);
-    const struct dbtuple *p = nullptr;
+    const struct dbtuple *p;
     const bool found = is_not_behind(t);
     if (found) {
-      if (require_latest && unlikely(!IsLatest(v)))
+      if (unlikely(!IsLatest(v)))
         return false;
       start_t = version;
       const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
       r.assign(get_value_start(), read_sz);
+      if (unlikely(!reader_check_version(v))) {
+#ifdef ENABLE_EVENT_COUNTERS
+        ++nretries;
+#endif
+        goto retry;
+      }
+      return true;
     } else {
       p = get_next();
     }
@@ -463,10 +515,8 @@ private:
 #endif
       goto retry;
     }
-    if (found)
-      return true;
     if (p)
-      return p->record_at<false>(t, start_t, r, max_len, allow_write_intent);
+      return record_at_chain(p, t, start_t, r, max_len, allow_write_intent);
     // NB(stephentu): if we reach the end of a chain then we assume that
     // the record exists as a deleted record.
     //
@@ -505,13 +555,13 @@ public:
    * NB(stephentu): calling stable_read() while holding the lock
    * is an error- this will cause deadlock
    */
-  inline bool
+  inline ALWAYS_INLINE bool
   stable_read(tid_t t, tid_t &start_t, string_type &r,
               bool allow_write_intent,
               size_t max_len = string_type::npos) const
   {
     INVARIANT(max_len > 0); // otherwise something will probably break
-    return record_at<true>(t, start_t, r, max_len, allow_write_intent);
+    return record_at(t, start_t, r, max_len, allow_write_intent);
   }
 
   inline bool
