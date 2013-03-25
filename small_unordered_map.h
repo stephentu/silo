@@ -8,6 +8,8 @@
 #include <type_traits>
 
 #include "macros.h"
+#include "counter.h"
+#include "log2.hh"
 
 namespace private_ {
 
@@ -27,6 +29,53 @@ namespace private_ {
   template <> struct is_eq_expensive<uint64_t> : public cheap_eq {};
   template <> struct is_eq_expensive<int64_t>  : public cheap_eq {};
 
+  static event_avg_counter evt_avg_max_unordered_map_chain_length
+    ("avg_max_unordered_map_chain_length");
+
+  template <typename T>
+  struct fast_func_param {
+    typedef typename std::conditional<std::is_scalar<T>::value, T, const T &>::type type;
+  };
+
+  template <typename T>
+  struct myhash {
+    inline ALWAYS_INLINE size_t
+    operator()(typename fast_func_param<T>::type t) const
+    {
+      return std::hash<T>()(t);
+    }
+  };
+
+
+  template <typename Tp>
+  struct myhash<Tp *> {
+    inline ALWAYS_INLINE size_t
+    operator()(Tp *t) const
+    {
+      // std::hash for ptrs is bad
+      // tommyhash: http://tommyds.sourceforge.net/doc/tommyhash_8h_source.html
+      size_t key = reinterpret_cast<size_t>(t) >> 3; // shift out 8-byte pointer alignment
+#ifdef USE_TOMMY_HASH
+      key = (~key) + (key << 21); // key = (key << 21) - key - 1;
+      key = key ^ (key >> 24);
+      key = (key + (key << 3)) + (key << 8); // key * 265
+      key = key ^ (key >> 14);
+      key = (key + (key << 2)) + (key << 4); // key * 21
+      key = key ^ (key >> 28);
+      key = key + (key << 31);
+#else
+      key = (~key) + (key << 21); // key = (key << 21) - key - 1;
+      key = key ^ (key >> 24);
+#endif
+      return key;
+    }
+  };
+
+  static inline constexpr size_t
+  TableSize(size_t small_size)
+  {
+    return round_up_to_pow2_const(small_size);
+  }
 }
 
 /**
@@ -38,7 +87,7 @@ namespace private_ {
 template <typename Key,
           typename T,
           size_t SmallSize = SMALL_SIZE_MAP,
-          typename Hash = std::hash<Key> >
+          typename Hash = private_::myhash<Key>>
 class small_unordered_map {
 public:
   typedef Key key_type;
@@ -60,9 +109,9 @@ private:
     std::is_scalar<key_type>::value &&
     std::is_scalar<mapped_type>::value;
 
-  //static_assert(SmallSize >= 1, "XXX");
-  //static const size_t TableSize = (SmallSize == 1) ? 1 : SmallSize / 2;
-  static const size_t TableSize = SmallSize;
+  static const size_t TableSize = private_::TableSize(SmallSize);
+  static_assert(SmallSize >= 1, "XXX");
+  static_assert(TableSize >= 1, "XXX");
 
   struct bucket {
     inline ALWAYS_INLINE bucket_value_type *
@@ -191,6 +240,17 @@ private:
     SmallIterType *bend;
     LargeIterType large_it;
   };
+
+  static size_t
+  chain_length(bucket *b)
+  {
+    size_t ret = 0;
+    while (b) {
+      ret++;
+      b = b->bnext;
+    }
+    return ret;
+  }
 
 public:
 

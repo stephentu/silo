@@ -135,7 +135,7 @@ hexify(const std::string &input)
 
 // rounding
 template <typename T, unsigned int lgbase>
-inline ALWAYS_INLINE T
+static inline ALWAYS_INLINE T
 round_up(T t)
 {
   const T mask = (T(1) << lgbase) - 1;
@@ -143,7 +143,7 @@ round_up(T t)
 }
 
 template <typename T, unsigned int lgbase>
-inline ALWAYS_INLINE T
+static inline ALWAYS_INLINE T
 round_down(T t)
 {
   const T mask = (T(1) << lgbase) - 1;

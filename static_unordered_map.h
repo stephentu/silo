@@ -9,7 +9,7 @@
 template <typename Key,
           typename T,
           size_t StaticSize = SMALL_SIZE_MAP,
-          typename Hash = std::hash<Key> >
+          typename Hash = private_::myhash<Key>>
 class static_unordered_map {
 public:
   typedef Key key_type;
@@ -28,7 +28,9 @@ private:
     std::is_scalar<key_type>::value &&
     std::is_scalar<mapped_type>::value;
 
-  static const size_t TableSize = StaticSize;
+  static const size_t TableSize = private_::TableSize(StaticSize);
+  static_assert(StaticSize >= 1, "XXX");
+  static_assert(TableSize >= 1, "XXX");
 
   struct bucket {
     inline ALWAYS_INLINE bucket_value_type *
@@ -136,6 +138,17 @@ private:
     BucketType *b;
   };
 
+  static size_t
+  chain_length(bucket *b)
+  {
+    size_t ret = 0;
+    while (b) {
+      ret++;
+      b = b->bnext;
+    }
+    return ret;
+  }
+
 public:
 
   typedef iterator_<bucket, value_type> iterator;
@@ -151,6 +164,16 @@ public:
   {
     for (size_t i = 0; i < n; i++)
       elems[i].destroy();
+#ifdef ENABLE_EVENT_COUNTERS
+    size_t ml = 0;
+    for (size_t i = 0; i < TableSize; i++) {
+      const size_t l = chain_length(table[i]);
+      ml = std::max(ml, l);
+
+    }
+    if (ml)
+      private_::evt_avg_max_unordered_map_chain_length.offer(ml);
+#endif
   }
 
   static_unordered_map(const static_unordered_map &other)
