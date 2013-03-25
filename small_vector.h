@@ -112,7 +112,8 @@ public:
       return;
     }
     INVARIANT(n > 0);
-    ptr()[n - 1].~T();
+    if (!is_trivially_destructible)
+      ptr()[n - 1].~T();
     n--;
   }
 
@@ -123,7 +124,7 @@ public:
   }
 
   inline void
-  public_back(T &&obj)
+  push_back(T &&obj)
   {
     emplace_back(std::move(obj));
   }
@@ -171,8 +172,9 @@ public:
       large_elems->clear();
       return;
     }
-    for (size_t i = 0; i < n; i++)
-      ptr()[i].~T();
+    if (!is_trivially_destructible)
+      for (size_t i = 0; i < n; i++)
+        ptr()[i].~T();
     n = 0;
   }
 

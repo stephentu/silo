@@ -63,6 +63,8 @@ HEADERS = amd64.h \
 	spinbarrier.h \
 	spinlock.h \
 	static_assert.h \
+	static_unordered_map.h \
+	static_vector.h \
 	thread.h \
 	tuple.h \
 	txn_btree.h \

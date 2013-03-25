@@ -10,7 +10,9 @@
 #include "varint.h"
 #include "xbuf.h"
 #include "small_vector.h"
+#include "static_vector.h"
 #include "small_unordered_map.h"
+#include "static_unordered_map.h"
 #include "counter.h"
 
 #include "record/encoder.h"
@@ -277,6 +279,7 @@ XbufTest()
 namespace small_vector_ns {
 
 typedef small_vector<string, 4> vec_type;
+typedef static_vector<string, 4> static_vec_type;
 typedef vector<string> stl_vec_type;
 
 template <typename VecType>
@@ -388,18 +391,35 @@ Test()
 {
   {
     vec_type v;
+    static_vec_type static_v;
     stl_vec_type stl_v;
     init_vec0(v);
+    init_vec0(static_v);
     init_vec0(stl_v);
+
     vec_type v_copy(v);
     vec_type v_assign;
     ALWAYS_ASSERT(v_assign.empty());
     v_assign = v;
+
+    static_vec_type static_v_copy(static_v);
+    static_vec_type static_v_assign;
+    ALWAYS_ASSERT(static_v_assign.empty());
+    static_v_assign = static_v;
+
     assert_vecs_equal(v, stl_v);
     assert_vecs_equal(v_copy, stl_v);
     assert_vecs_equal(v_assign, stl_v);
+
+    assert_vecs_equal(static_v, stl_v);
+    assert_vecs_equal(static_v_copy, stl_v);
+    assert_vecs_equal(static_v_assign, stl_v);
+
     v.clear();
     assert_vecs_equal(v, stl_vec_type());
+
+    static_v.clear();
+    assert_vecs_equal(static_v, stl_vec_type());
   }
 
   {
@@ -567,37 +587,40 @@ Test()
 namespace small_map_ns {
 
 typedef small_unordered_map<string, string, 4> map_type;
+typedef static_unordered_map<string, string, 4> static_map_type;
 typedef map<string, string> stl_map_type;
 
+template <typename MapType>
 static void
-assert_map_contains(map_type &m, const string &k, const string &v)
+assert_map_contains(MapType &m, const string &k, const string &v)
 {
   ALWAYS_ASSERT(!m.empty());
   ALWAYS_ASSERT(m[k] == v);
   {
-    map_type::iterator it = m.find(k);
+    typename MapType::iterator it = m.find(k);
     ALWAYS_ASSERT(it != m.end());
     ALWAYS_ASSERT(it->first == k);
     ALWAYS_ASSERT(it->second == v);
   }
-  const map_type &const_m = m;
+  const MapType &const_m = m;
   {
-    map_type::const_iterator it = const_m.find(k);
+    typename MapType::const_iterator it = const_m.find(k);
     ALWAYS_ASSERT(it != const_m.end());
     ALWAYS_ASSERT(it->first == k);
     ALWAYS_ASSERT(it->second == v);
   }
 }
 
+template <typename MapType>
 static void
-assert_map_equals(map_type &m, const stl_map_type &stl_m)
+assert_map_equals(MapType &m, const stl_map_type &stl_m)
 {
   ALWAYS_ASSERT(m.size() == stl_m.size());
 
   // reg version prefix
   {
     stl_map_type test;
-    for (map_type::iterator it = m.begin();
+    for (typename MapType::iterator it = m.begin();
          it != m.end(); ++it) {
       ALWAYS_ASSERT(test.find(it->first) == test.end());
       test[it->first] = it->second;
@@ -608,7 +631,7 @@ assert_map_equals(map_type &m, const stl_map_type &stl_m)
   // reg version postfix
   {
     stl_map_type test;
-    for (map_type::iterator it = m.begin();
+    for (typename MapType::iterator it = m.begin();
          it != m.end(); it++) {
       ALWAYS_ASSERT(test.find(it->first) == test.end());
       test[it->first] = it->second;
@@ -618,9 +641,9 @@ assert_map_equals(map_type &m, const stl_map_type &stl_m)
 
   // const version prefix
   {
-    const map_type &const_m = m;
+    const MapType &const_m = m;
     stl_map_type test;
-    for (map_type::const_iterator it = const_m.begin();
+    for (typename MapType::const_iterator it = const_m.begin();
          it != const_m.end(); ++it) {
       ALWAYS_ASSERT(test.find(it->first) == test.end());
       test[it->first] = it->second;
@@ -630,9 +653,9 @@ assert_map_equals(map_type &m, const stl_map_type &stl_m)
 
   // const version postfix
   {
-    const map_type &const_m = m;
+    const MapType &const_m = m;
     stl_map_type test;
-    for (map_type::const_iterator it = const_m.begin();
+    for (typename MapType::const_iterator it = const_m.begin();
          it != const_m.end(); it++) {
       ALWAYS_ASSERT(test.find(it->first) == test.end());
       test[it->first] = it->second;
@@ -668,15 +691,27 @@ Test()
 {
   {
     map_type m, m_copy;
+    static_map_type static_m, static_m_copy;
     stl_map_type stl_m;
+
     init_map(m);
+    init_map(static_m);
+
     ALWAYS_ASSERT(m.is_small_type());
+    ALWAYS_ASSERT(static_m.is_small_type());
     INVARIANT(m.size() == 4);
+    INVARIANT(static_m.size() == 4);
+
     init_map(stl_m);
+
     ALWAYS_ASSERT(m_copy.is_small_type());
     m_copy = m;
     ALWAYS_ASSERT(m_copy.is_small_type());
     INVARIANT(m_copy.size() == 4);
+
+    static_m_copy = static_m;
+    INVARIANT(static_m_copy.size() == 4);
+
     map_type m_construct(m);
     INVARIANT(m_construct.size() == 4);
     for (stl_map_type::iterator it = stl_m.begin();
@@ -691,6 +726,21 @@ Test()
     ALWAYS_ASSERT(m.is_small_type());
     ALWAYS_ASSERT(m_copy.is_small_type());
     ALWAYS_ASSERT(m_construct.is_small_type());
+
+    static_map_type static_m_construct(static_m);
+    INVARIANT(static_m_construct.size() == 4);
+    for (stl_map_type::iterator it = stl_m.begin();
+         it != stl_m.end(); ++it) {
+      assert_map_contains(static_m, it->first, it->second);
+      assert_map_contains(static_m_copy, it->first, it->second);
+      assert_map_contains(static_m_construct, it->first, it->second);
+    }
+    assert_map_equals(static_m, stl_m);
+    assert_map_equals(static_m_copy, stl_m);
+    assert_map_equals(static_m_construct, stl_m);
+    ALWAYS_ASSERT(static_m.is_small_type());
+    ALWAYS_ASSERT(static_m_copy.is_small_type());
+    ALWAYS_ASSERT(static_m_construct.is_small_type());
   }
 
   {

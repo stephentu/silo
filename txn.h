@@ -13,6 +13,7 @@
 #include <utility>
 #include <stdexcept>
 #include <limits>
+#include <type_traits>
 
 #include <unordered_map>
 
@@ -28,6 +29,8 @@
 #include "thread.h"
 #include "spinlock.h"
 #include "small_unordered_map.h"
+#include "static_unordered_map.h"
+#include "static_vector.h"
 #include "prefetch.h"
 #include "keyrange.h"
 #include "tuple.h"
@@ -277,7 +280,6 @@ protected:
                                        // followed by another insert() to the same
                                        // key
     };
-    inline basic_write_record_t() {}
     inline basic_write_record_t(const string_type &k,
                                 const string_type &r,
                                 btree *btr,
@@ -357,8 +359,6 @@ protected:
 
   // the absent set is a mapping from (btree_node -> version_number).
   struct absent_record_t {
-    absent_record_t() {}
-    absent_record_t(uint64_t version) : version(version) {}
     uint64_t version;
   };
 
@@ -415,6 +415,7 @@ struct default_transaction_traits {
   static const size_t absent_set_expected_size = EXTRA_SMALL_SIZE_MAP;
   static const size_t write_set_expected_size = SMALL_SIZE_MAP;
   static const bool stable_input_memory = false;
+  static const bool hard_expected_sizes = false; // true if the expected sizes are hard maximums
 };
 
 template <template <typename> class Protocol, typename Traits>
@@ -445,15 +446,43 @@ protected:
   typedef basic_write_record_t<traits_type::stable_input_memory> write_record_t;
 
 #ifdef USE_SMALL_CONTAINER_OPT
+
+  // small types
   typedef small_unordered_map<
     const dbtuple *, read_record_t,
-    traits_type::read_set_expected_size> read_set_map;
+    traits_type::read_set_expected_size> read_set_map_small;
   typedef small_unordered_map<
     dbtuple *, write_record_t,
-    traits_type::write_set_expected_size> write_set_map;
+    traits_type::write_set_expected_size> write_set_map_small;
   typedef small_unordered_map<
     const btree::node_opaque_t *, absent_record_t,
-    traits_type::absent_set_expected_size> absent_set_map;
+    traits_type::absent_set_expected_size> absent_set_map_small;
+
+  // static types
+  typedef static_unordered_map<
+    const dbtuple *, read_record_t,
+    traits_type::read_set_expected_size> read_set_map_static;
+  typedef static_unordered_map<
+    dbtuple *, write_record_t,
+    traits_type::write_set_expected_size> write_set_map_static;
+  typedef static_unordered_map<
+    const btree::node_opaque_t *, absent_record_t,
+    traits_type::absent_set_expected_size> absent_set_map_static;
+
+  // use static types if the expected sizes are guarantees
+  typedef
+    typename std::conditional<
+      traits_type::hard_expected_sizes,
+      read_set_map_static, read_set_map_small>::type read_set_map;
+  typedef
+    typename std::conditional<
+      traits_type::hard_expected_sizes,
+      write_set_map_static, write_set_map_small>::type write_set_map;
+  typedef
+    typename std::conditional<
+      traits_type::hard_expected_sizes,
+      absent_set_map_static, absent_set_map_small>::type absent_set_map;
+
 #else
   typedef std::unordered_map<const dbtuple *, read_record_t> read_set_map;
   typedef std::unordered_map<dbtuple *, write_record_t> write_set_map;
@@ -499,12 +528,23 @@ protected:
     marked_ptr<dbtuple> tuple;
   };
 
-  // NB: maintain two separate vectors, so we can sort faster (w/o swapping
-  // elems). logically, we want a map from dbtuple -> dbtuple_info, but this
-  // method is faster
+  // small type
   typedef
     typename util::vec<
       dbtuple_write_info, traits_type::write_set_expected_size>::type
+    dbtuple_write_info_vec_small;
+
+  // static type
+  typedef
+    static_vector<
+      dbtuple_write_info, traits_type::write_set_expected_size>
+    dbtuple_write_info_vec_static;
+
+  // chosen type
+  typedef
+    typename std::conditional<
+      traits_type::hard_expected_sizes,
+      dbtuple_write_info_vec_static, dbtuple_write_info_vec_small>::type
     dbtuple_write_info_vec;
 
 public:
