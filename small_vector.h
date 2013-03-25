@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <vector>
 #include <type_traits>
+
 #include "macros.h"
+#include "ndb_type_traits.h"
 
 /**
  * References are not guaranteed to be stable across mutation
@@ -15,8 +17,9 @@ template <typename T, size_t SmallSize = SMALL_SIZE_VEC>
 class small_vector {
   typedef std::vector<T> large_vector_type;
 
-  // std::is_trivially_destructible not supported in g++-4.7
-  static const bool is_trivially_destructible = std::is_scalar<T>::value;
+  static const bool is_trivially_destructible =
+    private_::is_trivially_destructible<T>::value;
+
   // std::is_trivially_copyable not supported in g++-4.7
   static const bool is_trivially_copyable = std::is_scalar<T>::value;
 

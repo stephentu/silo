@@ -53,6 +53,7 @@ HEADERS = amd64.h \
 	lockguard.h \
 	macros.h \
 	marked_ptr.h \
+	ndb_type_traits.h \
 	prefetch.h \
 	rcu.h \
 	record/encoder.h \

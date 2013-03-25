@@ -23,10 +23,8 @@ private:
   typedef std::unordered_map<Key, T, Hash> large_table_type;
   typedef std::pair<key_type, mapped_type> bucket_value_type;
 
-  // std::is_trivially_destructible not supported in g++-4.7
   static const bool is_trivially_destructible =
-    std::is_scalar<key_type>::value &&
-    std::is_scalar<mapped_type>::value;
+    private_::is_trivially_destructible<bucket_value_type>::value;
 
   static const size_t TableSize = private_::TableSize(StaticSize);
   static_assert(StaticSize >= 1, "XXX");

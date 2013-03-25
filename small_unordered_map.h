@@ -10,6 +10,7 @@
 #include "macros.h"
 #include "counter.h"
 #include "log2.hh"
+#include "ndb_type_traits.h"
 
 namespace private_ {
 
@@ -104,10 +105,8 @@ private:
   typedef typename large_table_type::iterator large_table_iterator;
   typedef typename large_table_type::const_iterator large_table_const_iterator;
 
-  // std::is_trivially_destructible not supported in g++-4.7
   static const bool is_trivially_destructible =
-    std::is_scalar<key_type>::value &&
-    std::is_scalar<mapped_type>::value;
+    private_::is_trivially_destructible<bucket_value_type>::value;
 
   static const size_t TableSize = private_::TableSize(SmallSize);
   static_assert(SmallSize >= 1, "XXX");

@@ -36,6 +36,7 @@
 #include "tuple.h"
 #include "scopedperf.hh"
 #include "marked_ptr.h"
+#include "ndb_type_traits.h"
 
 // forward decl
 template <template <typename> class Transaction> class txn_btree;
@@ -290,6 +291,58 @@ protected:
   friend std::ostream &
   operator<<(std::ostream &o, const absent_record_t &r);
 
+  struct dbtuple_write_info {
+    enum {
+      FLAGS_LOCKED = 0x1,
+      FLAGS_INSERT = 0x1 << 1,
+    };
+    inline dbtuple_write_info() {}
+    inline dbtuple_write_info(dbtuple *tuple)
+      : tuple(tuple)
+    {}
+    inline dbtuple_write_info(dbtuple *tuple, bool insert)
+      : tuple(tuple)
+    {
+      this->tuple.set_flags(insert ? (FLAGS_LOCKED | FLAGS_INSERT) : 0);
+    }
+    inline dbtuple *
+    get_tuple()
+    {
+      return tuple.get();
+    }
+    inline const dbtuple *
+    get_tuple() const
+    {
+      return tuple.get();
+    }
+    inline ALWAYS_INLINE void
+    mark_locked()
+    {
+      INVARIANT(!is_locked());
+      tuple.or_flags(FLAGS_LOCKED);
+      INVARIANT(is_locked());
+    }
+    inline ALWAYS_INLINE bool
+    is_locked() const
+    {
+      return tuple.get_flags() & FLAGS_LOCKED;
+    }
+    inline ALWAYS_INLINE bool
+    is_insert() const
+    {
+      return tuple.get_flags() & FLAGS_INSERT;
+    }
+    // for sorting- we want the tuples marked "inserted"
+    // to come first in the sort order [this simplifies the
+    // programming when acquiring locks and dealing with duplicates]
+    inline ALWAYS_INLINE
+    bool operator<(const dbtuple_write_info &o) const
+    {
+      return tuple < o.tuple || (tuple == o.tuple && !is_insert() < !o.is_insert());
+    }
+    marked_ptr<dbtuple> tuple;
+  };
+
   static event_counter g_evt_read_logical_deleted_node_search;
   static event_counter g_evt_read_logical_deleted_node_scan;
   static event_counter g_evt_dbtuple_write_search_failed;
@@ -311,6 +364,29 @@ protected:
   abort_reason reason;
   const uint64_t flags;
 };
+
+// type specializations
+namespace private_ {
+  template <>
+  struct is_trivially_destructible<transaction_base::read_record_t> {
+    static const bool value = true;
+  };
+
+  template <>
+  struct is_trivially_destructible<transaction_base::basic_write_record_t<true>> {
+    static const bool value = true;
+  };
+
+  template <>
+  struct is_trivially_destructible<transaction_base::absent_record_t> {
+    static const bool value = true;
+  };
+
+  template <>
+  struct is_trivially_destructible<transaction_base::dbtuple_write_info> {
+    static const bool value = true;
+  };
+}
 
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::read_record_t &r)
@@ -422,58 +498,6 @@ protected:
   typedef std::vector<write_record_t> write_set_map;
   typedef std::vector<absent_record_t> absent_set_map;
 #endif
-
-  struct dbtuple_write_info {
-    enum {
-      FLAGS_LOCKED = 0x1,
-      FLAGS_INSERT = 0x1 << 1,
-    };
-    inline dbtuple_write_info() {}
-    inline dbtuple_write_info(dbtuple *tuple)
-      : tuple(tuple)
-    {}
-    inline dbtuple_write_info(dbtuple *tuple, bool insert)
-      : tuple(tuple)
-    {
-      this->tuple.set_flags(insert ? (FLAGS_LOCKED | FLAGS_INSERT) : 0);
-    }
-    inline dbtuple *
-    get_tuple()
-    {
-      return tuple.get();
-    }
-    inline const dbtuple *
-    get_tuple() const
-    {
-      return tuple.get();
-    }
-    inline ALWAYS_INLINE void
-    mark_locked()
-    {
-      INVARIANT(!is_locked());
-      tuple.or_flags(FLAGS_LOCKED);
-      INVARIANT(is_locked());
-    }
-    inline ALWAYS_INLINE bool
-    is_locked() const
-    {
-      return tuple.get_flags() & FLAGS_LOCKED;
-    }
-    inline ALWAYS_INLINE bool
-    is_insert() const
-    {
-      return tuple.get_flags() & FLAGS_INSERT;
-    }
-    // for sorting- we want the tuples marked "inserted"
-    // to come first in the sort order [this simplifies the
-    // programming when acquiring locks and dealing with duplicates]
-    inline ALWAYS_INLINE
-    bool operator<(const dbtuple_write_info &o) const
-    {
-      return tuple < o.tuple || (tuple == o.tuple && !is_insert() < !o.is_insert());
-    }
-    marked_ptr<dbtuple> tuple;
-  };
 
   // small type
   typedef
