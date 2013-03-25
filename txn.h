@@ -280,6 +280,7 @@ protected:
                                        // followed by another insert() to the same
                                        // key
     };
+    basic_write_record_t() = default;
     inline basic_write_record_t(const string_type &k,
                                 const string_type &r,
                                 btree *btr,
