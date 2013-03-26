@@ -36,7 +36,7 @@ if __name__ == '__main__':
       def ex(p):
         import math
         return math.fsum([(1.0/11.0)*pn(float(n), p) for n in range(5, 16)])
-      return ex(p/100.0)
+      return ex(p/100.0) * 100.0
 
     def extract_p(x):
       m = RGX.search(x)
@@ -55,9 +55,9 @@ if __name__ == '__main__':
 
     def readonly_lines_func(config):
       if 'disable-read-only-snapshots' in config['bench_opts']:
-        return 'no-read-only'
+        return 'No-Snapshots'
       else:
-        return 'read-only'
+        return 'Snapshots'
 
     def MFormatter(x, p):
       if x == 0:
@@ -106,26 +106,28 @@ if __name__ == '__main__':
       #  'y-label' : 'txns/sec',
       #  'title' : 'tpcc full workload throughput graph',
       #},
-      #{
-      #  'name' : 'readonly',
-      #  'x-axis' : 'bench_opts',
-      #  'x-axis-func' : extract_p,
-      #  'y-axis' : deal_with_pos0_res,
-      #  'lines-func' : readonly_lines_func,
-      #  'x-label' : 'tpcc new order p value',
-      #  'y-label' : 'txns/sec',
-      #  'title' : 'tpcc read only throughput graph',
-      #  'legend' : 'right',
-      #},
+      {
+        'name' : 'readonly',
+        'x-axis' : 'bench_opts',
+        'x-axis-func' : extract_p,
+        'y-axis' : deal_with_pos0_res,
+        'lines-func' : readonly_lines_func,
+        'x-label' : '% remote warehouse stock',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : True,
+        #'title' : 'tpcc read only throughput graph',
+        'legend' : 'right',
+      },
     ]
 
     def label_transform(x):
       if x == 'kvdb':
-        return 'KV'
+        return 'Key-Value'
       if x == 'ndb-proto2':
         return 'XSYS'
       if x == 'kvdb-st':
-        return 'PartitionedStore'
+        return 'Partitioned-Store'
       return x
 
     for desc in descs:
