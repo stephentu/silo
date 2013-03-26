@@ -332,7 +332,9 @@ public:
     INVARIANT(tuple->is_write_intent());
     INVARIANT(tuple->is_latest());
     INVARIANT(rcu::in_rcu_region());
-    // we let the background tree walker clean up the spills
+    // this is too aggressive- better to let the background
+    // reaper clean the chains
+    //do_dbtuple_chain_cleanup(tuple);
   }
 
   inline ALWAYS_INLINE void

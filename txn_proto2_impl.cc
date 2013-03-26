@@ -392,9 +392,12 @@ txn_walker_loop::run()
       nodesperrun = min(nupperbound, nodesperrun);
       evt_avg_txn_walker_loop_iter_us.offer(us);
 
-      // sleep
-      ts.tv_sec  = rcu::EpochTimeNsec / ONE_SECOND_NS;
-      ts.tv_nsec = rcu::EpochTimeNsec % ONE_SECOND_NS;
+      // sleep if we are going too fast
+      if (us >= rcu::EpochTimeUsec)
+        continue;
+      const uint64_t sleep_ns = (rcu::EpochTimeUsec - us) * 1000;
+      ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      ts.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&ts, NULL);
       continue;
     }
