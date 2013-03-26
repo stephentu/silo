@@ -4,6 +4,7 @@
 #include "btree.h"
 #include "txn.h"
 
+#include <string>
 #include <type_traits>
 
 // XXX: hacky
@@ -13,7 +14,7 @@ extern void txn_btree_test();
 // behavior- the default implementation is just nops
 template <template <typename> class Transaction>
 struct txn_btree_handler {
-  inline void on_construct(btree *underlying) {} // get a handle to the underying btree
+  inline void on_construct(const std::string &name, btree *underlying) {} // get a handle to the underying btree
   inline void on_destruct() {} // called at the beginning of the txn_btree's dtor
   static const bool has_background_task = false;
 };
@@ -78,12 +79,14 @@ private:
 public:
 
   txn_btree(size_type value_size_hint = 128,
-            bool mostly_append = false)
+            bool mostly_append = false,
+            const std::string &name = "<unknown>")
     : value_size_hint(value_size_hint),
       mostly_append(mostly_append),
+      name(name),
       been_destructed(false)
   {
-    handler.on_construct(&underlying_btree);
+    handler.on_construct(name, &underlying_btree);
   }
 
   ~txn_btree()
@@ -369,6 +372,7 @@ private:
   btree underlying_btree;
   size_type value_size_hint;
   bool mostly_append;
+  std::string name;
   bool been_destructed;
   txn_btree_handler<Transaction> handler;
 };

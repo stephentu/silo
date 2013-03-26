@@ -25,6 +25,7 @@ public:
   virtual void run();
 private:
   volatile bool running;
+  std::string name;
   btree *btr;
 };
 
@@ -163,8 +164,11 @@ protected:
   // (this means g_consistent_epoch - 1 is the last epoch fully completed)
   static volatile uint64_t g_consistent_epoch CACHE_ALIGNED;
 
-  // contains the latest epoch # through which it is known NO readers are in
-  // (inclusive). Is either g_consistent_epoch - 1 or g_consistent_epoch - 2
+  // contains the latest epoch # through which it is known NO readers are in Is
+  // either g_consistent_epoch - 1 or g_consistent_epoch - 2. this means that
+  // tuples belonging to epoch < g_reads_finished_epoch are *safe* to garbage
+  // collect
+  // [if they are superceded by another tuple in epoch >= g_reads_finished_epoch]
   static volatile uint64_t g_reads_finished_epoch CACHE_ALIGNED;
 
   // for synchronizing with the epoch incrementor loop
@@ -347,10 +351,11 @@ private:
 template <>
 struct txn_btree_handler<transaction_proto2> {
   void
-  on_construct(btree *btr)
+  on_construct(const std::string &name, btree *btr)
   {
     INVARIANT(!walker_loop.running);
     INVARIANT(!walker_loop.btr);
+    walker_loop.name = name;
     walker_loop.btr = btr;
     walker_loop.running = true;
     COMPILER_MEMORY_FENCE;

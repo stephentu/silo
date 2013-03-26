@@ -33,6 +33,7 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
     INVARIANT(p != ln);
     INVARIANT(pprev);
     INVARIANT(!p->is_latest());
+    INVARIANT(EpochId(p->version) < g_reads_finished_epoch); // check safety
     pprev->set_next(NULL);
     p->gc_chain();
   }
@@ -45,23 +46,20 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
 {
   INVARIANT(rcu::in_rcu_region());
 
-  // first read the node w/o latching to see if there is potential work to do
   const dbtuple::version_t vcheck = tuple->unstable_version();
 
-  // easy checks
-  if (!dbtuple::IsLatest(vcheck) ||
-      dbtuple::IsDeleting(vcheck) ||
-      dbtuple::IsWriteIntent(vcheck) ||
-      tuple->version == dbtuple::MIN_TID ||
-      tuple->version == dbtuple::MAX_TID)
+  if (!dbtuple::IsLatest(vcheck) /* won't be able to do anything */ ||
+      tuple->version == dbtuple::MAX_TID /* newly inserted node, nothing to GC */)
     return true;
 
   // check to see if theres a chain to remove
   dbtuple *p = tuple->get_next();
   bool has_work = !tuple->size;
   while (p && !has_work) {
-    if (EpochId(p->version) <= g_reads_finished_epoch)
-      has_work = true;
+    if (EpochId(p->version) <= g_reads_finished_epoch) {
+      has_work = p->get_next();
+      break;
+    }
     p = p->get_next();
   }
   if (!has_work)
@@ -83,6 +81,10 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
     if (g_reads_finished_epoch < v) {
       ret = true;
     } else {
+      // g_reads_finished_epoch >= v: we don't require g_reads_finished_epoch > v
+      // as in tuple china cleanup, b/c removes are a special case: whether or
+      // not a consistent snapshot reads a removed element by its absense or by
+      // an empty record is irrelevant.
       btree::value_type removed = 0;
       const bool did_remove = btr->remove(varkey(key), &removed);
       if (!did_remove) INVARIANT(false);
@@ -196,11 +198,19 @@ static event_avg_counter evt_avg_txn_walker_loop_iter_us("avg_txn_walker_loop_it
 void
 txn_walker_loop::run()
 {
+#ifdef ENABLE_EVENT_COUNTERS
+  event_avg_counter *evt_avg_records_per_walk = nullptr;
+  size_t ntuples = 0;
+  if (name != "<unknown>")
+    evt_avg_records_per_walk = new event_avg_counter("avg_records_walk_" + name);
+#endif
   size_t nodesperrun = 100;
   string s; // the starting key of the scan
-  timer loop_timer;
+  timer big_loop_timer, loop_timer;
   struct timespec ts;
   typename vec<btree::leaf_node *>::type q;
+
+  //string name_check = "order_line";
 
   while (running) {
     // we don't use btree::tree_walk here because we want
@@ -218,25 +228,41 @@ txn_walker_loop::run()
       else
         s.resize(round_up<size_t, 3>(s.size()));
       q.clear();
+
       btr->search_impl(varkey(s), v, q);
       INVARIANT(!q.empty());
       INVARIANT(s.size() % 8 == 0);
       INVARIANT(s.size() / 8 >= q.size());
 
       size_t depth = q.size() - 1;
+
+      //if (name == name_check) {
+      //  cerr << "----- starting over from s as min key ----- " << endl;
+      //  cerr << "s_start: " << hexify(s) << endl;
+      //  cerr << "q.size(): " << q.size() << endl;
+      //}
+
       // NB:
       //   s[0, 8 * (q.size() - 1)) contains the key prefix
       //   s[8 * (q.size() - 1), s.size()) contains the key suffix
       bool include_kmin = true;
       while (!q.empty()) {
       descend:
+
+        //if (name == name_check) {
+        //  cerr << "descending depth: " << q.size() - 1 << endl;
+        //  cerr << "s: " << hexify(s) << endl;
+        //}
+
         const btree::key_slice kmin =
           host_endian_trfm<btree::key_slice>()(
               *reinterpret_cast<const btree::key_slice *>(
                 s.data() + 8 * (q.size() - 1)));
 
-        // resize
-        s.resize(8 * (q.size() - 1));
+        //if (name == name_check) {
+        //  cerr << "kmin: " << hexify(string(s.data() + 8 * (q.size() - 1), 8)) << endl;
+        //  cerr << "include_kmin: " << include_kmin << endl;
+        //}
 
         btree::leaf_node *cur = q.back();
         q.pop_back();
@@ -244,11 +270,13 @@ txn_walker_loop::run()
         // now:
         //  s[0, 8 * q.size()) contains key prefix
         INVARIANT(depth == q.size());
-        INVARIANT(s.size() == depth * 8);
 
         while (cur) {
-          if (++nnodes == nodesperrun)
+          if (++nnodes >= nodesperrun) {
+            //if (name == name_check)
+            //  cerr << "rcu recalc" << endl;
             goto recalc;
+          }
         process:
           INVARIANT(depth == q.size());
 
@@ -288,6 +316,9 @@ txn_walker_loop::run()
               s.resize(8 * q.size() + klen);
               NDB_MEMCPY((char *) s.data() + 8 * q.size(), values[i].keyslice(), klen);
             }
+#ifdef ENABLE_EVENT_COUNTERS
+            ntuples++;
+#endif
             transaction_proto2_static::try_dbtuple_cleanup(btr, s, tuple);
           }
 
@@ -327,16 +358,26 @@ txn_walker_loop::run()
           cur = next;
         }
 
+        //if (name == name_check)
+        //  cout << "finished layer " << depth << endl;
+
         // finished this layer
         include_kmin = false;
         depth--;
       }
 
-    // finished an entire scan of the tree
-    s.clear();
-    goto waitepoch;
+      // finished an entire scan of the tree
+#ifdef ENABLE_EVENT_COUNTERS
+      if (evt_avg_records_per_walk)
+        evt_avg_records_per_walk->offer(ntuples);
+      ntuples = 0;
+#endif
+      //if (name == name_check)
+      //  cout << name << " finished tree walk" << endl;
+      s.clear();
+      goto waitepoch;
 
-  } // end RCU region
+    } // end RCU region
 
   recalc:
     {
@@ -345,8 +386,8 @@ txn_walker_loop::run()
       const double actual_rate = double(nodesperrun) / double(us); // nodes/usec
       nodesperrun = size_t(actual_rate * double(rcu::EpochTimeUsec));
       // lower and upper bounds
-      const size_t nlowerbound = 10;
-      const size_t nupperbound = 1000;
+      const size_t nlowerbound = 100;
+      const size_t nupperbound = 10000;
       nodesperrun = max(nlowerbound, nodesperrun);
       nodesperrun = min(nupperbound, nodesperrun);
       evt_avg_txn_walker_loop_iter_us.offer(us);
@@ -361,8 +402,11 @@ txn_walker_loop::run()
   waitepoch:
     {
       // since nothing really changes within an epoch, we sleep for an epoch's
-      // worth of time
-      const uint64_t sleep_ns = txn_epoch_us * 1000;
+      // worth of time if necessary
+      const uint64_t us = big_loop_timer.lap();
+      if (us >= txn_epoch_us)
+        continue;
+      const uint64_t sleep_ns = (txn_epoch_us - us) * 1000;
       ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
       ts.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&ts, NULL);
