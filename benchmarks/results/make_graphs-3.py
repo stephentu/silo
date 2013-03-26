@@ -59,6 +59,18 @@ if __name__ == '__main__':
       else:
         return 'read-only'
 
+    def MFormatter(x, p):
+      if x == 0:
+        return '0'
+      v = float(x)/float(10**6)
+      return '%dM' % v
+
+    def KFormatter(x, p):
+      if x == 0:
+        return '0'
+      v = float(x)/float(10**3)
+      return '%dK' % v
+
     descs = [
       {
         'name' : 'scale',
@@ -66,9 +78,11 @@ if __name__ == '__main__':
         'x-axis-func' : lambda x: x,
         'y-axis' : deal_with_pos0_res,
         'lines' : ['db'], # each line holds this constant
-        'x-label' : 'num threads',
-        'y-label' : 'txns/sec',
-        'title' : 'ycsb throughput graph',
+        'x-label' : 'threads',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+        'x-axis-set-major-locator' : True,
+        #'title' : 'ycsb throughput graph',
       },
       {
         'name' : 'multipart:pct',
@@ -76,32 +90,43 @@ if __name__ == '__main__':
         'x-axis-func' : extract_pct,
         'y-axis' : deal_with_pos0_res,
         'lines' : ['db'], # each line holds this constant
-        'x-label' : '% x-partition txn',
-        'y-label' : 'txns/sec',
-        'title' : 'tpcc new-order throughput graph',
+        'x-label' : '% cross-partition',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        #'title' : 'tpcc new-order throughput graph',
         'legend' : 'upper right',
       },
-      {
-        'name' : 'multipart:cpu',
-        'x-axis-process' : multipart_cpu_process,
-        'y-axis' : deal_with_pos0_res,
-        'lines' : ['db'], # each line holds this constant
-        'x-label' : 'num threads',
-        'y-label' : 'txns/sec',
-        'title' : 'tpcc full workload throughput graph',
-      },
-      {
-        'name' : 'readonly',
-        'x-axis' : 'bench_opts',
-        'x-axis-func' : extract_p,
-        'y-axis' : deal_with_pos0_res,
-        'lines-func' : readonly_lines_func,
-        'x-label' : 'tpcc new order p value',
-        'y-label' : 'txns/sec',
-        'title' : 'tpcc read only throughput graph',
-        'legend' : 'right',
-      },
+      #{
+      #  'name' : 'multipart:cpu',
+      #  'x-axis-process' : multipart_cpu_process,
+      #  'y-axis' : deal_with_pos0_res,
+      #  'lines' : ['db'], # each line holds this constant
+      #  'x-label' : 'num threads',
+      #  'y-label' : 'txns/sec',
+      #  'title' : 'tpcc full workload throughput graph',
+      #},
+      #{
+      #  'name' : 'readonly',
+      #  'x-axis' : 'bench_opts',
+      #  'x-axis-func' : extract_p,
+      #  'y-axis' : deal_with_pos0_res,
+      #  'lines-func' : readonly_lines_func,
+      #  'x-label' : 'tpcc new order p value',
+      #  'y-label' : 'txns/sec',
+      #  'title' : 'tpcc read only throughput graph',
+      #  'legend' : 'right',
+      #},
     ]
+
+    def label_transform(x):
+      if x == 'kvdb':
+        return 'KV'
+      if x == 'ndb-proto2':
+        return 'XSYS'
+      if x == 'kvdb-st':
+        return 'PartitionedStore'
+      return x
 
     for desc in descs:
       bench = desc['name']
@@ -130,6 +155,7 @@ if __name__ == '__main__':
       # find min/max of xpts
       xmin = min([e for l in lines.values() for e in l])
       xmax = max([e for l in lines.values() for e in l])
+      #print xmin, xmax
 
       labels = []
       for (name, pts) in lines.iteritems():
@@ -153,13 +179,24 @@ if __name__ == '__main__':
 
         plt.errorbar(xpts, ymid, yerr=yerr)
         if type(name) == str:
-          labels.append(name)
+          labels.append(label_transform(name))
         else:
-          labels.append('-'.join(name))
+          labels.append(label_transform('-'.join(name)))
+
+      ax = plt.gca()
+      if desc['x-axis-set-major-locator']:
+        ax.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(sorted(lines.values()[0].keys())))
+      if 'y-axis-major-formatter' in desc:
+        ax.yaxis.set_major_formatter(desc['y-axis-major-formatter'])
 
       plt.xlabel(desc['x-label'])
       plt.ylabel(desc['y-label'])
-      plt.title(desc['title'])
+      if 'title' in desc:
+        plt.title(desc['title'])
+
+      plt.xlim(xmin = xmin, xmax = xmax)
+      plt.ylim(ymin = 0)
+
       placement = 'upper left' if not 'legend' in desc else desc['legend']
       plt.legend(labels, loc=placement)
       bname = '.'.join(os.path.basename(f).split('.')[:-1])
