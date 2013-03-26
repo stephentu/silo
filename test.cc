@@ -2,6 +2,7 @@
 #include <functional>
 #include <unordered_map>
 #include <tuple>
+#include <unistd.h>
 
 #include "thread.h"
 #include "txn.h"
@@ -905,6 +906,7 @@ public:
 #ifndef CHECK_INVARIANTS
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
+    cerr << "PID: " << getpid() << endl;
     varkeytest::Test();
     pxqueuetest::Test();
     CounterTest();

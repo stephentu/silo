@@ -163,6 +163,8 @@ main(int argc, char **argv)
 
   if (verbose) {
     const unsigned long ncpus = coreid::num_cpus_online();
+    cerr << "Database Benchmark:"                         << endl;
+    cerr << "  pid: " << getpid()                         << endl;
     cerr << "settings:"                                   << endl;
     cerr << "  par-loading : " << enable_parallel_loading << endl;
     cerr << "  pin-cpus    : " << pin_cpus                << endl;

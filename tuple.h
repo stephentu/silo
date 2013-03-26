@@ -250,7 +250,7 @@ public:
   {
     version_t v = hdr;
     INVARIANT(IsLocked(v));
-    INVARIANT(!IsModifying(v));
+    //INVARIANT(!IsModifying(v)); // mark_modifying() must be re-entrant
     v |= HDR_MODIFYING_MASK;
     COMPILER_MEMORY_FENCE; // XXX: is this fence necessary?
     hdr = v;

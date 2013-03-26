@@ -1,5 +1,7 @@
 #include <unistd.h>
 #include <limits>
+#include <memory>
+#include <atomic>
 
 #include "txn.h"
 #include "txn_proto1_impl.h"
@@ -505,6 +507,62 @@ protected:
   txn_btree<Protocol> *const btr;
   const uint64_t txn_flags;
 };
+
+namespace mp_stress_test_insert_removes_ns {
+  struct big_rec {
+    static const size_t S = numeric_limits<dbtuple::node_size_type>::max();
+    char buf[S];
+  };
+  static const size_t nworkers = 4;
+  static atomic<bool> running(true);
+  template <template <typename> class TxnType, typename Traits>
+  class worker : public txn_btree_worker<TxnType> {
+  public:
+    worker(txn_btree<TxnType> &btr, uint64_t txn_flags)
+      : txn_btree_worker<TxnType>(btr, txn_flags) {}
+    ~worker() {}
+    virtual void run()
+    {
+      fast_random r(reinterpret_cast<unsigned long>(this));
+      while (running.load()) {
+        TxnType<Traits> t(this->txn_flags);
+        try {
+          switch (r.next() % 3) {
+          case 0:
+            this->btr->insert_object(t, u64_varkey(0), rec(1));
+            break;
+          case 1:
+            this->btr->insert_object(t, u64_varkey(0), big_rec());
+            break;
+          case 2:
+            this->btr->remove(t, u64_varkey(0));
+            break;
+          }
+          t.commit(true);
+        } catch (transaction_abort_exception &e) {
+        }
+      }
+    }
+  };
+}
+
+template <template <typename> class TxnType, typename Traits>
+static void
+mp_stress_test_insert_removes()
+{
+  using namespace mp_stress_test_insert_removes_ns;
+  txn_btree<TxnType> btr;
+  vector< shared_ptr< worker<TxnType, Traits> > > v;
+  for (size_t i = 0; i < nworkers; i++)
+    v.emplace_back(new worker<TxnType, Traits>(btr, 0));
+  for (auto &p : v)
+    p->start();
+  sleep(5); // let many epochs pass
+  running.store(false);
+  for (auto &p : v)
+    p->join();
+
+}
 
 namespace mp_test1_ns {
   // read-modify-write test (counters)
@@ -1391,6 +1449,7 @@ void txn_btree_test()
   test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
   test_long_keys<transaction_proto2, default_transaction_traits>();
   test_long_keys2<transaction_proto2, default_transaction_traits>();
+  mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
   mp_test1<transaction_proto2, default_transaction_traits>();
   mp_test2<transaction_proto2, default_transaction_traits>();
   mp_test3<transaction_proto2, default_transaction_traits>();
