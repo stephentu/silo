@@ -187,6 +187,11 @@ txn_btree<Transaction>::purge_tree_walker::on_node_success()
     // XXX(stephentu): should we also walk the chain?
     purge_stats_ln_record_size_counts[ln->size]++;
     purge_stats_ln_alloc_size_counts[ln->alloc_size]++;
+    purge_stats_tuple_chain_counts[ln->chain_length()]++;
+    if (!ln->size && !ln->is_deleting())
+      purge_stats_tuple_logically_removed_no_mark++;
+    if (!ln->size && ln->is_deleting())
+      purge_stats_tuple_logically_removed_with_mark++;
 #endif
     if (txn_btree_handler<Transaction>::has_background_task) {
 #ifdef CHECK_INVARIANTS

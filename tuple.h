@@ -153,6 +153,18 @@ public:
   // reachable from this instance for deletion via RCU.
   void gc_chain();
 
+  size_t
+  chain_length() const
+  {
+    size_t ret = 0;
+    const dbtuple * cur = this;
+    while (cur) {
+      ret++;
+      cur = cur->get_next();
+    }
+    return ret;
+  }
+
   inline bool
   is_locked() const
   {
