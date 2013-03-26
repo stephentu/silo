@@ -90,26 +90,26 @@ grids += [
 #  * fix the tpc-c scale factor at 8
 #  * for volt, do one run @ 8-threads
 #  * for ndb, vary threads [8, 12, 16, 20, 24, 28, 32]
-grids += [
-  {
-    'name' : 'multipart:cpu',
-    'dbs' : ['kvdb'],
-    'threads' : [8],
-    'scale_factors': [8],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' : ['--enable-separate-tree-per-partition --enable-partition-locks'],
-    'par_load' : [True],
-  },
-  {
-    'name' : 'multipart:cpu',
-    'dbs' : ['ndb-proto2'],
-    'threads' : [8, 12, 16, 20, 24, 28, 32],
-    'scale_factors': [8],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' : [''],
-    'par_load' : [False],
-  },
-]
+#grids += [
+#  {
+#    'name' : 'multipart:cpu',
+#    'dbs' : ['kvdb'],
+#    'threads' : [8],
+#    'scale_factors': [8],
+#    'benchmarks' : ['tpcc'],
+#    'bench_opts' : ['--enable-separate-tree-per-partition --enable-partition-locks'],
+#    'par_load' : [True],
+#  },
+#  {
+#    'name' : 'multipart:cpu',
+#    'dbs' : ['ndb-proto2'],
+#    'threads' : [8, 12, 16, 20, 24, 28, 32],
+#    'scale_factors': [8],
+#    'benchmarks' : ['tpcc'],
+#    'bench_opts' : [''],
+#    'par_load' : [False],
+#  },
+#]
 
 
 # exp 4:
