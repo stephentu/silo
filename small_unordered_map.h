@@ -164,11 +164,11 @@ private:
   class iterator_ : public std::iterator<std::forward_iterator_tag, ValueType> {
     friend class small_unordered_map;
   public:
-    inline iterator_() : large(false), b(0), bend(0) {}
+    inline iterator_() : large(false), b(0) {}
 
     template <typename S, typename L, typename V>
     inline iterator_(const iterator_<S, L, V> &other)
-      : large(other.large), b(other.b), bend(other.bend)
+      : large(other.large), b(other.b)
     {}
 
     inline ValueType &
@@ -176,7 +176,6 @@ private:
     {
       if (unlikely(large))
         return *large_it;
-      INVARIANT(b != bend);
       return reinterpret_cast<ValueType &>(b->ref());
     }
 
@@ -185,7 +184,6 @@ private:
     {
       if (unlikely(large))
         return &(*large_it);
-      INVARIANT(b != bend);
       return reinterpret_cast<ValueType *>(b->ptr());
     }
 
@@ -211,7 +209,6 @@ private:
         ++large_it;
         return *this;
       }
-      INVARIANT(b < bend);
       b++;
       return *this;
     }
@@ -225,10 +222,9 @@ private:
     }
 
   protected:
-    inline iterator_(SmallIterType *b, SmallIterType *bend)
-      : large(false), b(b), bend(bend)
+    inline iterator_(SmallIterType *b)
+      : large(false), b(b)
     {
-      INVARIANT(b <= bend);
     }
     inline iterator_(LargeIterType large_it)
       : large(true), large_it(large_it) {}
@@ -236,7 +232,6 @@ private:
   private:
     bool large;
     SmallIterType *b;
-    SmallIterType *bend;
     LargeIterType large_it;
   };
 
@@ -412,7 +407,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->begin());
-    return iterator(&small_elems[0], &small_elems[n]);
+    return iterator(&small_elems[0]);
   }
 
   const_iterator
@@ -420,7 +415,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->begin());
-    return const_iterator(&small_elems[0], &small_elems[n]);
+    return const_iterator(&small_elems[0]);
   }
 
   inline iterator
@@ -428,7 +423,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->end());
-    return iterator(&small_elems[n], &small_elems[n]);
+    return iterator(&small_elems[n]);
   }
 
   inline const_iterator
@@ -436,7 +431,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->end());
-    return const_iterator(&small_elems[n], &small_elems[n]);
+    return const_iterator(&small_elems[n]);
   }
 
   iterator
@@ -446,7 +441,7 @@ public:
       return iterator(large_elems->find(k));
     bucket * const b = find_bucket(k, 0);
     if (b)
-      return iterator(b, &small_elems[n]);
+      return iterator(b);
     return end();
   }
 
@@ -457,7 +452,7 @@ public:
       return const_iterator(large_elems->find(k));
     const bucket * const b = find_bucket(k, 0);
     if (b)
-      return const_iterator(b, &small_elems[n]);
+      return const_iterator(b);
     return end();
   }
 
