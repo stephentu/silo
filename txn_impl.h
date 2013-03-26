@@ -225,6 +225,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           INVARIANT(last_px != it->get_tuple());
           INVARIANT(it->is_locked());
           INVARIANT(it->get_tuple()->is_locked());
+          INVARIANT(it->get_tuple()->is_lock_owner());
           last_px = it->get_tuple();
           continue;
         }
@@ -232,6 +233,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         INVARIANT(!it->is_locked());
         if (last_px == it->get_tuple()) {
           INVARIANT(last_px->is_locked());
+          INVARIANT(last_px->is_lock_owner());
           // already locked
           continue;
         }
@@ -246,10 +248,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           // we could also release our insert locks and try to acquire them
           // again in sorted order
           const transaction_base::abort_reason r = transaction_base::ABORT_REASON_INSERT_NODE_INTERFERENCE;
-          abort_impl(r);
-          if (doThrow)
-            throw transaction_abort_exception(r);
-          return false;
+          abort_trap((reason = r));
+          goto do_abort;
         }
         const dbtuple::version_t v = tuple->lock(true); // lock for write
         INVARIANT(dbtuple::IsLatest(v) == tuple->is_latest());
@@ -448,7 +448,8 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
   VERBOSE(std::cerr << "insert_if_absent suceeded for key: " << util::hexify(key) << std::endl
                     << "  new dbtuple is " << util::hexify(tuple) << std::endl);
   // update write_set
-  INVARIANT(find_write_set(tuple) == write_set.end());
+  // too expensive to be practical
+  // INVARIANT(find_write_set(tuple) == write_set.end());
   write_set.emplace_back(tuple, key, value, &btr, true);
 
   // update node #s

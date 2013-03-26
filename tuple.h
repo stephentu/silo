@@ -19,6 +19,10 @@
 #include "spinlock.h"
 #include "small_unordered_map.h"
 #include "prefetch.h"
+#include "pthread.h"
+
+// debugging tool
+//#define TUPLE_LOCK_OWNERSHIP_CHECKING
 
 template <template <typename> class Protocol, typename Traits>
   class transaction; // forward decl
@@ -45,6 +49,58 @@ public:
 
   static const tid_t MIN_TID = 0;
   static const tid_t MAX_TID = (tid_t) -1;
+
+// lock ownership helpers- works by recording all tuple
+// locks obtained in each transaction, and then when the txn
+// finishes, calling AssertAllTupleLocksReleased(), which makes
+// sure the current thread is no longer the owner of any locks
+// acquired during the txn
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+  static void
+  TupleLockRegionBegin()
+  {
+    if (!tl_locked_nodes)
+      tl_locked_nodes = new std::vector<const dbtuple *>;
+    tl_locked_nodes->clear();
+  }
+
+  // is used to signal the end of a tuple lock region
+  static void
+  AssertAllTupleLocksReleased()
+  {
+    ALWAYS_ASSERT(tl_locked_nodes);
+    for (auto p : *tl_locked_nodes)
+      ALWAYS_ASSERT(!p->is_lock_owner());
+    tl_locked_nodes->clear();
+  }
+
+  struct scoped_tuple_lock_region {
+    scoped_tuple_lock_region()
+    {
+      TupleLockRegionBegin();
+    }
+    ~scoped_tuple_lock_region()
+    {
+      AssertAllTupleLocksReleased();
+    }
+    scoped_tuple_lock_region(const scoped_tuple_lock_region &) = delete;
+    scoped_tuple_lock_region(scoped_tuple_lock_region &&) = delete;
+    scoped_tuple_lock_region &operator=(const scoped_tuple_lock_region &) = delete;
+  };
+
+private:
+
+  static void
+  AddTupleToLockRegion(const dbtuple *tuple)
+  {
+    ALWAYS_ASSERT(tuple->is_locked());
+    ALWAYS_ASSERT(tuple->is_lock_owner());
+    if (tl_locked_nodes)
+      tl_locked_nodes->emplace_back(tuple);
+  }
+
+  static __thread std::vector<const dbtuple *> *tl_locked_nodes;
+#endif
 
 private:
   static const version_t HDR_LOCKED_MASK = 0x1;
@@ -75,6 +131,10 @@ public:
   // [  0..1  |   1..2   |    2..3      |   3..4    |  4..5  |  5..32  ]
   volatile version_t hdr;
 
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+  pthread_t lock_owner;
+#endif
+
   // uninterpreted TID
   tid_t version;
 
@@ -103,6 +163,9 @@ private:
   dbtuple(const_record_type r,
           size_type size, size_type alloc_size)
     : hdr(HDR_LATEST_MASK),
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+      lock_owner(0), // not portable
+#endif
       version(MAX_TID),
       size(CheckBounds(size)),
       alloc_size(CheckBounds(alloc_size)),
@@ -120,6 +183,9 @@ private:
           size_type size, size_type alloc_size,
           struct dbtuple *next, bool set_latest)
     : hdr(set_latest ? HDR_LATEST_MASK : 0),
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+      lock_owner(0), // not portable
+#endif
       version(version),
       size(CheckBounds(size)),
       alloc_size(CheckBounds(alloc_size)),
@@ -177,6 +243,20 @@ public:
     return v & HDR_LOCKED_MASK;
   }
 
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+  inline bool
+  is_lock_owner() const
+  {
+    return pthread_equal(pthread_self(), lock_owner);
+  }
+#else
+  inline bool
+  is_lock_owner() const
+  {
+    return true;
+  }
+#endif
+
   inline version_t
   lock(bool write_intent)
   {
@@ -195,6 +275,11 @@ public:
       ++nspins;
 #endif
     }
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+    lock_owner = pthread_self();
+    AddTupleToLockRegion(this);
+    INVARIANT(is_lock_owner());
+#endif
     COMPILER_MEMORY_FENCE;
     INVARIANT(IsLocked(hdr));
     INVARIANT(!write_intent || IsWriteIntent(hdr));
@@ -211,6 +296,7 @@ public:
     version_t v = hdr;
     bool newv = false;
     INVARIANT(IsLocked(v));
+    INVARIANT(is_lock_owner());
     if (IsModifying(v) || IsWriteIntent(v)) {
       newv = true;
       const version_t n = Version(v);
@@ -226,6 +312,11 @@ public:
     INVARIANT(!IsLocked(v));
     INVARIANT(!IsModifying(v));
     INVARIANT(!IsWriteIntent(v));
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+    // XXX: not portable, but whatever
+    lock_owner = 0;
+    INVARIANT(!is_lock_owner());
+#endif
     COMPILER_MEMORY_FENCE;
     hdr = v;
   }
@@ -247,6 +338,7 @@ public:
   {
     // the lock on the latest version guards non-latest versions
     INVARIANT(!is_latest() || is_locked());
+    INVARIANT(!is_latest() || is_lock_owner());
     INVARIANT(!is_deleting());
     hdr |= HDR_DELETING_MASK;
   }
@@ -262,6 +354,7 @@ public:
   {
     version_t v = hdr;
     INVARIANT(IsLocked(v));
+    INVARIANT(is_lock_owner());
     //INVARIANT(!IsModifying(v)); // mark_modifying() must be re-entrant
     v |= HDR_MODIFYING_MASK;
     COMPILER_MEMORY_FENCE; // XXX: is this fence necessary?
@@ -303,6 +396,7 @@ public:
   clear_latest()
   {
     INVARIANT(is_locked());
+    INVARIANT(is_lock_owner());
     INVARIANT(is_latest());
     hdr &= ~HDR_LATEST_MASK;
   }
@@ -637,6 +731,7 @@ public:
   write_record_at(const Transaction *txn, tid_t t, const_record_type r, size_type sz)
   {
     INVARIANT(is_locked());
+    INVARIANT(is_lock_owner());
     INVARIANT(is_latest());
     INVARIANT(is_write_intent());
     INVARIANT(!is_deleting());

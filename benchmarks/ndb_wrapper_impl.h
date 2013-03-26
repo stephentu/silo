@@ -12,6 +12,7 @@
 #include "../txn.h"
 //#include "../txn_proto1_impl.h"
 #include "../txn_proto2_impl.h"
+#include "../tuple.h"
 
 //struct default_transaction_traits {
 //  static const size_t read_set_expected_size = SMALL_SIZE_MAP;

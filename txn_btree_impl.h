@@ -145,8 +145,10 @@ retry:
   } else {
     // should already exist in write set as insert
     // (because of try_insert_new_tuple())
-    INVARIANT(t.find_write_set(px) != t.write_set.end());
-    INVARIANT(t.find_write_set(px)->is_insert());
+
+    // too expensive to be a practical check
+    //INVARIANT(t.find_write_set(px) != t.write_set.end());
+    //INVARIANT(t.find_write_set(px)->is_insert());
   }
 }
 

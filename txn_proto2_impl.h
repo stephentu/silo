@@ -208,10 +208,16 @@ public:
     current_epoch = g_current_epoch;
     if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY)
       last_consistent_tid = MakeTid(0, 0, g_consistent_epoch);
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+    dbtuple::TupleLockRegionBegin();
+#endif
   }
 
   ~transaction_proto2()
   {
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+    dbtuple::AssertAllTupleLocksReleased();
+#endif
     const size_t my_core_id = coreid::core_id();
     VERBOSE(std::cerr << "destroy transaction_proto2 (core=" << my_core_id
                       << ", nest=" << tl_nest_level << ")" << std::endl);
@@ -299,6 +305,7 @@ public:
       typename dbtuple_write_info_vec::const_iterator it_end = write_tuples.end();
       for (; it != it_end; ++it) {
         INVARIANT(it->tuple->is_locked());
+        INVARIANT(it->tuple->is_lock_owner());
         INVARIANT(!it->tuple->is_deleting());
         INVARIANT(it->tuple->is_write_intent());
         INVARIANT(!it->tuple->is_modifying());
@@ -329,6 +336,7 @@ public:
   on_dbtuple_spill(dbtuple *tuple)
   {
     INVARIANT(tuple->is_locked());
+    INVARIANT(tuple->is_lock_owner());
     INVARIANT(tuple->is_write_intent());
     INVARIANT(tuple->is_latest());
     INVARIANT(rcu::in_rcu_region());

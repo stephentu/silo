@@ -15,6 +15,7 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
 {
   // try to clean up the chain
   INVARIANT(ln->is_locked());
+  INVARIANT(ln->is_lock_owner());
   INVARIANT(ln->is_latest());
   struct dbtuple *p = ln, *pprev = 0;
   const bool has_chain = ln->get_next();
