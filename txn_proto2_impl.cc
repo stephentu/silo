@@ -393,9 +393,11 @@ txn_walker_loop::run()
       evt_avg_txn_walker_loop_iter_us.offer(us);
 
       // sleep if we are going too fast
-      if (us >= rcu::EpochTimeUsec)
-        continue;
-      const uint64_t sleep_ns = (rcu::EpochTimeUsec - us) * 1000;
+      //if (us >= rcu::EpochTimeUsec)
+      //  continue;
+      //const uint64_t sleep_ns = (rcu::EpochTimeUsec - us) * 1000;
+
+      const uint64_t sleep_ns = rcu::EpochTimeUsec * 1000;
       ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
       ts.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&ts, NULL);
@@ -406,10 +408,13 @@ txn_walker_loop::run()
     {
       // since nothing really changes within an epoch, we sleep for an epoch's
       // worth of time if necessary
-      const uint64_t us = big_loop_timer.lap();
-      if (us >= txn_epoch_us)
-        continue;
-      const uint64_t sleep_ns = (txn_epoch_us - us) * 1000;
+
+      //const uint64_t us = big_loop_timer.lap();
+      //if (us >= txn_epoch_us)
+      //  continue;
+      //const uint64_t sleep_ns = (txn_epoch_us - us) * 1000;
+
+      const uint64_t sleep_ns = (txn_epoch_us) * 1000;
       ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
       ts.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&ts, NULL);
