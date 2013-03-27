@@ -1050,9 +1050,14 @@ protected:
         PinToWarehouseId(w);
       for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
         set<uint> c_ids_s;
-        while (c_ids_s.size() != NumCustomersPerDistrict())
-          c_ids_s.insert((r.next() % NumCustomersPerDistrict()) + 1);
-        const vector<uint> c_ids(c_ids_s.begin(), c_ids_s.end());
+        vector<uint> c_ids;
+        while (c_ids.size() != NumCustomersPerDistrict()) {
+          const auto x = (r.next() % NumCustomersPerDistrict()) + 1;
+          if (c_ids_s.count(x))
+            continue;
+          c_ids_s.insert(x);
+          c_ids.emplace_back(x);
+        }
         for (uint c = 1; c <= NumCustomersPerDistrict();) {
           void * const txn = db->new_txn(txn_flags, txn_buf());
           try {
