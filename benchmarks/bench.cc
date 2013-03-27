@@ -38,6 +38,8 @@ uint64_t ops_per_worker = 0;
 int run_mode = RUNMODE_TIME;
 int enable_parallel_loading = false;
 int pin_cpus = 0;
+int slow_exit = 0;
+int retry_aborted_transaction = 0;
 
 template <typename T>
 static void
@@ -123,14 +125,19 @@ bench_worker::run()
     double d = r.next_uniform();
     for (size_t i = 0; i < workload.size(); i++) {
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
+      retry:
         auto ret = workload[i].fn(this);
         if (likely(ret.first)) {
           ++ntxn_commits;
         } else {
           ++ntxn_aborts;
+          if (retry_aborted_transaction && running)
+            goto retry;
         }
-        size_delta += ret.second;
-        txn_counts[i]++;
+        size_delta += ret.second; // should be zero on abort
+        txn_counts[i]++; // txn_counts aren't used to compute throughput (is
+                         // just an informative number to print to the console
+                         // in verbose mode)
         break;
       }
       d -= workload[i].frequency;
@@ -283,6 +290,10 @@ bench_runner::run()
   cout << agg_throughput << " " << agg_abort_rate << endl;
 
   db->do_txn_finish();
+
+  if (!slow_exit)
+    return;
+
   for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
        it != open_tables.end(); ++it) {
     it->second->clear();

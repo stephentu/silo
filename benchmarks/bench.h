@@ -35,6 +35,8 @@ extern uint64_t ops_per_worker;
 extern int run_mode;
 extern int enable_parallel_loading;
 extern int pin_cpus;
+extern int slow_exit;
+extern int retry_aborted_transaction;
 
 class scoped_db_thread_ctx : private util::noncopyable {
 public:

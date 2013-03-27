@@ -47,18 +47,20 @@ main(int argc, char **argv)
   while (1) {
     static struct option long_options[] =
     {
-      {"verbose"          , no_argument       , &verbose                 , 1}   ,
-      {"parallel-loading" , no_argument       , &enable_parallel_loading , 1}   ,
-      {"pin-cpus"         , no_argument       , &pin_cpus                , 1}   ,
-      {"bench"            , required_argument , 0                        , 'b'} ,
-      {"scale-factor"     , required_argument , 0                        , 's'} ,
-      {"num-threads"      , required_argument , 0                        , 't'} ,
-      {"db-type"          , required_argument , 0                        , 'd'} ,
-      {"basedir"          , required_argument , 0                        , 'B'} ,
-      {"txn-flags"        , required_argument , 0                        , 'f'} ,
-      {"runtime"          , required_argument , 0                        , 'r'} ,
-      {"ops-per-worker"   , required_argument , 0                        , 'n'} ,
-      {"bench-opts"       , required_argument , 0                        , 'o'} ,
+      {"verbose"                    , no_argument       , &verbose                   , 1}   ,
+      {"parallel-loading"           , no_argument       , &enable_parallel_loading   , 1}   ,
+      {"pin-cpus"                   , no_argument       , &pin_cpus                  , 1}   ,
+      {"slow-exit"                  , no_argument       , &slow_exit                 , 1}   ,
+      {"retry-aborted-transactions" , no_argument       , &retry_aborted_transaction , 1}   ,
+      {"bench"                      , required_argument , 0                          , 'b'} ,
+      {"scale-factor"               , required_argument , 0                          , 's'} ,
+      {"num-threads"                , required_argument , 0                          , 't'} ,
+      {"db-type"                    , required_argument , 0                          , 'd'} ,
+      {"basedir"                    , required_argument , 0                          , 'B'} ,
+      {"txn-flags"                  , required_argument , 0                          , 'f'} ,
+      {"runtime"                    , required_argument , 0                          , 'r'} ,
+      {"ops-per-worker"             , required_argument , 0                          , 'n'} ,
+      {"bench-opts"                 , required_argument , 0                          , 'o'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
@@ -163,36 +165,38 @@ main(int argc, char **argv)
 
   if (verbose) {
     const unsigned long ncpus = coreid::num_cpus_online();
-    cerr << "Database Benchmark:"                         << endl;
-    cerr << "  pid: " << getpid()                         << endl;
-    cerr << "settings:"                                   << endl;
-    cerr << "  par-loading : " << enable_parallel_loading << endl;
-    cerr << "  pin-cpus    : " << pin_cpus                << endl;
-    cerr << "  bench       : " << bench_type              << endl;
-    cerr << "  scale       : " << scale_factor            << endl;
-    cerr << "  num-cpus    : " << ncpus                   << endl;
-    cerr << "  num-threads : " << nthreads                << endl;
-    cerr << "  db-type     : " << db_type                 << endl;
-    cerr << "  basedir     : " << basedir                 << endl;
-    cerr << "  txn-flags   : " << hexify(txn_flags)       << endl;
+    cerr << "Database Benchmark:"                           << endl;
+    cerr << "  pid: " << getpid()                           << endl;
+    cerr << "settings:"                                     << endl;
+    cerr << "  par-loading : " << enable_parallel_loading   << endl;
+    cerr << "  pin-cpus    : " << pin_cpus                  << endl;
+    cerr << "  slow-exit   : " << slow_exit                 << endl;
+    cerr << "  retry-txns  : " << retry_aborted_transaction << endl;
+    cerr << "  bench       : " << bench_type                << endl;
+    cerr << "  scale       : " << scale_factor              << endl;
+    cerr << "  num-cpus    : " << ncpus                     << endl;
+    cerr << "  num-threads : " << nthreads                  << endl;
+    cerr << "  db-type     : " << db_type                   << endl;
+    cerr << "  basedir     : " << basedir                   << endl;
+    cerr << "  txn-flags   : " << hexify(txn_flags)         << endl;
     if (run_mode == RUNMODE_TIME)
-      cerr << "  runtime     : " << runtime               << endl;
+      cerr << "  runtime     : " << runtime                 << endl;
     else
-      cerr << "  ops/worker  : " << ops_per_worker        << endl;
+      cerr << "  ops/worker  : " << ops_per_worker          << endl;
 #ifdef USE_VARINT_ENCODING
-    cerr << "  var-encode  : yes"                         << endl;
+    cerr << "  var-encode  : yes"                           << endl;
 #else
-    cerr << "  var-encode  : no"                          << endl;
+    cerr << "  var-encode  : no"                            << endl;
 #endif
 
 #ifdef USE_JEMALLOC
-    cerr << "  allocator   : jemalloc"                    << endl;
+    cerr << "  allocator   : jemalloc"                      << endl;
 #elif defined USE_TCMALLOC
-    cerr << "  allocator   : tcmalloc"                    << endl;
+    cerr << "  allocator   : tcmalloc"                      << endl;
 #elif defined USE_FLOW
-    cerr << "  allocator   : flow"                        << endl;
+    cerr << "  allocator   : flow"                          << endl;
 #else
-    cerr << "  allocator   : libc"                        << endl;
+    cerr << "  allocator   : libc"                          << endl;
 #endif
 
     cerr << "system properties:" << endl;
