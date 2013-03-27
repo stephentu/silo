@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <getopt.h>
 
 #include "../macros.h"
 #include "../varkey.h"
@@ -21,6 +22,11 @@ using namespace util;
 
 static size_t nkeys;
 static const size_t YCSBRecordSize = 100;
+
+// [R, W, RMW, Scan]
+// we're missing remove for now
+// the default is a modification of YCSB "A" we made (80/20 R/W)
+static unsigned g_txn_workload_mix[] = { 80, 20, 0, 0 };
 
 class ycsb_worker : public bench_worker {
 public:
@@ -145,7 +151,6 @@ public:
   virtual workload_desc_vec
   get_workload() const
   {
-    workload_desc_vec w;
     //w.push_back(workload_desc("Read", 0.95, TxnRead));
     //w.push_back(workload_desc("ReadModifyWrite", 0.04, TxnRmw));
     //w.push_back(workload_desc("Write", 0.01, TxnWrite));
@@ -158,8 +163,22 @@ public:
     //w.push_back(workload_desc("Write", 0.5, TxnWrite));
 
     // YCSB workload custom - 80/20 read/write
-    w.push_back(workload_desc("Read",  0.8, TxnRead));
-    w.push_back(workload_desc("Write", 0.2, TxnWrite));
+    //w.push_back(workload_desc("Read",  0.8, TxnRead));
+    //w.push_back(workload_desc("Write", 0.2, TxnWrite));
+
+    workload_desc_vec w;
+    unsigned m = 0;
+    for (size_t i = 0; i < ARRAY_NELEMS(g_txn_workload_mix); i++)
+      m += g_txn_workload_mix[i];
+    ALWAYS_ASSERT(m == 100);
+    if (g_txn_workload_mix[0])
+      w.push_back(workload_desc("Read",  double(g_txn_workload_mix[0])/100.0, TxnRead));
+    if (g_txn_workload_mix[1])
+      w.push_back(workload_desc("Write",  double(g_txn_workload_mix[1])/100.0, TxnWrite));
+    if (g_txn_workload_mix[2])
+      w.push_back(workload_desc("ReadModifyWrite",  double(g_txn_workload_mix[2])/100.0, TxnRmw));
+    if (g_txn_workload_mix[3])
+      w.push_back(workload_desc("Scan",  double(g_txn_workload_mix[3])/100.0, TxnScan));
     return w;
   }
 
@@ -333,6 +352,56 @@ ycsb_do_test(abstract_db *db, int argc, char **argv)
 {
   nkeys = size_t(scale_factor * 1000.0);
   ALWAYS_ASSERT(nkeys > 0);
+
+  // parse options
+  optind = 1;
+  while (1) {
+    static struct option long_options[] = {
+      {"workload-mix" , required_argument , 0 , 'w'},
+      {0, 0, 0, 0}
+    };
+    int option_index = 0;
+    int c = getopt_long(argc, argv, "w:", long_options, &option_index);
+    if (c == -1)
+      break;
+    switch (c) {
+    case 0:
+      if (long_options[option_index].flag != 0)
+        break;
+      abort();
+      break;
+
+    case 'w':
+      {
+        const vector<string> toks = split(optarg, ',');
+        ALWAYS_ASSERT(toks.size() == ARRAY_NELEMS(g_txn_workload_mix));
+        unsigned s = 0;
+        for (size_t i = 0; i < toks.size(); i++) {
+          unsigned p = strtoul(toks[i].c_str(), nullptr, 10);
+          ALWAYS_ASSERT(p >= 0 && p <= 100);
+          s += p;
+          g_txn_workload_mix[i] = p;
+        }
+        ALWAYS_ASSERT(s == 100);
+      }
+      break;
+
+    case '?':
+      /* getopt_long already printed an error message. */
+      exit(1);
+
+    default:
+      abort();
+    }
+  }
+
+  if (verbose) {
+    cerr << "ycsb settings:" << endl;
+    cerr << "  workload_mix: "
+         << format_list(g_txn_workload_mix, g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix))
+         << endl;
+  }
+
   ycsb_bench_runner r(db);
   r.run();
 }

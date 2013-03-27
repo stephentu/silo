@@ -2029,17 +2029,6 @@ private:
   map<string, vector<abstract_ordered_index *>> partitions;
 };
 
-static vector<string>
-split(const string &s, char delim)
-{
-  vector<string> elems;
-  stringstream ss(s);
-  string item;
-  while (getline(ss, item, delim))
-    elems.push_back(item);
-  return elems;
-}
-
 void
 tpcc_do_test(abstract_db *db, int argc, char **argv)
 {
