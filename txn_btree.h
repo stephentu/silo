@@ -5,6 +5,7 @@
 #include "txn.h"
 
 #include <string>
+#include <map>
 #include <type_traits>
 
 // XXX: hacky
@@ -277,7 +278,7 @@ public:
    * completely invalidated and un-usable. Any further operations
    * (other than calling the destructor) are undefined
    */
-  void unsafe_purge(bool dump_stats = false);
+  std::map<std::string, uint64_t> unsafe_purge(bool dump_stats = false);
 
   static void Test();
 
@@ -310,9 +311,10 @@ private:
     size_t purge_stats_nodes;
     size_t purge_stats_nosuffix_nodes;
 
-    void
+    std::map<std::string, uint64_t>
     dump_stats()
     {
+    std::map<std::string, uint64_t> ret;
       size_t v = 0;
       for (std::vector<uint16_t>::iterator it = purge_stats_nkeys_node.begin();
           it != purge_stats_nkeys_node.end(); ++it)
@@ -334,12 +336,15 @@ private:
         std::cerr << "    " << (it->first + sizeof(dbtuple)) << " => " << it->second << std::endl;
       std::cerr << "chain stats  (length => count)" << std::endl;
       for (std::map<size_t, size_t>::iterator it = purge_stats_tuple_chain_counts.begin();
-          it != purge_stats_tuple_chain_counts.end(); ++it)
+          it != purge_stats_tuple_chain_counts.end(); ++it) {
         std::cerr << "    " << it->first << " => " << it->second << std::endl;
+        ret["chain_" + std::to_string(it->first)] += it->second;
+      }
       std::cerr << "deleted recored stats" << std::endl;
       std::cerr << "    logically_removed (total): " << (purge_stats_tuple_logically_removed_no_mark + purge_stats_tuple_logically_removed_with_mark) << std::endl;
       std::cerr << "    logically_removed_no_mark: " << purge_stats_tuple_logically_removed_no_mark << std::endl;
       std::cerr << "    logically_removed_with_mark: " << purge_stats_tuple_logically_removed_with_mark << std::endl;
+      return ret;
     }
 #endif
 

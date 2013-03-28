@@ -545,7 +545,7 @@ private:
 };
 
 template <bool UseConcurrencyControl>
-void
+std::map<std::string, uint64_t>
 kvdb_ordered_index<UseConcurrencyControl>::clear()
 {
   purge_tree_walker<UseConcurrencyControl> w;
@@ -555,6 +555,7 @@ kvdb_ordered_index<UseConcurrencyControl>::clear()
   std::cerr << "purging kvdb index: " << name << std::endl;
   w.dump_stats();
 #endif
+  return std::map<std::string, uint64_t>();
 }
 
 template <bool UseConcurrencyControl>

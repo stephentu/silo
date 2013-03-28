@@ -196,6 +196,8 @@ struct leaf_value_desc {
 
 static event_avg_counter evt_avg_txn_walker_loop_iter_us("avg_txn_walker_loop_iter_us");
 
+volatile bool txn_walker_loop::global_running = true;
+
 void
 txn_walker_loop::run()
 {
@@ -213,7 +215,7 @@ txn_walker_loop::run()
 
   //string name_check = "order_line";
 
-  while (running) {
+  while (running && global_running) {
     // we don't use btree::tree_walk here because we want
     // to only scan parts of the tree under a single RCU
     // region

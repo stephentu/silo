@@ -539,7 +539,7 @@ ndb_ordered_index<Transaction>::size() const
 }
 
 template <template <typename> class Transaction>
-void
+std::map<std::string, uint64_t>
 ndb_ordered_index<Transaction>::clear()
 {
 #ifdef TXN_BTREE_DUMP_PURGE_STATS

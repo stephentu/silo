@@ -213,6 +213,8 @@ bench_runner::run()
     n_aborts += workers[i]->get_ntxn_aborts();
   }
 
+  db->do_txn_finish();
+
   const double elapsed_sec = double(elapsed) / 1000000.0;
   const double agg_throughput = double(n_commits) / elapsed_sec;
   const double avg_per_core_throughput = agg_throughput / double(workers.size());
@@ -289,15 +291,19 @@ bench_runner::run()
   // output for plotting script
   cout << agg_throughput << " " << agg_abort_rate << endl;
 
-  db->do_txn_finish();
-
   if (!slow_exit)
     return;
 
+  map<string, uint64_t> agg_stats;
   for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
        it != open_tables.end(); ++it) {
-    it->second->clear();
+    map_agg(agg_stats, it->second->clear());
     delete it->second;
+  }
+  if (verbose) {
+    for (auto &p : agg_stats)
+      cerr << p.first << " : " << p.second << endl;
+
   }
   open_tables.clear();
 

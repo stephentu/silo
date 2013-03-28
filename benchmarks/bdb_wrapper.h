@@ -68,7 +68,7 @@ public:
     NDB_UNIMPLEMENTED("size");
   }
 
-  virtual void
+  virtual std::map<std::string, uint64_t>
   clear()
   {
     NDB_UNIMPLEMENTED("clear");

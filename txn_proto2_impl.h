@@ -16,6 +16,7 @@ template <typename Traits>
 class txn_walker_loop : public ndb_thread {
   friend class transaction_proto2_static;
   friend class txn_btree_handler<transaction_proto2>;
+  friend class txn_epoch_sync<transaction_proto2>;
 public:
   // not a daemon thread, so we can join when the txn_btree exists
   txn_walker_loop()
@@ -25,6 +26,7 @@ public:
   virtual void run();
 private:
   volatile bool running;
+  static volatile bool global_running; // a hacky way to disable all cleaners temporarily
   std::string name;
   btree *btr;
 };
@@ -398,6 +400,8 @@ struct txn_epoch_sync<transaction_proto2> {
   static inline void
   finish()
   {
+    txn_walker_loop::global_running = false;
+    __sync_synchronize();
   }
 };
 

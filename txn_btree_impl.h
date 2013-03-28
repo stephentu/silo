@@ -153,7 +153,7 @@ retry:
 }
 
 template <template <typename> class Transaction>
-void
+std::map<std::string, uint64_t>
 txn_btree<Transaction>::unsafe_purge(bool dump_stats)
 {
   ALWAYS_ASSERT(!been_destructed);
@@ -164,8 +164,10 @@ txn_btree<Transaction>::unsafe_purge(bool dump_stats)
   underlying_btree.clear();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
   if (!dump_stats)
-    return;
-  w.dump_stats();
+    return std::map<std::string, uint64_t>();
+  return w.dump_stats();
+#else
+  return std::map<std::string, uint64_t>();
 #endif
 }
 

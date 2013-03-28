@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string>
 #include <utility>
+#include <map>
 
 #include "../macros.h"
 #include "str_arena.h"
@@ -124,7 +125,7 @@ public:
   /**
    * Not thread safe for now
    */
-  virtual void clear() = 0;
+  virtual std::map<std::string, uint64_t> clear() = 0;
 };
 
 #endif /* _ABSTRACT_ORDERED_INDEX_H_ */

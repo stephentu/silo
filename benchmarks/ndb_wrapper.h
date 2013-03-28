@@ -113,7 +113,7 @@ public:
       void *txn,
       std::string &&key);
   virtual size_t size() const;
-  virtual void clear();
+  virtual std::map<std::string, uint64_t> clear();
 private:
   std::string name;
   txn_btree<Transaction> btr;

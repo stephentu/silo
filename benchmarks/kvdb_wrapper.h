@@ -74,7 +74,7 @@ public:
       void *txn,
       const std::string &key);
   virtual size_t size() const;
-  virtual void clear();
+  virtual std::map<std::string, uint64_t> clear();
 private:
   std::string name;
   btree btr;
