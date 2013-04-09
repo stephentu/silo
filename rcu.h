@@ -370,6 +370,7 @@ public:
       local_queues[0].alloc_freelist(NQueueGroups);
       local_queues[1].alloc_freelist(NQueueGroups);
       NDB_MEMSET(arenas, 0, sizeof(arenas));
+      NDB_MEMSET(deallocs, 0, sizeof(deallocs));
     }
 
     inline void
@@ -384,11 +385,17 @@ public:
 
     void dealloc(void *p, size_t sz);
 
+    // try to release local arenas back to the allocator based on
+    // some simple thresholding heuristics- should only be called
+    // by background cleaners
+    void try_release();
+
   private:
 
     // local memory allocator
     ssize_t pin_cpu;
     void *arenas[allocator::MAX_ARENAS];
+    size_t deallocs[allocator::MAX_ARENAS]; // keeps track of the number of un-released deallocations
 
     inline void
     ensure_arena(size_t arena)
@@ -411,6 +418,12 @@ public:
   dealloc(void *p, size_t sz)
   {
     return mysync()->dealloc(p, sz);
+  }
+
+  static inline void
+  try_release()
+  {
+    return mysync()->try_release();
   }
 
   /**

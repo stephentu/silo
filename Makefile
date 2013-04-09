@@ -3,7 +3,7 @@
 DEBUG ?= 0
 
 ifeq ($(strip $(DEBUG)),1)
-        CXXFLAGS := -Wall -Werror -g -fno-omit-frame-pointer --std=c++0x
+        CXXFLAGS := -Wall -g -fno-omit-frame-pointer --std=c++0x
 else
         CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 endif
@@ -43,7 +43,8 @@ ifeq ($(USE_PERF_CTRS),1)
 	CXXFLAGS+=-DUSE_PERF_CTRS
 endif
 
-HEADERS = amd64.h \
+HEADERS = allocator.h \
+	amd64.h \
 	btree.h \
 	core.h \
 	counter.h \

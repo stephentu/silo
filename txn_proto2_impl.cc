@@ -417,6 +417,7 @@ txn_walker_loop::run()
       //  continue;
       //const uint64_t sleep_ns = (txn_epoch_us - us) * 1000;
 
+      rcu::try_release();
       const uint64_t sleep_ns = (txn_epoch_us) * 1000;
       ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
       ts.tv_nsec = sleep_ns % ONE_SECOND_NS;

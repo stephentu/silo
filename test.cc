@@ -4,6 +4,7 @@
 #include <tuple>
 #include <unistd.h>
 
+#include "core.h"
 #include "thread.h"
 #include "txn.h"
 #include "btree.h"
@@ -907,6 +908,10 @@ public:
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
     cerr << "PID: " << getpid() << endl;
+
+    // initialize the numa allocator subsystem with the number of CPUs running
+    // + reasonable size per core
+    ::allocator::Initialize(coreid::num_cpus_online(), size_t(128 * (1<<20)));
     varkeytest::Test();
     pxqueuetest::Test();
     CounterTest();
