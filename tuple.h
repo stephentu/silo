@@ -797,9 +797,9 @@ public:
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
       std::min(
-          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + sz),
+          util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + sz),
           max_alloc_sz);
-    char *p = (char *) malloc(alloc_sz);
+    char *p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
     INVARIANT(p);
     INVARIANT((alloc_sz - sizeof(dbtuple)) >= sz);
     return new (p) dbtuple(
@@ -814,15 +814,25 @@ public:
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
       std::min(
-          util::round_up<size_t, /* lgbase*/ 4>(sizeof(dbtuple) + sz),
+          util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + sz),
           max_alloc_sz);
-    char *p = (char *) malloc(alloc_sz);
+    char *p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
     INVARIANT(p);
     return new (p) dbtuple(
         version, value, sz,
         alloc_sz - sizeof(dbtuple), next, set_latest);
   }
 
+private:
+  static inline void
+  destruct_and_free(dbtuple *n)
+  {
+    const size_t alloc_sz = n->alloc_size + sizeof(dbtuple);
+    n->~dbtuple();
+    rcu::dealloc(n, alloc_sz);
+  }
+
+public:
   static void
   deleter(void *p)
   {
@@ -830,8 +840,7 @@ public:
     INVARIANT(n->is_deleting());
     INVARIANT(!n->is_locked());
     INVARIANT(!n->is_modifying());
-    n->~dbtuple();
-    free(n);
+    destruct_and_free(n);
   }
 
   static inline void
@@ -853,8 +862,7 @@ public:
     n->mark_deleting();
     n->unlock();
 #endif
-    n->~dbtuple();
-    free(n);
+    destruct_and_free(n);
   }
 
   static std::string
