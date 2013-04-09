@@ -1,9 +1,11 @@
 #include <sys/mman.h>
 #include <unistd.h>
+#include <map>
 
 #include "allocator.h"
 #include "spinlock.h"
 #include "lockguard.h"
+#include "static_vector.h"
 
 using namespace util;
 
@@ -70,17 +72,22 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
 
   // mmap() the entire region for now, but just as a marker
   // (this does not actually cause physical pages to be allocated)
+  // note: we allocate an extra hugepgsize so we can guarantee alignment
+  // of g_memstart to a huge page boundary
 
-  g_memstart = mmap(nullptr, g_ncpus * g_maxpercore,
+  void * const x = mmap(nullptr, g_ncpus * g_maxpercore + hugepgsize,
       PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (g_memstart == MAP_FAILED) {
+  if (x == MAP_FAILED) {
     perror("mmap");
     ALWAYS_ASSERT(false);
   }
+
+  g_memstart = reinterpret_cast<void *>(iceil(uintptr_t(x), hugepgsize));
   g_memend = reinterpret_cast<char *>(g_memstart) + (g_ncpus * g_maxpercore);
 
-  // XXX: no reason this has to actually hold, but assume it does for now
-  ALWAYS_ASSERT(!(reinterpret_cast<uintptr_t>(g_memstart) % get_page_size()));
+  ALWAYS_ASSERT(!(reinterpret_cast<uintptr_t>(g_memstart) % hugepgsize));
+  ALWAYS_ASSERT(reinterpret_cast<uintptr_t>(g_memend) <=
+      (reinterpret_cast<uintptr_t>(x) + (g_ncpus * g_maxpercore + hugepgsize)));
 
   for (size_t i = 0; i < g_ncpus; i++) {
     g_regions[i]->region_begin = reinterpret_cast<char *>(g_memstart) + (i * g_maxpercore);
@@ -145,14 +152,61 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
   if (reinterpret_cast<uintptr_t>(mypx) % pgsize)
     ALWAYS_ASSERT(false);
 
-  void *x = mmap(mypx, hugepgsize, PROT_READ | PROT_WRITE,
-      MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_FIXED, -1, 0);
+  void * const x = mmap(mypx, hugepgsize, PROT_READ | PROT_WRITE,
+      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   if (unlikely(x == MAP_FAILED)) {
     perror("mmap");
     ALWAYS_ASSERT(false);
   }
+  if (madvise(x, hugepgsize, MADV_HUGEPAGE)) {
+    perror("madvise");
+    ALWAYS_ASSERT(false);
+  }
 
   return initialize_page(x, hugepgsize, (arena + 1) * AllocAlignment);
+}
+
+void
+allocator::ReleaseArenas(void **arenas)
+{
+  // cpu -> [(head, tail)]
+  std::map<size_t, static_vector<std::pair<void *, void *>, MAX_ARENAS>> m;
+  for (size_t arena = 0; arena < MAX_ARENAS; arena++) {
+    void *p = arenas[arena];
+    while (p) {
+      void * const pnext = *reinterpret_cast<void **>(p);
+      const size_t cpu = PointerToCpu(p);
+      auto it = m.find(cpu);
+      if (it == m.end()) {
+        auto &v = m[cpu];
+        v.resize(MAX_ARENAS);
+        *reinterpret_cast<void **>(p) = nullptr;
+        v[arena].first = v[arena].second = p;
+      } else {
+        auto &v = it->second;
+        if (!v[arena].second) {
+          *reinterpret_cast<void **>(p) = nullptr;
+          v[arena].first = v[arena].second = p;
+        } else {
+          *reinterpret_cast<void **>(p) = v[arena].first;
+          v[arena].first = p;
+        }
+      }
+      p = pnext;
+    }
+  }
+  for (auto &p : m) {
+    INVARIANT(!p.second.empty());
+    percore &pc = g_regions[p.first].elem;
+    lock_guard<spinlock> l(pc.lock);
+    for (size_t arena = 0; arena < MAX_ARENAS; arena++) {
+      INVARIANT(bool(p.second[arena].first) == bool(p.second[arena].second));
+      if (!p.second[arena].first)
+        continue;
+      *reinterpret_cast<void **>(p.second[arena].second) = pc.arenas[arena];
+      pc.arenas[arena] = p.second[arena].first;
+    }
+  }
 }
 
 void *allocator::g_memstart = nullptr;

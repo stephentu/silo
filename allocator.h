@@ -2,6 +2,8 @@
 #define _NDB_ALLOCATOR_H_
 
 #include <cstdint>
+#include <iterator>
+
 #include "util.h"
 #include "macros.h"
 #include "spinlock.h"
@@ -19,6 +21,9 @@ public:
   // returns an arena linked-list
   static void *
   AllocateArenas(size_t cpu, size_t sz);
+
+  static void
+  ReleaseArenas(void **arenas);
 
   static const size_t LgAllocAlignment = 4; // all allocations aligned to 2^4 = 16
   static const size_t AllocAlignment = 1 << LgAllocAlignment;
@@ -46,7 +51,10 @@ public:
   {
     INVARIANT(p >= g_memstart);
     INVARIANT(p < g_memend);
-    return (reinterpret_cast<char *>(p) - reinterpret_cast<char *>(g_memstart)) % g_maxpercore;
+    const size_t ret =
+      (reinterpret_cast<char *>(p) - reinterpret_cast<char *>(g_memstart)) / g_maxpercore;
+    INVARIANT(ret < g_ncpus);
+    return ret;
   }
 
 private:

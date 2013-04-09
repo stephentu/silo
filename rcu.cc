@@ -123,6 +123,23 @@ rcu::sync::dealloc(void *p, size_t sz)
   ALWAYS_ASSERT(arena < ::allocator::MAX_ARENAS);
   *reinterpret_cast<void **>(p) = arenas[arena];
   arenas[arena] = p;
+  deallocs[arena]++;
+}
+
+void
+rcu::sync::try_release()
+{
+  // XXX: tune
+  static const size_t threshold = 1000;
+  // only release if there are > threshold segments to release (over all arenas)
+  size_t acc = 0;
+  for (size_t i = 0; i < ::allocator::MAX_ARENAS; i++)
+    acc += deallocs[i];
+  if (acc > threshold) {
+    ::allocator::ReleaseArenas(arenas);
+    NDB_MEMSET(arenas, 0, sizeof(arenas));
+    NDB_MEMSET(deallocs, 0, sizeof(deallocs));
+  }
 }
 
 void
@@ -304,6 +321,7 @@ public:
       evt_avg_gc_reaper_queue_len.offer(n);
       evt_rcu_deletes += n;
       stack_queue.clear();
+      rcu::try_release();
     }
   }
 

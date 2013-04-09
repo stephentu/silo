@@ -5,8 +5,11 @@
 #include <set>
 #include <stack>
 #include <vector>
-
 #include <sstream>
+#include <atomic>
+#include <memory>
+
+#include "core.h"
 #include "btree.h"
 #include "thread.h"
 #include "txn.h"
@@ -2780,6 +2783,53 @@ mp_test4()
   ALWAYS_ASSERT(btr.size() == nkeys);
 }
 
+namespace mp_test_pinning_ns {
+  static const size_t keys_per_thread = 1000;
+  static const size_t nthreads = 4;
+  static atomic<bool> running(true);
+  class worker : public btree_worker {
+  public:
+    worker(unsigned int thread, btree &btr) : btree_worker(btr), thread(thread) {}
+    virtual void
+    run()
+    {
+      rcu::pin_current_thread(thread % coreid::num_cpus_online());
+      for (unsigned mode = 0; running.load(); mode++) {
+        for (size_t i = thread * keys_per_thread;
+             running.load() && i < (thread + 1) * keys_per_thread;
+             i++) {
+          if (mode % 2) {
+            // remove
+            btr->remove(u64_varkey(i));
+          } else {
+            // insert
+            btr->insert(u64_varkey(i), (btree::value_type) i);
+          }
+        }
+      }
+    }
+  private:
+    unsigned int thread;
+  };
+}
+
+static void
+mp_test_pinning()
+{
+  using namespace mp_test_pinning_ns;
+  btree btr;
+  vector<shared_ptr<worker>> workers;
+  for (size_t i = 0; i < nthreads; i++)
+    workers.emplace_back(new worker(i, btr));
+  for (auto &p : workers)
+    p->start();
+  sleep(5);
+  running.store(false);
+  for (auto &p : workers)
+    p->join();
+  btr.invariant_checker();
+}
+
 namespace mp_test5_ns {
 
   static const size_t niters = 100000;
@@ -3547,6 +3597,8 @@ btree::TestFast()
   test_null_keys_2();
   test_random_keys();
   test_insert_remove_mix();
+  mp_test_pinning();
+  cout << "btree::TestFast passed" << endl;
 }
 
 void
@@ -3565,6 +3617,7 @@ btree::TestSlow()
   //perf_test();
   //read_only_perf_test();
   //write_only_perf_test();
+  cout << "btree::TestSlow passed" << endl;
 }
 
 string

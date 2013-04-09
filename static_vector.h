@@ -142,6 +142,24 @@ public:
   {
   }
 
+  inline void
+  resize(size_t n, value_type val = value_type())
+  {
+    INVARIANT(n <= StaticSize);
+    if (n > this->n) {
+      // expand
+      while (this->n < n)
+        new (&ptr()[this->n++]) T(val);
+    } else if (n < this->n) {
+      // shrink
+      while (this->n > n) {
+        if (!is_trivially_destructible)
+          ptr()[this->n - 1].~T();
+        this->n--;
+      }
+    }
+  }
+
   // non-standard API
   inline bool is_small_type() const { return true; }
 
