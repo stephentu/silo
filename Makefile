@@ -8,7 +8,7 @@ else
         CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 endif
 
-LDFLAGS := -lpthread
+LDFLAGS := -lpthread -lnuma
 
 # 0 = libc malloc
 # 1 = jemalloc
@@ -78,7 +78,8 @@ HEADERS = amd64.h \
 	varint.h \
 	varkey.h \
 	xbuf.h
-SRCFILES = btree.cc \
+SRCFILES = allocator.cc \
+	btree.cc \
 	core.cc \
 	counter.cc \
 	hash_bytes.cc \

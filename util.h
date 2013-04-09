@@ -133,21 +133,32 @@ hexify(const std::string &input)
   return output;
 }
 
+template <typename T, unsigned int lgbase>
+struct mask_ {
+  static const T value = ((T(1) << lgbase) - 1);
+};
+
 // rounding
 template <typename T, unsigned int lgbase>
-static inline ALWAYS_INLINE T
+static constexpr inline ALWAYS_INLINE T
 round_up(T t)
 {
-  const T mask = (T(1) << lgbase) - 1;
-  return (t + mask) & ~mask;
+  return (t + mask_<T, lgbase>::value) & ~mask_<T, lgbase>::value;
 }
 
 template <typename T, unsigned int lgbase>
-static inline ALWAYS_INLINE T
+static constexpr inline ALWAYS_INLINE T
 round_down(T t)
 {
-  const T mask = (T(1) << lgbase) - 1;
-  return (t & ~mask);
+  return (t & ~mask_<T, lgbase>::value);
+}
+
+template <typename T, typename U>
+static inline ALWAYS_INLINE T
+iceil(T x, U y)
+{
+  U mod = x % y;
+  return x + (mod ? y - mod : 0);
 }
 
 //// xor-shift:

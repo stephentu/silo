@@ -1,6 +1,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <string.h>
+#include <numa.h>
+#include <sched.h>
 #include <iostream>
 
 #include "rcu.h"
@@ -94,6 +96,35 @@ rcu::unregister_sync(pthread_t p)
   return s;
 }
 
+void *
+rcu::sync::alloc(size_t sz)
+{
+  auto sizes = ::allocator::ArenaSize(sz);
+  auto arena = sizes.second;
+  if (pin_cpu == -1 || arena >= ::allocator::MAX_ARENAS)
+    // fallback to regular allocator
+    return malloc(sz);
+  ensure_arena(arena);
+  void *p = arenas[arena];
+  ALWAYS_ASSERT(p);
+  arenas[arena] = *reinterpret_cast<void **>(p);
+  return p;
+}
+
+void
+rcu::sync::dealloc(void *p, size_t sz)
+{
+  if (!::allocator::ManagesPointer(p)) {
+    ::free(p);
+    return;
+  }
+  auto sizes = ::allocator::ArenaSize(sz);
+  auto arena = sizes.second;
+  ALWAYS_ASSERT(arena < ::allocator::MAX_ARENAS);
+  *reinterpret_cast<void **>(p) = arenas[arena];
+  arenas[arena] = p;
+}
+
 void
 rcu::enable_slowpath()
 {
@@ -114,17 +145,13 @@ rcu::enable_slowpath()
 void
 rcu::region_begin()
 {
-  if (unlikely(!tl_sync)) {
-    INVARIANT(!tl_crit_section_depth);
-    enable();
-    tl_sync = register_sync(pthread_self());
-  }
-  INVARIANT(tl_sync);
+  sync * const s = mysync();
+  INVARIANT(s);
   INVARIANT(gc_thread_started);
   if (!tl_crit_section_depth++) {
-    tl_sync->local_critical_mutex.lock();
-    tl_sync->local_epoch = global_epoch;
-    INVARIANT(tl_sync->local_epoch != cleaning_epoch);
+    s->local_critical_mutex.lock();
+    s->local_epoch = global_epoch;
+    INVARIANT(s->local_epoch != cleaning_epoch);
   }
 }
 
@@ -212,6 +239,29 @@ bool
 rcu::in_rcu_region()
 {
   return tl_crit_section_depth;
+}
+
+rcu::sync *
+rcu::mysync()
+{
+  if (unlikely(!tl_sync)) {
+    INVARIANT(!tl_crit_section_depth);
+    enable();
+    tl_sync = register_sync(pthread_self());
+  }
+  return tl_sync;
+}
+
+void
+rcu::pin_current_thread(size_t cpu)
+{
+  sync * const s = mysync();
+  s->set_pin_cpu(cpu);
+  auto node = numa_node_of_cpu(cpu);
+  // pin to node
+  ALWAYS_ASSERT(!numa_run_on_node(node));
+  // is numa_run_on_node() guaranteed to take effect immediately?
+  ALWAYS_ASSERT(!sched_yield());
 }
 
 static const uint64_t rcu_epoch_us = rcu::EpochTimeUsec;

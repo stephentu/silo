@@ -9,6 +9,7 @@
 #include <list>
 #include <utility>
 
+#include "allocator.h"
 #include "counter.h"
 #include "spinlock.h"
 #include "util.h"
@@ -353,18 +354,64 @@ public:
 
   // all RCU threads interact w/ the RCU subsystem via
   // a sync struct
+  //
+  // this is also serving as a memory allocator for the time being
   struct sync {
+
+    // rcu
     volatile epoch_t local_epoch CACHE_ALIGNED;
     spinlock local_critical_mutex;
     px_queue local_queues[2]; // XXX: cache align?
     px_queue scratch_queue;
+
     sync(epoch_t local_epoch)
-      : local_epoch(local_epoch)
+      : local_epoch(local_epoch), pin_cpu(-1)
     {
       local_queues[0].alloc_freelist(NQueueGroups);
       local_queues[1].alloc_freelist(NQueueGroups);
+      NDB_MEMSET(arenas, 0, sizeof(arenas));
+    }
+
+    inline void
+    set_pin_cpu(size_t cpu)
+    {
+      pin_cpu = cpu;
+    }
+
+    // allocate a block of memory of size sz. caller needs to remember
+    // the size of the allocation when calling free
+    void *alloc(size_t sz);
+
+    void dealloc(void *p, size_t sz);
+
+  private:
+
+    // local memory allocator
+    ssize_t pin_cpu;
+    void *arenas[allocator::MAX_ARENAS];
+
+    inline void
+    ensure_arena(size_t arena)
+    {
+      if (likely(arenas[arena]))
+        return;
+      INVARIANT(pin_cpu >= 0);
+      arenas[arena] = allocator::AllocateArenas(pin_cpu, arena);
     }
   };
+
+  // thin forwarders
+  static inline void *
+  alloc(size_t sz)
+  {
+    return mysync()->alloc(sz);
+  }
+
+  static inline void
+  dealloc(void *p, size_t sz)
+  {
+    return mysync()->dealloc(p, sz);
+  }
 
   /**
    * precondition: p must not already be registered - caller is
@@ -404,9 +451,19 @@ public:
 
   static bool in_rcu_region();
 
+  // pin the current thread to CPU.
+  //
+  // this CPU number corresponds to the ones exposed by
+  // sched.h. note that we currently pin to the numa node
+  // associated with the cpu. memory allocation, however, is
+  // CPU-specific
+  static void pin_current_thread(size_t cpu);
+
 private:
 
   static void enable_slowpath();
+
+  static sync *mysync();
 
   static void *gc_thread_loop(void *p);
   static spinlock &rcu_mutex();

@@ -530,11 +530,7 @@ private:
     static inline leaf_node*
     alloc()
     {
-#ifdef BTREE_NODE_ALLOC_CACHE_ALIGNED
-      void *p = memalign(CACHELINE_SIZE, sizeof(leaf_node));
-#else
-      void *p = malloc(sizeof(leaf_node));
-#endif
+      void * const p = rcu::alloc(LeafNodeAllocSize);
       INVARIANT(p);
       return new (p) leaf_node;
     }
@@ -546,7 +542,7 @@ private:
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
       n->~leaf_node();
-      free(n);
+      rcu::dealloc(p, LeafNodeAllocSize);
     }
 
     static inline void
@@ -645,11 +641,7 @@ private:
     static inline internal_node*
     alloc()
     {
-#ifdef BTREE_NODE_ALLOC_CACHE_ALIGNED
-      void *p = memalign(CACHELINE_SIZE, sizeof(internal_node));
-#else
-      void *p = malloc(sizeof(internal_node));
-#endif
+      void * const p = rcu::alloc(InternalNodeAllocSize);
       INVARIANT(p);
       return new (p) internal_node;
     }
@@ -661,7 +653,7 @@ private:
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
       n->~internal_node();
-      free(n);
+      rcu::dealloc(p, InternalNodeAllocSize);
     }
 
     static inline void
@@ -674,6 +666,14 @@ private:
     }
 
   } PACKED;
+
+#ifdef BTREE_NODE_ALLOC_CACHE_ALIGNED
+  static const size_t LeafNodeAllocSize = util::round_up<size_t, LG_CACHELINE_SIZE>(sizeof(leaf_node));
+  static const size_t InternalNodeAllocSize = util::round_up<size_t, LG_CACHELINE_SIZE>(sizeof(internal_node));
+#else
+  static const size_t LeafNodeAllocSize = sizeof(leaf_node);
+  static const size_t InternalNodeAllocSize = sizeof(internal_node);
+#endif
 
   static inline leaf_node*
   AsLeaf(node *n)

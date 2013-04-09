@@ -1,3 +1,7 @@
+Baseline:
+
+$ sudo apt-get install libnuma-dev
+
 To use with jemalloc:
 
 $ sudo apt-get install libjemalloc-dev
