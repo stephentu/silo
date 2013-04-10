@@ -285,6 +285,7 @@ protected: \
     ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
     const unsigned long pinid = (wid - 1) % MaxCpuForPinning();
     rcu::pin_current_thread(pinid);
+    rcu::fault_region();
   }
 
 public:

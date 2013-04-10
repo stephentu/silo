@@ -380,6 +380,12 @@ public:
       pin_cpu = cpu;
     }
 
+    inline ssize_t
+    get_pin_cpu() const
+    {
+      return pin_cpu;
+    }
+
     // allocate a block of memory of size sz. caller needs to remember
     // the size of the allocation when calling free
     void *alloc(size_t sz);
@@ -474,6 +480,8 @@ public:
   // associated with the cpu. memory allocation, however, is
   // CPU-specific
   static void pin_current_thread(size_t cpu);
+
+  static void fault_region();
 
 private:
 

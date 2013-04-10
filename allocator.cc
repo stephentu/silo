@@ -90,8 +90,10 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
       (reinterpret_cast<uintptr_t>(x) + (g_ncpus * g_maxpercore + hugepgsize)));
 
   for (size_t i = 0; i < g_ncpus; i++) {
-    g_regions[i]->region_begin = reinterpret_cast<char *>(g_memstart) + (i * g_maxpercore);
-    g_regions[i]->region_end   = reinterpret_cast<char *>(g_memstart) + ((i + 1) * g_maxpercore);
+    g_regions[i]->region_begin =
+      reinterpret_cast<char *>(g_memstart) + (i * g_maxpercore);
+    g_regions[i]->region_end   =
+      reinterpret_cast<char *>(g_memstart) + ((i + 1) * g_maxpercore);
   }
 
   s_init = true;
@@ -120,7 +122,6 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
   INVARIANT(arena < MAX_ARENAS);
   INVARIANT(g_memstart);
   INVARIANT(g_maxpercore);
-  static const size_t pgsize = GetPageSize();
   static const size_t hugepgsize = GetHugepageSize();
 
   // check w/o locking first
@@ -140,30 +141,35 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
 
   // do allocation in region
   void *mypx = nullptr;
+  bool needs_mmap = false;
   {
     lock_guard<spinlock> l(pc.lock);
     mypx = pc.region_begin;
     pc.region_begin = reinterpret_cast<char *>(pc.region_begin) + hugepgsize;
+    needs_mmap = !pc.region_faulted;
   }
 
   // out of memory?
   ALWAYS_ASSERT(mypx < pc.region_end);
 
-  if (reinterpret_cast<uintptr_t>(mypx) % pgsize)
+  if (reinterpret_cast<uintptr_t>(mypx) % hugepgsize)
     ALWAYS_ASSERT(false);
 
-  void * const x = mmap(mypx, hugepgsize, PROT_READ | PROT_WRITE,
-      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-  if (unlikely(x == MAP_FAILED)) {
-    perror("mmap");
-    ALWAYS_ASSERT(false);
-  }
-  if (madvise(x, hugepgsize, MADV_HUGEPAGE)) {
-    perror("madvise");
-    ALWAYS_ASSERT(false);
+  if (needs_mmap) {
+    void * const x = mmap(mypx, hugepgsize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    if (unlikely(x == MAP_FAILED)) {
+      perror("mmap");
+      ALWAYS_ASSERT(false);
+    }
+    INVARIANT(x == mypx);
+    if (madvise(x, hugepgsize, MADV_HUGEPAGE)) {
+      perror("madvise");
+      ALWAYS_ASSERT(false);
+    }
   }
 
-  return initialize_page(x, hugepgsize, (arena + 1) * AllocAlignment);
+  return initialize_page(mypx, hugepgsize, (arena + 1) * AllocAlignment);
 }
 
 void
@@ -207,6 +213,38 @@ allocator::ReleaseArenas(void **arenas)
       pc.arenas[arena] = p.second[arena].first;
     }
   }
+}
+
+void
+allocator::FaultRegion(size_t cpu)
+{
+  static const size_t hugepgsize = GetHugepageSize();
+  INVARIANT(cpu < g_ncpus);
+  percore &pc = g_regions[cpu].elem;
+  if (pc.region_faulted)
+    return;
+  lock_guard<spinlock> l(pc.lock);
+  if (pc.region_faulted)
+    return;
+  // mmap the entire region + memset it for faulting
+  if (reinterpret_cast<uintptr_t>(pc.region_begin) % hugepgsize)
+    ALWAYS_ASSERT(false);
+  const size_t sz =
+    reinterpret_cast<uintptr_t>(pc.region_end) -
+    reinterpret_cast<uintptr_t>(pc.region_begin);
+  void * const x = mmap(pc.region_begin, sz, PROT_READ | PROT_WRITE,
+      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+  if (unlikely(x == MAP_FAILED)) {
+    perror("mmap");
+    ALWAYS_ASSERT(false);
+  }
+  INVARIANT(x == pc.region_begin);
+  if (madvise(x, sz, MADV_HUGEPAGE)) {
+    perror("madvise");
+    ALWAYS_ASSERT(false);
+  }
+  NDB_MEMSET(pc.region_begin, 0, sz);
+  pc.region_faulted = true;
 }
 
 void *allocator::g_memstart = nullptr;

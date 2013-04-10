@@ -37,6 +37,10 @@ public:
     return std::make_pair(allocsz, arena);
   }
 
+  // slow, but only needs to be called on initialization
+  static void
+  FaultRegion(size_t cpu);
+
   // returns true if managed by this allocator, false otherwise
   static inline bool
   ManagesPointer(void *p)
@@ -68,10 +72,11 @@ private:
   static size_t g_ncpus;
   static size_t g_maxpercore;
 
-
   struct percore {
     percore()
-      : region_begin(nullptr), region_end(nullptr)
+      : region_begin(nullptr),
+        region_end(nullptr),
+        region_faulted(false)
     {
       NDB_MEMSET(arenas, 0, sizeof(arenas));
     }
@@ -82,6 +87,8 @@ private:
     // set by Initialize()
     void *region_begin;
     void *region_end;
+
+    bool region_faulted;
 
     spinlock lock;
     void *arenas[MAX_ARENAS];

@@ -288,6 +288,15 @@ rcu::pin_current_thread(size_t cpu)
   s->do_release();
 }
 
+void
+rcu::fault_region()
+{
+  sync * const s = mysync();
+  if (s->get_pin_cpu() == -1)
+    return;
+  ::allocator::FaultRegion(s->get_pin_cpu());
+}
+
 static const uint64_t rcu_epoch_us = rcu::EpochTimeUsec;
 static const uint64_t rcu_epoch_ns = rcu::EpochTimeNsec;
 
