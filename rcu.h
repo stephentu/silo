@@ -348,7 +348,12 @@ public:
 
   // XXX(stephentu): tune?
   static const size_t NGCReapers = 4;
+
+#ifdef CHECK_INVARIANTS
   static const uint64_t EpochTimeUsec = 10 * 1000; /* 10 ms */
+#else
+  static const uint64_t EpochTimeUsec = 1000 * 1000; /* 1 sec */
+#endif
   static const uint64_t EpochTimeNsec = EpochTimeUsec * 1000;
   static const size_t NQueueGroups = 32;
 

@@ -41,6 +41,7 @@ static event_counter evt_rcu_global_queue_reaps("rcu_global_queue_reaps");
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
 static event_avg_counter evt_avg_rcu_local_delete_queue_len("avg_rcu_local_delete_queue_len");
+static event_avg_counter evt_avg_rcu_sync_try_release("avg_rcu_sync_try_release");
 
 spinlock &
 rcu::rcu_mutex()
@@ -130,13 +131,15 @@ void
 rcu::sync::try_release()
 {
   // XXX: tune
-  static const size_t threshold = 1000;
+  static const size_t threshold = 10000;
   // only release if there are > threshold segments to release (over all arenas)
   size_t acc = 0;
   for (size_t i = 0; i < ::allocator::MAX_ARENAS; i++)
     acc += deallocs[i];
-  if (acc > threshold)
+  if (acc > threshold) {
     do_release();
+    evt_avg_rcu_sync_try_release.offer(acc);
+  }
 }
 
 void
