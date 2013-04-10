@@ -37,6 +37,7 @@ using namespace util;
   x(oorder_c_id_idx) \
   x(order_line) \
   x(stock) \
+  x(stock_data) \
   x(warehouse)
 
 static inline ALWAYS_INLINE size_t
@@ -720,7 +721,7 @@ protected:
   virtual void
   load()
   {
-    string obj_buf;
+    string obj_buf, obj_buf1;
 
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ?
@@ -742,37 +743,41 @@ protected:
           const size_t iend = std::min((b + 1) * batchsize + 1, NumItems());
           for (uint i = (b * batchsize + 1); i <= iend; i++) {
             const stock::key k(w, i);
+            const stock_data::key k_data(w, i);
 
             stock::value v;
             v.s_quantity = RandomNumber(r, 10, 100);
             v.s_ytd = 0;
             v.s_order_cnt = 0;
             v.s_remote_cnt = 0;
+
+            stock_data::value v_data;
             const int len = RandomNumber(r, 26, 50);
             if (RandomNumber(r, 1, 100) > 10) {
               const string s_data = RandomStr(r, len);
-              v.s_data.assign(s_data);
+              v_data.s_data.assign(s_data);
             } else {
               const int startOriginal = RandomNumber(r, 2, (len - 8));
               const string s_data = RandomStr(r, startOriginal + 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 7);
-              v.s_data.assign(s_data);
+              v_data.s_data.assign(s_data);
             }
-            v.s_dist_01.assign(RandomStr(r, 24));
-            v.s_dist_02.assign(RandomStr(r, 24));
-            v.s_dist_03.assign(RandomStr(r, 24));
-            v.s_dist_04.assign(RandomStr(r, 24));
-            v.s_dist_05.assign(RandomStr(r, 24));
-            v.s_dist_06.assign(RandomStr(r, 24));
-            v.s_dist_07.assign(RandomStr(r, 24));
-            v.s_dist_08.assign(RandomStr(r, 24));
-            v.s_dist_09.assign(RandomStr(r, 24));
-            v.s_dist_10.assign(RandomStr(r, 24));
+            v_data.s_dist_01.assign(RandomStr(r, 24));
+            v_data.s_dist_02.assign(RandomStr(r, 24));
+            v_data.s_dist_03.assign(RandomStr(r, 24));
+            v_data.s_dist_04.assign(RandomStr(r, 24));
+            v_data.s_dist_05.assign(RandomStr(r, 24));
+            v_data.s_dist_06.assign(RandomStr(r, 24));
+            v_data.s_dist_07.assign(RandomStr(r, 24));
+            v_data.s_dist_08.assign(RandomStr(r, 24));
+            v_data.s_dist_09.assign(RandomStr(r, 24));
+            v_data.s_dist_10.assign(RandomStr(r, 24));
 
             checker::SanityCheckStock(&k, &v);
             const size_t sz = Size(v);
             stock_total_sz += sz;
             n_stocks++;
             tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, v));
+            tbl_stock_data(w)->insert(txn, Encode(k_data), Encode(obj_buf1, v_data));
           }
           if (db->commit_txn(txn)) {
             b++;
@@ -1276,6 +1281,11 @@ tpcc_worker::txn_new_order()
       const stock::value *v_s = Decode(obj_v, v_s_temp);
       checker::SanityCheckStock(&k_s, v_s);
 
+      const stock_data::key k_s_data(ol_supply_w_id, ol_i_id);
+      ALWAYS_ASSERT(tbl_stock_data(ol_supply_w_id)->get(txn, Encode(obj_key1, k_s_data), obj_v));
+      stock_data::value v_s_data_temp;
+      const stock_data::value *v_s_data = Decode(obj_v, v_s_data_temp);
+
       stock::value v_s_new(*v_s);
       if (v_s_new.s_quantity - ol_quantity >= 10)
         v_s_new.s_quantity -= ol_quantity;
@@ -1297,34 +1307,34 @@ tpcc_worker::txn_new_order()
       const inline_str_fixed<24> *ol_dist_info;
       switch (districtID) {
       case 1:
-        ol_dist_info = &v_s->s_dist_01;
+        ol_dist_info = &v_s_data->s_dist_01;
         break;
       case 2:
-        ol_dist_info = &v_s->s_dist_02;
+        ol_dist_info = &v_s_data->s_dist_02;
         break;
       case 3:
-        ol_dist_info = &v_s->s_dist_03;
+        ol_dist_info = &v_s_data->s_dist_03;
         break;
       case 4:
-        ol_dist_info = &v_s->s_dist_04;
+        ol_dist_info = &v_s_data->s_dist_04;
         break;
       case 5:
-        ol_dist_info = &v_s->s_dist_05;
+        ol_dist_info = &v_s_data->s_dist_05;
         break;
       case 6:
-        ol_dist_info = &v_s->s_dist_06;
+        ol_dist_info = &v_s_data->s_dist_06;
         break;
       case 7:
-        ol_dist_info = &v_s->s_dist_07;
+        ol_dist_info = &v_s_data->s_dist_07;
         break;
       case 8:
-        ol_dist_info = &v_s->s_dist_08;
+        ol_dist_info = &v_s_data->s_dist_08;
         break;
       case 9:
-        ol_dist_info = &v_s->s_dist_09;
+        ol_dist_info = &v_s_data->s_dist_09;
         break;
       case 10:
-        ol_dist_info = &v_s->s_dist_10;
+        ol_dist_info = &v_s_data->s_dist_10;
         break;
       default:
         ALWAYS_ASSERT(false);
