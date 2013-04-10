@@ -346,6 +346,7 @@ private:
     check_version(uint64_t version) const
     {
       COMPILER_MEMORY_FENCE;
+      INVARIANT(!IsModifying(version));
       // are the version the same, modulo the locked bit?
       return (hdr & ~HDR_LOCKED_MASK) == (version & ~HDR_LOCKED_MASK);
     }

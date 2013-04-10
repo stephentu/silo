@@ -949,7 +949,9 @@ btree::insert0(node *np,
       }
       leaf->inc_key_slots_used();
 
-      //leaf->base_invariant_unique_keys_check();
+//#ifdef CHECK_INVARIANTS
+//      leaf->base_invariant_unique_keys_check();
+//#endif
       if (insert_info) {
         insert_info->first = leaf;
         insert_info->second = node::Version(leaf->unstable_version()); // we hold lock on leaf
@@ -1515,7 +1517,9 @@ btree::remove0(node *np,
         // before it gets updated)
         SINGLE_THREADED_INVARIANT(!leaf->prev || leaf->prev->next == leaf);
 
-        //leaf->base_invariant_unique_keys_check();
+//#ifdef CHECK_INVARIANTS
+//        leaf->base_invariant_unique_keys_check();
+//#endif
         leaf_node::release(right_sibling);
         return R_MERGE_WITH_RIGHT;
       }

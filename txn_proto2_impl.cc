@@ -75,7 +75,7 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
 
   do_dbtuple_chain_cleanup(tuple);
 
-  if (!tuple->size) {
+  if (!tuple->size && !tuple->is_deleting()) {
     // latest version is a deleted entry, so try to delete
     // from the tree
     const uint64_t v = EpochId(tuple->version);
@@ -284,6 +284,13 @@ txn_walker_loop::run()
           INVARIANT(depth == q.size());
 
           const uint64_t version = cur->stable_version();
+          if (btree::node::IsDeleting(version)) {
+            // skip deleted nodes, because their suffixes will be empty
+            // NB: can read next ptr w/o validation, because stable deleting
+            // nodes will not mutate
+            cur = cur->next;
+            continue;
+          }
           const size_t n = cur->key_slots_used();
           typename vec<pair<btree::key_slice, btree::node *>>::type layers;
           typename vec<leaf_value_desc>::type values;
@@ -311,6 +318,7 @@ txn_walker_loop::run()
             INVARIANT(klen <= 9);
             INVARIANT(tuple);
             if (klen == 9) {
+              INVARIANT(values[i].suffix.size() > 0);
               s.resize(8 * (q.size() + 1) + values[i].suffix.size());
               NDB_MEMCPY((char *) s.data() + 8 * q.size(), values[i].keyslice(), 8);
               NDB_MEMCPY((char *) s.data() + 8 * (q.size() + 1),
