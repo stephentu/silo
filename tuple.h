@@ -145,6 +145,11 @@ public:
 
   dbtuple *next;
 
+#ifdef TUPLE_CHECK_KEY
+  // for debugging
+  std::string key;
+#endif
+
   // must be last field
   uint8_t value_start[0];
 
@@ -869,7 +874,9 @@ public:
   VersionInfoStr(version_t v);
 
 }
+#ifndef TUPLE_CHECK_KEY
 PACKED
+#endif
 ;
 
 #endif /* _NDB_TUPLE_H_ */

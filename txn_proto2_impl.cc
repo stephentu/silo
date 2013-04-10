@@ -88,7 +88,13 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
       // an empty record is irrelevant.
       btree::value_type removed = 0;
       const bool did_remove = btr->remove(varkey(key), &removed);
-      if (!did_remove) INVARIANT(false);
+      if (!did_remove) {
+        cerr << " *** could not remove key: " << hexify(key) << endl;
+#ifdef TUPLE_CHECK_KEY
+        cerr << " *** original key        : " << hexify(tuple->key) << endl;
+#endif
+        INVARIANT(false);
+      }
       INVARIANT(removed == (btree::value_type) tuple);
       dbtuple::release(tuple); // release() marks deleted
       ++evt_try_delete_unlinks;
@@ -317,6 +323,8 @@ txn_walker_loop::run()
             const size_t klen = values[i].len;
             INVARIANT(klen <= 9);
             INVARIANT(tuple);
+            const size_t qsize UNUSED = q.size();
+            const size_t vsize UNUSED = values[i].suffix.size();
             if (klen == 9) {
               INVARIANT(values[i].suffix.size() > 0);
               s.resize(8 * (q.size() + 1) + values[i].suffix.size());

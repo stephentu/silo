@@ -434,6 +434,9 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
   INVARIANT(find_read_set(tuple) == read_set.end());
   INVARIANT(tuple->is_latest());
   INVARIANT(tuple->version == dbtuple::MAX_TID);
+#ifdef TUPLE_CHECK_KEY
+  tuple->key.assign(key.data(), key.size());
+#endif
   tuple->lock(true);
   // XXX: underlying btree api should return the existing value if
   // insert fails- this would allow us to avoid having to do another search
