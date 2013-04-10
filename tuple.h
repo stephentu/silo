@@ -166,8 +166,9 @@ private:
 
   // creates a record with a tentative value at MAX_TID
   dbtuple(const_record_type r,
-          size_type size, size_type alloc_size)
-    : hdr(HDR_LATEST_MASK),
+          size_type size, size_type alloc_size, bool acquire_lock)
+    : hdr(HDR_LATEST_MASK |
+          (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0)),
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
       lock_owner(0), // not portable
 #endif
@@ -181,6 +182,14 @@ private:
     NDB_MEMCPY(&value_start[0], r, size);
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+    if (acquire_lock) {
+      lock_owner = pthread_self();
+      AddTupleToLockRegion(this);
+      INVARIANT(is_lock_owner());
+    }
+#endif
+    COMPILER_MEMORY_FENCE; // for acquire_lock
   }
 
   // creates a record with a non-empty, non tentative value
@@ -795,7 +804,7 @@ public:
   // just internal vs external fragmentation)
 
   static inline dbtuple *
-  alloc_first(const_record_type value, size_type sz)
+  alloc_first(const_record_type value, size_type sz, bool acquire_lock)
   {
     INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
     const size_t max_alloc_sz =
@@ -808,7 +817,7 @@ public:
     INVARIANT(p);
     INVARIANT((alloc_sz - sizeof(dbtuple)) >= sz);
     return new (p) dbtuple(
-        value, sz, alloc_sz - sizeof(dbtuple));
+        value, sz, alloc_sz - sizeof(dbtuple), acquire_lock);
   }
 
   static inline dbtuple *

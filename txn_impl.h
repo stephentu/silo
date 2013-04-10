@@ -430,14 +430,15 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
 {
   // perf: ~900 tsc/alloc on istc11.csail.mit.edu
   dbtuple * const tuple = dbtuple::alloc_first(
-      (dbtuple::const_record_type) value.data(), value.size());
+      (dbtuple::const_record_type) value.data(), value.size(), true);
   INVARIANT(find_read_set(tuple) == read_set.end());
   INVARIANT(tuple->is_latest());
   INVARIANT(tuple->version == dbtuple::MAX_TID);
+  INVARIANT(tuple->is_locked());
+  INVARIANT(tuple->is_write_intent());
 #ifdef TUPLE_CHECK_KEY
   tuple->key.assign(key.data(), key.size());
 #endif
-  tuple->lock(true);
   // XXX: underlying btree api should return the existing value if
   // insert fails- this would allow us to avoid having to do another search
   std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
