@@ -115,8 +115,7 @@ DO_STRUCT(oorder_c_id_idx, OORDER_C_ID_IDX_KEY_FIELDS, OORDER_C_ID_IDX_VALUE_FIE
   y(uint32_t,ol_delivery_d) \
   y(float,ol_amount) \
   y(int32_t,ol_supply_w_id) \
-  y(int8_t,ol_quantity) \
-  y(inline_str_fixed<24>,ol_dist_info)
+  y(int8_t,ol_quantity)
 DO_STRUCT(order_line, ORDER_LINE_KEY_FIELDS, ORDER_LINE_VALUE_FIELDS)
 
 #define STOCK_KEY_FIELDS(x, y) \

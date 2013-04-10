@@ -1100,7 +1100,8 @@ protected:
 
               v_ol.ol_supply_w_id = k_ol.ol_w_id;
               v_ol.ol_quantity = 5;
-              v_ol.ol_dist_info = RandomStr(r, 24);
+              // v_ol.ol_dist_info comes from stock_data(ol_supply_w_id, ol_o_id)
+              //v_ol.ol_dist_info = RandomStr(r, 24);
 
               checker::SanityCheckOrderLine(&k_ol, &v_ol);
               const size_t sz = Size(v_ol);
@@ -1281,11 +1282,6 @@ tpcc_worker::txn_new_order()
       const stock::value *v_s = Decode(obj_v, v_s_temp);
       checker::SanityCheckStock(&k_s, v_s);
 
-      const stock_data::key k_s_data(ol_supply_w_id, ol_i_id);
-      ALWAYS_ASSERT(tbl_stock_data(ol_supply_w_id)->get(txn, Encode(obj_key1, k_s_data), obj_v));
-      stock_data::value v_s_data_temp;
-      const stock_data::value *v_s_data = Decode(obj_v, v_s_data_temp);
-
       stock::value v_s_new(*v_s);
       if (v_s_new.s_quantity - ol_quantity >= 10)
         v_s_new.s_quantity -= ol_quantity;
@@ -1303,45 +1299,6 @@ tpcc_worker::txn_new_order()
       v_ol.ol_amount = float(ol_quantity) * v_i->i_price;
       v_ol.ol_supply_w_id = int32_t(ol_supply_w_id);
       v_ol.ol_quantity = int8_t(ol_quantity);
-
-      const inline_str_fixed<24> *ol_dist_info;
-      switch (districtID) {
-      case 1:
-        ol_dist_info = &v_s_data->s_dist_01;
-        break;
-      case 2:
-        ol_dist_info = &v_s_data->s_dist_02;
-        break;
-      case 3:
-        ol_dist_info = &v_s_data->s_dist_03;
-        break;
-      case 4:
-        ol_dist_info = &v_s_data->s_dist_04;
-        break;
-      case 5:
-        ol_dist_info = &v_s_data->s_dist_05;
-        break;
-      case 6:
-        ol_dist_info = &v_s_data->s_dist_06;
-        break;
-      case 7:
-        ol_dist_info = &v_s_data->s_dist_07;
-        break;
-      case 8:
-        ol_dist_info = &v_s_data->s_dist_08;
-        break;
-      case 9:
-        ol_dist_info = &v_s_data->s_dist_09;
-        break;
-      case 10:
-        ol_dist_info = &v_s_data->s_dist_10;
-        break;
-      default:
-        ALWAYS_ASSERT(false);
-        break;
-      }
-
-      NDB_MEMCPY(&v_ol.ol_dist_info, (const char *) ol_dist_info, sizeof(v_ol.ol_dist_info));
 
       const size_t order_line_sz = Size(v_ol);
       tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), Encode(str(), v_ol));

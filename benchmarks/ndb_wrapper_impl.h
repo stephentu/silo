@@ -57,7 +57,7 @@ struct hint_read_only_traits {
 };
 
 struct hint_tpcc_new_order_traits {
-  static const size_t read_set_expected_size = 50;
+  static const size_t read_set_expected_size = 35;
   static const size_t write_set_expected_size = 35;
   static const size_t absent_set_expected_size = 1;
   static const bool stable_input_memory = true;
