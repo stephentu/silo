@@ -59,46 +59,46 @@ grids = []
 #]
 
 # exp 2:
-def mk_grid(name, bench, nthds):
-  return {
-    'name' : name,
-    'dbs' : ['ndb-proto2'],
-    'threads' : [nthds],
-    'scale_factors' : [nthds],
-    'benchmarks' : [bench],
-    'bench_opts' : [''],
-    'par_load' : [False],
-    'retry' : [False],
-  }
-grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+#def mk_grid(name, bench, nthds):
+#  return {
+#    'name' : name,
+#    'dbs' : ['ndb-proto2'],
+#    'threads' : [nthds],
+#    'scale_factors' : [nthds],
+#    'benchmarks' : [bench],
+#    'bench_opts' : [''],
+#    'par_load' : [False],
+#    'retry' : [False],
+#  }
+#grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 # exp 3:
 #   x-axis varies the % multi-partition for new order. hold scale_factor constant @ 28,
 #   nthreads also constant at 28
-#D_RANGE = range(0, 11)
-#grids += [
-#  {
-#    'name' : 'multipart:pct',
-#    'dbs' : ['ndb-proto2'],
-#    'threads' : [28],
-#    'scale_factors': [28],
-#    'benchmarks' : ['tpcc'],
-#    'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
-#    'par_load' : [False],
-#    'retry' : [False],
-#  },
-#  {
-#    'name' : 'multipart:pct',
-#    'dbs' : ['kvdb-st'],
-#    'threads' : [28],
-#    'scale_factors': [28],
-#    'benchmarks' : ['tpcc'],
-#    'bench_opts' :
-#      ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
-#    'par_load' : [True],
-#    'retry' : [False],
-#  },
-#]
+D_RANGE = range(0, 11)
+grids += [
+  {
+    'name' : 'multipart:pct',
+    'dbs' : ['ndb-proto2'],
+    'threads' : [28],
+    'scale_factors': [28],
+    'benchmarks' : ['tpcc'],
+    'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
+    'par_load' : [False],
+    'retry' : [False],
+  },
+  {
+    'name' : 'multipart:pct',
+    'dbs' : ['kvdb-st'],
+    'threads' : [28],
+    'scale_factors': [28],
+    'benchmarks' : ['tpcc'],
+    'bench_opts' :
+      ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
+    'par_load' : [True],
+    'retry' : [False],
+  },
+]
 
 # exp 4:
 #  * standard workload mix
@@ -132,31 +132,31 @@ grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 #  * 50% new order, 50% stock level
 #  * scale factor 8, n-threads 16
 #  * x-axis is --new-order-remote-item-pct from [0, 20, 40, 60, 80, 100]
-RO_DRANGE = [0, 20, 40, 60, 80, 100]
-grids += [
-  {
-    'name' : 'readonly',
-    'dbs' : ['ndb-proto2'],
-    'threads' : [16],
-    'scale_factors': [8],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' : ['--workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
-    'par_load' : [False],
-    'retry' : [True],
-  },
-  {
-    'name' : 'readonly',
-    'dbs' : ['ndb-proto2'],
-    'threads' : [16],
-    'scale_factors': [8],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' : ['--disable-read-only-snapshots --workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
-    'par_load' : [False],
-    'retry' : [True],
-  },
-]
+#RO_DRANGE = [0, 20, 40, 60, 80, 100]
+#grids += [
+#  {
+#    'name' : 'readonly',
+#    'dbs' : ['ndb-proto2'],
+#    'threads' : [16],
+#    'scale_factors': [8],
+#    'benchmarks' : ['tpcc'],
+#    'bench_opts' : ['--workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
+#    'par_load' : [False],
+#    'retry' : [True],
+#  },
+#  {
+#    'name' : 'readonly',
+#    'dbs' : ['ndb-proto2'],
+#    'threads' : [16],
+#    'scale_factors': [8],
+#    'benchmarks' : ['tpcc'],
+#    'bench_opts' : ['--disable-read-only-snapshots --workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
+#    'par_load' : [False],
+#    'retry' : [True],
+#  },
+#]
 
-def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts, par_load, retry_aborted_txn):
+def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts, par_load, retry_aborted_txn, numa_memory):
   args = [
       './dbtest',
       '--bench', bench,
@@ -168,7 +168,8 @@ def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts
       '--runtime', '60',
   ] + ([] if not bench_opts else ['--bench-opts', bench_opts]) \
     + ([] if not par_load else ['--parallel-loading']) \
-    + ([] if not retry_aborted_txn else ['--retry-aborted-transactions'])
+    + ([] if not retry_aborted_txn else ['--retry-aborted-transactions']) \
+    + ([] if not numa_memory else ['--numa-memory', numa_memory])
   print >>sys.stderr, '[INFO] running command %s' % str(args)
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
@@ -183,9 +184,10 @@ if __name__ == '__main__':
   # iterate over all configs
   results = []
   for grid in grids:
-    for (db, bench, scale_factor, threads, bench_opts, par_load, retry) in itertools.product(
+    for (db, bench, scale_factor, threads, bench_opts, par_load, retry, numa_memory) in itertools.product(
         grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
-        grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry']):
+        grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
+        grid['numa_memory']):
       config = {
         'name'         : grid['name'],
         'db'           : db,
@@ -195,11 +197,12 @@ if __name__ == '__main__':
         'bench_opts'   : bench_opts,
         'par_load'     : par_load,
         'retry'        : retry,
+        'numa_memory'  : numa_memory,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
       values = []
       for _ in range(NTRIALS):
-        value = run_configuration(basedir, db, bench, scale_factor, threads, bench_opts, par_load, retry)
+        value = run_configuration(basedir, db, bench, scale_factor, threads, bench_opts, par_load, retry, numa_memory)
         values.append(value)
       results.append((config, values))
 
