@@ -11,7 +11,6 @@
 
 #include <stdlib.h>
 #include <unistd.h>
-#include <sched.h>
 #include <getopt.h>
 
 #include <set>
@@ -67,6 +66,12 @@ NumCustomersPerDistrict()
 }
 
 // helpers
+
+static size_t
+MaxCpuForPinning()
+{
+  return min(coreid::num_cpus_online(), nthreads);
+}
 
 // T must implement lock()/unlock(). Both must *not* throw exceptions
 template <typename T>
@@ -277,27 +282,9 @@ protected: \
   static void
   PinToWarehouseId(unsigned int wid)
   {
-    ALWAYS_ASSERT(CPU_SETSIZE >= coreid::num_cpus_online());
     ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
-    const unsigned long pinid = (wid - 1) % coreid::num_cpus_online();
-    cpu_set_t cs;
-    CPU_ZERO(&cs);
-    CPU_SET(pinid, &cs);
-    ALWAYS_ASSERT(sched_setaffinity(0, sizeof(cs), &cs) == 0);
-    INVARIANT(IsPinnedToWarehouseId(wid));
-  }
-
-  // checks the *calling* thread
-  static bool
-  IsPinnedToWarehouseId(unsigned int wid)
-  {
-    ALWAYS_ASSERT(CPU_SETSIZE >= coreid::num_cpus_online());
-    ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
-    const unsigned long pinid = (wid - 1) % coreid::num_cpus_online();
-    cpu_set_t cs;
-    CPU_ZERO(&cs);
-    ALWAYS_ASSERT(sched_getaffinity(0, sizeof(cs), &cs) == 0);
-    return CPU_ISSET(pinid, &cs);
+    const unsigned long pinid = (wid - 1) % MaxCpuForPinning();
+    rcu::pin_current_thread(pinid);
   }
 
 public:
@@ -556,8 +543,9 @@ protected:
   virtual void
   on_run_setup() OVERRIDE
   {
-    if (pin_cpus)
-      ALWAYS_ASSERT(IsPinnedToWarehouseId(warehouse_id));
+    if (!pin_cpus)
+      return;
+    rcu::pin_current_thread(worker_id % MaxCpuForPinning());
   }
 
   inline ALWAYS_INLINE string &
@@ -598,11 +586,6 @@ protected:
     try {
       vector<warehouse::value> warehouses;
       for (uint i = 1; i <= NumWarehouses(); i++) {
-        // seems kind of silly to change affinity to insert 1 data item, but
-        // whatever we'll live
-        if (pin_cpus)
-          PinToWarehouseId(i);
-
         const warehouse::key k(i);
 
         const string w_name = RandomStr(r, RandomNumber(r, 6, 10));

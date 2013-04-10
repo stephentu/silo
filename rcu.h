@@ -357,6 +357,7 @@ public:
   //
   // this is also serving as a memory allocator for the time being
   struct sync {
+    friend class rcu;
 
     // rcu
     volatile epoch_t local_epoch CACHE_ALIGNED;
@@ -391,6 +392,8 @@ public:
     void try_release();
 
   private:
+
+    void do_release();
 
     // local memory allocator
     ssize_t pin_cpu;

@@ -105,16 +105,6 @@ bench_worker::run()
   { // XXX(stephentu): this is a hack
     scoped_rcu_region r; // register this thread in rcu region
   }
-  if (pin_cpus) {
-    ALWAYS_ASSERT(CPU_SETSIZE >= coreid::num_cpus_online());
-    const unsigned long pinid = worker_id % coreid::num_cpus_online();
-    cpu_set_t cs;
-    CPU_ZERO(&cs);
-    CPU_SET(pinid, &cs);
-    ALWAYS_ASSERT(sched_setaffinity(0, sizeof(cs), &cs) == 0);
-    if (verbose)
-      cerr << "** pinned worker=" << worker_id << " to CPU=" << pinid << endl;
-  }
   on_run_setup();
   scoped_db_thread_ctx ctx(db);
   const workload_desc_vec workload = get_workload();

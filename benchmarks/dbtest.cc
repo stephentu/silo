@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/sysinfo.h>
 
+#include "../allocator.h"
 #include "bench.h"
 #include "bdb_wrapper.h"
 #include "ndb_wrapper.h"
@@ -32,6 +33,24 @@ split_ws(const string &s)
   return r;
 }
 
+static size_t
+parse_memory_spec(const string &s)
+{
+  string x(s);
+  size_t mult = 1;
+  if (x.back() == 'G') {
+    mult = static_cast<size_t>(1) << 30;
+    x.pop_back();
+  } else if (x.back() == 'M') {
+    mult = static_cast<size_t>(1) << 20;
+    x.pop_back();
+  } else if (x.back() == 'K') {
+    mult = static_cast<size_t>(1) << 10;
+    x.pop_back();
+  }
+  return strtoul(x.c_str(), nullptr, 10) * mult;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -42,6 +61,7 @@ main(int argc, char **argv)
   char *curdir = get_current_dir_name();
   string basedir = curdir;
   string bench_opts;
+  size_t numa_memory = 0;
   free(curdir);
   int saw_run_spec = 0;
   while (1) {
@@ -61,10 +81,11 @@ main(int argc, char **argv)
       {"runtime"                    , required_argument , 0                          , 'r'} ,
       {"ops-per-worker"             , required_argument , 0                          , 'n'} ,
       {"bench-opts"                 , required_argument , 0                          , 'o'} ,
+      {"numa-memory"                , required_argument , 0                          , 'm'} , // implies --pin-cpus
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -120,6 +141,15 @@ main(int argc, char **argv)
       bench_opts = optarg;
       break;
 
+    case 'm':
+      {
+        pin_cpus = 1;
+        const size_t m = parse_memory_spec(optarg);
+        ALWAYS_ASSERT(m > 0);
+        numa_memory = m;
+      }
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -139,6 +169,13 @@ main(int argc, char **argv)
     test_fn = encstress_do_test;
   else
     ALWAYS_ASSERT(false);
+
+  // initialize the numa allocator
+  if (numa_memory > 0) {
+    const size_t maxpercpu = iceil(numa_memory / nthreads, ::allocator::GetHugepageSize());
+    numa_memory = maxpercpu * nthreads;
+    ::allocator::Initialize(nthreads, maxpercpu);
+  }
 
   if (db_type == "bdb") {
     string cmd = "rm -rf " + basedir + "/db/*";
@@ -198,6 +235,11 @@ main(int argc, char **argv)
 #else
     cerr << "  allocator   : libc"                          << endl;
 #endif
+    if (numa_memory > 0) {
+      cerr << "  numa-memory : " << numa_memory             << endl;
+    } else {
+      cerr << "  numa-memory : disabled"                    << endl;
+    }
 
     cerr << "system properties:" << endl;
     cerr << "  btree_internal_node_size: " << btree::InternalNodeSize() << endl;

@@ -135,11 +135,16 @@ rcu::sync::try_release()
   size_t acc = 0;
   for (size_t i = 0; i < ::allocator::MAX_ARENAS; i++)
     acc += deallocs[i];
-  if (acc > threshold) {
-    ::allocator::ReleaseArenas(arenas);
-    NDB_MEMSET(arenas, 0, sizeof(arenas));
-    NDB_MEMSET(deallocs, 0, sizeof(deallocs));
-  }
+  if (acc > threshold)
+    do_release();
+}
+
+void
+rcu::sync::do_release()
+{
+  ::allocator::ReleaseArenas(arenas);
+  NDB_MEMSET(arenas, 0, sizeof(arenas));
+  NDB_MEMSET(deallocs, 0, sizeof(deallocs));
 }
 
 void
@@ -279,6 +284,8 @@ rcu::pin_current_thread(size_t cpu)
   ALWAYS_ASSERT(!numa_run_on_node(node));
   // is numa_run_on_node() guaranteed to take effect immediately?
   ALWAYS_ASSERT(!sched_yield());
+  // release current thread-local cache back to allocator
+  s->do_release();
 }
 
 static const uint64_t rcu_epoch_us = rcu::EpochTimeUsec;

@@ -11,8 +11,8 @@ using namespace util;
 
 // page+alloc routines taken from masstree
 
-static size_t
-get_hugepage_size()
+size_t
+allocator::GetHugepageSize()
 {
   FILE *f = fopen("/proc/meminfo", "r");
   assert(f);
@@ -32,8 +32,8 @@ get_hugepage_size()
   return size;
 }
 
-static size_t
-get_page_size()
+size_t
+allocator::GetPageSize()
 {
   return sysconf(_SC_PAGESIZE);
 }
@@ -62,7 +62,7 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
   ALWAYS_ASSERT(!g_ncpus);
   ALWAYS_ASSERT(!g_maxpercore);
 
-  static const size_t hugepgsize = get_hugepage_size();
+  static const size_t hugepgsize = GetHugepageSize();
 
   // round maxpercore to the nearest hugepagesize
   maxpercore = slow_round_up(maxpercore, hugepgsize);
@@ -120,8 +120,8 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
   INVARIANT(arena < MAX_ARENAS);
   INVARIANT(g_memstart);
   INVARIANT(g_maxpercore);
-  static const size_t pgsize = get_page_size();
-  static const size_t hugepgsize = get_hugepage_size();
+  static const size_t pgsize = GetPageSize();
+  static const size_t hugepgsize = GetHugepageSize();
 
   // check w/o locking first
   percore &pc = g_regions[cpu].elem;

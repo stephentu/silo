@@ -57,6 +57,9 @@ public:
     return ret;
   }
 
+  static size_t GetPageSize();
+  static size_t GetHugepageSize();
+
 private:
 
   // [g_memstart, g_memstart + ncpus * maxpercore) is the region of memory mmap()-ed
