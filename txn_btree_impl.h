@@ -107,7 +107,6 @@ txn_btree<Transaction>::do_tree_put(
     Transaction<Traits> &t, const string_type &k,
     const string_type &v, bool expect_new)
 {
-  typedef typename transaction<Transaction, Traits>::write_record_t write_record_t;
   t.ensure_active();
   if (unlikely(t.is_read_only())) {
     const transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
