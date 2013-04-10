@@ -323,8 +323,6 @@ txn_walker_loop::run()
             const size_t klen = values[i].len;
             INVARIANT(klen <= 9);
             INVARIANT(tuple);
-            const size_t qsize UNUSED = q.size();
-            const size_t vsize UNUSED = values[i].suffix.size();
             if (klen == 9) {
               INVARIANT(values[i].suffix.size() > 0);
               s.resize(8 * (q.size() + 1) + values[i].suffix.size());
