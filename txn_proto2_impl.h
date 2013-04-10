@@ -370,7 +370,7 @@ struct txn_btree_handler<transaction_proto2> {
     walker_loop.name = name;
     walker_loop.btr = btr;
     walker_loop.running = true;
-    COMPILER_MEMORY_FENCE;
+    __sync_synchronize();
     walker_loop.start();
   }
 
