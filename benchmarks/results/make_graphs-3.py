@@ -6,6 +6,7 @@ import numpy as np
 
 import os
 import sys
+import math
 
 if __name__ == '__main__':
   files = sys.argv[1:]
@@ -63,17 +64,33 @@ if __name__ == '__main__':
       if x == 0:
         return '0'
       v = float(x)/float(10**6)
-      return '%dM' % v
+      if math.ceil(v) == v:
+        return '%dM' % v
+      return '%.1fM' % v
 
     def KFormatter(x, p):
       if x == 0:
         return '0'
       v = float(x)/float(10**3)
-      return '%dK' % v
+      if math.ceil(v) == v:
+        return '%dK' % v
+      return '%.1fK' % v
 
     descs = [
+      #{
+      #  'name' : 'scale',
+      #  'x-axis' : 'threads',
+      #  'x-axis-func' : lambda x: x,
+      #  'y-axis' : deal_with_pos0_res,
+      #  'lines' : ['db'], # each line holds this constant
+      #  'x-label' : 'threads',
+      #  'y-label' : 'throughput (txns/sec)',
+      #  'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+      #  'x-axis-set-major-locator' : True,
+      #  #'title' : 'ycsb throughput graph',
+      #},
       {
-        'name' : 'scale',
+        'name' : 'scale_tpcc',
         'x-axis' : 'threads',
         'x-axis-func' : lambda x: x,
         'y-axis' : deal_with_pos0_res,
@@ -82,21 +99,21 @@ if __name__ == '__main__':
         'y-label' : 'throughput (txns/sec)',
         'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
         'x-axis-set-major-locator' : True,
-        #'title' : 'ycsb throughput graph',
+        #'title' : 'tpcc throughput graph',
       },
-      {
-        'name' : 'multipart:pct',
-        'x-axis' : 'bench_opts',
-        'x-axis-func' : extract_pct,
-        'y-axis' : deal_with_pos0_res,
-        'lines' : ['db'], # each line holds this constant
-        'x-label' : '% cross-partition',
-        'y-label' : 'throughput (txns/sec)',
-        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
-        'x-axis-set-major-locator' : False,
-        #'title' : 'tpcc new-order throughput graph',
-        'legend' : 'upper right',
-      },
+      #{
+      #  'name' : 'multipart:pct',
+      #  'x-axis' : 'bench_opts',
+      #  'x-axis-func' : extract_pct,
+      #  'y-axis' : deal_with_pos0_res,
+      #  'lines' : ['db'], # each line holds this constant
+      #  'x-label' : '% cross-partition',
+      #  'y-label' : 'throughput (txns/sec)',
+      #  'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+      #  'x-axis-set-major-locator' : False,
+      #  #'title' : 'tpcc new-order throughput graph',
+      #  'legend' : 'upper right',
+      #},
       #{
       #  'name' : 'multipart:cpu',
       #  'x-axis-process' : multipart_cpu_process,
@@ -106,26 +123,26 @@ if __name__ == '__main__':
       #  'y-label' : 'txns/sec',
       #  'title' : 'tpcc full workload throughput graph',
       #},
-      {
-        'name' : 'readonly',
-        'x-axis' : 'bench_opts',
-        'x-axis-func' : extract_p,
-        'y-axis' : deal_with_pos0_res,
-        'lines-func' : readonly_lines_func,
-        'x-label' : '% remote warehouse stock',
-        'y-label' : 'throughput (txns/sec)',
-        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
-        'x-axis-set-major-locator' : True,
-        #'title' : 'tpcc read only throughput graph',
-        'legend' : 'right',
-      },
+      #{
+      #  'name' : 'readonly',
+      #  'x-axis' : 'bench_opts',
+      #  'x-axis-func' : extract_p,
+      #  'y-axis' : deal_with_pos0_res,
+      #  'lines-func' : readonly_lines_func,
+      #  'x-label' : '% remote warehouse stock',
+      #  'y-label' : 'throughput (txns/sec)',
+      #  'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+      #  'x-axis-set-major-locator' : True,
+      #  #'title' : 'tpcc read only throughput graph',
+      #  'legend' : 'right',
+      #},
     ]
 
     def label_transform(x):
       if x == 'kvdb':
         return 'Key-Value'
       if x == 'ndb-proto2':
-        return 'XSYS'
+        return 'Maflingo'
       if x == 'kvdb-st':
         return 'Partitioned-Store'
       return x
