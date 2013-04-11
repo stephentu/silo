@@ -30,6 +30,9 @@ THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
 
 NTRIALS = 3
 
+### NOTE: for TPC-C, in general, allocate 4GB of memory per thread for the experiments.
+### this is over-conservative
+
 grids = []
 
 # exp 1:
@@ -86,6 +89,7 @@ grids += [
     'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
     'par_load' : [False],
     'retry' : [False],
+    'numa_memory' : ['%dG' % (4 * 28)],
   },
   {
     'name' : 'multipart:pct',
@@ -97,6 +101,7 @@ grids += [
       ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
     'par_load' : [True],
     'retry' : [False],
+    'numa_memory' : ['%dG' % (4 * 28)],
   },
 ]
 
