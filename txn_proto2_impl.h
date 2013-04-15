@@ -15,7 +15,7 @@ template <typename Traits>
 // each txn_btree has a walker_loop associated with it
 class txn_walker_loop : public ndb_thread {
   friend class transaction_proto2_static;
-  friend class txn_btree_handler<transaction_proto2>;
+  friend class base_txn_btree_handler<transaction_proto2>;
   friend class txn_epoch_sync<transaction_proto2>;
 public:
   // not a daemon thread, so we can join when the txn_btree exists
@@ -361,7 +361,7 @@ private:
 
 // txn_btree_handler specialization
 template <>
-struct txn_btree_handler<transaction_proto2> {
+struct base_txn_btree_handler<transaction_proto2> {
   void
   on_construct(const std::string &name, btree *btr)
   {

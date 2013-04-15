@@ -45,6 +45,7 @@ endif
 
 HEADERS = allocator.h \
 	amd64.h \
+	base_txn_btree.h \
 	btree.h \
 	core.h \
 	counter.h \
