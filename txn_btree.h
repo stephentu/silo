@@ -83,7 +83,6 @@ public:
             bool mostly_append = false,
             const std::string &name = "<unknown>")
     : value_size_hint(value_size_hint),
-      mostly_append(mostly_append),
       name(name),
       been_destructed(false)
   {
@@ -258,18 +257,6 @@ public:
     this->value_size_hint = value_size_hint;
   }
 
-  inline bool
-  is_mostly_append() const
-  {
-    return mostly_append;
-  }
-
-  inline void
-  set_mostly_append(bool mostly_append)
-  {
-    this->mostly_append = mostly_append;
-  }
-
   /**
    * only call when you are sure there are no concurrent modifications on the
    * tree. is neither threadsafe nor transactional
@@ -376,7 +363,6 @@ private:
 
   btree underlying_btree;
   size_type value_size_hint;
-  bool mostly_append;
   std::string name;
   bool been_destructed;
   txn_btree_handler<Transaction> handler;
