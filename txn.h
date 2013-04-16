@@ -39,7 +39,7 @@
 #include "ndb_type_traits.h"
 
 // forward decl
-template <template <typename> class Transaction> class txn_btree;
+template <template <typename> class Transaction> class base_txn_btree;
 
 class transaction_unusable_exception {};
 class transaction_read_only_exception {};
@@ -87,7 +87,7 @@ struct string_container<true, N> {
 
 // base class with very simple definitions- nothing too exciting yet
 class transaction_base : private util::noncopyable {
-  template <template <typename> class T> friend class txn_btree;
+  template <template <typename> class T> friend class base_txn_btree;
 public:
 
   typedef dbtuple::tid_t tid_t;
@@ -430,7 +430,7 @@ struct default_transaction_traits {
 
 template <template <typename> class Protocol, typename Traits>
 class transaction : public transaction_base {
-  friend class txn_btree<Protocol>;
+  friend class base_txn_btree<Protocol>;
   friend Protocol<Traits>;
 
   typedef Traits traits_type;

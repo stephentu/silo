@@ -270,6 +270,12 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
     serializer<IntSizeType, Compress> s;
     return s.nbytes(&obj->sz) + obj->sz;
   }
+
+  static inline constexpr size_t
+  max_nbytes()
+  {
+    return serializer<IntSizeType, Compress>::max_bytes() + N;
+  }
 };
 
 #endif /* _NDB_BENCH_INLINE_STR_H_ */

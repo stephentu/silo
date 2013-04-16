@@ -7,11 +7,13 @@
 #include "txn_proto1_impl.h"
 #include "txn_proto2_impl.h"
 #include "txn_btree.h"
-#include "txn_btree_impl.h"
+#include "typed_txn_btree.h"
 #include "thread.h"
 #include "util.h"
 #include "macros.h"
 #include "tuple.h"
+#include "record/encoder.h"
+#include "benchmarks/inline_str.h" // XXX: bad dependence
 
 #include "scopedperf.hh"
 
@@ -495,6 +497,44 @@ test_long_keys2()
     txn_epoch_sync<TxnType>::sync();
     txn_epoch_sync<TxnType>::finish();
   }
+}
+
+#define TESTREC_KEY_FIELDS(x, y) \
+  x(int32_t,k0) \
+  y(int32_t,k1)
+#define TESTREC_VALUE_FIELDS(x, y) \
+  x(int32_t,v0) \
+  y(int16_t,v1) \
+  y(inline_str_fixed<10>,v2)
+DO_STRUCT(testrec, TESTREC_KEY_FIELDS, TESTREC_VALUE_FIELDS)
+
+template <template <typename> class TxnType, typename Traits>
+static void
+test_typed_btree()
+{
+  typed_txn_btree<TxnType, schema<testrec>> btr;
+  typename typed_txn_btree<TxnType, schema<testrec>>::default_string_allocator sa;
+
+  const testrec::key k0(1, 1);
+  const testrec::value v0(2, 3, "hello");
+  testrec::value v, v1;
+
+  {
+    TxnType<Traits> t;
+    ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, k0, v, sa));
+    btr.insert(t, k0, v0, sa);
+    AssertSuccessfulCommit(t);
+  }
+
+  {
+    TxnType<Traits> t;
+    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v1, sa));
+    ALWAYS_ASSERT_COND_IN_TXN(t, v0 == v1);
+    AssertSuccessfulCommit(t);
+  }
+
+  txn_epoch_sync<TxnType>::sync();
+  txn_epoch_sync<TxnType>::finish();
 }
 
 template <template <typename> class Protocol>
@@ -1441,6 +1481,7 @@ void txn_btree_test()
   //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
+  test_typed_btree<transaction_proto2, default_transaction_traits>();
   test1<transaction_proto2, default_transaction_traits>();
   test2<transaction_proto2, default_transaction_traits>();
   test_absent_key_race<transaction_proto2, default_transaction_traits>();
@@ -1449,6 +1490,7 @@ void txn_btree_test()
   test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
   test_long_keys<transaction_proto2, default_transaction_traits>();
   test_long_keys2<transaction_proto2, default_transaction_traits>();
+
   mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
   mp_test1<transaction_proto2, default_transaction_traits>();
   mp_test2<transaction_proto2, default_transaction_traits>();

@@ -29,8 +29,8 @@ struct serializer {
     return sizeof(*obj);
   }
 
-  inline size_t
-  max_nbytes() const
+  static inline constexpr size_t
+  max_nbytes()
   {
     return sizeof(T);
   }
@@ -57,8 +57,8 @@ struct serializer<uint32_t, true> {
     return size_uvint32(*obj);
   }
 
-  size_t
-  max_nbytes() const
+  static inline constexpr size_t
+  max_nbytes()
   {
     return 5;
   }
@@ -92,8 +92,8 @@ struct serializer<int32_t, true> {
     return s.nbytes(&v);
   }
 
-  size_t
-  max_nbytes() const
+  static inline constexpr size_t
+  max_nbytes()
   {
     return 5;
   }

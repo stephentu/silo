@@ -3,10 +3,12 @@
 
 #include "btree.h"
 #include "txn.h"
+#include "lockguard.h"
 
 #include <string>
 #include <map>
 #include <type_traits>
+#include <memory>
 
 // each Transaction implementation should specialize this for special
 // behavior- the default implementation is just nops
@@ -34,15 +36,19 @@ public:
   typedef size_t size_type;
 
   struct default_string_allocator {
-    inline ALWAYS_INLINE string_type *
+    inline string_type *
     operator()()
     {
-      return nullptr;
+      strs.emplace_back(new string_type);
+      return strs.back().get();
     }
-    inline ALWAYS_INLINE void
+    inline void
     return_last(string_type *px)
     {
+      // XXX: check px in strs
     }
+  private:
+    std::vector<std::shared_ptr<string_type>> strs;
   };
 
   base_txn_btree(size_type value_size_hint = 128,
@@ -161,12 +167,87 @@ private:
 
 protected:
 
+  struct search_range_callback {
+  public:
+    virtual ~search_range_callback() {}
+    virtual bool invoke(const string_type &k, const string_type &v) = 0;
+  };
+
+  template <typename Traits, typename StringAllocator>
+  struct txn_search_range_callback : public btree::low_level_search_range_callback {
+    txn_search_range_callback(Transaction<Traits> *t,
+                              search_range_callback *caller_callback,
+                              const StringAllocator &sa,
+                              size_type fetch_prefix)
+      : t(t), caller_callback(caller_callback),
+        sa(sa), fetch_prefix(fetch_prefix) {}
+    virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
+    virtual bool invoke(const btree::string_type &k, btree::value_type v,
+                        const btree::node_opaque_t *n, uint64_t version);
+    Transaction<Traits> *const t;
+    search_range_callback *const caller_callback;
+    StringAllocator sa;
+    string_type temp_buf;
+    size_type fetch_prefix;
+  };
+
+  template <typename Traits>
+  inline bool
+  do_search(Transaction<Traits> &t, const key_type &k, string_type &v,
+            size_type max_bytes_read);
+
+  // StringAllocator needs to be CopyConstructable
+  template <typename Traits, typename StringAllocator>
+  inline void
+  do_search_range_call(Transaction<Traits> &t,
+                       const key_type &lower,
+                       const key_type *upper,
+                       search_range_callback &callback,
+                       const StringAllocator &sa,
+                       size_type fetch_prefix);
+
+  // remove() is just do_tree_put() with empty-string
+  // expect_new indicates if we expect the record to not exist in the tree-
+  // is just a hint that affects perf, not correctness
+  template <typename Traits>
+  void do_tree_put(Transaction<Traits> &t, const string_type &k,
+                   const string_type &v, bool expect_new);
+
+
   btree underlying_btree;
   size_type value_size_hint;
   std::string name;
   bool been_destructed;
   base_txn_btree_handler<Transaction> handler;
 };
+
+namespace private_ {
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe0, txn_btree_search_probe0_cg)
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe1, txn_btree_search_probe1_cg)
+}
+
+template <template <typename> class Transaction>
+template <typename Traits>
+bool
+base_txn_btree<Transaction>::do_search(
+    Transaction<Traits> &t, const key_type &k,
+    string_type &v, size_t max_bytes_read)
+{
+  t.ensure_active();
+
+  // search the underlying btree to map k=>(btree_node|tuple)
+  btree::value_type underlying_v;
+  btree::versioned_node_t search_info;
+  const bool found = this->underlying_btree.search(k, underlying_v, &search_info);
+  if (found) {
+    const dbtuple * const tuple = reinterpret_cast<const dbtuple *>(underlying_v);
+    return t.do_tuple_read(tuple, v, max_bytes_read);
+  } else {
+    // not found, add to absent_set
+    t.do_node_read(search_info.first, search_info.second);
+    return false;
+  }
+}
 
 template <template <typename> class Transaction>
 std::map<std::string, uint64_t>
@@ -239,6 +320,123 @@ void
 base_txn_btree<Transaction>::purge_tree_walker::on_node_failure()
 {
   spec_values.clear();
+}
+
+template <template <typename> class Transaction>
+template <typename Traits>
+void
+base_txn_btree<Transaction>::do_tree_put(
+    Transaction<Traits> &t, const string_type &k,
+    const string_type &v, bool expect_new)
+{
+  t.ensure_active();
+  if (unlikely(t.is_read_only())) {
+    const transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
+    t.abort_impl(r);
+    throw transaction_abort_exception(r);
+  }
+  dbtuple *px = nullptr;
+  bool insert = false;
+retry:
+  if (expect_new) {
+    auto ret = t.try_insert_new_tuple(this->underlying_btree, k, v);
+    INVARIANT(!ret.second || ret.first);
+    if (unlikely(ret.second)) {
+      const transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
+      t.abort_impl(r);
+      throw transaction_abort_exception(r);
+    }
+    px = ret.first;
+    if (px)
+      insert = true;
+  }
+  if (!px) {
+    // do regular search
+    btree::value_type bv = 0;
+    if (!this->underlying_btree.search(varkey(k), bv)) {
+      expect_new = true;
+      goto retry;
+    }
+    px = reinterpret_cast<dbtuple *>(bv);
+  }
+  INVARIANT(px);
+  if (!insert) {
+    // add to write set normally, as non-insert
+    t.write_set.emplace_back(px, k, v, &this->underlying_btree, false);
+  } else {
+    // should already exist in write set as insert
+    // (because of try_insert_new_tuple())
+
+    // too expensive to be a practical check
+    //INVARIANT(t.find_write_set(px) != t.write_set.end());
+    //INVARIANT(t.find_write_set(px)->is_insert());
+  }
+}
+
+template <template <typename> class Transaction>
+template <typename Traits, typename StringAllocator>
+void
+base_txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::on_resp_node(
+    const btree::node_opaque_t *n, uint64_t version)
+{
+  VERBOSE(std::cerr << "on_resp_node(): <node=0x" << util::hexify(intptr_t(n))
+               << ", version=" << version << ">" << std::endl);
+  VERBOSE(std::cerr << "  " << btree::NodeStringify(n) << std::endl);
+  t->do_node_read(n, version);
+}
+
+template <template <typename> class Transaction>
+template <typename Traits, typename StringAllocator>
+bool
+base_txn_btree<Transaction>::txn_search_range_callback<Traits, StringAllocator>::invoke(
+    const btree::string_type &k, btree::value_type v,
+    const btree::node_opaque_t *n, uint64_t version)
+{
+  t->ensure_active();
+  VERBOSE(std::cerr << "search range k: " << util::hexify(k) << " from <node=0x" << util::hexify(n)
+                    << ", version=" << version << ">" << std::endl
+                    << "  " << *((dbtuple *) v) << std::endl);
+
+  string_type *r_px = sa();
+  string_type *r_px_orig = r_px;
+  if (!r_px) {
+    temp_buf.clear();
+    r_px = &temp_buf;
+  }
+  string_type &r(*r_px);
+  INVARIANT(r.empty());
+  const dbtuple * const tuple = reinterpret_cast<const dbtuple *>(v);
+  if (t->do_tuple_read(tuple, r))
+    return caller_callback->invoke(k, r);
+  sa.return_last(r_px_orig);
+  return true;
+}
+
+template <template <typename> class Transaction>
+template <typename Traits, typename StringAllocator>
+void
+base_txn_btree<Transaction>::do_search_range_call(
+    Transaction<Traits> &t,
+    const key_type &lower,
+    const key_type *upper,
+    search_range_callback &callback,
+    const StringAllocator &sa,
+    size_type fetch_prefix)
+{
+  t.ensure_active();
+  if (upper)
+    VERBOSE(std::cerr << "txn_btree(0x" << util::hexify(intptr_t(this))
+                 << ")::search_range_call [" << util::hexify(lower)
+                 << ", " << util::hexify(*upper) << ")" << std::endl);
+  else
+    VERBOSE(std::cerr << "txn_btree(0x" << util::hexify(intptr_t(this))
+                 << ")::search_range_call [" << util::hexify(lower)
+                 << ", +inf)" << std::endl);
+  if (unlikely(upper && *upper <= lower))
+    return;
+  txn_search_range_callback<Traits, StringAllocator> c(
+			&t, &callback, sa, fetch_prefix);
+  this->underlying_btree.search_range_call(lower, upper, c, c.sa());
 }
 
 #endif /* _NDB_BASE_TXN_BTREE_H_ */

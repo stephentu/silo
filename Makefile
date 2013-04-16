@@ -71,11 +71,11 @@ HEADERS = allocator.h \
 	thread.h \
 	tuple.h \
 	txn_btree.h \
-	txn_btree_impl.h \
 	txn.h \
 	txn_impl.h \
 	txn_proto1_impl.h \
 	txn_proto2_impl.h \
+	typed_txn_btree.h \
 	util.h \
 	varint.h \
 	varkey.h \

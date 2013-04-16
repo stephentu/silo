@@ -125,6 +125,30 @@ namespace private_ {
     size += s.nbytes(&obj->name); \
   } while (0);
 
+#define SERIALIZE_MAX_NBYTES_KEY_FIELD_X(tpe, name) \
+  serializer< tpe, false >::max_nbytes()
+#define SERIALIZE_MAX_NBYTES_KEY_FIELD_Y(tpe, name) \
+  + serializer< tpe, false >::max_nbytes()
+
+#define SERIALIZE_MAX_NBYTES_VALUE_FIELD_X(tpe, name) \
+  serializer< tpe, true >::max_nbytes()
+#define SERIALIZE_MAX_NBYTES_VALUE_FIELD_Y(tpe, name) \
+  + serializer< tpe, true >::max_nbytes()
+
+#define SERIALIZE_MAX_NBYTES_PREFIX_KEY_FIELD_X(tpe, name) \
+  do { \
+    ret += serializer< tpe, false >::max_nbytes(); \
+    if (++i >= nfields) \
+      return ret; \
+  } while (0);
+
+#define SERIALIZE_MAX_NBYTES_PREFIX_VALUE_FIELD_X(tpe, name) \
+  do { \
+    ret += serializer< tpe, true >::max_nbytes(); \
+    if (++i >= nfields) \
+      return ret; \
+  } while (0);
+
 #define SERIALIZE_WRITE_KEY_FIELD_X(tpe, name) \
   SERIALIZE_WRITE_FIELD(tpe, name, false, HOST_TO_BIG_TRANSFORM)
 #define SERIALIZE_WRITE_VALUE_FIELD_X(tpe, name) \
@@ -281,7 +305,6 @@ namespace private_ {
   }; \
   template <> \
   struct encoder< name::key > { \
-  private: \
   void \
   encode_write(uint8_t *buf, const struct name::key *obj) const \
   { \
@@ -297,13 +320,27 @@ namespace private_ {
   { \
     return sizeof(*obj); \
   } \
-  public: \
+  static inline constexpr size_t \
+  encode_max_nbytes() \
+  { \
+    return keyfields(SERIALIZE_MAX_NBYTES_KEY_FIELD_X, \
+                     SERIALIZE_MAX_NBYTES_KEY_FIELD_Y); \
+  } \
+  inline ALWAYS_INLINE size_t \
+  encode_max_nbytes_prefix(size_t nfields) const \
+  { \
+    size_t ret = 0; \
+    size_t i = 0; \
+    if (likely(nfields == std::numeric_limits<size_t>::max())) \
+      return std::numeric_limits<size_t>::max(); \
+    APPLY_X_AND_Y(keyfields, SERIALIZE_MAX_NBYTES_PREFIX_KEY_FIELD_X) \
+    return ret; \
+  } \
   DO_STRUCT_COMMON(name::key) \
   DO_STRUCT_ENCODE_REST(name::key) \
   }; \
   template <> \
   struct encoder< name::value > { \
-  private: \
   void \
   encode_write(uint8_t *buf, const struct name::value *obj) const \
   { \
@@ -321,9 +358,32 @@ namespace private_ {
     APPLY_X_AND_Y(valuefields, SERIALIZE_NBYTES_VALUE_FIELD_X) \
     return size; \
   } \
-  public: \
+  static inline constexpr size_t \
+  encode_max_nbytes() \
+  { \
+    return valuefields(SERIALIZE_MAX_NBYTES_VALUE_FIELD_X, \
+                       SERIALIZE_MAX_NBYTES_VALUE_FIELD_Y); \
+  } \
+  inline ALWAYS_INLINE size_t \
+  encode_max_nbytes_prefix(size_t nfields) const \
+  { \
+    size_t ret = 0; \
+    size_t i = 0; \
+    if (likely(nfields == std::numeric_limits<size_t>::max())) \
+      return std::numeric_limits<size_t>::max(); \
+    APPLY_X_AND_Y(valuefields, SERIALIZE_MAX_NBYTES_PREFIX_VALUE_FIELD_X) \
+    return ret; \
+  } \
   DO_STRUCT_COMMON(name::value) \
   DO_STRUCT_REST_VALUE(name::value) \
   };
+
+template <typename T>
+struct schema {
+  typedef typename T::key key_type;
+  typedef typename T::value value_type;
+  typedef encoder<key_type> key_encoder_type;
+  typedef encoder<value_type> value_encoder_type;
+};
 
 #endif /* _NDB_BENCH_ENCODER_H_ */

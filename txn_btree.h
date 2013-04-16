@@ -31,12 +31,7 @@ public:
   typedef typename super_type::value_type value_type;
   typedef typename super_type::size_type size_type;
   typedef typename super_type::default_string_allocator default_string_allocator;
-
-  struct search_range_callback {
-  public:
-    virtual ~search_range_callback() {}
-    virtual bool invoke(const string_type &k, const string_type &v) = 0;
-  };
+  typedef typename super_type::search_range_callback search_range_callback;
 
 private:
   template <typename T>
@@ -79,10 +74,25 @@ public:
   template <typename Traits>
   inline bool
   search(Transaction<Traits> &t, const key_type &k, string_type &v,
-         size_t max_bytes_read = string_type::npos);
-
+         size_type max_bytes_read = string_type::npos)
+  {
+    return this->do_search(t, k, v, max_bytes_read);
+  }
 
   // StringAllocator needs to be CopyConstructable
+  template <typename Traits,
+            typename StringAllocator = default_string_allocator>
+  inline void
+  search_range_call(Transaction<Traits> &t,
+                    const key_type &lower,
+                    const key_type *upper,
+                    search_range_callback &callback,
+                    const StringAllocator &sa = StringAllocator(),
+                    size_type fetch_prefix = string_type::npos)
+  {
+    this->do_search_range_call(t, lower, upper, callback, sa, fetch_prefix);
+  }
+
   template <typename Traits,
             typename StringAllocator = default_string_allocator>
   inline void
@@ -90,22 +100,14 @@ public:
                     const string_type &lower,
                     const string_type *upper,
                     search_range_callback &callback,
-                    const StringAllocator &sa = StringAllocator())
+                    const StringAllocator &sa = StringAllocator(),
+                    size_type fetch_prefix = string_type::npos)
   {
     key_type u;
     if (upper)
       u = key_type(*upper);
-    search_range_call(t, key_type(lower), upper ? &u : nullptr, callback, sa);
+    search_range_call(t, key_type(lower), upper ? &u : nullptr, callback, sa, fetch_prefix);
   }
-
-  template <typename Traits,
-            typename StringAllocator = default_string_allocator>
-  void
-  search_range_call(Transaction<Traits> &t,
-                    const key_type &lower,
-                    const key_type *upper,
-                    search_range_callback &callback,
-                    const StringAllocator &sa = StringAllocator());
 
   template <typename Traits, typename T,
             typename StringAllocator = default_string_allocator>
@@ -113,10 +115,11 @@ public:
   search_range(
       Transaction<Traits> &t, const string_type &lower,
       const string_type *upper, T callback,
-      const StringAllocator &sa = StringAllocator())
+      const StringAllocator &sa = StringAllocator(),
+      size_type fetch_prefix = string_type::npos)
   {
     type_callback_wrapper<T> w(&callback);
-    search_range_call(t, lower, upper, w, sa);
+    search_range_call(t, lower, upper, w, sa, fetch_prefix);
   }
 
   template <typename Traits, typename T,
@@ -125,10 +128,11 @@ public:
   search_range(
       Transaction<Traits> &t, const key_type &lower,
       const key_type *upper, T callback,
-      const StringAllocator &sa = StringAllocator())
+      const StringAllocator &sa = StringAllocator(),
+      size_type fetch_prefix = string_type::npos)
   {
     type_callback_wrapper<T> w(&callback);
-    search_range_call(t, lower, upper, w, sa);
+    search_range_call(t, lower, upper, w, sa, fetch_prefix);
   }
 
   template <typename Traits>
@@ -136,7 +140,7 @@ public:
   put(Transaction<Traits> &t, const string_type &k, const string_type &v)
   {
     INVARIANT(!v.empty());
-    do_tree_put(t, k, v, false);
+    this->do_tree_put(t, k, v, false);
   }
 
   // XXX: other put variants
@@ -146,7 +150,7 @@ public:
   insert(Transaction<Traits> &t, const string_type &k, const string_type &v)
   {
     INVARIANT(!v.empty());
-    do_tree_put(t, k, v, true);
+    this->do_tree_put(t, k, v, true);
   }
 
   // insert() methods below are for legacy use
@@ -158,7 +162,7 @@ public:
   {
     INVARIANT(v);
     INVARIANT(sz);
-    do_tree_put(t, k, string_type((const char *) v, sz), true);
+    this->do_tree_put(t, k, string_type((const char *) v, sz), true);
   }
 
   template <typename Traits,
@@ -168,7 +172,7 @@ public:
   {
     INVARIANT(v);
     INVARIANT(sz);
-    do_tree_put(t, to_string_type(k), string_type((const char *) v, sz), true);
+    this->do_tree_put(t, to_string_type(k), string_type((const char *) v, sz), true);
   }
 
   template <typename Traits, typename T>
@@ -192,7 +196,7 @@ public:
     // use static empty string so stable_input_memory can take
     // address of the value
     static const std::string s_empty;
-    do_tree_put(t, k, s_empty, false);
+    this->do_tree_put(t, k, s_empty, false);
   }
 
   template <typename Traits,
@@ -200,33 +204,11 @@ public:
   inline void
   remove(Transaction<Traits> &t, const key_type &k)
   {
-    do_tree_put(t, to_string_type(k), string_type(), false);
+    this->do_tree_put(t, to_string_type(k), string_type(), false);
   }
 
   static void Test();
 
-private:
-  template <typename Traits, typename StringAllocator>
-  struct txn_search_range_callback : public btree::low_level_search_range_callback {
-    txn_search_range_callback(Transaction<Traits> *t,
-                              search_range_callback *caller_callback,
-                              const StringAllocator &sa)
-      : t(t), caller_callback(caller_callback), sa(sa) {}
-    virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
-    virtual bool invoke(const btree::string_type &k, btree::value_type v,
-                        const btree::node_opaque_t *n, uint64_t version);
-    Transaction<Traits> *const t;
-    search_range_callback *const caller_callback;
-    StringAllocator sa;
-    string_type temp_buf;
-  };
-
-  // remove() is just do_tree_put() with empty-string
-  // expect_new indicates if we expect the record to not exist in the tree-
-  // is just a hint that affects perf, not correctness
-  template <typename Traits>
-  void do_tree_put(Transaction<Traits> &t, const string_type &k,
-                   const string_type &v, bool expect_new);
 };
 
 #endif /* _NDB_TXN_BTREE_H_ */
