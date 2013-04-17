@@ -119,6 +119,15 @@ namespace private_ {
     obj->name = trfm(tpe, obj->name); \
   } while (0);
 
+#define SERIALIZE_PREFIX_READ_FIELD(tpe, name, compress, trfm) \
+  do { \
+    serializer< tpe, compress > s; \
+    buf = s.read(buf, &obj->name); \
+    obj->name = trfm(tpe, obj->name); \
+    if (++i >= prefix) \
+      return; \
+  } while (0);
+
 #define SERIALIZE_NBYTES_FIELD(tpe, name, compress) \
   do { \
     serializer< tpe, compress > s; \
@@ -158,6 +167,11 @@ namespace private_ {
   SERIALIZE_READ_FIELD(tpe, name, false, BIG_TO_HOST_TRANSFORM)
 #define SERIALIZE_READ_VALUE_FIELD_X(tpe, name) \
   SERIALIZE_READ_FIELD(tpe, name, true, IDENT_TRANSFORM)
+
+#define SERIALIZE_PREFIX_READ_KEY_FIELD_X(tpe, name) \
+  SERIALIZE_PREFIX_READ_FIELD(tpe, name, false, BIG_TO_HOST_TRANSFORM)
+#define SERIALIZE_PREFIX_READ_VALUE_FIELD_X(tpe, name) \
+  SERIALIZE_PREFIX_READ_FIELD(tpe, name, true, IDENT_TRANSFORM)
 
 #define SERIALIZE_NBYTES_KEY_FIELD_X(tpe, name) \
   SERIALIZE_NBYTES_FIELD(tpe, name, false)
@@ -204,6 +218,12 @@ namespace private_ {
     encode_read(buf, obj); \
     return obj; \
   } \
+  inline ALWAYS_INLINE const struct name * \
+  prefix_read(const uint8_t *buf, struct name *obj, size_t prefix) const \
+  { \
+    encode_prefix_read(buf, obj, prefix); \
+    return obj; \
+  } \
   inline ALWAYS_INLINE size_t \
   nbytes(const struct name *obj) const \
   { \
@@ -212,14 +232,20 @@ namespace private_ {
 
 // implements direct pass-through version of the above functions
 #define DO_STRUCT_PASS_THROUGH_REST(name) \
-  inline const uint8_t * \
+  inline ALWAYS_INLINE const uint8_t * \
   write(uint8_t *buf, const struct name *obj) const \
   { \
     *((struct name *) buf) = *obj; \
     return buf; \
   } \
-  inline const struct name * \
+  inline ALWAYS_INLINE const struct name * \
   read(const uint8_t *buf, struct name *obj) const \
+  { \
+    *obj = *((const struct name *) buf); \
+    return obj; \
+  } \
+  inline ALWAYS_INLINE const struct name * \
+  prefix_read(const uint8_t *buf, struct name *obj, size_t prefix) const \
   { \
     *obj = *((const struct name *) buf); \
     return obj; \
@@ -255,6 +281,16 @@ namespace private_ {
   read(const char *buf, struct name *obj) const \
   { \
     return read((const uint8_t *) buf, obj); \
+  } \
+  inline ALWAYS_INLINE const struct name * \
+  prefix_read(const std::string &buf, struct name *obj, size_t prefix) const \
+  { \
+    return prefix_read((const uint8_t *) buf.data(), obj, prefix); \
+  } \
+  inline ALWAYS_INLINE const struct name * \
+  prefix_read(const char *buf, struct name *obj, size_t prefix) const \
+  { \
+    return prefix_read((const uint8_t *) buf, obj, prefix); \
   }
 
 #ifdef USE_VARINT_ENCODING
@@ -305,15 +341,21 @@ namespace private_ {
   }; \
   template <> \
   struct encoder< name::key > { \
-  void \
+  inline void \
   encode_write(uint8_t *buf, const struct name::key *obj) const \
   { \
     APPLY_X_AND_Y(keyfields, SERIALIZE_WRITE_KEY_FIELD_X) \
   } \
-  void \
+  inline void \
   encode_read(const uint8_t *buf, struct name::key *obj) const \
   { \
     APPLY_X_AND_Y(keyfields, SERIALIZE_READ_KEY_FIELD_X) \
+  } \
+  inline void \
+  encode_prefix_read(const uint8_t *buf, struct name::key *obj, size_t prefix) const \
+  { \
+    size_t i = 0; \
+    APPLY_X_AND_Y(keyfields, SERIALIZE_PREFIX_READ_KEY_FIELD_X) \
   } \
   inline ALWAYS_INLINE size_t \
   encode_nbytes(const struct name::key *obj) const \
@@ -341,17 +383,23 @@ namespace private_ {
   }; \
   template <> \
   struct encoder< name::value > { \
-  void \
+  inline void \
   encode_write(uint8_t *buf, const struct name::value *obj) const \
   { \
     APPLY_X_AND_Y(valuefields, SERIALIZE_WRITE_VALUE_FIELD_X) \
   } \
-  void \
+  inline void \
   encode_read(const uint8_t *buf, struct name::value *obj) const \
   { \
     APPLY_X_AND_Y(valuefields, SERIALIZE_READ_VALUE_FIELD_X) \
   } \
-  size_t \
+  inline void \
+  encode_prefix_read(const uint8_t *buf, struct name::value *obj, size_t prefix) const \
+  { \
+    size_t i = 0; \
+    APPLY_X_AND_Y(valuefields, SERIALIZE_PREFIX_READ_VALUE_FIELD_X) \
+  } \
+  inline size_t \
   encode_nbytes(const struct name::value *obj) const \
   { \
     size_t size = 0; \

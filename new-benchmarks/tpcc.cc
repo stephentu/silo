@@ -1182,12 +1182,12 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
     customer::value v_c;
-    ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c, this->arena));
+    ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c, this->arena, Prefix(3)));
     checker::SanityCheckCustomer(&k_c, &v_c);
 
     const warehouse::key k_w(warehouse_id);
     warehouse::value v_w;
-    ALWAYS_ASSERT(tables.tbl_warehouse(warehouse_id)->search(txn, k_w, v_w, this->arena));
+    ALWAYS_ASSERT(tables.tbl_warehouse(warehouse_id)->search(txn, k_w, v_w, this->arena, Prefix(2)));
     checker::SanityCheckWarehouse(&k_w, &v_w);
 
     const district::key k_d(warehouse_id, districtID);
@@ -1201,10 +1201,9 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
     tables.tbl_new_order(warehouse_id)->insert(txn, k_no, v_no, this->arena);
     ret += new_order_sz;
 
-    district::value v_d_new(v_d);
-    v_d_new.d_next_o_id++;
+    v_d.d_next_o_id++;
 
-    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d_new, this->arena);
+    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d, this->arena);
 
     const oorder::key k_oo(warehouse_id, districtID, k_no.no_o_id);
     oorder::value v_oo;
@@ -1230,7 +1229,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
 
       const item::key k_i(ol_i_id);
       item::value v_i;
-      ALWAYS_ASSERT(tables.tbl_item(1)->search(txn, k_i, v_i, this->arena));
+      ALWAYS_ASSERT(tables.tbl_item(1)->search(txn, k_i, v_i, this->arena, Prefix(3)));
       checker::SanityCheckItem(&k_i, &v_i);
 
       const stock::key k_s(ol_supply_w_id, ol_i_id);

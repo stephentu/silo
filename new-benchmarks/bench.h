@@ -37,6 +37,18 @@ extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
 
+namespace {
+inline size_t constexpr
+Prefix(size_t prefix)
+{
+#ifdef CHECK_INVARIANTS
+  return std::numeric_limits<size_t>::max();
+#else
+  return prefix;
+#endif
+}
+}
+
 // NOTE: the typed_* versions of classes exist so we don't have to convert all
 // classes to templatetized [for sanity in compliation times]; we trade off
 // a bit of type-safety for more rapid development cycles

@@ -74,9 +74,10 @@ private:
 
   struct wrapper : public super_type::search_range_callback {
     wrapper(search_range_callback &caller_callback,
-            bool no_key_results)
+            bool no_key_results, size_type fetch_prefix)
       : caller_callback(&caller_callback),
-        no_key_results(no_key_results) {}
+        no_key_results(no_key_results),
+        fetch_prefix(fetch_prefix) {}
     virtual bool
     invoke(const typename super_type::string_type &k,
            const typename super_type::string_type &v)
@@ -84,13 +85,14 @@ private:
       key_type key;
       value_type value;
       if (!no_key_results)
-        key_encoder.read(k, &key);
-      value_encoder.read(v, &value);
+        key_encoder.prefix_read(k, &key, fetch_prefix);
+      value_encoder.prefix_read(v, &value, fetch_prefix);
       return caller_callback->invoke(key, value);
     }
   private:
     search_range_callback *const caller_callback;
     bool no_key_results;
+    size_type fetch_prefix;
     key_encoder_type key_encoder;
     value_encoder_type value_encoder;
   };
@@ -115,7 +117,7 @@ typed_txn_btree<Transaction, Schema>::search(
   const size_t max_bytes_read = key_encoder.encode_max_nbytes_prefix(fetch_prefix);
   if (!this->do_search(t, varkey(*kbuf), *vbuf, max_bytes_read))
     return false;
-  value_encoder.read(vbuf->data(), &v);
+  value_encoder.prefix_read(vbuf->data(), &v, fetch_prefix);
   return true;
 }
 
@@ -134,7 +136,7 @@ typed_txn_btree<Transaction, Schema>::search_range_call(
   if (upperbuf)
     key_encoder.write(*upperbuf, upper);
   varkey upperbufvk(upperbuf ? varkey(*upperbuf) : varkey());
-  wrapper cb(callback, no_key_results);
+  wrapper cb(callback, no_key_results, fetch_prefix);
   this->do_search_range_call(
       t, varkey(*lowerbuf), upperbuf ? &upperbufvk : nullptr, cb, sa, fetch_prefix);
 }
