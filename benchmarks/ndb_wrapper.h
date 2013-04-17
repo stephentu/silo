@@ -3,7 +3,6 @@
 
 #include "abstract_db.h"
 #include "../txn_btree.h"
-#include "../txn_btree_impl.h"
 
 namespace private_ {
   struct ndbtxn {
