@@ -23,7 +23,9 @@ public:
     virtual bool invoke(const key_type &k, const value_type &v) = 0;
   };
 
-  typedef typename super_type::search_range_callback bytes_search_range_callback;
+  //typedef typename super_type::search_range_callback bytes_search_range_callback;
+  // more type-safe
+  struct bytes_search_range_callback : public super_type::search_range_callback {};
 
   typed_txn_btree(size_type value_size_hint = 128,
                   bool mostly_append = false,

@@ -51,6 +51,22 @@ Decode(const char *buf, T &obj)
 }
 
 template <typename T>
+static inline const T *
+PrefixDecode(const std::string &buf, T &obj, size_t prefix)
+{
+  const encoder<T> enc;
+  return enc.prefix_read(buf.data(), &obj, prefix);
+}
+
+template <typename T>
+static inline const T *
+PrefixDecode(const char *buf, T &obj, size_t prefix)
+{
+  const encoder<T> enc;
+  return enc.read(buf, &obj, prefix);
+}
+
+template <typename T>
 static inline size_t
 Size(const T &t)
 {
