@@ -130,10 +130,10 @@ typed_txn_btree<Transaction, Schema>::search_range_call(
 {
   string_type *lowerbuf = sa();
   string_type *upperbuf = upper ? sa() : nullptr;
-  varkey upperbufvk(upperbuf ? varkey(*upperbuf) : varkey());
   key_encoder.write(*lowerbuf, &lower);
   if (upperbuf)
     key_encoder.write(*upperbuf, upper);
+  varkey upperbufvk(upperbuf ? varkey(*upperbuf) : varkey());
   wrapper cb(callback, no_key_results);
   this->do_search_range_call(
       t, varkey(*lowerbuf), upperbuf ? &upperbufvk : nullptr, cb, sa, fetch_prefix);
@@ -150,10 +150,10 @@ typed_txn_btree<Transaction, Schema>::bytes_search_range_call(
 {
   string_type *lowerbuf = sa();
   string_type *upperbuf = upper ? sa() : nullptr;
-  varkey upperbufvk(upperbuf ? varkey(*upperbuf) : varkey());
   key_encoder.write(*lowerbuf, &lower);
   if (upperbuf)
     key_encoder.write(*upperbuf, upper);
+  varkey upperbufvk(upperbuf ? varkey(*upperbuf) : varkey());
   this->do_search_range_call(
       t, varkey(*lowerbuf), upperbuf ? &upperbufvk : nullptr, callback, sa, fetch_prefix);
 }
