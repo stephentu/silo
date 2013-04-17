@@ -525,6 +525,7 @@ protected:
   virtual void
   load()
   {
+    default_string_allocator arena;
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
       vector<warehouse::value> warehouses;
@@ -554,7 +555,7 @@ protected:
           const size_t sz = Size(v);
           warehouse_total_sz += sz;
           n_warehouses++;
-          tables.tbl_warehouse(i)->insert(txn, k, v, this->arena);
+          tables.tbl_warehouse(i)->insert(txn, k, v, arena);
           warehouses.push_back(v);
         }
         ALWAYS_ASSERT(txn.commit());
@@ -564,7 +565,7 @@ protected:
         for (uint i = 1; i <= NumWarehouses(); i++) {
           const warehouse::key k(i);
           warehouse::value v;
-          ALWAYS_ASSERT(tables.tbl_warehouse(i)->search(txn, k, v, this->arena));
+          ALWAYS_ASSERT(tables.tbl_warehouse(i)->search(txn, k, v, arena));
           ALWAYS_ASSERT(warehouses[i - 1] == v);
           checker::SanityCheckWarehouse(&k, &v);
         }
@@ -600,6 +601,7 @@ protected:
   virtual void
   load()
   {
+    default_string_allocator arena;
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
     auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags);
     uint64_t total_sz = 0;
@@ -627,7 +629,7 @@ protected:
         const size_t sz = Size(v);
         total_sz += sz;
         // XXX: replicate items table across all NUMA nodes
-        tables.tbl_item(1)->insert(*txn, k, v, this->arena); // this table is shared, so any partition is OK
+        tables.tbl_item(1)->insert(*txn, k, v, arena); // this table is shared, so any partition is OK
 
         if (bsize != -1 && !(i % bsize)) {
           ALWAYS_ASSERT(txn->commit());
@@ -671,6 +673,7 @@ protected:
   virtual void
   load()
   {
+    default_string_allocator arena;
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
@@ -726,8 +729,8 @@ protected:
             const size_t sz = Size(v);
             stock_total_sz += sz;
             n_stocks++;
-            tables.tbl_stock(w)->insert(*txn, k, v, this->arena);
-            tables.tbl_stock_data(w)->insert(*txn, k_data, v_data, this->arena);
+            tables.tbl_stock(w)->insert(*txn, k, v, arena);
+            tables.tbl_stock_data(w)->insert(*txn, k_data, v_data, arena);
           }
           if (txn->commit()) {
             b++;
@@ -776,6 +779,7 @@ protected:
   virtual void
   load()
   {
+    default_string_allocator arena;
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
     auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags);
     uint64_t district_total_sz = 0, n_districts = 0;
@@ -802,7 +806,7 @@ protected:
           const size_t sz = Size(v);
           district_total_sz += sz;
           n_districts++;
-          tables.tbl_district(w)->insert(*txn, k, v, this->arena);
+          tables.tbl_district(w)->insert(*txn, k, v, arena);
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
             ALWAYS_ASSERT(txn->commit());
@@ -847,6 +851,7 @@ protected:
   virtual void
   load()
   {
+    default_string_allocator arena;
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
     const uint w_end   = (warehouse_id == -1) ?
@@ -896,7 +901,7 @@ protected:
             checker::SanityCheckCustomer(&k, &v);
             const size_t sz = Size(v);
             total_sz += sz;
-            tables.tbl_customer(w)->insert(txn, k, v, this->arena);
+            tables.tbl_customer(w)->insert(txn, k, v, arena);
 
             // customer name index
             const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -905,7 +910,7 @@ protected:
             // index structure is:
             // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-            tables.tbl_customer_name_idx(w)->insert(txn, k_idx, v_idx, this->arena);
+            tables.tbl_customer_name_idx(w)->insert(txn, k_idx, v_idx, arena);
 
             history::key k_hist;
             k_hist.h_c_id = c;
@@ -919,7 +924,7 @@ protected:
             v_hist.h_amount = 10;
             v_hist.h_data.assign(RandomStr(this->r, RandomNumber(this->r, 10, 24)));
 
-            tables.tbl_history(w)->insert(txn, k_hist, v_hist, this->arena);
+            tables.tbl_history(w)->insert(txn, k_hist, v_hist, arena);
           }
 
           if (txn.commit()) {
@@ -978,6 +983,7 @@ protected:
   virtual void
   load()
   {
+    default_string_allocator arena;
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
     uint64_t oorder_total_sz = 0, n_oorders = 0;
     uint64_t new_order_total_sz = 0, n_new_orders = 0;
@@ -1019,12 +1025,12 @@ protected:
             const size_t sz = Size(v_oo);
             oorder_total_sz += sz;
             n_oorders++;
-            tables.tbl_oorder(w)->insert(txn, k_oo, v_oo, this->arena);
+            tables.tbl_oorder(w)->insert(txn, k_oo, v_oo, arena);
 
             const oorder_c_id_idx::key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
             const oorder_c_id_idx::value v_oo_idx(0);
 
-            tables.tbl_oorder_c_id_idx(w)->insert(txn, k_oo_idx, v_oo_idx, this->arena);
+            tables.tbl_oorder_c_id_idx(w)->insert(txn, k_oo_idx, v_oo_idx, arena);
 
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
@@ -1034,7 +1040,7 @@ protected:
               const size_t sz = Size(v_no);
               new_order_total_sz += sz;
               n_new_orders++;
-              tables.tbl_new_order(w)->insert(txn, k_no, v_no, this->arena);
+              tables.tbl_new_order(w)->insert(txn, k_no, v_no, arena);
             }
 
             for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -1060,7 +1066,7 @@ protected:
               const size_t sz = Size(v_ol);
               order_line_total_sz += sz;
               n_order_lines++;
-              tables.tbl_order_line(w)->insert(txn, k_ol, v_ol, this->arena);
+              tables.tbl_order_line(w)->insert(txn, k_ol, v_ol, arena);
             }
             if (txn.commit()) {
               c++;

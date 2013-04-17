@@ -7,6 +7,7 @@
 #include <limits>
 #include <queue>
 #include <utility>
+#include <memory>
 
 #include <stdint.h>
 #include <pthread.h>
@@ -439,6 +440,22 @@ split(const std::string &s, char delim)
     elems.emplace_back(item);
   return elems;
 }
+
+struct default_string_allocator {
+  inline std::string *
+  operator()()
+  {
+    strs.emplace_back(new std::string);
+    return strs.back().get();
+  }
+  inline void
+  return_last(std::string *px)
+  {
+    // XXX: check px in strs
+  }
+private:
+  std::vector<std::shared_ptr<std::string>> strs;
+};
 
 } // namespace util
 

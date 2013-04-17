@@ -87,7 +87,6 @@ protected:
   util::fast_random r;
   abstract_db *const db;
   spin_barrier *b;
-  str_arena arena;
 };
 
 template <typename Database>

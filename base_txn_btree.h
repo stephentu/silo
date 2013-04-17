@@ -4,6 +4,7 @@
 #include "btree.h"
 #include "txn.h"
 #include "lockguard.h"
+#include "util.h"
 
 #include <string>
 #include <map>
@@ -35,21 +36,7 @@ public:
   typedef const uint8_t * value_type;
   typedef size_t size_type;
 
-  struct default_string_allocator {
-    inline string_type *
-    operator()()
-    {
-      strs.emplace_back(new string_type);
-      return strs.back().get();
-    }
-    inline void
-    return_last(string_type *px)
-    {
-      // XXX: check px in strs
-    }
-  private:
-    std::vector<std::shared_ptr<string_type>> strs;
-  };
+  typedef util::default_string_allocator default_string_allocator;
 
   base_txn_btree(size_type value_size_hint = 128,
             bool mostly_append = false,
