@@ -108,4 +108,38 @@ private:
   str_arena *arena;
 };
 
+// wraps a ptr and forwards
+class proxy_str_arena {
+public:
+  proxy_str_arena(str_arena *arena) : arena(arena) {}
+  proxy_str_arena(str_arena &arena) : arena(&arena) {}
+
+  inline void
+  reset()
+  {
+    arena->reset();
+  }
+
+  std::string *
+  next()
+  {
+    return arena->next();
+  }
+
+  inline std::string *
+  operator()()
+  {
+    return next();
+  }
+
+  void
+  return_last(std::string *px)
+  {
+    arena->return_last(px);
+  }
+
+private:
+  str_arena *arena;
+};
+
 #endif /* _STR_ARENA_H_ */

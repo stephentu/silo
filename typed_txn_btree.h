@@ -23,6 +23,8 @@ public:
     virtual bool invoke(const key_type &k, const value_type &v) = 0;
   };
 
+  typedef typename super_type::search_range_callback bytes_search_range_callback;
+
   typed_txn_btree(size_type value_size_hint = 128,
                   bool mostly_append = false,
                   const std::string &name = "<unknown>")
@@ -38,7 +40,17 @@ public:
   template <typename Traits, typename StringAllocator>
   inline void search_range_call(
       Transaction<Traits> &t, const key_type &lower, const key_type *upper,
-      search_range_callback &callback, StringAllocator &sa,
+      search_range_callback &callback,
+      StringAllocator sa,
+      bool no_key_results = false, /* skip decoding of keys? */
+      size_type fetch_prefix = std::numeric_limits<size_type>::max());
+
+  // a lower-level variant which does not bother to decode the key/values
+  template <typename Traits, typename StringAllocator>
+  inline void bytes_search_range_call(
+      Transaction<Traits> &t, const key_type &lower, const key_type *upper,
+      bytes_search_range_callback &callback,
+      StringAllocator sa,
       size_type fetch_prefix = std::numeric_limits<size_type>::max());
 
   /* save_columns currently ignored */
@@ -61,20 +73,24 @@ public:
 private:
 
   struct wrapper : public super_type::search_range_callback {
-    wrapper(search_range_callback &caller_callback)
-      : caller_callback(&caller_callback) {}
+    wrapper(search_range_callback &caller_callback,
+            bool no_key_results)
+      : caller_callback(&caller_callback),
+        no_key_results(no_key_results) {}
     virtual bool
     invoke(const typename super_type::string_type &k,
            const typename super_type::string_type &v)
     {
       key_type key;
       value_type value;
-      key_encoder.read(k, &key);
+      if (!no_key_results)
+        key_encoder.read(k, &key);
       value_encoder.read(v, &value);
-      return caller_callback(key, value);
+      return caller_callback->invoke(key, value);
     }
   private:
     search_range_callback *const caller_callback;
+    bool no_key_results;
     key_encoder_type key_encoder;
     value_encoder_type value_encoder;
   };
@@ -108,16 +124,38 @@ template <typename Traits, typename StringAllocator>
 void
 typed_txn_btree<Transaction, Schema>::search_range_call(
     Transaction<Traits> &t, const key_type &lower, const key_type *upper,
-    search_range_callback &callback, StringAllocator &sa,
+    search_range_callback &callback,
+    StringAllocator sa,
+    bool no_key_results, size_type fetch_prefix)
+{
+  string_type *lowerbuf = sa();
+  string_type *upperbuf = upper ? sa() : nullptr;
+  varkey upperbufvk(upperbuf ? varkey(*upperbuf) : varkey());
+  key_encoder.write(*lowerbuf, &lower);
+  if (upperbuf)
+    key_encoder.write(*upperbuf, upper);
+  wrapper cb(callback, no_key_results);
+  this->do_search_range_call(
+      t, varkey(*lowerbuf), upperbuf ? &upperbufvk : nullptr, cb, sa, fetch_prefix);
+}
+
+template <template <typename> class Transaction, typename Schema>
+template <typename Traits, typename StringAllocator>
+void
+typed_txn_btree<Transaction, Schema>::bytes_search_range_call(
+    Transaction<Traits> &t, const key_type &lower, const key_type *upper,
+    bytes_search_range_callback &callback,
+    StringAllocator sa,
     size_type fetch_prefix)
 {
   string_type *lowerbuf = sa();
   string_type *upperbuf = upper ? sa() : nullptr;
+  varkey upperbufvk(upperbuf ? varkey(*upperbuf) : varkey());
   key_encoder.write(*lowerbuf, &lower);
   if (upperbuf)
     key_encoder.write(*upperbuf, upper);
-  wrapper cb(callback);
-  this->do_search_range_call(t, *lowerbuf, upperbuf, cb, sa, fetch_prefix);
+  this->do_search_range_call(
+      t, varkey(*lowerbuf), upperbuf ? &upperbufvk : nullptr, callback, sa, fetch_prefix);
 }
 
 template <template <typename> class Transaction, typename Schema>

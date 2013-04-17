@@ -127,6 +127,19 @@ BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/ycsb.cc
 BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
 
+NEWBENCH_HEADERS = $(HEADERS) \
+	new-benchmarks/abstract_db.h \
+	new-benchmarks/abstract_ordered_index.h \
+	new-benchmarks/bench.h \
+	new-benchmarks/inline_str.h \
+	new-benchmarks/ndb_database.h \
+	new-benchmarks/str_arena.h \
+	new-benchmarks/tpcc.h
+
+NEWBENCH_SRCFILES = new-benchmarks/bench.cc \
+	new-benchmarks/tpcc.cc
+NEWBENCH_OBJFILES = $(NEWBENCH_SRCFILES:.cc=.o)
+
 all: test
 
 benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
@@ -135,24 +148,35 @@ benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
 benchmarks/masstree/%.o: benchmarks/masstree/%.cc $(BENCH_HEADERS)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
+new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 %.o: %.cc $(HEADERS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 test: test.o $(OBJFILES)
-	$(CXX) $(CXXFLAGS) -o test $^ $(LDFLAGS)
+	$(CXX) -o test $^ $(LDFLAGS)
 
 .PHONY: dbtest
 dbtest: benchmarks/dbtest
 
 benchmarks/dbtest: benchmarks/dbtest.o $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/dbtest $^ $(BENCH_LDFLAGS)
+	$(CXX) -o benchmarks/dbtest $^ $(BENCH_LDFLAGS)
 
 .PHONY: kvtest
 kvtest: benchmarks/masstree/kvtest
 
 benchmarks/masstree/kvtest: benchmarks/masstree/kvtest.o $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) $(BENCH_CXXFLAGS) -o benchmarks/masstree/kvtest $^ $(BENCH_LDFLAGS)
+	$(CXX) -o benchmarks/masstree/kvtest $^ $(BENCH_LDFLAGS)
+
+.PHONY: newdbtest
+newdbtest: new-benchmarks/dbtest
+
+new-benchmarks/dbtest: new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES)
+	$(CXX) -o new-benchmarks/dbtest $^ $(LDFLAGS)
 
 .PHONY: clean
 clean:
-	rm -f *.o test benchmarks/*.o benchmarks/dbtest benchmarks/masstree/*.o benchmarks/masstree/kvtest
+	rm -f *.o test benchmarks/*.o benchmarks/dbtest \
+		benchmarks/masstree/*.o benchmarks/masstree/kvtest \
+		new-benchmarks/*.o new-benchmarks/dbtest

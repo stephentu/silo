@@ -6,4 +6,5 @@ tags
 test
 benchmarks/dbtest
 benchmarks/masstree/kvtest
+new-benchmarks/dbtest
 config.mk
