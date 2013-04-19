@@ -7,7 +7,7 @@
 #include <string>
 
 #include "../macros.h"
-#include "../record/serializer.h"
+#include "serializer.h"
 
 // equivalent to VARCHAR(N)
 
@@ -142,10 +142,24 @@ private:
 } PACKED;
 
 template <unsigned int N>
-class inline_str_8 : public inline_str_base<uint8_t, N> {} PACKED;
+class inline_str_8 : public inline_str_base<uint8_t, N> {
+  typedef inline_str_base<uint8_t, N> super_type;
+public:
+  inline_str_8() : super_type() {}
+  inline_str_8(const char *s) : super_type(s) {}
+  inline_str_8(const char *s, size_t n) : super_type(s, n) {}
+  inline_str_8(const std::string &s) : super_type(s) {}
+} PACKED;
 
 template <unsigned int N>
-class inline_str_16 : public inline_str_base<uint16_t, N> {} PACKED;
+class inline_str_16 : public inline_str_base<uint16_t, N> {
+  typedef inline_str_base<uint16_t, N> super_type;
+public:
+  inline_str_16() : super_type() {}
+  inline_str_16(const char *s) : super_type(s) {}
+  inline_str_16(const char *s, size_t n) : super_type(s, n) {}
+  inline_str_16(const std::string &s) : super_type(s) {}
+} PACKED;
 
 // equiavlent to CHAR(N)
 template <unsigned int N, char FillChar = ' '>
@@ -246,29 +260,37 @@ private:
 template <typename IntSizeType, unsigned int N, bool Compress>
 struct serializer< inline_str_base<IntSizeType, N>, Compress > {
   typedef inline_str_base<IntSizeType, N> obj_type;
-  inline uint8_t *
-  write(uint8_t *buf, const obj_type &obj) const
+  static inline uint8_t *
+  write(uint8_t *buf, const obj_type &obj)
   {
-    serializer<IntSizeType, Compress> s;
-    buf = write(buf, &obj.sz);
+    buf = serializer<IntSizeType, Compress>::write(buf, &obj.sz);
     NDB_MEMCPY(buf, &obj.buf[0], obj.sz);
     return buf + obj.sz;
   }
 
-  const uint8_t *
-  read(const uint8_t *buf, obj_type *obj) const
+  static const uint8_t *
+  read(const uint8_t *buf, obj_type *obj)
   {
-    serializer<IntSizeType, Compress> s;
-    buf = read(buf, &obj->sz);
+    buf = serializer<IntSizeType, Compress>::read(buf, &obj->sz);
     NDB_MEMCPY(&obj->buf[0], buf, obj->sz);
     return buf + obj->sz;
   }
 
-  size_t
-  nbytes(const obj_type *obj) const
+  static inline size_t
+  nbytes(const obj_type *obj)
   {
-    serializer<IntSizeType, Compress> s;
-    return s.nbytes(&obj->sz) + obj->sz;
+    return serializer<IntSizeType, Compress>::nbytes(&obj->sz) + obj->sz;
+  }
+
+  static inline size_t
+  skip(const uint8_t *stream, uint8_t *oldv)
+  {
+    IntSizeType sz = 0;
+    const uint8_t * const body = serializer<IntSizeType, Compress>::read(stream, &sz);
+    const size_t totalsz = (body - stream) + sz;
+    if (oldv)
+      NDB_MEMCPY(oldv, stream, totalsz);
+    return totalsz;
   }
 
   static inline constexpr size_t

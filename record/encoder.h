@@ -124,21 +124,18 @@ namespace private_ {
 
 #define SERIALIZE_WRITE_FIELD(tpe, name, compress, trfm) \
   do { \
-    serializer< tpe, compress > s; \
-    buf = s.write(buf, trfm(tpe, obj->name)); \
+    buf = serializer< tpe, compress >::write(buf, trfm(tpe, obj->name)); \
   } while (0);
 
 #define SERIALIZE_READ_FIELD(tpe, name, compress, trfm) \
   do { \
-    serializer< tpe, compress > s; \
-    buf = s.read(buf, &obj->name); \
+    buf = serializer< tpe, compress >::read(buf, &obj->name); \
     obj->name = trfm(tpe, obj->name); \
   } while (0);
 
 #define SERIALIZE_PREFIX_READ_FIELD(tpe, name, compress, trfm) \
   do { \
-    serializer< tpe, compress > s; \
-    buf = s.read(buf, &obj->name); \
+    buf = serializer< tpe, compress >::read(buf, &obj->name); \
     obj->name = trfm(tpe, obj->name); \
     if (++i >= prefix) \
       return; \
@@ -146,8 +143,7 @@ namespace private_ {
 
 #define SERIALIZE_NBYTES_FIELD(tpe, name, compress) \
   do { \
-    serializer< tpe, compress > s; \
-    size += s.nbytes(&obj->name); \
+    size += serializer< tpe, compress >::nbytes(&obj->name); \
   } while (0);
 
 #define SERIALIZE_MAX_NBYTES_KEY_FIELD_X(tpe, name) \
@@ -193,6 +189,23 @@ namespace private_ {
   SERIALIZE_NBYTES_FIELD(tpe, name, false)
 #define SERIALIZE_NBYTES_VALUE_FIELD_X(tpe, name) \
   SERIALIZE_NBYTES_FIELD(tpe, name, true)
+
+#define DESCRIPTOR_VALUE_WRITE_FN_X(tpe, name) \
+  &generic_serializer< serializer< tpe, true > >::write,
+#define DESCRIPTOR_VALUE_READ_FN_X(tpe, name) \
+  &generic_serializer< serializer< tpe, true > >::read,
+#define DESCRIPTOR_VALUE_NBYTES_FN_X(tpe, name) \
+  &generic_serializer< serializer< tpe, true > >::nbytes,
+#define DESCRIPTOR_VALUE_SKIP_FN_X(tpe, name) \
+  &generic_serializer< serializer< tpe, true > >::skip,
+#define DESCRIPTOR_VALUE_NFIELDS_X(tpe, name) \
+  + 1
+#define DESCRIPTOR_VALUE_MAX_NBYTES_X(tpe, name) \
+  serializer< tpe, true >::max_nbytes(),
+#define DESCRIPTOR_VALUE_OFFSETOF_X(tpe, name) \
+  offsetof(value, name),
+#define DESCRIPTOR_VALUE_SIZEOF_X(tpe, name) \
+  sizeof(tpe),
 
 // semantics:
 
@@ -354,6 +367,69 @@ namespace private_ {
       return !operator==(other); \
     } \
   } PACKED; \
+  struct value_descriptor { \
+    static inline generic_write_fn \
+    write_fn(size_t i) \
+    { \
+      static generic_write_fn write_fns[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_WRITE_FN_X) \
+      }; \
+      return write_fns[i]; \
+    } \
+    static inline generic_read_fn \
+    read_fn(size_t i) \
+    { \
+      static generic_read_fn read_fns[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_READ_FN_X) \
+      }; \
+      return read_fns[i]; \
+    } \
+    static inline generic_nbytes_fn \
+    nbytes_fn(size_t i) \
+    { \
+      static generic_nbytes_fn nbytes_fns[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_NBYTES_FN_X) \
+      }; \
+      return nbytes_fns[i]; \
+    } \
+    static inline generic_skip_fn \
+    skip_fn(size_t i) \
+    { \
+      static generic_skip_fn skip_fns[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_SKIP_FN_X) \
+      }; \
+      return skip_fns[i]; \
+    } \
+    static inline constexpr size_t \
+    nfields() \
+    { \
+      return 0 + APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_NFIELDS_X); \
+    } \
+    static inline size_t \
+    max_nbytes(size_t i) \
+    { \
+      static size_t maxn[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_MAX_NBYTES_X) \
+      }; \
+      return maxn[i]; \
+    } \
+    static inline size_t \
+    cstruct_offsetof(size_t i) \
+    { \
+      static size_t offsets[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_OFFSETOF_X) \
+      }; \
+      return offsets[i]; \
+    } \
+    static inline size_t \
+    cstruct_sizeof(size_t i) \
+    { \
+      static size_t sizeofs[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_SIZEOF_X) \
+      }; \
+      return sizeofs[i]; \
+    } \
+  }; \
   }; \
   template <> \
   struct encoder< name::key > { \

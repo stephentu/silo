@@ -7,28 +7,6 @@
 using namespace std;
 using namespace util;
 
-// read unsigned varint32 from buffer. assumes the buffer will have enough size
-const uint8_t *
-read_uvint32_slow(const uint8_t *buf, uint32_t *value)
-{
-  const uint8_t *p;
-  uint32_t b, result;
-
-  p = buf;
-
-  b = *p++; result  = (b & 0x7F)      ; if (likely(b < 0x80)) goto done;
-  b = *p++; result |= (b & 0x7F) <<  7; if (likely(b < 0x80)) goto done;
-  b = *p++; result |= (b & 0x7F) << 14; if (likely(b < 0x80)) goto done;
-  b = *p++; result |= (b & 0x7F) << 21; if (likely(b < 0x80)) goto done;
-  b = *p++; result |=  b         << 28; if (likely(b < 0x80)) goto done;
-
-  ALWAYS_ASSERT(false); // should not reach here (improper encoding)
-
-done:
-  *value = result;
-  return p;
-}
-
 static void
 do_test(uint32_t v)
 {

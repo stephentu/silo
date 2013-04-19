@@ -4,8 +4,27 @@
 #include <stdint.h>
 #include "macros.h"
 
-extern const uint8_t *
-read_uvint32_slow(const uint8_t *buf, uint32_t *value) NEVER_INLINE;
+// read unsigned varint32 from buffer. assumes the buffer will have enough size
+inline const uint8_t *
+read_uvint32_slow(const uint8_t *buf, uint32_t *value)
+{
+  const uint8_t *p;
+  uint32_t b, result;
+
+  p = buf;
+
+  b = *p++; result  = (b & 0x7F)      ; if (likely(b < 0x80)) goto done;
+  b = *p++; result |= (b & 0x7F) <<  7; if (likely(b < 0x80)) goto done;
+  b = *p++; result |= (b & 0x7F) << 14; if (likely(b < 0x80)) goto done;
+  b = *p++; result |= (b & 0x7F) << 21; if (likely(b < 0x80)) goto done;
+  b = *p++; result |=  b         << 28; if (likely(b < 0x80)) goto done;
+
+  ALWAYS_ASSERT(false); // should not reach here (improper encoding)
+
+done:
+  *value = result;
+  return p;
+}
 
 /**
  * Read a uvint32 from buf into value, returning the
@@ -22,6 +41,26 @@ read_uvint32(const uint8_t *buf, uint32_t *value)
   } else {
     return read_uvint32_slow(buf, value);
   }
+}
+
+inline ALWAYS_INLINE size_t
+skip_uvint32(const uint8_t *stream, uint8_t *rawv)
+{
+  if (rawv) {
+    if (likely((rawv[0] = stream[0]) < 0x80)) return 1;
+    if (likely((rawv[1] = stream[1]) < 0x80)) return 2;
+    if (likely((rawv[2] = stream[2]) < 0x80)) return 3;
+    if (likely((rawv[3] = stream[3]) < 0x80)) return 4;
+    if (likely((rawv[4] = stream[4]) < 0x80)) return 5;
+  } else {
+    if (likely(stream[0] < 0x80)) return 1;
+    if (likely(stream[1] < 0x80)) return 2;
+    if (likely(stream[2] < 0x80)) return 3;
+    if (likely(stream[3] < 0x80)) return 4;
+    if (likely(stream[4] < 0x80)) return 5;
+  }
+  ALWAYS_ASSERT(false);
+  return 0;
 }
 
 /**

@@ -1827,8 +1827,7 @@ tpcc_worker::txn_stock_level()
       for (auto &p : c.s_i_ids) {
         ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
 
-        const serializer<int16_t, true> i16s;
-        const size_t nbytesread = i16s.max_nbytes();
+        const size_t nbytesread = serializer<int16_t, true>::max_nbytes();
 
         const stock::key k_s(warehouse_id, p.first);
         INVARIANT(p.first >= 1 && p.first <= NumItems());
@@ -1839,7 +1838,7 @@ tpcc_worker::txn_stock_level()
         INVARIANT(obj_v.size() <= nbytesread);
         const uint8_t *ptr = (const uint8_t *) obj_v.data();
         int16_t i16tmp;
-        ptr = i16s.read(ptr, &i16tmp);
+        ptr = serializer<int16_t, true>::read(ptr, &i16tmp);
         if (i16tmp < int(threshold))
           s_i_ids_distinct[p.first] = 1;
       }

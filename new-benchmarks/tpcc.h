@@ -4,7 +4,7 @@
 #include <memory>
 
 #include "../record/encoder.h"
-#include "inline_str.h"
+#include "../record/inline_str.h"
 #include "../macros.h"
 
 #define CUSTOMER_KEY_FIELDS(x, y) \

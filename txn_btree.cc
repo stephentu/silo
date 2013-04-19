@@ -13,7 +13,7 @@
 #include "macros.h"
 #include "tuple.h"
 #include "record/encoder.h"
-#include "benchmarks/inline_str.h" // XXX: bad dependence
+#include "record/inline_str.h"
 
 #include "scopedperf.hh"
 

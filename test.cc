@@ -16,8 +16,9 @@
 #include "small_unordered_map.h"
 #include "static_unordered_map.h"
 #include "counter.h"
-
 #include "record/encoder.h"
+#include "record/inline_str.h"
+#include "record/cursor.h"
 
 #define MYREC_KEY_FIELDS(x, y) \
   x(int32_t,k0) \
@@ -26,6 +27,19 @@
   x(int32_t,v0) \
   y(int16_t,v1)
 DO_STRUCT(myrec, MYREC_KEY_FIELDS, MYREC_VALUE_FIELDS)
+
+#define CURSORREC_KEY_FIELDS(x, y) \
+  x(int32_t,k0) \
+  y(int32_t,k1)
+#define CURSORREC_VALUE_FIELDS(x, y) \
+  x(int32_t,v0) \
+  y(int16_t,v1) \
+  y(int32_t,v2) \
+  y(inline_str_8<25>,v3) \
+  y(inline_str_fixed<25>,v4) \
+  y(int32_t,v5) \
+  y(int8_t,v6)
+DO_STRUCT(cursorrec, CURSORREC_KEY_FIELDS, CURSORREC_VALUE_FIELDS)
 
 using namespace std;
 using namespace util;
@@ -830,6 +844,63 @@ operator<<(ostream &o, const myrec::value &v)
 }
 
 void
+TestCursor()
+{
+  const cursorrec::value v(12345, 1, 54321, "foo", "bar", 98765, 2);
+  const string enc_v = Encode(v);
+  cursorrec::value v0;
+  read_record_cursor<cursorrec> rc((const uint8_t *) enc_v.data());
+  for (size_t i = rc.field();
+       i < cursorrec::value_descriptor::nfields();
+       i = rc.field())
+    rc.read_current_and_advance(&v0);
+  ALWAYS_ASSERT(v == v0);
+
+  // mutate v2 => 98765432, v4 => "asdfasdfasdf"
+  v0.v2 = 98765432;
+  v0.v4.assign("asdfasdfasdf");
+
+  rc.reset();
+  rc.skip_to(2);
+  const size_t v2_oldsz = rc.read_current_raw_size_and_advance();
+  rc.skip_to(4);
+  const size_t v4_oldsz = rc.read_current_raw_size_and_advance();
+
+  typedef serializer<int32_t, true> si32;
+  typedef serializer<inline_str_fixed<25>, true> sistr25;
+  ALWAYS_ASSERT(si32::nbytes(&v.v2) == v2_oldsz);
+  ALWAYS_ASSERT(sistr25::nbytes(&v.v4) == v4_oldsz);
+  ALWAYS_ASSERT(cursorrec::value_descriptor::nbytes_fn(2)((const uint8_t *) &v.v2) == v2_oldsz);
+  ALWAYS_ASSERT(cursorrec::value_descriptor::nbytes_fn(4)((const uint8_t *) &v.v4) == v4_oldsz);
+
+  const size_t v2_newsz =
+    cursorrec::value_descriptor::nbytes_fn(2)((const uint8_t *) &v0.v2);
+  const size_t v4_newsz =
+    cursorrec::value_descriptor::nbytes_fn(4)((const uint8_t *) &v0.v4);
+
+  uint8_t v2_oldraw_v[cursorrec::value_descriptor::max_nbytes(2)];
+  uint8_t v4_oldraw_v[cursorrec::value_descriptor::max_nbytes(4)];
+
+  string enc_v0 = enc_v;
+  if ((v2_oldsz + v4_oldsz) < (v2_newsz + v4_newsz))
+    // grow buffer
+    enc_v0.resize(enc_v0.size() + (v2_newsz + v4_newsz) - (v2_oldsz + v4_oldsz));
+  write_record_cursor<cursorrec> wc((uint8_t *) enc_v0.data());
+  wc.skip_to(2);
+  wc.write_current_and_advance(&v0, &v2_oldraw_v[0]);
+  wc.skip_to(4);
+  wc.write_current_and_advance(&v0, &v4_oldraw_v[0]);
+
+  read_record_cursor<cursorrec> rc1((const uint8_t *) enc_v0.data());
+  cursorrec::value v2;
+  for (size_t i = rc1.field();
+       i < cursorrec::value_descriptor::nfields();
+       i = rc1.field())
+    rc1.read_current_and_advance(&v2);
+  ALWAYS_ASSERT(v2 == v0);
+}
+
+void
 Test()
 {
   const myrec::key k0(123, 456);
@@ -888,6 +959,8 @@ Test()
     ALWAYS_ASSERT(v1 == v1_temp);
     ALWAYS_ASSERT(v2 == v2_temp);
   }
+
+  TestCursor();
 
   cout << "encoder test passed" << endl;
 }

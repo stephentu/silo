@@ -58,7 +58,9 @@ HEADERS = allocator.h \
 	ndb_type_traits.h \
 	prefetch.h \
 	rcu.h \
+	record/cursor.h \
 	record/encoder.h \
+	record/inline_str.h \
 	record/serializer.h \
 	scopedperf.hh \
 	small_unordered_map.h \
@@ -108,7 +110,6 @@ BENCH_HEADERS = $(HEADERS) \
 	benchmarks/abstract_ordered_index.h \
 	benchmarks/bdb_wrapper.h \
 	benchmarks/bench.h \
-	benchmarks/inline_str.h \
 	benchmarks/kvdb_wrapper.h \
 	benchmarks/kvdb_wrapper_impl.h \
 	benchmarks/masstree/kvrandom.hh \
@@ -131,7 +132,6 @@ NEWBENCH_HEADERS = $(HEADERS) \
 	new-benchmarks/abstract_db.h \
 	new-benchmarks/abstract_ordered_index.h \
 	new-benchmarks/bench.h \
-	new-benchmarks/inline_str.h \
 	new-benchmarks/ndb_database.h \
 	new-benchmarks/str_arena.h \
 	new-benchmarks/tpcc.h

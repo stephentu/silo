@@ -5,28 +5,79 @@
 #include "../macros.h"
 #include "../varint.h"
 
+typedef uint8_t *(*generic_write_fn)(uint8_t *, const uint8_t *);
+typedef const uint8_t *(*generic_read_fn)(const uint8_t *, uint8_t *);
+typedef size_t (*generic_nbytes_fn)(const uint8_t *);
+typedef size_t (*generic_skip_fn)(const uint8_t *, uint8_t *);
+
+// wraps a real serializer, exposing generic functions
+template <typename Serializer>
+struct generic_serializer {
+  typedef typename Serializer::obj_type obj_type;
+
+  static inline uint8_t *
+  write(uint8_t *buf, const uint8_t *obj)
+  {
+    return Serializer::write(buf, *reinterpret_cast<const obj_type *>(obj));
+  }
+
+  static inline const uint8_t *
+  read(const uint8_t *buf, uint8_t *obj)
+  {
+    return Serializer::read(buf, reinterpret_cast<obj_type *>(obj));
+  }
+
+  static inline size_t
+  nbytes(const uint8_t *obj)
+  {
+    return Serializer::nbytes(reinterpret_cast<const obj_type *>(obj));
+  }
+
+  static inline size_t
+  skip(const uint8_t *stream, uint8_t *rawv)
+  {
+    return Serializer::skip(stream, rawv);
+  }
+
+  static inline constexpr size_t
+  max_nbytes()
+  {
+    return Serializer::max_bytes();
+  }
+};
+
 template <typename T, bool Compress>
 struct serializer {
-  inline uint8_t *
-  write(uint8_t *buf, const T &obj) const
+  typedef T obj_type;
+
+  static inline uint8_t *
+  write(uint8_t *buf, const T &obj)
   {
     T *p = (T *) buf;
     *p = obj;
     return (uint8_t *) (p + 1);
   }
 
-  inline const uint8_t *
-  read(const uint8_t *buf, T *obj) const
+  static inline const uint8_t *
+  read(const uint8_t *buf, T *obj)
   {
     const T *p = (const T *) buf;
     *obj = *p;
     return (const uint8_t *) (p + 1);
   }
 
-  inline size_t
-  nbytes(const T *obj) const
+  static inline size_t
+  nbytes(const T *obj)
   {
     return sizeof(*obj);
+  }
+
+  static inline size_t
+  skip(const uint8_t *stream, uint8_t *rawv)
+  {
+    if (rawv)
+      NDB_MEMCPY(rawv, stream, sizeof(T));
+    return sizeof(T);
   }
 
   static inline constexpr size_t
@@ -39,22 +90,30 @@ struct serializer {
 // serializer<T, True> specializations
 template <>
 struct serializer<uint32_t, true> {
-  inline uint8_t *
-  write(uint8_t *buf, uint32_t obj) const
+  typedef uint32_t obj_type;
+
+  static inline uint8_t *
+  write(uint8_t *buf, uint32_t obj)
   {
     return write_uvint32(buf, obj);
   }
 
-  const uint8_t *
-  read(const uint8_t *buf, uint32_t *obj) const
+  static inline const uint8_t *
+  read(const uint8_t *buf, uint32_t *obj)
   {
     return read_uvint32(buf, obj);
   }
 
-  size_t
-  nbytes(const uint32_t *obj) const
+  static inline size_t
+  nbytes(const uint32_t *obj)
   {
     return size_uvint32(*obj);
+  }
+
+  static inline size_t
+  skip(const uint8_t *stream, uint8_t *rawv)
+  {
+    return skip_uvint32(stream, rawv);
   }
 
   static inline constexpr size_t
@@ -66,30 +125,35 @@ struct serializer<uint32_t, true> {
 
 template <>
 struct serializer<int32_t, true> {
-  inline uint8_t *
-  write(uint8_t *buf, int32_t obj) const
+  typedef int32_t obj_type;
+
+  static inline uint8_t *
+  write(uint8_t *buf, int32_t obj)
   {
-    serializer<uint32_t, true> s;
     const uint32_t v = encode(obj);
-    return s.write(buf, v);
+    return serializer<uint32_t, true>::write(buf, v);
   }
 
-  const uint8_t *
-  read(const uint8_t *buf, int32_t *obj) const
+  static inline const uint8_t *
+  read(const uint8_t *buf, int32_t *obj)
   {
-    serializer<uint32_t, true> s;
     uint32_t v;
-    buf = s.read(buf, &v);
+    buf = serializer<uint32_t, true>::read(buf, &v);
     *obj = decode(v);
     return buf;
   }
 
-  size_t
-  nbytes(const int32_t *obj) const
+  static inline size_t
+  nbytes(const int32_t *obj)
   {
-    serializer<uint32_t, true> s;
     const uint32_t v = encode(*obj);
-    return s.nbytes(&v);
+    return serializer<uint32_t, true>::nbytes(&v);
+  }
+
+  static inline size_t
+  skip(const uint8_t *stream, uint8_t *rawv)
+  {
+    return skip_uvint32(stream, rawv);
   }
 
   static inline constexpr size_t
@@ -102,13 +166,13 @@ private:
   // zig-zag encoding from:
   // http://code.google.com/p/protobuf/source/browse/trunk/src/google/protobuf/wire_format_lite.h
 
-  static inline ALWAYS_INLINE uint32_t
+  static inline ALWAYS_INLINE constexpr uint32_t
   encode(int32_t value)
   {
     return (value << 1) ^ (value >> 31);
   }
 
-  static inline ALWAYS_INLINE int32_t
+  static inline ALWAYS_INLINE constexpr int32_t
   decode(uint32_t value)
   {
     return (value >> 1) ^ -static_cast<int32_t>(value & 1);
