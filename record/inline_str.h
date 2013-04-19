@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <string>
+#include <ostream>
 
 #include "../macros.h"
 #include "serializer.h"
@@ -141,6 +142,14 @@ private:
   mutable char buf[N + 1];
 } PACKED;
 
+template <typename IntSizeType, unsigned int N>
+inline std::ostream &
+operator<<(std::ostream &o, const inline_str_base<IntSizeType, N> &s)
+{
+  o << std::string(s.data(), s.size());
+  return o;
+}
+
 template <unsigned int N>
 class inline_str_8 : public inline_str_base<uint8_t, N> {
   typedef inline_str_base<uint8_t, N> super_type;
@@ -255,6 +264,14 @@ public:
 private:
   char buf[N];
 } PACKED;
+
+template <unsigned int N, char FillChar>
+inline std::ostream &
+operator<<(std::ostream &o, const inline_str_fixed<N, FillChar> &s)
+{
+  o << std::string(s.data(), s.size());
+  return o;
+}
 
 // serializer<T> specialization
 template <typename IntSizeType, unsigned int N, bool Compress>

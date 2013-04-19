@@ -898,6 +898,8 @@ TestCursor()
        i = rc1.field())
     rc1.read_current_and_advance(&v2);
   ALWAYS_ASSERT(v2 == v0);
+  cerr << "v2: " << v2 << endl;
+  cerr << "v0: " << v2 << endl;
 }
 
 void

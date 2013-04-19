@@ -122,6 +122,12 @@ namespace private_ {
 #define STRUCT_INITLIST_REST_X(tpe, name) \
   , name(name)
 
+#define STRUCT_PRINTER_FIRST_X(tpe, name) \
+  #name << "=" << obj.name
+
+#define STRUCT_PRINTER_REST_X(tpe, name) \
+  << ", " << #name << "=" << obj.name
+
 #define SERIALIZE_WRITE_FIELD(tpe, name, compress, trfm) \
   do { \
     buf = serializer< tpe, compress >::write(buf, trfm(tpe, obj->name)); \
@@ -431,6 +437,18 @@ namespace private_ {
     } \
   }; \
   }; \
+  inline std::ostream & \
+  operator<<(std::ostream &o, const name::key &obj) \
+  { \
+    o << "{" << keyfields(STRUCT_PRINTER_FIRST_X, STRUCT_PRINTER_REST_X) << "}"; \
+    return o; \
+  } \
+  inline std::ostream & \
+  operator<<(std::ostream &o, const name::value &obj) \
+  { \
+    o << "{" << valuefields(STRUCT_PRINTER_FIRST_X, STRUCT_PRINTER_REST_X) << "}"; \
+    return o; \
+  } \
   template <> \
   struct encoder< name::key > { \
   inline void \
