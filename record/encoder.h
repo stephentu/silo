@@ -200,10 +200,14 @@ namespace private_ {
   &generic_serializer< serializer< tpe, true > >::write,
 #define DESCRIPTOR_VALUE_READ_FN_X(tpe, name) \
   &generic_serializer< serializer< tpe, true > >::read,
+#define DESCRIPTOR_VALUE_FAILSAFE_READ_FN_X(tpe, name) \
+  &generic_serializer< serializer< tpe, true > >::failsafe_read,
 #define DESCRIPTOR_VALUE_NBYTES_FN_X(tpe, name) \
   &generic_serializer< serializer< tpe, true > >::nbytes,
 #define DESCRIPTOR_VALUE_SKIP_FN_X(tpe, name) \
   &generic_serializer< serializer< tpe, true > >::skip,
+#define DESCRIPTOR_VALUE_FAILSAFE_SKIP_FN_X(tpe, name) \
+  &generic_serializer< serializer< tpe, true > >::failsafe_skip,
 #define DESCRIPTOR_VALUE_NFIELDS_X(tpe, name) \
   + 1
 #define DESCRIPTOR_VALUE_MAX_NBYTES_X(tpe, name) \
@@ -390,6 +394,14 @@ namespace private_ {
       }; \
       return read_fns[i]; \
     } \
+    static inline generic_failsafe_read_fn \
+    failsafe_read_fn(size_t i) \
+    { \
+      static generic_failsafe_read_fn failsafe_read_fns[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_FAILSAFE_READ_FN_X) \
+      }; \
+      return failsafe_read_fns[i]; \
+    } \
     static inline generic_nbytes_fn \
     nbytes_fn(size_t i) \
     { \
@@ -405,6 +417,14 @@ namespace private_ {
         APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_SKIP_FN_X) \
       }; \
       return skip_fns[i]; \
+    } \
+    static inline generic_failsafe_skip_fn \
+    failsafe_skip_fn(size_t i) \
+    { \
+      static generic_failsafe_skip_fn failsafe_skip_fns[] = { \
+        APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_FAILSAFE_SKIP_FN_X) \
+      }; \
+      return failsafe_skip_fns[i]; \
     } \
     static inline constexpr size_t \
     nfields() \

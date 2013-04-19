@@ -849,7 +849,7 @@ TestCursor()
   const cursorrec::value v(12345, 1, 54321, "foo", "bar", 98765, 2);
   const string enc_v = Encode(v);
   cursorrec::value v0;
-  read_record_cursor<cursorrec> rc((const uint8_t *) enc_v.data());
+  read_record_cursor<cursorrec> rc((const uint8_t *) enc_v.data(), enc_v.size());
   for (size_t i = rc.field();
        i < cursorrec::value_descriptor::nfields();
        i = rc.field())
@@ -891,7 +891,7 @@ TestCursor()
   wc.skip_to(4);
   wc.write_current_and_advance(&v0, &v4_oldraw_v[0]);
 
-  read_record_cursor<cursorrec> rc1((const uint8_t *) enc_v0.data());
+  read_record_cursor<cursorrec> rc1((const uint8_t *) enc_v0.data(), enc_v0.size());
   cursorrec::value v2;
   for (size_t i = rc1.field();
        i < cursorrec::value_descriptor::nfields();

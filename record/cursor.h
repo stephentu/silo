@@ -10,21 +10,31 @@ public:
   typedef typename T::value value_type;
   typedef typename T::value_descriptor value_descriptor_type;
 
-  read_record_cursor(const uint8_t *px)
-    : px_begin(px), px_cur(px), n(0) {}
+  // [px, px+nbytes) is assumed to be valid memory
+  read_record_cursor(const uint8_t *px, size_t nbytes)
+    : px_begin(px), nbytes(nbytes), px_cur(px), n(0) {}
 
-  inline void
+  // returns true on success, false on fail
+  inline bool
   skip_to(size_t i)
   {
     INVARIANT(i >= n);
     INVARIANT(i < value_descriptor_type::nfields());
-    while (n < i)
-      px_cur += value_descriptor_type::skip_fn(n++)(px_cur, nullptr);
+    while (n < i) {
+      const size_t sz = value_descriptor_type::failsafe_skip_fn(n++)(px_cur, nbytes, nullptr);
+      if (unlikely(!sz))
+        return false;
+      px_cur += sz;
+      nbytes -= sz;
+    }
+    return true;
   }
 
   inline void
   reset()
   {
+    INVARIANT(px_cur >= px_begin);
+    nbytes += (px_cur - px_begin);
     px_cur = px_begin;
     n = 0;
   }
@@ -35,6 +45,7 @@ public:
     return n;
   }
 
+  // returns 0 on failure
   inline size_t
   read_current_and_advance(value_type *v)
   {
@@ -42,25 +53,38 @@ public:
     uint8_t * const buf = reinterpret_cast<uint8_t *>(v) +
       value_descriptor_type::cstruct_offsetof(n);
     const uint8_t * const px_skip =
-      value_descriptor_type::read_fn(n++)(px_cur, buf);
+      value_descriptor_type::failsafe_read_fn(n++)(px_cur, nbytes, buf);
+    if (unlikely(!px_skip))
+      return 0;
     const size_t rawsz = px_skip - px_cur;
     INVARIANT(rawsz <= value_descriptor_type::max_nbytes(n - 1));
+    nbytes -= rawsz;
     px_cur = px_skip;
     return rawsz;
   }
 
+  // returns 0 on failure
   inline size_t
   read_current_raw_size_and_advance()
   {
     INVARIANT(n < value_descriptor_type::nfields());
-    const size_t rawsz = value_descriptor_type::skip_fn(n++)(px_cur, nullptr);
+    const size_t rawsz =
+      value_descriptor_type::failsafe_skip_fn(n++)(px_cur, nbytes, nullptr);
+    if (unlikely(!nbytes))
+      return 0;
     INVARIANT(rawsz <= value_descriptor_type::max_nbytes(n - 1));
+    nbytes -= rawsz;
     px_cur += rawsz;
     return rawsz;
   }
 
 private:
   const uint8_t *px_begin;
+
+  // the 3 fields below are kept in sync:
+  // [px_cur, px_cur+nbytes) is valid memory
+  // px_cur points to the start of the n-th field
+  size_t nbytes;
   const uint8_t *px_cur;
   size_t n; // current field position in cursor
 };

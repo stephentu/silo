@@ -293,6 +293,21 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
     return buf + obj->sz;
   }
 
+  static const uint8_t *
+  failsafe_read(const uint8_t *buf, size_t nbytes, obj_type *obj)
+  {
+    const uint8_t * const hdrbuf =
+      serializer<IntSizeType, Compress>::failsafe_read(buf, nbytes, &obj->sz);
+    if (unlikely(!hdrbuf))
+      return nullptr;
+    nbytes -= (hdrbuf - buf);
+    if (nbytes < obj->sz)
+      return nullptr;
+    buf = hdrbuf;
+    NDB_MEMCPY(&obj->buf[0], buf, obj->sz);
+    return buf + obj->sz;
+  }
+
   static inline size_t
   nbytes(const obj_type *obj)
   {
@@ -304,6 +319,23 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
   {
     IntSizeType sz = 0;
     const uint8_t * const body = serializer<IntSizeType, Compress>::read(stream, &sz);
+    const size_t totalsz = (body - stream) + sz;
+    if (oldv)
+      NDB_MEMCPY(oldv, stream, totalsz);
+    return totalsz;
+  }
+
+  static inline size_t
+  failsafe_skip(const uint8_t *stream, size_t nbytes, uint8_t *oldv)
+  {
+    IntSizeType sz = 0;
+    const uint8_t * const body =
+      serializer<IntSizeType, Compress>::failsafe_read(stream, nbytes, &sz);
+    if (unlikely(!body))
+      return 0;
+    nbytes -= (body - stream);
+    if (unlikely(nbytes < sz))
+      return 0;
     const size_t totalsz = (body - stream) + sz;
     if (oldv)
       NDB_MEMCPY(oldv, stream, totalsz);

@@ -7,8 +7,10 @@
 
 typedef uint8_t *(*generic_write_fn)(uint8_t *, const uint8_t *);
 typedef const uint8_t *(*generic_read_fn)(const uint8_t *, uint8_t *);
+typedef const uint8_t *(*generic_failsafe_read_fn)(const uint8_t *, size_t, uint8_t *);
 typedef size_t (*generic_nbytes_fn)(const uint8_t *);
 typedef size_t (*generic_skip_fn)(const uint8_t *, uint8_t *);
+typedef size_t (*generic_failsafe_skip_fn)(const uint8_t *, size_t, uint8_t *);
 
 // wraps a real serializer, exposing generic functions
 template <typename Serializer>
@@ -27,6 +29,14 @@ struct generic_serializer {
     return Serializer::read(buf, reinterpret_cast<obj_type *>(obj));
   }
 
+  // returns nullptr on failure
+  static inline const uint8_t *
+  failsafe_read(const uint8_t *buf, size_t nbytes, uint8_t *obj)
+  {
+    return Serializer::failsafe_read(
+        buf, nbytes, reinterpret_cast<obj_type *>(obj));
+  }
+
   static inline size_t
   nbytes(const uint8_t *obj)
   {
@@ -37,6 +47,13 @@ struct generic_serializer {
   skip(const uint8_t *stream, uint8_t *rawv)
   {
     return Serializer::skip(stream, rawv);
+  }
+
+  // returns 0 on failure
+  static inline size_t
+  failsafe_skip(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
+  {
+    return Serializer::failsafe_skip(stream, nbytes, rawv);
   }
 
   static inline constexpr size_t
@@ -66,6 +83,14 @@ struct serializer {
     return (const uint8_t *) (p + 1);
   }
 
+  static inline const uint8_t *
+  failsafe_read(const uint8_t *buf, size_t nbytes, T *obj)
+  {
+    if (unlikely(nbytes < sizeof(T)))
+      return nullptr;
+    return read(buf, obj);
+  }
+
   static inline size_t
   nbytes(const T *obj)
   {
@@ -75,6 +100,16 @@ struct serializer {
   static inline size_t
   skip(const uint8_t *stream, uint8_t *rawv)
   {
+    if (rawv)
+      NDB_MEMCPY(rawv, stream, sizeof(T));
+    return sizeof(T);
+  }
+
+  static inline size_t
+  failsafe_skip(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
+  {
+    if (unlikely(nbytes < sizeof(T)))
+      return 0;
     if (rawv)
       NDB_MEMCPY(rawv, stream, sizeof(T));
     return sizeof(T);
@@ -104,6 +139,12 @@ struct serializer<uint32_t, true> {
     return read_uvint32(buf, obj);
   }
 
+  static inline const uint8_t *
+  failsafe_read(const uint8_t *buf, size_t nbytes, uint32_t *obj)
+  {
+    return failsafe_read_uvint32(buf, nbytes, obj);
+  }
+
   static inline size_t
   nbytes(const uint32_t *obj)
   {
@@ -114,6 +155,12 @@ struct serializer<uint32_t, true> {
   skip(const uint8_t *stream, uint8_t *rawv)
   {
     return skip_uvint32(stream, rawv);
+  }
+
+  static inline size_t
+  failsafe_skip(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
+  {
+    return failsafe_skip_uvint32(stream, nbytes, rawv);
   }
 
   static inline constexpr size_t
@@ -143,6 +190,17 @@ struct serializer<int32_t, true> {
     return buf;
   }
 
+  static inline const uint8_t *
+  failsafe_read(const uint8_t *buf, size_t nbytes, int32_t *obj)
+  {
+    uint32_t v;
+    buf = serializer<uint32_t, true>::failsafe_read(buf, nbytes, &v);
+    if (unlikely(!buf))
+      return 0;
+    *obj = decode(v);
+    return buf;
+  }
+
   static inline size_t
   nbytes(const int32_t *obj)
   {
@@ -154,6 +212,12 @@ struct serializer<int32_t, true> {
   skip(const uint8_t *stream, uint8_t *rawv)
   {
     return skip_uvint32(stream, rawv);
+  }
+
+  static inline size_t
+  failsafe_skip(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
+  {
+    return failsafe_skip_uvint32(stream, nbytes, rawv);
   }
 
   static inline constexpr size_t

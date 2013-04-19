@@ -38,9 +38,47 @@ read_uvint32(const uint8_t *buf, uint32_t *value)
   if (likely(*buf < 0x80)) {
     *value = *buf;
     return buf + 1;
-  } else {
-    return read_uvint32_slow(buf, value);
   }
+  return read_uvint32_slow(buf, value);
+}
+
+inline const uint8_t *
+failsafe_read_uvint32_slow(
+    const uint8_t *buf, size_t nbytes, uint32_t *value)
+{
+  const uint8_t *p;
+  uint32_t b, result;
+
+  p = buf;
+
+  if (unlikely(!nbytes--)) return nullptr;
+  b = *p++; result  = (b & 0x7F)      ; if (likely(b < 0x80)) goto done;
+  if (unlikely(!nbytes--)) return nullptr;
+  b = *p++; result |= (b & 0x7F) <<  7; if (likely(b < 0x80)) goto done;
+  if (unlikely(!nbytes--)) return nullptr;
+  b = *p++; result |= (b & 0x7F) << 14; if (likely(b < 0x80)) goto done;
+  if (unlikely(!nbytes--)) return nullptr;
+  b = *p++; result |= (b & 0x7F) << 21; if (likely(b < 0x80)) goto done;
+  if (unlikely(!nbytes--)) return nullptr;
+  b = *p++; result |=  b         << 28; if (likely(b < 0x80)) goto done;
+
+done:
+  *value = result;
+  return p;
+}
+
+inline ALWAYS_INLINE const uint8_t *
+failsafe_read_uvint32(
+    const uint8_t *stream, size_t nbytes, uint32_t *value)
+{
+  if (unlikely(!nbytes))
+    return nullptr;
+  const uint8_t ch = *stream;
+  if (likely(ch < 0x80)) {
+    *value = ch;
+    return stream + 1;
+  }
+  return failsafe_read_uvint32_slow(stream, nbytes, value);
 }
 
 inline ALWAYS_INLINE size_t
@@ -57,6 +95,36 @@ skip_uvint32(const uint8_t *stream, uint8_t *rawv)
     if (likely(stream[1] < 0x80)) return 2;
     if (likely(stream[2] < 0x80)) return 3;
     if (likely(stream[3] < 0x80)) return 4;
+    if (likely(stream[4] < 0x80)) return 5;
+  }
+  ALWAYS_ASSERT(false);
+  return 0;
+}
+
+inline ALWAYS_INLINE size_t
+failsafe_skip_uvint32(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
+{
+  if (rawv) {
+    if (unlikely(!nbytes--)) return 0;
+    if (likely((rawv[0] = stream[0]) < 0x80)) return 1;
+    if (unlikely(!nbytes--)) return 0;
+    if (likely((rawv[1] = stream[1]) < 0x80)) return 2;
+    if (unlikely(!nbytes--)) return 0;
+    if (likely((rawv[2] = stream[2]) < 0x80)) return 3;
+    if (unlikely(!nbytes--)) return 0;
+    if (likely((rawv[3] = stream[3]) < 0x80)) return 4;
+    if (unlikely(!nbytes--)) return 0;
+    if (likely((rawv[4] = stream[4]) < 0x80)) return 5;
+  } else {
+    if (unlikely(!nbytes--)) return 0;
+    if (likely(stream[0] < 0x80)) return 1;
+    if (unlikely(!nbytes--)) return 0;
+    if (likely(stream[1] < 0x80)) return 2;
+    if (unlikely(!nbytes--)) return 0;
+    if (likely(stream[2] < 0x80)) return 3;
+    if (unlikely(!nbytes--)) return 0;
+    if (likely(stream[3] < 0x80)) return 4;
+    if (unlikely(!nbytes--)) return 0;
     if (likely(stream[4] < 0x80)) return 5;
   }
   ALWAYS_ASSERT(false);
