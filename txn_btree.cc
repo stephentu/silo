@@ -116,6 +116,7 @@ test1()
     VERBOSE(cerr << "Testing with flags=0x" << hexify(txn_flags) << endl);
 
     txn_btree<TxnType> btr(sizeof(rec));
+    default_string_allocator arena;
 
     {
       TxnType<Traits> t(txn_flags);
@@ -184,7 +185,8 @@ test1()
 
       const u64_varkey vend(5);
       size_t ctr = 0;
-      btr.search_range(t0, u64_varkey(1), &vend, test_callback_ctr(&ctr));
+      test_callback_ctr cb(&ctr);
+      btr.search_range(t0, u64_varkey(1), &vend, cb, arena);
       ALWAYS_ASSERT_COND_IN_TXN(t0, ctr == 0);
 
       btr.insert_object(t1, u64_varkey(2), rec(4));
@@ -199,7 +201,8 @@ test1()
       TxnType<Traits> t(txn_flags);
       const u64_varkey vend(20);
       size_t ctr = 0;
-      btr.search_range(t, u64_varkey(10), &vend, test_callback_ctr(&ctr));
+      test_callback_ctr cb(&ctr);
+      btr.search_range(t, u64_varkey(10), &vend, cb, arena);
       ALWAYS_ASSERT_COND_IN_TXN(t, ctr == 0);
       btr.insert_object(t, u64_varkey(15), rec(5));
       AssertSuccessfulCommit(t);
@@ -414,6 +417,7 @@ test_long_keys()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr;
+    default_string_allocator arena;
 
     {
       TxnType<Traits> t(txn_flags);
@@ -433,7 +437,7 @@ test_long_keys()
       const string highkey_s = make_long_key(1, 2, 3, N);
       const varkey highkey(highkey_s);
       counting_scan_callback<TxnType> c(1);
-      btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
+      btr.search_range_call(t, varkey(lowkey_s), &highkey, c, arena);
       AssertSuccessfulCommit(t);
       if (c.ctr != N)
         cerr << "c.ctr: " << c.ctr << ", N: " << N << endl;
@@ -471,6 +475,7 @@ test_long_keys2()
     const string highkey_s((const char *) &highkey_cstr[0], ARRAY_NELEMS(highkey_cstr));
 
     txn_btree<TxnType> btr;
+    default_string_allocator arena;
     {
       TxnType<Traits> t(txn_flags);
       btr.insert_object(t, varkey(lowkey_s), rec(12345));
@@ -489,7 +494,7 @@ test_long_keys2()
       TxnType<Traits> t(txn_flags);
       counting_scan_callback<TxnType> c(12345);
       const varkey highkey(highkey_s);
-      btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
+      btr.search_range_call(t, varkey(lowkey_s), &highkey, c, arena);
       AssertSuccessfulCommit(t);
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == 1);
     }
@@ -508,19 +513,66 @@ test_long_keys2()
   y(inline_str_fixed<10>,v2)
 DO_STRUCT(testrec, TESTREC_KEY_FIELDS, TESTREC_VALUE_FIELDS)
 
+namespace test_typed_btree_ns {
+
+static const pair<testrec::key, testrec::value> scan_values[] = {
+  {testrec::key(10, 1), testrec::value(123456 + 1, 10, "A")},
+  {testrec::key(10, 2), testrec::value(123456 + 2, 10, "B")},
+  {testrec::key(10, 3), testrec::value(123456 + 3, 10, "C")},
+  {testrec::key(10, 4), testrec::value(123456 + 4, 10, "D")},
+  {testrec::key(10, 5), testrec::value(123456 + 5, 10, "E")},
+};
+
+template <template <typename> class Protocol>
+class scan_callback : public typed_txn_btree<Protocol, schema<testrec>>::search_range_callback {
+public:
+  constexpr scan_callback() : n(0) {}
+
+  virtual bool
+  invoke(const testrec::key &key,
+         const testrec::value &value)
+  {
+    ALWAYS_ASSERT(n < ARRAY_NELEMS(scan_values));
+    ALWAYS_ASSERT(scan_values[n].first == key);
+    ALWAYS_ASSERT(scan_values[n].second.v2 == value.v2);
+    n++;
+    return true;
+  }
+
+private:
+  size_t n;
+};
+
+static constexpr uint64_t
+FieldsMask()
+{
+  return 0;
+}
+
+template <typename First, typename... Rest>
+static uint64_t
+FieldsMask(First f, Rest... rest)
+{
+  return (1UL << f) | FieldsMask(rest...);
+}
+
+}
+
 template <template <typename> class TxnType, typename Traits>
 static void
 test_typed_btree()
 {
+  using namespace test_typed_btree_ns;
+
   typed_txn_btree<TxnType, schema<testrec>> btr;
   typename typed_txn_btree<TxnType, schema<testrec>>::default_string_allocator sa;
 
   const testrec::key k0(1, 1);
   const testrec::value v0(2, 3, "hello");
-  testrec::value v, v1;
 
   {
     TxnType<Traits> t;
+    testrec::value v;
     ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, k0, v, sa));
     btr.insert(t, k0, v0, sa);
     AssertSuccessfulCommit(t);
@@ -528,13 +580,49 @@ test_typed_btree()
 
   {
     TxnType<Traits> t;
-    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v1, sa));
-    ALWAYS_ASSERT_COND_IN_TXN(t, v0 == v1);
+    testrec::value v;
+    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, sa));
+    ALWAYS_ASSERT_COND_IN_TXN(t, v0 == v);
+    AssertSuccessfulCommit(t);
+  }
+
+  {
+    TxnType<Traits> t;
+    testrec::value v;
+    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, sa, FieldsMask(1, 2)));
+    ALWAYS_ASSERT_COND_IN_TXN(t, v.v1 == v0.v1);
+    ALWAYS_ASSERT_COND_IN_TXN(t, v.v2 == v0.v2);
+    AssertSuccessfulCommit(t);
+  }
+
+  {
+    TxnType<Traits> t;
+    testrec::value v;
+    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, sa, FieldsMask(0, 2)));
+    ALWAYS_ASSERT_COND_IN_TXN(t, v.v0 == v0.v0);
+    ALWAYS_ASSERT_COND_IN_TXN(t, v.v2 == v0.v2);
+    AssertSuccessfulCommit(t);
+  }
+
+  {
+    TxnType<Traits> t;
+    for (size_t i = 0; i < ARRAY_NELEMS(scan_values); i++)
+      btr.insert(t, scan_values[i].first, scan_values[i].second, sa);
+    AssertSuccessfulCommit(t);
+  }
+
+  {
+    TxnType<Traits> t;
+    const testrec::key begin(10, 0);
+    scan_callback<TxnType> cb;
+    btr.search_range_call(t, begin, nullptr, cb, sa, false, FieldsMask(2));
     AssertSuccessfulCommit(t);
   }
 
   txn_epoch_sync<TxnType>::sync();
   txn_epoch_sync<TxnType>::finish();
+
+  cerr << "test_typed_btree() passed" << endl;
 }
 
 template <template <typename> class Protocol>
@@ -761,12 +849,13 @@ namespace mp_test2_ns {
       while (running) {
         try {
           TxnType<Traits> t(this->txn_flags);
+          default_string_allocator arena;
           string v_ctr;
           ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
           ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
           counting_scan_callback<TxnType> c;
           const u64_varkey kend(range_end);
-          this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
+          this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c, arena);
           t.commit(true);
           if (c.ctr != ((const rec *) v_ctr.data())->v) {
             cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
@@ -815,12 +904,13 @@ mp_test2()
     {
       // make sure the first validation passes
       TxnType<Traits> t(txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+      default_string_allocator arena;
       string v_ctr;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(ctr_key), v_ctr));
       ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
       counting_scan_callback<TxnType> c;
       const u64_varkey kend(range_end);
-      btr.search_range_call(t, u64_varkey(range_begin), &kend, c);
+      btr.search_range_call(t, u64_varkey(range_begin), &kend, c, arena);
       AssertSuccessfulCommit(t);
       if (c.ctr != ((const rec *) v_ctr.data())->v) {
         cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
@@ -912,8 +1002,9 @@ namespace mp_test3_ns {
       while (running) {
         try {
           TxnType<Traits> t(this->txn_flags);
+          default_string_allocator arena;
           sum = 0;
-          this->btr->search_range_call(t, u64_varkey(0), NULL, *this);
+          this->btr->search_range_call(t, u64_varkey(0), NULL, *this, arena);
           t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, sum == (naccounts * amount_per_person));
           validations++;
@@ -1072,9 +1163,10 @@ namespace mp_test_simple_write_skew_ns {
       while (running) {
         try {
           TxnType<Traits> t(this->txn_flags);
+          default_string_allocator arena;
           if ((n % 2) == 0) {
             ctr = 0;
-            this->btr->search_range_call(t, u64_varkey(0), NULL, *this);
+            this->btr->search_range_call(t, u64_varkey(0), NULL, *this, arena);
             if (ctr == 2)
               this->btr->insert_object(t, u64_varkey(d), rec(0));
             t.commit(true);
@@ -1187,6 +1279,7 @@ namespace mp_test_batch_processing_ns {
       while (running) {
         try {
           TxnType<Traits> t(this->txn_flags);
+          default_string_allocator arena;
           string v;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
           ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
@@ -1194,7 +1287,7 @@ namespace mp_test_batch_processing_ns {
           const uint32_t prev_bid = r->v - 1; // prev batch
           sum = 0;
           const string endkey = MakeKey(prev_bid, numeric_limits<uint32_t>::max());
-          receipts->search_range_call(t, MakeKey(prev_bid, 0), &endkey, *this);
+          receipts->search_range_call(t, MakeKey(prev_bid, 0), &endkey, *this, arena);
           t.commit(true);
           map<uint32_t, uint32_t>::iterator it = reports.find(prev_bid);
           if (it != reports.end()) {

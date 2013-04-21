@@ -431,23 +431,23 @@ private:
   abstract_ordered_index::scan_callback *upcall;
 };
 
-struct ndb_str_allocator {
-public:
-  ndb_str_allocator(str_arena *arena) : arena(arena) {}
-  inline std::string *
-  operator()()
-  {
-    return likely(arena) ? arena->next() : nullptr;
-  }
-  inline void
-  return_last(std::string *px)
-  {
-    if (likely(arena))
-      arena->return_last(px);
-  }
-private:
-  str_arena *arena;
-};
+//struct ndb_str_allocator {
+//public:
+//  ndb_str_allocator(str_arena *arena) : arena(arena) {}
+//  inline std::string *
+//  operator()()
+//  {
+//    return likely(arena) ? arena->next() : nullptr;
+//  }
+//  inline void
+//  return_last(std::string *px)
+//  {
+//    if (likely(arena))
+//      arena->return_last(px);
+//  }
+//private:
+//  str_arena *arena;
+//};
 
 template <template <typename> class Transaction>
 void
@@ -467,7 +467,7 @@ ndb_ordered_index<Transaction>::scan(
   case a: \
     { \
       auto t = cast< b >()(p); \
-      btr.search_range_call(*t, start_key, end_key, c, ndb_str_allocator(arena)); \
+      btr.search_range_call(*t, start_key, end_key, c, *arena); \
       return; \
     }
     switch (p->hint) {

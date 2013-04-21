@@ -1330,7 +1330,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
       {
         ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
         tables.tbl_new_order(warehouse_id)->search_range_call(
-            txn, k_no_0, &k_no_1, new_order_c, proxy_str_arena(this->arena));
+            txn, k_no_0, &k_no_1, new_order_c, this->arena);
       }
 
       const new_order::key &k_no = new_order_c.get_key();
@@ -1354,7 +1354,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
 
       // XXX(stephentu): mutable scans would help here
       tables.tbl_order_line(warehouse_id)->search_range_call(
-          txn, k_oo_0, &k_oo_1, c, proxy_str_arena(this->arena));
+          txn, k_oo_0, &k_oo_1, c, this->arena);
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
 #ifdef CHECK_INVARIANTS
@@ -1481,7 +1481,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
         typename Database::template IndexType<schema<customer_name_idx>>::type,
         NMaxCustomerIdxScanElems, true> c(s_arena.get());
       tables.tbl_customer_name_idx(customerWarehouseID)->bytes_search_range_call(
-        txn, k_c_idx_0, &k_c_idx_1, c, proxy_str_arena(this->arena));
+        txn, k_c_idx_0, &k_c_idx_1, c, this->arena);
       ALWAYS_ASSERT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
@@ -1633,7 +1633,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
         typename Database::template IndexType<schema<customer_name_idx>>::type,
         NMaxCustomerIdxScanElems, true> c(s_arena.get());
       tables.tbl_customer_name_idx(warehouse_id)->bytes_search_range_call(
-          txn, k_c_idx_0, &k_c_idx_1, c, proxy_str_arena(this->arena));
+          txn, k_c_idx_0, &k_c_idx_1, c, this->arena);
       ALWAYS_ASSERT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
@@ -1676,7 +1676,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
     {
       ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
       tables.tbl_oorder_c_id_idx(warehouse_id)->bytes_search_range_call(
-          txn, k_oo_idx_0, &k_oo_idx_1, c_oorder, proxy_str_arena(this->arena));
+          txn, k_oo_idx_0, &k_oo_idx_1, c_oorder, this->arena);
     }
     ALWAYS_ASSERT(c_oorder.size());
 
@@ -1690,7 +1690,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
     const order_line::key k_ol_0(warehouse_id, districtID, o_id, 0);
     const order_line::key k_ol_1(warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
     tables.tbl_order_line(warehouse_id)->bytes_search_range_call(
-        txn, k_ol_0, &k_ol_1, c_order_line, proxy_str_arena(this->arena));
+        txn, k_ol_0, &k_ol_1, c_order_line, this->arena);
     ALWAYS_ASSERT(c_order_line.n >= 5 && c_order_line.n <= 15);
 
     //measure_txn_counters(txn, "txn_order_status");
@@ -1779,7 +1779,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
       // Prefix(1) must be kept in sync w/ order_line_scan_callback
       ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
       tables.tbl_order_line(warehouse_id)->bytes_search_range_call(
-          txn, k_ol_0, &k_ol_1, c, proxy_str_arena(this->arena), Prefix(1));
+          txn, k_ol_0, &k_ol_1, c, this->arena, Prefix(1));
     }
     {
       small_unordered_map<uint, bool, 512> s_i_ids_distinct;

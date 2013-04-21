@@ -44,7 +44,9 @@ Prefix(size_t prefix)
 #ifdef CHECK_INVARIANTS
   return std::numeric_limits<size_t>::max();
 #else
-  return prefix;
+  INVARIANT(prefix > 0);
+  INVARIANT(prefix <= sizeof(size_t) * 8);
+  return (1UL << prefix) - 1;
 #endif
 }
 }

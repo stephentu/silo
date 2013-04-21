@@ -599,9 +599,9 @@ protected:
 
   // reads the contents of tuple into v
   // within this transaction context
+  template <typename Reader>
   bool
-  do_tuple_read(const dbtuple *tuple, string_type &v,
-                size_t max_bytes_read = string_type::npos);
+  do_tuple_read(const dbtuple *tuple, Reader &reader);
 
   void
   do_node_read(const btree::node_opaque_t *n,

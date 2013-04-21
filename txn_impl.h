@@ -477,14 +477,12 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
 }
 
 template <template <typename> class Protocol, typename Traits>
+template <typename Reader>
 bool
 transaction<Protocol, Traits>::do_tuple_read(
-    const dbtuple *tuple,
-    string_type &v,
-    size_t max_bytes_read)
+    const dbtuple *tuple, Reader &reader)
 {
   INVARIANT(tuple);
-  INVARIANT(max_bytes_read > 0);
   ++evt_local_search_lookups;
 
   const std::pair<bool, transaction_base::tid_t> snapshot_tid_t =
@@ -500,18 +498,25 @@ transaction<Protocol, Traits>::do_tuple_read(
     auto write_set_it = find_write_set(const_cast<dbtuple *>(tuple));
     if (unlikely(write_set_it != write_set.end())) {
       ++evt_local_search_write_set_hits;
-      v.assign(write_set_it->get_value().data(),
-               std::min(write_set_it->get_value().size(), max_bytes_read));
-      return !v.empty();
+      if (!write_set_it->get_value().empty()) {
+        const bool succ =
+          reader((const uint8_t *) write_set_it->get_value().data(),
+                 write_set_it->get_value().size());
+        if (!succ)
+          INVARIANT(false);
+      }
+      return !write_set_it->get_value().empty();
     }
   }
 
   // do the actual tuple read
+  dbtuple::ReadStatus stat;
   {
     PERF_DECL(static std::string probe0_name(std::string(__PRETTY_FUNCTION__) + std::string(":do_read:")));
     ANON_REGION(probe0_name.c_str(), &private_::txn_btree_search_probe0_cg);
     tuple->prefetch();
-    if (unlikely(!tuple->stable_read(snapshot_tid, start_t, v, is_read_only_txn, max_bytes_read))) {
+    stat = tuple->stable_read(snapshot_tid, start_t, reader, is_read_only_txn);
+    if (unlikely(stat == dbtuple::READ_FAILED)) {
       const transaction_base::abort_reason r = transaction_base::ABORT_REASON_UNSTABLE_READ;
       abort_impl(r);
       throw transaction_abort_exception(r);
@@ -522,7 +527,9 @@ transaction<Protocol, Traits>::do_tuple_read(
     abort_impl(r);
     throw transaction_abort_exception(r);
   }
-  const bool v_empty = v.empty();
+  INVARIANT(stat == dbtuple::READ_EMPTY ||
+            stat == dbtuple::READ_RECORD);
+  const bool v_empty = (stat == dbtuple::READ_EMPTY);
   if (v_empty)
     ++transaction_base::g_evt_read_logical_deleted_node_search;
   if (!is_read_only_txn)

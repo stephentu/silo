@@ -221,6 +221,12 @@ private:
 
 public:
 
+  enum ReadStatus {
+    READ_FAILED,
+    READ_EMPTY,
+    READ_RECORD,
+  };
+
   inline void
   prefetch() const
   {
@@ -511,16 +517,16 @@ public:
     this->next = nullptr;
   }
 
-  inline ALWAYS_INLINE char *
+  inline ALWAYS_INLINE uint8_t *
   get_value_start()
   {
-    return (char *) &value_start[0];
+    return &value_start[0];
   }
 
-  inline ALWAYS_INLINE const char *
+  inline ALWAYS_INLINE const uint8_t *
   get_value_start() const
   {
-    return (const char *) &value_start[0];
+    return &value_start[0];
   }
 
 private:
@@ -544,10 +550,11 @@ private:
 #endif
 
   // written to be non-recursive
-  static bool
-  record_at_chain(const dbtuple *starting,
-                  tid_t t, tid_t &start_t, string_type &r,
-                  size_t max_len, bool allow_write_intent)
+  template <typename Reader>
+  static ReadStatus
+  record_at_chain(
+      const dbtuple *starting, tid_t t, tid_t &start_t,
+      Reader &reader, bool allow_write_intent)
   {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
@@ -561,39 +568,38 @@ private:
     const bool found = current->is_not_behind(t);
     if (found) {
       start_t = current->version;
-      const size_t read_sz = std::min(static_cast<size_t>(current->size), max_len);
-      r.assign(current->get_value_start(), read_sz);
-      if (unlikely(!current->reader_check_version(v))) {
-#ifdef ENABLE_EVENT_COUNTERS
-        ++nretries;
-#endif
-        goto loop;
-      }
-      return true;
+      const size_t read_sz = current->size;
+      if (unlikely(read_sz && !reader(current->get_value_start(), read_sz)))
+        goto retry;
+      if (unlikely(!current->reader_check_version(v)))
+        goto retry;
+      return read_sz ? READ_RECORD : READ_EMPTY;
     } else {
       p = current->get_next();
     }
-    if (unlikely(!current->reader_check_version(v))) {
-#ifdef ENABLE_EVENT_COUNTERS
-      ++nretries;
-#endif
-      goto loop;
-    }
+    if (unlikely(!current->reader_check_version(v)))
+      goto retry;
     if (p) {
       current = p;
       goto loop;
     }
     // see note in record_at()
     start_t = MIN_TID;
-    r.clear();
-    return true;
+    return READ_EMPTY;
+  retry:
+#ifdef ENABLE_EVENT_COUNTERS
+    ++nretries;
+#endif
+    goto loop;
   }
 
   // we force one level of inlining, but don't force record_at_chain()
   // to be inlined
-  inline ALWAYS_INLINE bool
-  record_at(tid_t t, tid_t &start_t, string_type &r,
-            size_t max_len, bool allow_write_intent) const
+  template <typename Reader>
+  inline ALWAYS_INLINE ReadStatus
+  record_at(
+      tid_t t, tid_t &start_t,
+      Reader &reader, bool allow_write_intent) const
   {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
@@ -606,37 +612,29 @@ private:
       // since our system is screwed anyways if we ever reach MAX_TID, this
       // is OK for now, but a real solution should exist at some point
       start_t = MIN_TID;
-      r.clear();
-      return true;
+      return READ_EMPTY;
     }
-  retry:
+  loop:
     const version_t v = reader_stable_version(allow_write_intent);
     const struct dbtuple *p;
     const bool found = is_not_behind(t);
     if (found) {
       if (unlikely(!IsLatest(v)))
-        return false;
+        return READ_FAILED;
       start_t = version;
-      const size_t read_sz = std::min(static_cast<size_t>(size), max_len);
-      r.assign(get_value_start(), read_sz);
-      if (unlikely(!reader_check_version(v))) {
-#ifdef ENABLE_EVENT_COUNTERS
-        ++nretries;
-#endif
+      const size_t read_sz = size;
+      if (unlikely(read_sz && !reader(get_value_start(), read_sz)))
         goto retry;
-      }
-      return true;
+      if (unlikely(!reader_check_version(v)))
+        goto retry;
+      return read_sz ? READ_RECORD : READ_EMPTY;
     } else {
       p = get_next();
     }
-    if (unlikely(!reader_check_version(v))) {
-#ifdef ENABLE_EVENT_COUNTERS
-      ++nretries;
-#endif
+    if (unlikely(!reader_check_version(v)))
       goto retry;
-    }
     if (p)
-      return record_at_chain(p, t, start_t, r, max_len, allow_write_intent);
+      return record_at_chain(p, t, start_t, reader, allow_write_intent);
     // NB(stephentu): if we reach the end of a chain then we assume that
     // the record exists as a deleted record.
     //
@@ -651,8 +649,12 @@ private:
     // oldest TID possible in the system. But we currently don't implement
     // wrap around
     start_t = MIN_TID;
-    r.clear();
-    return true;
+    return READ_EMPTY;
+  retry:
+#ifdef ENABLE_EVENT_COUNTERS
+    ++nretries;
+#endif
+    goto loop;
   }
 
   static event_counter g_evt_dbtuple_creates;
@@ -675,13 +677,13 @@ public:
    * NB(stephentu): calling stable_read() while holding the lock
    * is an error- this will cause deadlock
    */
-  inline ALWAYS_INLINE bool
-  stable_read(tid_t t, tid_t &start_t, string_type &r,
-              bool allow_write_intent,
-              size_t max_len = string_type::npos) const
+  template <typename Reader>
+  inline ALWAYS_INLINE ReadStatus
+  stable_read(
+      tid_t t, tid_t &start_t,
+      Reader &reader, bool allow_write_intent) const
   {
-    INVARIANT(max_len > 0); // otherwise something will probably break
-    return record_at(t, start_t, r, max_len, allow_write_intent);
+    return record_at(t, start_t, reader, allow_write_intent);
   }
 
   inline bool
@@ -779,7 +781,7 @@ public:
     ++g_evt_dbtuple_spills;
     g_evt_avg_record_spill_len.offer(size);
 
-    char * const vstart = get_value_start();
+    uint8_t * const vstart = get_value_start();
 
     if (sz <= alloc_size) {
       dbtuple * const spill = alloc(version, (const_record_type) vstart, size, get_next(), false);

@@ -31,13 +31,20 @@ public:
   typedef typename super_type::value_type value_type;
   typedef typename super_type::size_type size_type;
   typedef typename super_type::default_string_allocator default_string_allocator;
-  typedef typename super_type::search_range_callback search_range_callback;
+
+  struct search_range_callback {
+  public:
+    virtual ~search_range_callback() {}
+    virtual bool invoke(const string_type &k, const string_type &v) = 0;
+  };
 
 private:
+
   template <typename T>
   class type_callback_wrapper : public search_range_callback {
   public:
-    type_callback_wrapper(T *callback) : callback(callback) {}
+    constexpr type_callback_wrapper(T *callback)
+      : callback(callback) {}
     virtual bool
     invoke(const string_type &k, const string_type &v)
     {
@@ -52,6 +59,10 @@ private:
   {
     return string_type((const char *) k.data(), k.size());
   }
+
+  //typedef typename super_type::key_reader key_reader;
+  //typedef typename super_type::single_value_reader single_value_reader;
+  //typedef typename super_type::value_reader value_reader;
 
 public:
 
@@ -76,31 +87,32 @@ public:
   search(Transaction<Traits> &t, const key_type &k, string_type &v,
          size_type max_bytes_read = string_type::npos)
   {
-    return this->do_search(t, k, v, max_bytes_read);
+    typename super_type::single_value_reader r(v, max_bytes_read);
+    return this->do_search(t, k, r);
   }
 
   // StringAllocator needs to be CopyConstructable
-  template <typename Traits,
-            typename StringAllocator = default_string_allocator>
+  template <typename Traits, typename StringAllocator>
   inline void
   search_range_call(Transaction<Traits> &t,
                     const key_type &lower,
                     const key_type *upper,
                     search_range_callback &callback,
-                    const StringAllocator &sa = StringAllocator(),
+                    StringAllocator &sa,
                     size_type fetch_prefix = string_type::npos)
   {
-    this->do_search_range_call(t, lower, upper, callback, sa, fetch_prefix);
+    typename super_type::key_reader kr;
+    typename super_type::template value_reader<StringAllocator> vr(sa, fetch_prefix);
+    this->do_search_range_call(t, lower, upper, callback, kr, vr, sa);
   }
 
-  template <typename Traits,
-            typename StringAllocator = default_string_allocator>
+  template <typename Traits, typename StringAllocator>
   inline void
   search_range_call(Transaction<Traits> &t,
                     const string_type &lower,
                     const string_type *upper,
                     search_range_callback &callback,
-                    const StringAllocator &sa = StringAllocator(),
+                    StringAllocator &sa,
                     size_type fetch_prefix = string_type::npos)
   {
     key_type u;
@@ -109,26 +121,24 @@ public:
     search_range_call(t, key_type(lower), upper ? &u : nullptr, callback, sa, fetch_prefix);
   }
 
-  template <typename Traits, typename T,
-            typename StringAllocator = default_string_allocator>
+  template <typename Traits, typename T, typename StringAllocator>
   inline void
   search_range(
       Transaction<Traits> &t, const string_type &lower,
-      const string_type *upper, T callback,
-      const StringAllocator &sa = StringAllocator(),
+      const string_type *upper, T &callback,
+      StringAllocator &sa = StringAllocator(),
       size_type fetch_prefix = string_type::npos)
   {
     type_callback_wrapper<T> w(&callback);
     search_range_call(t, lower, upper, w, sa, fetch_prefix);
   }
 
-  template <typename Traits, typename T,
-            typename StringAllocator = default_string_allocator>
+  template <typename Traits, typename T, typename StringAllocator>
   inline void
   search_range(
       Transaction<Traits> &t, const key_type &lower,
-      const key_type *upper, T callback,
-      const StringAllocator &sa = StringAllocator(),
+      const key_type *upper, T &callback,
+      StringAllocator &sa,
       size_type fetch_prefix = string_type::npos)
   {
     type_callback_wrapper<T> w(&callback);

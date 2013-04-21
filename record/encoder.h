@@ -147,6 +147,17 @@ namespace private_ {
       return; \
   } while (0);
 
+#define SERIALIZE_FAILSAFE_READ_FIELD(tpe, name, compress, trfm) \
+  do { \
+    const uint8_t * const p = \
+      serializer< tpe, compress >::failsafe_read(buf, nbytes, &obj->name); \
+    if (unlikely(!p)) \
+      return false; \
+    nbytes -= (p - buf); \
+    buf = p; \
+    obj->name = trfm(tpe, obj->name); \
+  } while (0);
+
 #define SERIALIZE_NBYTES_FIELD(tpe, name, compress) \
   do { \
     size += serializer< tpe, compress >::nbytes(&obj->name); \
@@ -190,6 +201,11 @@ namespace private_ {
   SERIALIZE_PREFIX_READ_FIELD(tpe, name, false, BIG_TO_HOST_TRANSFORM)
 #define SERIALIZE_PREFIX_READ_VALUE_FIELD_X(tpe, name) \
   SERIALIZE_PREFIX_READ_FIELD(tpe, name, true, IDENT_TRANSFORM)
+
+#define SERIALIZE_FAILSAFE_READ_KEY_FIELD_X(tpe, name) \
+  SERIALIZE_FAILSAFE_READ_FIELD(tpe, name, false, BIG_TO_HOST_TRANSFORM)
+#define SERIALIZE_FAILSAFE_READ_VALUE_FIELD_X(tpe, name) \
+  SERIALIZE_FAILSAFE_READ_FIELD(tpe, name, true, IDENT_TRANSFORM)
 
 #define SERIALIZE_NBYTES_KEY_FIELD_X(tpe, name) \
   SERIALIZE_NBYTES_FIELD(tpe, name, false)
@@ -263,6 +279,13 @@ namespace private_ {
     encode_prefix_read(buf, obj, prefix); \
     return obj; \
   } \
+  inline ALWAYS_INLINE const struct name * \
+  failsafe_read(const uint8_t *buf, size_t nbytes, struct name *obj) const \
+  { \
+    if (unlikely(!encode_failsafe_read(buf, nbytes, obj))) \
+      return nullptr; \
+    return obj; \
+  } \
   inline ALWAYS_INLINE size_t \
   nbytes(const struct name *obj) const \
   { \
@@ -286,6 +309,14 @@ namespace private_ {
   inline ALWAYS_INLINE const struct name * \
   prefix_read(const uint8_t *buf, struct name *obj, size_t prefix) const \
   { \
+    *obj = *((const struct name *) buf); \
+    return obj; \
+  } \
+  inline ALWAYS_INLINE const struct name * \
+  failsafe_read(const uint8_t *buf, size_t nbytes, struct name *obj) const \
+  { \
+    if (unlikely(nbytes < sizeof(*obj))) \
+      return nullptr; \
     *obj = *((const struct name *) buf); \
     return obj; \
   } \
@@ -487,6 +518,12 @@ namespace private_ {
     size_t i = 0; \
     APPLY_X_AND_Y(keyfields, SERIALIZE_PREFIX_READ_KEY_FIELD_X) \
   } \
+  inline bool \
+  encode_failsafe_read(const uint8_t *buf, size_t nbytes, struct name::key *obj) const \
+  { \
+    APPLY_X_AND_Y(keyfields, SERIALIZE_FAILSAFE_READ_KEY_FIELD_X) \
+    return true; \
+  } \
   inline ALWAYS_INLINE size_t \
   encode_nbytes(const struct name::key *obj) const \
   { \
@@ -529,6 +566,12 @@ namespace private_ {
     size_t i = 0; \
     APPLY_X_AND_Y(valuefields, SERIALIZE_PREFIX_READ_VALUE_FIELD_X) \
   } \
+  inline bool \
+  encode_failsafe_read(const uint8_t *buf, size_t nbytes, struct name::value *obj) const \
+  { \
+    APPLY_X_AND_Y(valuefields, SERIALIZE_FAILSAFE_READ_VALUE_FIELD_X) \
+    return true; \
+  } \
   inline size_t \
   encode_nbytes(const struct name::value *obj) const \
   { \
@@ -558,8 +601,10 @@ namespace private_ {
 
 template <typename T>
 struct schema {
+  typedef T base_type;
   typedef typename T::key key_type;
   typedef typename T::value value_type;
+  typedef typename T::value_descriptor value_descriptor_type;
   typedef encoder<key_type> key_encoder_type;
   typedef encoder<value_type> value_encoder_type;
 };

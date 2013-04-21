@@ -996,7 +996,7 @@ public:
     small_vector_ns::Test();
     small_map_ns::Test();
     recordtest::Test();
-    btree::TestFast();
+    //btree::TestFast();
     //btree::TestSlow();
     txn_btree_test();
     ret = 0;
