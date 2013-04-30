@@ -787,15 +787,19 @@ public:
     if (likely(txn->can_overwrite_record_tid(version, t))) {
       // see if we have enough space
       if (likely(new_sz <= alloc_size)) {
-        // succeeded
+        // directly update in place
+        mark_modifying();
         writer(get_value_start(), size);
         version = t;
         size = new_sz;
         return write_record_ret(false, nullptr);
       }
 
-      // keep in the chain (it's wasteful, but not incorrect)
+      // keep this tuple in the chain (it's wasteful, but not incorrect)
       // so that cleanup is easier
+      //
+      // XXX(stephentu): alloc_spill() should acquire the lock on
+      // the returned tuple in the ctor, as an optimization
       dbtuple * const rep = alloc_spill(t, get_value_start(), size, new_sz, this, true);
       writer(rep->get_value_start(), size);
       INVARIANT(rep->is_latest());
@@ -814,6 +818,7 @@ public:
     if (new_sz <= alloc_size) {
       dbtuple * const spill = alloc(version, (const_record_type) vstart, size, get_next(), false);
       INVARIANT(!spill->is_latest());
+      mark_modifying();
       set_next(spill);
       writer(get_value_start(), size);
       version = t;
