@@ -426,7 +426,7 @@ std::pair< dbtuple *, bool >
 transaction<Protocol, P, Traits>::try_insert_new_tuple(
     btree &btr,
     const key_type &key,
-    const value_type &value,
+    const value_type *value,
     typename private_::typeutil<value_info_type>::func_param_type vinfo)
 {
   key_writer_type key_writer(&key);
@@ -434,14 +434,17 @@ transaction<Protocol, P, Traits>::try_insert_new_tuple(
     key_writer.fully_materialize(
         Traits::stable_input_memory, this->string_allocator());
 
-  value_writer_type value_writer(&value, vinfo);
+  value_writer_type value_writer(value, vinfo);
   const std::string * const value_str =
     value_writer.fully_materialize(
         Traits::stable_input_memory, this->string_allocator());
 
   // perf: ~900 tsc/alloc on istc11.csail.mit.edu
-  dbtuple * const tuple = dbtuple::alloc_first(
-      (const uint8_t *) value_str->data(), value_str->size(), true);
+  dbtuple * const tuple =
+    likely(value_str) ?
+      dbtuple::alloc_first(
+        (const uint8_t *) value_str->data(), value_str->size(), true) :
+      dbtuple::alloc_first(nullptr, 0, true);
   INVARIANT(find_read_set(tuple) == read_set.end());
   INVARIANT(tuple->is_latest());
   INVARIANT(tuple->version == dbtuple::MAX_TID);
@@ -467,7 +470,7 @@ transaction<Protocol, P, Traits>::try_insert_new_tuple(
   // update write_set
   // too expensive to be practical
   // INVARIANT(find_write_set(tuple) == write_set.end());
-  write_set.emplace_back(tuple, *key_str, &value, vinfo, &btr, true);
+  write_set.emplace_back(tuple, *key_str, value, vinfo, &btr, true);
 
   // update node #s
   INVARIANT(insert_info.first);

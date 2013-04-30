@@ -682,6 +682,25 @@ public:
     return get_flags() & TXN_FLAG_READ_ONLY;
   }
 
+  // for debugging purposes only
+  inline const read_set_map &
+  get_read_set() const
+  {
+    return read_set;
+  }
+
+  inline const write_set_map &
+  get_write_set() const
+  {
+    return write_set;
+  }
+
+  inline const absent_set_map &
+  get_absent_set() const
+  {
+    return absent_set;
+  }
+
 protected:
   inline void abort_impl(abort_reason r);
 
@@ -707,7 +726,7 @@ protected:
   try_insert_new_tuple(
       btree &btr,
       const key_type &key,
-      const value_type &value,
+      const value_type *value,
       typename private_::typeutil<value_info_type>::func_param_type vinfo);
 
   // reads the contents of tuple into v

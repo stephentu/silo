@@ -778,10 +778,10 @@ public:
     INVARIANT(is_write_intent());
     INVARIANT(!is_deleting());
 
-    //if (!sz)
-    //  ++g_evt_dbtuple_logical_deletes;
-
     const size_t new_sz = writer.compute_needed(get_value_start(), size);
+
+    if (!new_sz)
+      ++g_evt_dbtuple_logical_deletes;
 
     // try to overwrite this record
     if (likely(txn->can_overwrite_record_tid(version, t))) {

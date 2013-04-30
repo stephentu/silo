@@ -25,7 +25,7 @@ struct txn_btree_ {
     inline const std::string *
     fully_materialize(bool stable_input, StringAllocator &sa)
     {
-      if (stable_input)
+      if (stable_input || !k)
         return k;
       std::string * const ret = sa();
       ret->assign(k->data(), k->size());
@@ -123,22 +123,25 @@ struct txn_btree_ {
     inline size_t
     compute_needed(const uint8_t *buf, size_t sz)
     {
-      return v->size();
+      return v ? v->size() : 0;
     }
     template <typename StringAllocator>
     inline const std::string *
     fully_materialize(bool stable_input, StringAllocator &sa)
     {
-      if (stable_input)
+      if (stable_input || !v)
         return v;
       std::string * const ret = sa();
       ret->assign(v->data(), v->size());
       return ret;
     }
+
+    // input [buf, buf+sz) is old value
     inline void
     operator()(uint8_t *buf, size_t sz)
     {
-      INVARIANT(sz >= v->size());
+      if (!v)
+        return;
       NDB_MEMCPY(buf, v->data(), v->size());
     }
   private:

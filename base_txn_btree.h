@@ -318,6 +318,9 @@ void base_txn_btree<Transaction, P>::do_tree_put(
     typename private_::typeutil<typename P::ValueInfo>::func_param_type vinfo,
     bool expect_new)
 {
+  INVARIANT(!expect_new || v); // makes little sense to remove() a key you expect
+                               // to not be present, so we assert this doesn't happen
+                               // for now [since this would indicate a suboptimality]
   t.ensure_active();
   if (unlikely(t.is_read_only())) {
     const transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
@@ -328,8 +331,7 @@ void base_txn_btree<Transaction, P>::do_tree_put(
   bool insert = false;
 retry:
   if (expect_new) {
-    INVARIANT(v); // XXX: limitation for now
-    auto ret = t.try_insert_new_tuple(this->underlying_btree, k, *v, vinfo);
+    auto ret = t.try_insert_new_tuple(this->underlying_btree, k, v, vinfo);
     INVARIANT(!ret.second || ret.first);
     if (unlikely(ret.second)) {
       const transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
@@ -349,6 +351,9 @@ retry:
       key_writer.fully_materialize(
           Traits::stable_input_memory, t.string_allocator());
     if (!this->underlying_btree.search(varkey(*key_str), bv)) {
+      // XXX(stephentu): if we are removing a key and we can't find it, then we
+      // should just treat this as a read [of an empty-value], instead of
+      // explicitly inserting an empty node...
       expect_new = true;
       goto retry;
     }

@@ -134,6 +134,8 @@ struct typed_txn_btree_ {
     inline const std::string *
     fully_materialize(bool stable_input, StringAllocator &sa)
     {
+      if (!k)
+        return nullptr;
       std::string * const ret = sa();
       const key_encoder_type key_encoder;
       key_encoder.write(*ret, k);
@@ -155,9 +157,11 @@ struct typed_txn_btree_ {
     inline size_t
     compute_needed(const uint8_t *buf, size_t sz)
     {
-      if (fields == 0)
+      if (fields == 0) {
         // delete
+        INVARIANT(!v);
         return 0;
+      }
 
       ssize_t new_updates_sum = 0;
       for (uint64_t i = 0; i < value_descriptor_type::nfields(); i++) {
@@ -194,9 +198,11 @@ struct typed_txn_btree_ {
     fully_materialize(bool stable_input, StringAllocator &sa)
     {
       INVARIANT(fields == AllFieldsMask || fields == 0);
-      if (fields == 0)
+      if (fields == 0) {
         // delete
+        INVARIANT(!v);
         return nullptr;
+      }
       std::string * const ret = sa();
       const value_encoder_type value_encoder;
       value_encoder.write(*ret, v);
@@ -208,9 +214,11 @@ struct typed_txn_btree_ {
     inline void
     operator()(uint8_t *buf, size_t sz)
     {
-      if (fields == 0)
+      if (fields == 0) {
         // no-op for delete
+        INVARIANT(!v);
         return;
+      }
       if (fields == AllFieldsMask) {
         // special case, just use the standard encoder (faster)
         // because it's straight-line w/ no branching
