@@ -797,12 +797,16 @@ namespace mp_test2_ns {
     virtual bool
     invoke(const string &k, const string &v)
     {
+      ALWAYS_ASSERT(k.size() == 8);
+      const uint64_t u64k =
+        host_endian_trfm<uint64_t>()(*reinterpret_cast<const uint64_t *>(k.data()));
       if (v.size() != sizeof(rec)) {
         cerr << "v.size(): " << v.size() << endl;
         cerr << "sizeof rec: " << sizeof(rec) << endl;
         ALWAYS_ASSERT(false);
       }
       rec *r = (rec *) v.data();
+      ALWAYS_ASSERT(u64k == r->v);
       VERBOSE(cerr << "counting_scan_callback: " << hexify(k) << " => " << r->v << endl);
       if (!has_last) {
         last = r->v;
@@ -830,26 +834,56 @@ namespace mp_test2_ns {
         for (size_t i = range_begin; running && i < range_end; i++) {
         retry:
           typename Traits::StringAllocator arena;
-          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
-          try {
-            rec ctr_rec;
-            string v, v_ctr;
-            ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
-            ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
-            ALWAYS_ASSERT_COND_IN_TXN(t, ((const rec *) v_ctr.data())->v > 1);
-            if (this->btr->search(t, u64_varkey(i), v)) {
-              AssertByteEquality(rec(i), v);
-              this->btr->remove(t, u64_varkey(i));
-              ctr_rec.v = ((const rec *) v_ctr.data())->v - 1;
-            } else {
-              this->btr->insert_object(t, u64_varkey(i), rec(i));
-              ctr_rec.v = ((const rec *) v_ctr.data())->v + 1;
+          bool did_remove = false;
+          uint64_t did_v = 0;
+          {
+            typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
+            try {
+              rec ctr_rec;
+              string v, v_ctr;
+              ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
+              ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
+              ALWAYS_ASSERT_COND_IN_TXN(t, ((const rec *) v_ctr.data())->v > 1);
+              if (this->btr->search(t, u64_varkey(i), v)) {
+                AssertByteEquality(rec(i), v);
+                this->btr->remove(t, u64_varkey(i));
+                ctr_rec.v = ((const rec *) v_ctr.data())->v - 1;
+                did_remove = true;
+              } else {
+                this->btr->insert_object(t, u64_varkey(i), rec(i));
+                ctr_rec.v = ((const rec *) v_ctr.data())->v + 1;
+              }
+              did_v = ctr_rec.v;
+              this->btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
+              t.commit(true);
+            } catch (transaction_abort_exception &e) {
+              naborts++;
+              goto retry;
             }
-            this->btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
-            t.commit(true);
-          } catch (transaction_abort_exception &e) {
-            naborts++;
-            goto retry;
+          }
+
+          {
+            typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
+            try {
+              string v, v_ctr;
+              ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
+              ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
+              const bool ret = this->btr->search(t, u64_varkey(i), v);
+              t.commit(true);
+              if (reinterpret_cast<const rec *>(v_ctr.data())->v != did_v) {
+                cerr << "rec.v: " << reinterpret_cast<const rec *>(v_ctr.data())->v << ", did_v: " << did_v << endl;
+                ALWAYS_ASSERT(false);
+              }
+              if (did_remove && ret) {
+                cerr << "removed previous, but still found" << endl;
+                ALWAYS_ASSERT(false);
+              } else if (!did_remove && !ret) {
+                cerr << "did not previous, but not found" << endl;
+                ALWAYS_ASSERT(false);
+              }
+            } catch (transaction_abort_exception &e) {
+              ALWAYS_ASSERT(false);
+            }
           }
         }
       }
