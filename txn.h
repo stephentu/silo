@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <limits>
 #include <type_traits>
+#include <tuple>
 
 #include <unordered_map>
 
@@ -39,7 +40,8 @@
 #include "ndb_type_traits.h"
 
 // forward decl
-template <template <typename> class Transaction> class base_txn_btree;
+template <template <typename, typename> class Transaction, typename P>
+  class base_txn_btree;
 
 class transaction_unusable_exception {};
 class transaction_read_only_exception {};
@@ -47,54 +49,54 @@ class transaction_read_only_exception {};
 // XXX: hacky
 extern std::string (*g_proto_version_str)(uint64_t v);
 
-template <bool enable, size_t N>
-struct string_container {
+template <typename T, bool enable>
+struct static_container {
   inline ALWAYS_INLINE void
-  assign_string(size_t i, const std::string &s)
+  assign(const T &t)
   {
   }
-  inline ALWAYS_INLINE std::string *
-  get_string(size_t i)
+  inline ALWAYS_INLINE T *
+  get()
   {
     return nullptr;
   }
-  inline ALWAYS_INLINE const std::string *
-  get_string(size_t i) const
+  inline ALWAYS_INLINE const T *
+  get() const
   {
     return nullptr;
   }
 };
 
-template <size_t N>
-struct string_container<true, N> {
+// T must have no-arg ctor and be assignable
+template <typename T>
+struct static_container<T, true> {
   inline void
-  assign_string(size_t i, const std::string &s)
+  assign(const T &t)
   {
-    strings[i] = s;
+    this->t = t;
   }
-  inline std::string *
-  get_string(size_t i)
+  inline T *
+  get()
   {
-    return &strings[i];
+    return &t;
   }
-  inline const std::string *
-  get_string(size_t i) const
+  inline const T *
+  get() const
   {
-    return &strings[i];
+    return &t;
   }
-  std::string strings[N];
+private:
+  T t;
 };
 
 // base class with very simple definitions- nothing too exciting yet
 class transaction_base : private util::noncopyable {
-  template <template <typename> class T> friend class base_txn_btree;
+  template <template <typename, typename> class T, typename P>
+    friend class base_txn_btree;
 public:
 
   typedef dbtuple::tid_t tid_t;
-  typedef dbtuple::record_type record_type;
-  typedef dbtuple::const_record_type const_record_type;
   typedef dbtuple::size_type size_type;
-  typedef btree::key_type key_type;
   typedef dbtuple::string_type string_type;
 
   // TXN_EMBRYO - the transaction object has been allocated but has not
@@ -191,8 +193,8 @@ protected:
   // "write_set" is used to indicate if this read tuple
   // also belongs in the write set.
   struct read_record_t {
-    read_record_t() = default;
-    read_record_t(const dbtuple *tuple, tid_t t)
+    constexpr read_record_t() : tuple(), t() {}
+    constexpr read_record_t(const dbtuple *tuple, tid_t t)
       : tuple(tuple), t(t) {}
     inline const dbtuple *
     get_tuple() const
@@ -213,24 +215,30 @@ protected:
   operator<<(std::ostream &o, const read_record_t &r);
 
   // the write set is a mapping from (tuple -> value_to_write).
-  template <bool stable_strings>
+  template <typename ValueType, typename ValueInfoType, bool StableInputs>
   struct basic_write_record_t {
+    typedef ValueType value_type;
+    typedef ValueInfoType value_info_type;
     enum { FLAGS_INSERT = 0x1 };
+
     basic_write_record_t() = default;
     basic_write_record_t(dbtuple *tuple,
                          const string_type &k,
-                         const string_type &r,
+                         const ValueType *r,
+                         typename private_::typeutil<ValueInfoType>::func_param_type vinfo,
                          btree *btr,
                          bool insert)
       : tuple(tuple),
-        k(stable_strings ? &k : nullptr),
-        r(stable_strings ? &r : nullptr),
+        k(StableInputs ? &k : nullptr),
+        r(r),
+        vinfo(vinfo),
         btr(btr)
     {
-      if (!stable_strings) {
+      if (!StableInputs) {
         // optimized away at compile time
-        container.assign_string(0, k);
-        container.assign_string(1, r);
+        key_container.assign(k);
+        if (r)
+          value_container.assign(*r);
       }
       this->btr.set_flags(insert ? FLAGS_INSERT : 0);
     }
@@ -258,32 +266,45 @@ protected:
     inline const string_type &
     get_key() const
     {
-      if (stable_strings)
+      if (StableInputs)
         return *k;
       else
-        return *container.get_string(0);
+        return *key_container.get();
     }
-    inline const string_type &
+    inline const ValueType *
     get_value() const
     {
-      if (stable_strings)
-        return *r;
+      if (StableInputs)
+        return r;
       else
-        return *container.get_string(1);
+        return r ? value_container.get() : nullptr;
+    }
+    inline typename private_::typeutil<ValueInfoType>::func_param_type
+    get_value_info() const
+    {
+      return vinfo;
     }
   private:
     dbtuple *tuple;
     const string_type *k;
-    const string_type *r;
+    const ValueType *r;
+    ValueInfoType vinfo;
     marked_ptr<btree> btr; // first bit for inserted
 
     // for configurations which don't guarantee stable put strings
-    string_container<!stable_strings, 2> container;
+
+    // XXX: un-necessary, because key_writer guarantees us stable string
+    static_container<std::string, !StableInputs> key_container;
+
+    // necessary regardless of key_writer
+    static_container<ValueType, !StableInputs> value_container;
   };
 
-  template <bool s>
+  template <typename ValueType, typename ValueInfoType, bool StableInputs>
   friend std::ostream &
-  operator<<(std::ostream &o, const basic_write_record_t<s> &r);
+  operator<<(
+      std::ostream &o,
+      const basic_write_record_t<ValueType, ValueInfoType, StableInputs> &r);
 
   // the absent set is a mapping from (btree_node -> version_number).
   struct absent_record_t { uint64_t version; };
@@ -372,9 +393,15 @@ namespace private_ {
     static const bool value = true;
   };
 
-  template <>
-  struct is_trivially_destructible<transaction_base::basic_write_record_t<true>> {
-    static const bool value = true;
+  template <typename R, typename VI>
+  struct is_trivially_destructible<transaction_base::basic_write_record_t<R, VI, true>> {
+    static const bool value = is_trivially_destructible<VI>::value;
+  };
+
+  template <typename R, typename VI>
+  struct is_trivially_destructible<transaction_base::basic_write_record_t<R, VI, false>> {
+    static const bool value =
+      is_trivially_destructible<R>::value && is_trivially_destructible<VI>::value;
   };
 
   template <>
@@ -397,9 +424,11 @@ operator<<(std::ostream &o, const transaction_base::read_record_t &r)
   return o;
 }
 
-template <bool s>
+template <typename ValueType, typename ValueInfoType, bool StableInputs>
 inline ALWAYS_INLINE std::ostream &
-operator<<(std::ostream &o, const transaction_base::basic_write_record_t<s> &r)
+operator<<(
+    std::ostream &o,
+    const transaction_base::basic_write_record_t<ValueType, ValueInfoType, StableInputs> &r)
 {
   o << "[tuple=" << util::hexify(r.get_tuple())
     << ", key=" << util::hexify(r.get_key())
@@ -426,34 +455,115 @@ struct default_transaction_traits {
                                             // to read our latest (uncommited) values? this comes at a
                                             // performance penality [you should not need this behavior to
                                             // write txns, since you *know* the values you inserted]
+
+  typedef util::default_string_allocator StringAllocator;
 };
 
-template <template <typename> class Protocol, typename Traits>
+template <template <typename, typename> class Protocol,
+          typename P,
+          typename Traits>
 class transaction : public transaction_base {
-  friend class base_txn_btree<Protocol>;
-  friend Protocol<Traits>;
+  friend class base_txn_btree<Protocol, P>;
+  friend Protocol<P, Traits>;
+
+public:
+
+  // KeyWriter is expected to implement:
+  // [1-arg constructor]
+  //   KeyWriter(const Key *)
+  // [fully materialize]
+  //   template <typename StringAllocator>
+  //   const std::string * fully_materialize(bool, StringAllocator &)
+
+  // ValueWriter is expected to implement:
+  // [1-arg constructor]
+  //   ValueWriter(const Value *, ValueInfo)
+  // [compute new size from old value]
+  //   size_t compute_needed(const uint8_t *, size_t)
+  // [fully materialize]
+  //   template <typename StringAllocator>
+  //   const std::string * fully_materialize(bool, StringAllocator &)
+  // [perform write]
+  //   void operator()(uint8_t *, size_t)
+  //
+  // ValueWriter does not have to be move/copy constructable. The value passed
+  // into the ValueWriter constructor is guaranteed to be valid throughout the
+  // lifetime of a ValueWriter instance.
+
+  // KeyReader Interface
+  //
+  // KeyReader is a simple transformation from (const std::string &) => const Key &.
+  // The input is guaranteed to be stable, so it has a simple interface:
+  //
+  //   const Key &operator()(const std::string &)
+  //
+  // The KeyReader is expect to preserve the following property: After a call
+  // to operator(), but before the next, the returned value is guaranteed to be
+  // valid and remain stable.
+
+  // ValueReader Interface
+  //
+  // ValueReader is a more complex transformation from (const uint8_t *, size_t) => Value &.
+  // The input is not guaranteed to be stable, so it has a more complex interface:
+  //
+  //   template <typename StringAllocator>
+  //   bool operator()(const uint8_t *, size_t, StringAllocator &)
+  //
+  // This interface returns false if there was not enough buffer space to
+  // finish the read, true otherwise.  Note that this interface returning true
+  // does NOT mean that a read was stable, but it just means there were enough
+  // bytes in the buffer to perform the tentative read.
+  //
+  // Note that ValueReader also exposes a dup interface
+  //
+  //   template <typename StringAllocator>
+  //   void dup(const Value &, StringAllocator &)
+  //
+  // ValueReader also exposes a means to fetch results:
+  //
+  //   Value &results()
+  //
+  // The ValueReader is expected to preserve the following property: After a
+  // call to operator(), if it returns true, then the value returned from
+  // results() should remain valid and stable until the next call to
+  // operator().
+
+  typedef typename P::Key key_type;
+  typedef typename P::Value value_type;
+  typedef typename P::ValueInfo value_info_type;
+
+  typedef typename P::KeyWriter key_writer_type;
+  typedef typename P::ValueWriter value_writer_type;
+
+  //typedef typename P::KeyReader key_reader_type;
+  //typedef typename P::SingleValueReader single_value_reader_type;
+  //typedef typename P::ValueReader value_reader_type;
 
   typedef Traits traits_type;
+  typedef typename Traits::StringAllocator string_allocator_type;
 
 protected:
   // data structures
 
-  inline ALWAYS_INLINE Protocol<Traits> *
+  inline ALWAYS_INLINE Protocol<P, Traits> *
   cast()
   {
-    return static_cast<Protocol<Traits> *>(this);
+    return static_cast<Protocol<P, Traits> *>(this);
   }
 
-  inline ALWAYS_INLINE const Protocol<Traits> *
+  inline ALWAYS_INLINE const Protocol<P, Traits> *
   cast() const
   {
-    return static_cast<const Protocol<Traits> *>(this);
+    return static_cast<const Protocol<P, Traits> *>(this);
   }
 
   // XXX: we have baked in b-tree into the protocol- other indexes are possible
   // but we would need to abstract it away. we don't bother for now.
 
-  typedef basic_write_record_t<traits_type::stable_input_memory> write_record_t;
+  typedef
+    basic_write_record_t<
+      value_type, value_info_type, traits_type::stable_input_memory>
+    write_record_t;
 
 #ifdef USE_SMALL_CONTAINER_OPT
 
@@ -519,7 +629,9 @@ protected:
     dbtuple_write_info_vec;
 
   static inline bool
-  sorted_dbtuples_contains(const dbtuple_write_info_vec &dbtuples, const dbtuple *tuple)
+  sorted_dbtuples_contains(
+      const dbtuple_write_info_vec &dbtuples,
+      const dbtuple *tuple)
   {
     // XXX: skip binary search for small-sized dbtuples?
     return std::binary_search(dbtuples.begin(), dbtuples.end(),
@@ -528,7 +640,7 @@ protected:
 
 public:
 
-  inline transaction(uint64_t flags);
+  inline transaction(uint64_t flags, string_allocator_type &sa);
   inline ~transaction();
 
   // returns TRUE on successful commit, FALSE on abort
@@ -571,7 +683,7 @@ public:
   }
 
 protected:
-  void abort_impl(abort_reason r);
+  inline void abort_impl(abort_reason r);
 
   // low-level API for txn_btree
 
@@ -594,18 +706,18 @@ protected:
   std::pair< dbtuple *, bool >
   try_insert_new_tuple(
       btree &btr,
-      const std::string &key,
-      const std::string &value);
+      const key_type &key,
+      const value_type &value,
+      typename private_::typeutil<value_info_type>::func_param_type vinfo);
 
   // reads the contents of tuple into v
   // within this transaction context
-  template <typename Reader>
+  template <typename ValueReader>
   bool
-  do_tuple_read(const dbtuple *tuple, Reader &reader);
+  do_tuple_read(const dbtuple *tuple, ValueReader &value_reader);
 
   void
-  do_node_read(const btree::node_opaque_t *n,
-               uint64_t version);
+  do_node_read(const btree::node_opaque_t *n, uint64_t version);
 
 public:
   // expected public overrides
@@ -617,6 +729,12 @@ public:
   std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
   tid_t null_entry_tid() const;
+
+  inline string_allocator_type &
+  string_allocator()
+  {
+    return *sa;
+  }
 
 protected:
   // expected protected overrides
@@ -692,6 +810,8 @@ protected:
   read_set_map read_set;
   write_set_map write_set;
   absent_set_map absent_set;
+
+  string_allocator_type *sa;
 };
 
 class transaction_abort_exception : public std::exception {
@@ -713,7 +833,7 @@ private:
 };
 
 // XXX(stephentu): stupid hacks
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 struct txn_epoch_sync {
   // block until the next epoch
   static inline void sync() {}

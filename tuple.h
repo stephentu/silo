@@ -24,7 +24,9 @@
 // debugging tool
 //#define TUPLE_LOCK_OWNERSHIP_CHECKING
 
-template <template <typename> class Protocol, typename Traits>
+template <template <typename, typename> class Protocol,
+          typename P,
+          typename Traits>
   class transaction; // forward decl
 
 /**
@@ -208,6 +210,29 @@ private:
     INVARIANT(size <= alloc_size);
     INVARIANT(set_latest == is_latest());
     NDB_MEMCPY(&value_start[0], r, size);
+    ++g_evt_dbtuple_creates;
+    g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
+  }
+
+  // creates a spill record, copying in the *old* value, but setting
+  // the size to the *new* value
+  dbtuple(tid_t version, const_record_type r,
+          size_type old_size, size_type new_size,
+          size_type alloc_size,
+          struct dbtuple *next, bool set_latest)
+    : hdr(set_latest ? HDR_LATEST_MASK : 0),
+#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
+      lock_owner(0), // not portable
+#endif
+      version(version),
+      size(CheckBounds(new_size)),
+      alloc_size(CheckBounds(alloc_size)),
+      next(next)
+  {
+    INVARIANT(old_size <= new_size);
+    INVARIANT(new_size <= alloc_size);
+    INVARIANT(set_latest == is_latest());
+    NDB_MEMCPY(&value_start[0], r, old_size);
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
   }
@@ -550,11 +575,11 @@ private:
 #endif
 
   // written to be non-recursive
-  template <typename Reader>
+  template <typename Reader, typename StringAllocator>
   static ReadStatus
   record_at_chain(
       const dbtuple *starting, tid_t t, tid_t &start_t,
-      Reader &reader, bool allow_write_intent)
+      Reader &reader, StringAllocator &sa, bool allow_write_intent)
   {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
@@ -569,7 +594,7 @@ private:
     if (found) {
       start_t = current->version;
       const size_t read_sz = current->size;
-      if (unlikely(read_sz && !reader(current->get_value_start(), read_sz)))
+      if (unlikely(read_sz && !reader(current->get_value_start(), read_sz, sa)))
         goto retry;
       if (unlikely(!current->reader_check_version(v)))
         goto retry;
@@ -595,11 +620,11 @@ private:
 
   // we force one level of inlining, but don't force record_at_chain()
   // to be inlined
-  template <typename Reader>
+  template <typename Reader, typename StringAllocator>
   inline ALWAYS_INLINE ReadStatus
   record_at(
       tid_t t, tid_t &start_t,
-      Reader &reader, bool allow_write_intent) const
+      Reader &reader, StringAllocator &sa, bool allow_write_intent) const
   {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
@@ -623,7 +648,7 @@ private:
         return READ_FAILED;
       start_t = version;
       const size_t read_sz = size;
-      if (unlikely(read_sz && !reader(get_value_start(), read_sz)))
+      if (unlikely(read_sz && !reader(get_value_start(), read_sz, sa)))
         goto retry;
       if (unlikely(!reader_check_version(v)))
         goto retry;
@@ -634,7 +659,7 @@ private:
     if (unlikely(!reader_check_version(v)))
       goto retry;
     if (p)
-      return record_at_chain(p, t, start_t, reader, allow_write_intent);
+      return record_at_chain(p, t, start_t, reader, sa, allow_write_intent);
     // NB(stephentu): if we reach the end of a chain then we assume that
     // the record exists as a deleted record.
     //
@@ -677,13 +702,14 @@ public:
    * NB(stephentu): calling stable_read() while holding the lock
    * is an error- this will cause deadlock
    */
-  template <typename Reader>
+  template <typename Reader, typename StringAllocator>
   inline ALWAYS_INLINE ReadStatus
   stable_read(
       tid_t t, tid_t &start_t,
-      Reader &reader, bool allow_write_intent) const
+      Reader &reader, StringAllocator &sa,
+      bool allow_write_intent) const
   {
-    return record_at(t, start_t, reader, allow_write_intent);
+    return record_at(t, start_t, reader, sa, allow_write_intent);
   }
 
   inline bool
@@ -742,9 +768,9 @@ public:
    *
    * XXX: document return value
    */
-  template <typename Transaction>
+  template <typename Transaction, typename Writer>
   write_record_ret
-  write_record_at(const Transaction *txn, tid_t t, const_record_type r, size_type sz)
+  write_record_at(const Transaction *txn, tid_t t, Writer &writer)
   {
     INVARIANT(is_locked());
     INVARIANT(is_lock_owner());
@@ -752,26 +778,28 @@ public:
     INVARIANT(is_write_intent());
     INVARIANT(!is_deleting());
 
-    if (!sz)
-      ++g_evt_dbtuple_logical_deletes;
+    //if (!sz)
+    //  ++g_evt_dbtuple_logical_deletes;
+
+    const size_t new_sz = writer.compute_needed(get_value_start(), size);
 
     // try to overwrite this record
     if (likely(txn->can_overwrite_record_tid(version, t))) {
       // see if we have enough space
-
-      if (likely(sz <= alloc_size)) {
-        // directly update in place
-        mark_modifying();
+      if (likely(new_sz <= alloc_size)) {
+        // succeeded
+        writer(get_value_start(), size);
         version = t;
-        size = sz;
-        NDB_MEMCPY(get_value_start(), r, sz);
-        return write_record_ret(false, NULL);
+        size = new_sz;
+        return write_record_ret(false, nullptr);
       }
 
       // keep in the chain (it's wasteful, but not incorrect)
       // so that cleanup is easier
-      dbtuple * const rep = alloc(t, r, sz, this, true);
+      dbtuple * const rep = alloc_spill(t, get_value_start(), size, new_sz, this, true);
+      writer(rep->get_value_start(), size);
       INVARIANT(rep->is_latest());
+      INVARIANT(rep->size == new_sz);
       clear_latest();
       ++g_evt_dbtuple_inplace_buf_insufficient;
       return write_record_ret(false, rep);
@@ -783,19 +811,20 @@ public:
 
     uint8_t * const vstart = get_value_start();
 
-    if (sz <= alloc_size) {
+    if (new_sz <= alloc_size) {
       dbtuple * const spill = alloc(version, (const_record_type) vstart, size, get_next(), false);
       INVARIANT(!spill->is_latest());
-      mark_modifying();
       set_next(spill);
+      writer(get_value_start(), size);
       version = t;
-      size = sz;
-      NDB_MEMCPY(vstart, r, sz);
-      return write_record_ret(true, NULL);
+      size = new_sz;
+      return write_record_ret(true, nullptr);
     }
 
-    dbtuple * const rep = alloc(t, r, sz, this, true);
+    dbtuple * const rep = alloc_spill(t, get_value_start(), size, new_sz, this, true);
+    writer(rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
+    INVARIANT(rep->size == new_sz);
     clear_latest();
     ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
     return write_record_ret(true, rep);
@@ -838,6 +867,26 @@ public:
         version, value, sz,
         alloc_sz - sizeof(dbtuple), next, set_latest);
   }
+
+  static inline dbtuple *
+  alloc_spill(tid_t version, const_record_type value, size_type oldsz,
+              size_type newsz, struct dbtuple *next, bool set_latest)
+  {
+    INVARIANT(newsz <= std::numeric_limits<node_size_type>::max());
+    INVARIANT(newsz >= oldsz);
+    const size_t max_alloc_sz =
+      std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
+    const size_t alloc_sz =
+      std::min(
+          util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + newsz),
+          max_alloc_sz);
+    char *p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
+    INVARIANT(p);
+    return new (p) dbtuple(
+        version, value, oldsz, newsz,
+        alloc_sz - sizeof(dbtuple), next, set_latest);
+  }
+
 
 private:
   static inline void

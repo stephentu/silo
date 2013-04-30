@@ -104,7 +104,7 @@ operator<<(ostream &o, const rec &r)
   return o;
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test1()
 {
@@ -116,10 +116,10 @@ test1()
     VERBOSE(cerr << "Testing with flags=0x" << hexify(txn_flags) << endl);
 
     txn_btree<TxnType> btr(sizeof(rec));
-    default_string_allocator arena;
+    typename Traits::StringAllocator arena;
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, u64_varkey(0), v));
       btr.insert_object(t, u64_varkey(0), rec(0));
@@ -131,7 +131,8 @@ test1()
     }
 
     {
-      TxnType<Traits> t0(txn_flags), t1(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits>
+        t0(txn_flags, arena), t1(txn_flags, arena);
       string v0, v1;
 
       ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
@@ -160,7 +161,8 @@ test1()
 
     {
       // racy insert
-      TxnType<Traits> t0(txn_flags), t1(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits>
+        t0(txn_flags, arena), t1(txn_flags, arena);
       string v0, v1;
 
       ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
@@ -181,12 +183,13 @@ test1()
 
     {
       // racy scan
-      TxnType<Traits> t0(txn_flags), t1(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits>
+        t0(txn_flags, arena), t1(txn_flags, arena);
 
       const u64_varkey vend(5);
       size_t ctr = 0;
       test_callback_ctr cb(&ctr);
-      btr.search_range(t0, u64_varkey(1), &vend, cb, arena);
+      btr.search_range(t0, u64_varkey(1), &vend, cb);
       ALWAYS_ASSERT_COND_IN_TXN(t0, ctr == 0);
 
       btr.insert_object(t1, u64_varkey(2), rec(4));
@@ -198,11 +201,11 @@ test1()
     }
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       const u64_varkey vend(20);
       size_t ctr = 0;
       test_callback_ctr cb(&ctr);
-      btr.search_range(t, u64_varkey(10), &vend, cb, arena);
+      btr.search_range(t, u64_varkey(10), &vend, cb);
       ALWAYS_ASSERT_COND_IN_TXN(t, ctr == 0);
       btr.insert_object(t, u64_varkey(15), rec(5));
       AssertSuccessfulCommit(t);
@@ -216,7 +219,7 @@ test1()
 
 struct bufrec { char buf[256]; };
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test2()
 {
@@ -225,15 +228,16 @@ test2()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr(sizeof(bufrec));
+    typename Traits::StringAllocator arena;
     bufrec r;
     NDB_MEMSET(r.buf, 'a', ARRAY_NELEMS(r.buf));
     for (size_t i = 0; i < 100; i++) {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       btr.insert_object(t, u64_varkey(i), r);
       AssertSuccessfulCommit(t);
     }
     for (size_t i = 0; i < 100; i++) {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(i), v));
       AssertByteEquality(r, v);
@@ -244,7 +248,7 @@ test2()
   }
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test_absent_key_race()
 {
@@ -253,9 +257,11 @@ test_absent_key_race()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
 
     {
-      TxnType<Traits> t0(txn_flags), t1(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits>
+        t0(txn_flags, arena), t1(txn_flags, arena);
       string v0, v1;
       ALWAYS_ASSERT_COND_IN_TXN(t0, !btr.search(t0, u64_varkey(0), v0));
       ALWAYS_ASSERT_COND_IN_TXN(t1, !btr.search(t1, u64_varkey(0), v1));
@@ -276,7 +282,7 @@ test_absent_key_race()
   }
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test_inc_value_size()
 {
@@ -285,10 +291,11 @@ test_inc_value_size()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
     const size_t upper = numeric_limits<dbtuple::node_size_type>::max();
     for (size_t i = 1; i < upper; i++) {
       const string v(i, 'a');
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       btr.insert(t, u64_varkey(0), (const uint8_t *) v.data(), v.size());
       AssertSuccessfulCommit(t);
     }
@@ -297,7 +304,7 @@ test_inc_value_size()
   }
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test_multi_btree()
 {
@@ -306,15 +313,16 @@ test_multi_btree()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr0, btr1;
+    typename Traits::StringAllocator arena;
     for (size_t i = 0; i < 100; i++) {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       btr0.insert_object(t, u64_varkey(i), rec(123));
       btr1.insert_object(t, u64_varkey(i), rec(123));
       AssertSuccessfulCommit(t);
     }
 
     for (size_t i = 0; i < 100; i++) {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       string v0, v1;
       bool ret0 = btr0.search(t, u64_varkey(i), v0);
       bool ret1 = btr1.search(t, u64_varkey(i), v1);
@@ -332,7 +340,7 @@ test_multi_btree()
   }
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test_read_only_snapshot()
 {
@@ -341,9 +349,10 @@ test_read_only_snapshot()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       btr.insert_object(t, u64_varkey(0), rec(0));
       AssertSuccessfulCommit(t);
     }
@@ -354,7 +363,9 @@ test_read_only_snapshot()
     txn_epoch_sync<TxnType>::sync();
 
     {
-      TxnType<Traits> t0(txn_flags), t1(txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+      typename txn_btree<TxnType>::template transaction<Traits>
+        t0(txn_flags, arena),
+        t1(txn_flags | transaction_base::TXN_FLAG_READ_ONLY, arena);
       string v0, v1;
       ALWAYS_ASSERT_COND_IN_TXN(t0, btr.search(t0, u64_varkey(0), v0));
       ALWAYS_ASSERT_COND_IN_TXN(t0, !v0.empty());
@@ -388,7 +399,7 @@ make_long_key(int32_t a, int32_t b, int32_t c, int32_t d) {
   return string(&buf[0], ARRAY_NELEMS(buf));
 }
 
-template <template <typename> class Protocol>
+template <template <typename, typename> class Protocol>
 class counting_scan_callback : public txn_btree<Protocol>::search_range_callback {
 public:
   counting_scan_callback(uint64_t expect) : ctr(0), expect(expect) {}
@@ -406,7 +417,7 @@ public:
 
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test_long_keys()
 {
@@ -417,10 +428,10 @@ test_long_keys()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr;
-    default_string_allocator arena;
+    typename Traits::StringAllocator arena;
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       for (size_t a = 0; a < N; a++)
         for (size_t b = 0; b < N; b++)
           for (size_t c = 0; c < N; c++)
@@ -432,12 +443,12 @@ test_long_keys()
     }
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       const string lowkey_s = make_long_key(1, 2, 3, 0);
       const string highkey_s = make_long_key(1, 2, 3, N);
       const varkey highkey(highkey_s);
       counting_scan_callback<TxnType> c(1);
-      btr.search_range_call(t, varkey(lowkey_s), &highkey, c, arena);
+      btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       AssertSuccessfulCommit(t);
       if (c.ctr != N)
         cerr << "c.ctr: " << c.ctr << ", N: " << N << endl;
@@ -449,7 +460,7 @@ test_long_keys()
   }
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test_long_keys2()
 {
@@ -475,15 +486,15 @@ test_long_keys2()
     const string highkey_s((const char *) &highkey_cstr[0], ARRAY_NELEMS(highkey_cstr));
 
     txn_btree<TxnType> btr;
-    default_string_allocator arena;
+    typename Traits::StringAllocator arena;
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       btr.insert_object(t, varkey(lowkey_s), rec(12345));
       AssertSuccessfulCommit(t);
     }
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, varkey(lowkey_s), v));
       AssertByteEquality(rec(12345), v);
@@ -491,10 +502,10 @@ test_long_keys2()
     }
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       counting_scan_callback<TxnType> c(12345);
       const varkey highkey(highkey_s);
-      btr.search_range_call(t, varkey(lowkey_s), &highkey, c, arena);
+      btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       AssertSuccessfulCommit(t);
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == 1);
     }
@@ -523,7 +534,7 @@ static const pair<testrec::key, testrec::value> scan_values[] = {
   {testrec::key(10, 5), testrec::value(123456 + 5, 10, "E")},
 };
 
-template <template <typename> class Protocol>
+template <template <typename, typename> class Protocol>
 class scan_callback : public typed_txn_btree<Protocol, schema<testrec>>::search_range_callback {
 public:
   constexpr scan_callback() : n(0) {}
@@ -558,64 +569,67 @@ FieldsMask(First f, Rest... rest)
 
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 test_typed_btree()
 {
   using namespace test_typed_btree_ns;
 
   typed_txn_btree<TxnType, schema<testrec>> btr;
-  typename typed_txn_btree<TxnType, schema<testrec>>::default_string_allocator sa;
+  typename Traits::StringAllocator arena;
+  typedef
+    typename typed_txn_btree<TxnType, schema<testrec>>::template transaction<Traits>
+    txn_type;
 
   const testrec::key k0(1, 1);
   const testrec::value v0(2, 3, "hello");
 
   {
-    TxnType<Traits> t;
+    txn_type t(0, arena);
     testrec::value v;
-    ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, k0, v, sa));
-    btr.insert(t, k0, v0, sa);
+    ALWAYS_ASSERT_COND_IN_TXN(t, !btr.search(t, k0, v));
+    btr.insert(t, k0, v0);
     AssertSuccessfulCommit(t);
   }
 
   {
-    TxnType<Traits> t;
+    txn_type t(0, arena);
     testrec::value v;
-    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, sa));
+    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v));
     ALWAYS_ASSERT_COND_IN_TXN(t, v0 == v);
     AssertSuccessfulCommit(t);
   }
 
   {
-    TxnType<Traits> t;
+    txn_type t(0, arena);
     testrec::value v;
-    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, sa, FieldsMask(1, 2)));
+    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, FieldsMask(1, 2)));
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v1 == v0.v1);
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v2 == v0.v2);
     AssertSuccessfulCommit(t);
   }
 
   {
-    TxnType<Traits> t;
+    txn_type t(0, arena);
     testrec::value v;
-    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, sa, FieldsMask(0, 2)));
+    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, FieldsMask(0, 2)));
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v0 == v0.v0);
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v2 == v0.v2);
     AssertSuccessfulCommit(t);
   }
 
   {
-    TxnType<Traits> t;
+    txn_type t(0, arena);
     for (size_t i = 0; i < ARRAY_NELEMS(scan_values); i++)
-      btr.insert(t, scan_values[i].first, scan_values[i].second, sa);
+      btr.insert(t, scan_values[i].first, scan_values[i].second);
     AssertSuccessfulCommit(t);
   }
 
   {
-    TxnType<Traits> t;
+    txn_type t(0, arena);
     const testrec::key begin(10, 0);
     scan_callback<TxnType> cb;
-    btr.search_range_call(t, begin, nullptr, cb, sa, false, FieldsMask(2));
+    btr.search_range_call(t, begin, nullptr, cb, false, FieldsMask(2));
     AssertSuccessfulCommit(t);
   }
 
@@ -625,7 +639,7 @@ test_typed_btree()
   cerr << "test_typed_btree() passed" << endl;
 }
 
-template <template <typename> class Protocol>
+template <template <typename, typename> class Protocol>
 class txn_btree_worker : public ndb_thread {
 public:
   txn_btree_worker(txn_btree<Protocol> &btr, uint64_t txn_flags)
@@ -643,7 +657,7 @@ namespace mp_stress_test_insert_removes_ns {
   };
   static const size_t nworkers = 4;
   static atomic<bool> running(true);
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class worker : public txn_btree_worker<TxnType> {
   public:
     worker(txn_btree<TxnType> &btr, uint64_t txn_flags)
@@ -653,7 +667,8 @@ namespace mp_stress_test_insert_removes_ns {
     {
       fast_random r(reinterpret_cast<unsigned long>(this));
       while (running.load()) {
-        TxnType<Traits> t(this->txn_flags);
+        typename Traits::StringAllocator arena;
+        typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
         try {
           switch (r.next() % 3) {
           case 0:
@@ -674,7 +689,7 @@ namespace mp_stress_test_insert_removes_ns {
   };
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 mp_stress_test_insert_removes()
 {
@@ -697,7 +712,7 @@ namespace mp_test1_ns {
 
   const size_t niters = 1000;
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class worker : public txn_btree_worker<TxnType> {
   public:
     worker(txn_btree<TxnType> &btr, uint64_t txn_flags)
@@ -707,7 +722,8 @@ namespace mp_test1_ns {
     {
       for (size_t i = 0; i < niters; i++) {
       retry:
-        TxnType<Traits> t(this->txn_flags);
+        typename Traits::StringAllocator arena;
+        typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
         try {
           rec r;
           string v;
@@ -727,7 +743,7 @@ namespace mp_test1_ns {
   };
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 mp_test1()
 {
@@ -738,6 +754,7 @@ mp_test1()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
 
     worker<TxnType, Traits> w0(btr, txn_flags);
     worker<TxnType, Traits> w1(btr, txn_flags);
@@ -748,7 +765,7 @@ mp_test1()
     w0.join(); w1.join(); w2.join(); w3.join();
 
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       string v;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(0), v));
       ALWAYS_ASSERT_COND_IN_TXN(t, !v.empty());
@@ -773,7 +790,7 @@ namespace mp_test2_ns {
   static volatile bool running = true;
 
   // expects the values to be monotonically increasing (as records)
-  template <template <typename> class Protocol>
+  template <template <typename, typename> class Protocol>
   class counting_scan_callback : public txn_btree<Protocol>::search_range_callback {
   public:
     counting_scan_callback() : ctr(0), has_last(false), last(0) {}
@@ -802,7 +819,7 @@ namespace mp_test2_ns {
     uint64_t last;
   };
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class mutate_worker : public txn_btree_worker<TxnType> {
   public:
     mutate_worker(txn_btree<TxnType> &btr, uint64_t flags)
@@ -812,7 +829,8 @@ namespace mp_test2_ns {
       while (running) {
         for (size_t i = range_begin; running && i < range_end; i++) {
         retry:
-          TxnType<Traits> t(this->txn_flags);
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           try {
             rec ctr_rec;
             string v, v_ctr;
@@ -839,7 +857,7 @@ namespace mp_test2_ns {
     size_t naborts;
   };
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class reader_worker : public txn_btree_worker<TxnType> {
   public:
     reader_worker(txn_btree<TxnType> &btr, uint64_t flags)
@@ -848,14 +866,14 @@ namespace mp_test2_ns {
     {
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
-          default_string_allocator arena;
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           string v_ctr;
           ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
           ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
           counting_scan_callback<TxnType> c;
           const u64_varkey kend(range_end);
-          this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c, arena);
+          this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
           t.commit(true);
           if (c.ctr != ((const rec *) v_ctr.data())->v) {
             cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
@@ -874,7 +892,7 @@ namespace mp_test2_ns {
   };
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 mp_test2()
 {
@@ -884,8 +902,9 @@ mp_test2()
        txn_flags_idx++) {
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
     txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       size_t n = 0;
       for (size_t i = range_begin; i < range_end; i++)
         if ((i % 2) == 0) {
@@ -903,14 +922,15 @@ mp_test2()
 
     {
       // make sure the first validation passes
-      TxnType<Traits> t(txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
-      default_string_allocator arena;
+      typename txn_btree<TxnType>::template transaction<Traits> t(
+          txn_flags | transaction_base::TXN_FLAG_READ_ONLY, arena);
+      typename Traits::StringAllocator arena;
       string v_ctr;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(ctr_key), v_ctr));
       ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
       counting_scan_callback<TxnType> c;
       const u64_varkey kend(range_end);
-      btr.search_range_call(t, u64_varkey(range_begin), &kend, c, arena);
+      btr.search_range_call(t, u64_varkey(range_begin), &kend, c);
       AssertSuccessfulCommit(t);
       if (c.ctr != ((const rec *) v_ctr.data())->v) {
         cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
@@ -952,7 +972,7 @@ namespace mp_test3_ns {
   static const size_t naccounts = 100;
   static const size_t niters = 1000000;
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class transfer_worker : public txn_btree_worker<TxnType> {
   public:
     transfer_worker(txn_btree<TxnType> &btr, uint64_t flags, unsigned long seed)
@@ -963,7 +983,8 @@ namespace mp_test3_ns {
       for (size_t i = 0; i < niters; i++) {
       retry:
         try {
-          TxnType<Traits> t(this->txn_flags);
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           uint64_t a = r.next() % naccounts;
           uint64_t b = r.next() % naccounts;
           while (unlikely(a == b))
@@ -990,7 +1011,7 @@ namespace mp_test3_ns {
     const unsigned long seed;
   };
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class invariant_worker_scan : public txn_btree_worker<TxnType>,
                                 public txn_btree<TxnType>::search_range_callback {
   public:
@@ -1001,10 +1022,10 @@ namespace mp_test3_ns {
     {
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
-          default_string_allocator arena;
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           sum = 0;
-          this->btr->search_range_call(t, u64_varkey(0), NULL, *this, arena);
+          this->btr->search_range_call(t, u64_varkey(0), NULL, *this);
           t.commit(true);
           ALWAYS_ASSERT_COND_IN_TXN(t, sum == (naccounts * amount_per_person));
           validations++;
@@ -1024,7 +1045,7 @@ namespace mp_test3_ns {
     uint64_t sum;
   };
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class invariant_worker_1by1 : public txn_btree_worker<TxnType> {
   public:
     invariant_worker_1by1(txn_btree<TxnType> &btr, uint64_t flags)
@@ -1034,7 +1055,8 @@ namespace mp_test3_ns {
     {
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           uint64_t sum = 0;
           for (uint64_t i = 0; i < naccounts; i++) {
             string v;
@@ -1060,7 +1082,7 @@ namespace mp_test3_ns {
 
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 mp_test3()
 {
@@ -1072,8 +1094,9 @@ mp_test3()
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
     txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       for (uint64_t i = 0; i < naccounts; i++)
         btr.insert_object(t, u64_varkey(i), rec(amount_per_person));
       AssertSuccessfulCommit(t);
@@ -1111,7 +1134,7 @@ namespace mp_test_simple_write_skew_ns {
 
   volatile bool running = true;
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class get_worker : public txn_btree_worker<TxnType> {
   public:
     get_worker(unsigned int d, txn_btree<TxnType> &btr, uint64_t txn_flags)
@@ -1120,7 +1143,8 @@ namespace mp_test_simple_write_skew_ns {
     {
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           if ((n % 2) == 0) {
             // try to take this doctor off call
             unsigned int ctr = 0;
@@ -1152,7 +1176,7 @@ namespace mp_test_simple_write_skew_ns {
     unsigned int d;
   };
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class scan_worker : public txn_btree_worker<TxnType>,
                       public txn_btree<TxnType>::search_range_callback {
   public:
@@ -1162,11 +1186,11 @@ namespace mp_test_simple_write_skew_ns {
     {
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
-          default_string_allocator arena;
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           if ((n % 2) == 0) {
             ctr = 0;
-            this->btr->search_range_call(t, u64_varkey(0), NULL, *this, arena);
+            this->btr->search_range_call(t, u64_varkey(0), NULL, *this);
             if (ctr == 2)
               this->btr->insert_object(t, u64_varkey(d), rec(0));
             t.commit(true);
@@ -1196,7 +1220,7 @@ namespace mp_test_simple_write_skew_ns {
   };
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 mp_test_simple_write_skew()
 {
@@ -1208,9 +1232,10 @@ mp_test_simple_write_skew()
     const uint64_t txn_flags = TxnFlags[txn_flags_idx];
 
     txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
     {
-      TxnType<Traits> t(txn_flags);
-      _static_assert(NDoctors >= 2);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
+      static_assert(NDoctors >= 2, "XX");
       for (uint64_t i = 0; i < NDoctors; i++)
         btr.insert_object(t, u64_varkey(i), rec(i < 2 ? 1 : 0));
       AssertSuccessfulCommit(t);
@@ -1268,7 +1293,7 @@ namespace mp_test_batch_processing_ns {
     return buf;
   }
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class report_worker : public ndb_thread,
                         public txn_btree<TxnType>::search_range_callback {
   public:
@@ -1278,8 +1303,8 @@ namespace mp_test_batch_processing_ns {
     {
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
-          default_string_allocator arena;
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           string v;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
           ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
@@ -1287,7 +1312,7 @@ namespace mp_test_batch_processing_ns {
           const uint32_t prev_bid = r->v - 1; // prev batch
           sum = 0;
           const string endkey = MakeKey(prev_bid, numeric_limits<uint32_t>::max());
-          receipts->search_range_call(t, MakeKey(prev_bid, 0), &endkey, *this, arena);
+          receipts->search_range_call(t, MakeKey(prev_bid, 0), &endkey, *this);
           t.commit(true);
           map<uint32_t, uint32_t>::iterator it = reports.find(prev_bid);
           if (it != reports.end()) {
@@ -1323,7 +1348,7 @@ namespace mp_test_batch_processing_ns {
     unsigned int sum;
   };
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class new_receipt_worker : public ndb_thread {
   public:
     new_receipt_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
@@ -1333,7 +1358,8 @@ namespace mp_test_batch_processing_ns {
     {
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           string v;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
           ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
@@ -1365,7 +1391,7 @@ namespace mp_test_batch_processing_ns {
     uint32_t last_rid;
   };
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class incr_worker : public ndb_thread {
   public:
     incr_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
@@ -1377,7 +1403,8 @@ namespace mp_test_batch_processing_ns {
       t.tv_nsec = 1000; // 1 us
       while (running) {
         try {
-          TxnType<Traits> t(this->txn_flags);
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           string v;
           ALWAYS_ASSERT_COND_IN_TXN(t, ctrl->search(t, u64_varkey(0), v));
           ALWAYS_ASSERT_COND_IN_TXN(t, v.size() == sizeof(rec));
@@ -1401,7 +1428,7 @@ namespace mp_test_batch_processing_ns {
   };
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 mp_test_batch_processing()
 {
@@ -1414,8 +1441,9 @@ mp_test_batch_processing()
 
     txn_btree<TxnType> ctrl;
     txn_btree<TxnType> receipts;
+    typename Traits::StringAllocator arena;
     {
-      TxnType<Traits> t(txn_flags);
+      typename txn_btree<TxnType>::template transaction<Traits> t(txn_flags, arena);
       ctrl.insert_object(t, u64_varkey(0), rec(1));
       AssertSuccessfulCommit(t);
     }
@@ -1469,7 +1497,7 @@ namespace read_only_perf_ns {
 
   volatile bool running = false;
 
-  template <template <typename> class TxnType, typename Traits>
+  template <template <typename, typename> class TxnType, typename Traits>
   class worker : public txn_btree_worker<TxnType> {
   public:
     worker(unsigned int seed, txn_btree<TxnType> &btr, uint64_t txn_flags)
@@ -1481,7 +1509,8 @@ namespace read_only_perf_ns {
         const uint64_t k = r.next() % nkeys;
       retry:
         try {
-          TxnType<Traits> t(this->txn_flags);
+          typename Traits::StringAllocator arena;
+          typename txn_btree<TxnType>::template transaction<Traits> t(this->txn_flags, arena);
           string v;
           bool found = this->btr->search(t, u64_varkey(k), v);
           t.commit(true);
@@ -1499,7 +1528,7 @@ namespace read_only_perf_ns {
   };
 }
 
-template <template <typename> class TxnType, typename Traits>
+template <template <typename, typename> class TxnType, typename Traits>
 static void
 read_only_perf()
 {
@@ -1514,7 +1543,7 @@ read_only_perf()
     {
       const size_t nkeyspertxn = 100000;
       for (size_t i = 0; i < nkeys / nkeyspertxn; i++) {
-        TxnType<Traits> t;
+        typename txn_btree<TxnType>::template transaction<Traits> t;
         const size_t end = (i == (nkeys / nkeyspertxn - 1)) ? nkeys : ((i + 1) * nkeyspertxn);
         for (size_t j = i * nkeyspertxn; j < end; j++)
           btr.insert_object(t, u64_varkey(j), rec(j + 1));

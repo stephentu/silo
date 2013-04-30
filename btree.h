@@ -27,7 +27,8 @@
 
 //#define LOCK_OWNERSHIP_CHECKING
 
-template <template <typename> class Transaction> class base_txn_btree;
+template <template <typename, typename> class Transaction, class P>
+  class base_txn_btree;
 
 /**
  * A concurrent, variable key length b+-tree, optimized for read heavy
@@ -47,7 +48,8 @@ template <template <typename> class Transaction> class base_txn_btree;
  * change compiler fences into actual memory fences, at the very least.
  */
 class btree : public rcu_enabled {
-  template <template <typename> class T> friend class base_txn_btree;
+  template <template <typename, typename> class T, typename P>
+    friend class base_txn_btree;
   friend class txn_walker_loop;
 public:
   typedef varkey key_type;

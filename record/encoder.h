@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "serializer.h"
 #include "../util.h"
+#include "../ndb_type_traits.h"
 
 // the C preprocessor is absolutely wonderful...
 
@@ -72,31 +73,6 @@ Size(const T &t)
 {
   const encoder<T> enc;
   return enc.nbytes(&t);
-}
-
-namespace private_ {
-  // some type hacks
-
-  template <typename T>
-  struct typeutil { typedef const T & func_param_type; };
-
-  template <typename T>
-  struct primitive_typeutil { typedef T func_param_type; };
-
-  // specialize typeutil for int types to use primitive_typeutil
-
-#define SPECIALIZE_PRIM_TYPEUTIL(tpe) \
-  template <> struct typeutil< tpe > : public primitive_typeutil< tpe > {};
-
-  SPECIALIZE_PRIM_TYPEUTIL(bool)
-  SPECIALIZE_PRIM_TYPEUTIL(int8_t)
-  SPECIALIZE_PRIM_TYPEUTIL(uint8_t)
-  SPECIALIZE_PRIM_TYPEUTIL(int16_t)
-  SPECIALIZE_PRIM_TYPEUTIL(uint16_t)
-  SPECIALIZE_PRIM_TYPEUTIL(int32_t)
-  SPECIALIZE_PRIM_TYPEUTIL(uint32_t)
-  SPECIALIZE_PRIM_TYPEUTIL(int64_t)
-  SPECIALIZE_PRIM_TYPEUTIL(uint64_t)
 }
 
 #define IDENT_TRANSFORM(tpe, expr) (expr)

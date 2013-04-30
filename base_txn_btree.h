@@ -5,6 +5,7 @@
 #include "txn.h"
 #include "lockguard.h"
 #include "util.h"
+#include "ndb_type_traits.h"
 
 #include <string>
 #include <map>
@@ -13,61 +14,20 @@
 
 // each Transaction implementation should specialize this for special
 // behavior- the default implementation is just nops
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 struct base_txn_btree_handler {
   inline void on_construct(const std::string &name, btree *underlying) {} // get a handle to the underying btree
   inline void on_destruct() {} // called at the beginning of the txn_btree's dtor
   static const bool has_background_task = false;
 };
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction, typename P>
 class base_txn_btree {
-
-  // XXX: not ideal
-  template <template <typename> class P, typename T>
-    friend class transaction;
-
-  // XXX: would like to declare friend wth all Transaction<T> classes, but
-  // doesn't seem like an easy way to do that for template template parameters
-
-  // KeyReader Interface
-  //
-  // KeyReader is a simple transformation from (const std::string &) => T.
-  // The input is guaranteed to be stable, so it has a simple interface:
-  //
-  //   T operator()(const std::string &)
-  //
-  // The KeyReader is expect to preserve the following property: After a call
-  // to operator(), but before the next, the returned value is guaranteed to be
-  // valid and remain stable.
-
-  // ValueReader Interface
-  //
-  // ValueReader is a more complex transformation from (const uint8_t *, size_t) => T.
-  // The input is not guaranteed to be stable, so it has a more complex interface:
-  //
-  //   bool operator()(const uint8_t *, size_t)
-  //
-  // This interface returns false if there was not enough buffer space to
-  // finish the read, true otherwise.  Note that this interface returning true
-  // does NOT mean that a read was stable, but it just means there were enough
-  // bytes in the buffer to perform the tentative read. Note that ValueReader
-  // also exposes a means to fetch results:
-  //
-  //   T results()
-  //
-  // The ValueReader is expected to preserve the following property: After a
-  // call to operator(), if it returns true, then the value returned from
-  // results() should remain valid and stable until the next call to
-  // operator().
-
 public:
-  typedef transaction_base::key_type key_type;
-  typedef transaction_base::string_type string_type;
-  typedef const uint8_t * value_type;
-  typedef size_t size_type;
 
-  typedef util::default_string_allocator default_string_allocator;
+  typedef transaction_base::tid_t tid_t;
+  typedef transaction_base::size_type size_type;
+  typedef transaction_base::string_type string_type;
 
   base_txn_btree(size_type value_size_hint = 128,
             bool mostly_append = false,
@@ -188,134 +148,53 @@ protected:
   // readers are placed here so they can be shared amongst
   // derived implementations
 
-  class key_reader {
-  public:
-    inline ALWAYS_INLINE const std::string &
-    operator()(const std::string &s)
-    {
-      return s;
-    }
-  };
-
-  class single_value_reader {
-  public:
-    constexpr single_value_reader(
-        std::string &s, size_t max_bytes_read)
-      : s(&s), max_bytes_read(max_bytes_read) {}
-
-    inline bool
-    operator()(const uint8_t *data, size_t sz)
-    {
-      const size_t readsz = std::min(sz, max_bytes_read);
-      s->assign((const char *) data, readsz);
-      return true;
-    }
-
-    inline std::string &
-    results()
-    {
-      return *s;
-    }
-
-    inline const std::string &
-    results() const
-    {
-      return *s;
-    }
-
-  private:
-    std::string *s;
-    size_t max_bytes_read;
-  };
-
-  // does not bother to interpret the bytes from a record
-  template <typename StringAllocator>
-  class value_reader {
-  public:
-    constexpr value_reader(StringAllocator &sa, size_t max_bytes_read)
-      : sa(&sa), px(nullptr), max_bytes_read(max_bytes_read) {}
-
-    inline bool
-    operator()(const uint8_t *data, size_t sz)
-    {
-      const size_t readsz = std::min(sz, max_bytes_read);
-      px = (*sa)();
-      px->assign((const char *) data, readsz);
-      return true;
-    }
-
-    inline std::string &
-    results()
-    {
-      INVARIANT(px);
-      return *px;
-    }
-
-    inline const std::string &
-    results() const
-    {
-      INVARIANT(px);
-      return *px;
-    }
-
-  private:
-    StringAllocator *sa;
-    std::string *px;
-    size_t max_bytes_read;
-  };
-
-  template <typename Traits,
-            typename Callback,
-            typename KeyReader,
-            typename ValueReader,
-            typename StringAllocator>
+  template <typename Traits, typename Callback,
+            typename KeyReader, typename ValueReader>
   struct txn_search_range_callback : public btree::low_level_search_range_callback {
     constexpr txn_search_range_callback(
-          Transaction<Traits> *t,
+          Transaction<P, Traits> *t,
           Callback *caller_callback,
           KeyReader *key_reader,
-          ValueReader *value_reader,
-          StringAllocator *sa)
+          ValueReader *value_reader)
       : t(t), caller_callback(caller_callback),
-        key_reader(key_reader), value_reader(value_reader), sa(sa) {}
+        key_reader(key_reader), value_reader(value_reader) {}
 
     virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
     virtual bool invoke(const btree::string_type &k, btree::value_type v,
                         const btree::node_opaque_t *n, uint64_t version);
 
   private:
-    Transaction<Traits> *const t;
+    Transaction<P, Traits> *const t;
     Callback *const caller_callback;
     KeyReader *const key_reader;
     ValueReader *const value_reader;
-    StringAllocator *const sa;
   };
 
   template <typename Traits, typename ValueReader>
   inline bool
-  do_search(Transaction<Traits> &t, const key_type &k, ValueReader &value_reader);
+  do_search(Transaction<P, Traits> &t,
+            const typename P::Key &k,
+            ValueReader &value_reader);
 
-  template <typename Traits,
-            typename Callback,
-            typename KeyReader,
-            typename ValueReader,
-            typename StringAllocator>
+  template <typename Traits, typename Callback,
+            typename KeyReader, typename ValueReader>
   inline void
-  do_search_range_call(Transaction<Traits> &t,
-                       const key_type &lower,
-                       const key_type *upper,
+  do_search_range_call(Transaction<P, Traits> &t,
+                       const typename P::Key &lower,
+                       const typename P::Key *upper,
                        Callback &callback,
                        KeyReader &key_reader,
-                       ValueReader &value_reader,
-                       StringAllocator &sa);
+                       ValueReader &value_reader);
 
-  // remove() is just do_tree_put() with empty-string
   // expect_new indicates if we expect the record to not exist in the tree-
-  // is just a hint that affects perf, not correctness
+  // is just a hint that affects perf, not correctness. remove is put with nullptr
+  // as value
   template <typename Traits>
-  void do_tree_put(Transaction<Traits> &t, const string_type &k,
-                   const string_type &v, bool expect_new);
-
+  void do_tree_put(Transaction<P, Traits> &t,
+                   const typename P::Key &k,
+                   const typename P::Value *v,
+                   typename private_::typeutil<typename P::ValueInfo>::func_param_type vinfo,
+                   bool expect_new);
 
   btree underlying_btree;
   size_type value_size_hint;
@@ -329,18 +208,24 @@ namespace private_ {
   STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe1, txn_btree_search_probe1_cg)
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction, typename P>
 template <typename Traits, typename ValueReader>
 bool
-base_txn_btree<Transaction>::do_search(
-    Transaction<Traits> &t, const key_type &k, ValueReader &value_reader)
+base_txn_btree<Transaction, P>::do_search(
+    Transaction<P, Traits> &t,
+    const typename P::Key &k,
+    ValueReader &value_reader)
 {
   t.ensure_active();
+
+  typename P::KeyWriter key_writer(&k);
+  const std::string * const key_str =
+    key_writer.fully_materialize(true, t.string_allocator());
 
   // search the underlying btree to map k=>(btree_node|tuple)
   btree::value_type underlying_v;
   btree::versioned_node_t search_info;
-  const bool found = this->underlying_btree.search(k, underlying_v, &search_info);
+  const bool found = this->underlying_btree.search(varkey(*key_str), underlying_v, &search_info);
   if (found) {
     const dbtuple * const tuple = reinterpret_cast<const dbtuple *>(underlying_v);
     return t.do_tuple_read(tuple, value_reader);
@@ -351,9 +236,9 @@ base_txn_btree<Transaction>::do_search(
   }
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction, typename P>
 std::map<std::string, uint64_t>
-base_txn_btree<Transaction>::unsafe_purge(bool dump_stats)
+base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
 {
   ALWAYS_ASSERT(!been_destructed);
   been_destructed = true;
@@ -370,17 +255,17 @@ base_txn_btree<Transaction>::unsafe_purge(bool dump_stats)
 #endif
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction, typename P>
 void
-base_txn_btree<Transaction>::purge_tree_walker::on_node_begin(const btree::node_opaque_t *n)
+base_txn_btree<Transaction, P>::purge_tree_walker::on_node_begin(const btree::node_opaque_t *n)
 {
   INVARIANT(spec_values.empty());
   spec_values = btree::ExtractValues(n);
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction, typename P>
 void
-base_txn_btree<Transaction>::purge_tree_walker::on_node_success()
+base_txn_btree<Transaction, P>::purge_tree_walker::on_node_success()
 {
   for (size_t i = 0; i < spec_values.size(); i++) {
     dbtuple *ln =
@@ -417,19 +302,21 @@ done:
   spec_values.clear();
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction, typename P>
 void
-base_txn_btree<Transaction>::purge_tree_walker::on_node_failure()
+base_txn_btree<Transaction, P>::purge_tree_walker::on_node_failure()
 {
   spec_values.clear();
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction, typename P>
 template <typename Traits>
-void
-base_txn_btree<Transaction>::do_tree_put(
-    Transaction<Traits> &t, const string_type &k,
-    const string_type &v, bool expect_new)
+void base_txn_btree<Transaction, P>::do_tree_put(
+    Transaction<P, Traits> &t,
+    const typename P::Key &k,
+    const typename P::Value *v,
+    typename private_::typeutil<typename P::ValueInfo>::func_param_type vinfo,
+    bool expect_new)
 {
   t.ensure_active();
   if (unlikely(t.is_read_only())) {
@@ -441,7 +328,8 @@ base_txn_btree<Transaction>::do_tree_put(
   bool insert = false;
 retry:
   if (expect_new) {
-    auto ret = t.try_insert_new_tuple(this->underlying_btree, k, v);
+    INVARIANT(v); // XXX: limitation for now
+    auto ret = t.try_insert_new_tuple(this->underlying_btree, k, *v, vinfo);
     INVARIANT(!ret.second || ret.first);
     if (unlikely(ret.second)) {
       const transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
@@ -452,10 +340,15 @@ retry:
     if (px)
       insert = true;
   }
+  const std::string *key_str = nullptr;
   if (!px) {
     // do regular search
     btree::value_type bv = 0;
-    if (!this->underlying_btree.search(varkey(k), bv)) {
+    typename P::KeyWriter key_writer(&k);
+    key_str =
+      key_writer.fully_materialize(
+          Traits::stable_input_memory, t.string_allocator());
+    if (!this->underlying_btree.search(varkey(*key_str), bv)) {
       expect_new = true;
       goto retry;
     }
@@ -463,8 +356,9 @@ retry:
   }
   INVARIANT(px);
   if (!insert) {
+    INVARIANT(key_str);
     // add to write set normally, as non-insert
-    t.write_set.emplace_back(px, k, v, &this->underlying_btree, false);
+    t.write_set.emplace_back(px, *key_str, v, vinfo, &this->underlying_btree, false);
   } else {
     // should already exist in write set as insert
     // (because of try_insert_new_tuple())
@@ -475,15 +369,12 @@ retry:
   }
 }
 
-template <template <typename> class Transaction>
-template <typename Traits,
-          typename Callback,
-          typename KeyReader,
-          typename ValueReader,
-          typename StringAllocator>
+template <template <typename, typename> class Transaction, typename P>
+template <typename Traits, typename Callback,
+          typename KeyReader, typename ValueReader>
 void
-base_txn_btree<Transaction>
-  ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader, StringAllocator>
+base_txn_btree<Transaction, P>
+  ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader>
   ::on_resp_node(
     const btree::node_opaque_t *n, uint64_t version)
 {
@@ -493,15 +384,12 @@ base_txn_btree<Transaction>
   t->do_node_read(n, version);
 }
 
-template <template <typename> class Transaction>
-template <typename Traits,
-          typename Callback,
-          typename KeyReader,
-          typename ValueReader,
-          typename StringAllocator>
+template <template <typename, typename> class Transaction, typename P>
+template <typename Traits, typename Callback,
+          typename KeyReader, typename ValueReader>
 bool
-base_txn_btree<Transaction>
-  ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader, StringAllocator>
+base_txn_btree<Transaction, P>
+  ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader>
   ::invoke(
     const btree::string_type &k, btree::value_type v,
     const btree::node_opaque_t *n, uint64_t version)
@@ -512,25 +400,22 @@ base_txn_btree<Transaction>
                     << "  " << *((dbtuple *) v) << std::endl);
   const dbtuple * const tuple = reinterpret_cast<const dbtuple *>(v);
   if (t->do_tuple_read(tuple, *value_reader))
-    return caller_callback->invoke((*key_reader)(k), value_reader->results());
+    return caller_callback->invoke(
+        (*key_reader)(k), value_reader->results());
   return true;
 }
 
-template <template <typename> class Transaction>
-template <typename Traits,
-          typename Callback,
-          typename KeyReader,
-          typename ValueReader,
-          typename StringAllocator>
+template <template <typename, typename> class Transaction, typename P>
+template <typename Traits, typename Callback,
+          typename KeyReader, typename ValueReader>
 void
-base_txn_btree<Transaction>::do_search_range_call(
-    Transaction<Traits> &t,
-    const key_type &lower,
-    const key_type *upper,
+base_txn_btree<Transaction, P>::do_search_range_call(
+    Transaction<P, Traits> &t,
+    const typename P::Key &lower,
+    const typename P::Key *upper,
     Callback &callback,
     KeyReader &key_reader,
-    ValueReader &value_reader,
-    StringAllocator &sa)
+    ValueReader &value_reader)
 {
   t.ensure_active();
   if (upper)
@@ -541,11 +426,27 @@ base_txn_btree<Transaction>::do_search_range_call(
     VERBOSE(std::cerr << "txn_btree(0x" << util::hexify(intptr_t(this))
                  << ")::search_range_call [" << util::hexify(lower)
                  << ", +inf)" << std::endl);
-  if (unlikely(upper && *upper <= lower))
+
+  typename P::KeyWriter lower_key_writer(&lower);
+  const std::string * const lower_str =
+    lower_key_writer.fully_materialize(true, t.string_allocator());
+
+  typename P::KeyWriter upper_key_writer(upper);
+  const std::string * const upper_str =
+    upper_key_writer.fully_materialize(true, t.string_allocator());
+
+  if (unlikely(upper_str && *upper_str <= *lower_str))
     return;
-  txn_search_range_callback<Traits, Callback, KeyReader, ValueReader, StringAllocator> c(
-			&t, &callback, &key_reader, &value_reader, &sa);
-  this->underlying_btree.search_range_call(lower, upper, c, sa());
+
+  txn_search_range_callback<Traits, Callback, KeyReader, ValueReader> c(
+			&t, &callback, &key_reader, &value_reader);
+
+  varkey uppervk;
+  if (upper_str)
+    uppervk = varkey(*upper_str);
+  this->underlying_btree.search_range_call(
+      varkey(*lower_str), upper_str ? &uppervk : nullptr,
+      c, t.string_allocator()());
 }
 
 #endif /* _NDB_BASE_TXN_BTREE_H_ */

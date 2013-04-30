@@ -14,7 +14,7 @@ public:
   // can take the bottom 3 bits of a ptr [ptrs must be 8-byte aligned]
   static const uintptr_t LowBitsMask = 0x7;
 
-  inline marked_ptr() : px(0) {}
+  constexpr inline marked_ptr() : px(0) {}
 
   template <typename U>
   inline marked_ptr(U *px) : px(reinterpret_cast<uintptr_t>(px))
