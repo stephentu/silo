@@ -6,16 +6,16 @@
 
 // base definitions
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
-transaction<Protocol, P, Traits>::transaction(uint64_t flags, string_allocator_type &sa)
+template <template <typename> class Protocol, typename Traits>
+transaction<Protocol, Traits>::transaction(uint64_t flags, string_allocator_type &sa)
   : transaction_base(flags), sa(&sa)
 {
   // XXX(stephentu): VERY large RCU region
   rcu::region_begin();
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
-transaction<Protocol, P, Traits>::~transaction()
+template <template <typename> class Protocol, typename Traits>
+transaction<Protocol, Traits>::~transaction()
 {
   // transaction shouldn't fall out of scope w/o resolution
   // resolution means TXN_EMBRYO, TXN_COMMITED, and TXN_ABRT
@@ -23,9 +23,9 @@ transaction<Protocol, P, Traits>::~transaction()
   rcu::region_end();
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 void
-transaction<Protocol, P, Traits>::clear()
+transaction<Protocol, Traits>::clear()
 {
   // it's actually *more* efficient to not call clear explicitly on the
   // read/write/absent sets, and let the destructors do the clearing- this is
@@ -33,9 +33,9 @@ transaction<Protocol, P, Traits>::clear()
   // have to end in a valid state
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 void
-transaction<Protocol, P, Traits>::abort_impl(abort_reason reason)
+transaction<Protocol, Traits>::abort_impl(abort_reason reason)
 {
   abort_trap(reason);
   switch (state) {
@@ -103,9 +103,9 @@ namespace {
   }
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 void
-transaction<Protocol, P, Traits>::dump_debug_info() const
+transaction<Protocol, Traits>::dump_debug_info() const
 {
   std::cerr << "Transaction (obj=" << util::hexify(this) << ") -- state "
        << transaction_state_to_cstr(state) << std::endl;
@@ -134,9 +134,9 @@ transaction<Protocol, P, Traits>::dump_debug_info() const
 
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 std::map<std::string, uint64_t>
-transaction<Protocol, P, Traits>::get_txn_counters() const
+transaction<Protocol, Traits>::get_txn_counters() const
 {
   std::map<std::string, uint64_t> ret;
 
@@ -155,9 +155,9 @@ transaction<Protocol, P, Traits>::get_txn_counters() const
   return ret;
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 bool
-transaction<Protocol, P, Traits>::commit(bool doThrow)
+transaction<Protocol, Traits>::commit(bool doThrow)
 {
   PERF_DECL(
       static std::string probe0_name(
@@ -343,9 +343,8 @@ transaction<Protocol, P, Traits>::commit(bool doThrow)
                                               // w/o creating a new chain
         } else {
           tuple->prefetch();
-          value_writer_type writer(it->get_value(), it->get_value_info());
           const dbtuple::write_record_ret ret = tuple->write_record_at(
-              cast(), commit_tid.second, writer);
+              cast(), commit_tid.second, it->get_value(), it->get_writer());
           lock_guard<dbtuple> guard(ret.second, true);
           if (unlikely(ret.second)) {
             // need to unlink tuple from underlying btree, replacing
@@ -421,44 +420,38 @@ do_abort:
   return false;
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 std::pair< dbtuple *, bool >
-transaction<Protocol, P, Traits>::try_insert_new_tuple(
+transaction<Protocol, Traits>::try_insert_new_tuple(
     btree &btr,
-    const key_type &key,
-    const value_type *value,
-    typename private_::typeutil<value_info_type>::func_param_type vinfo)
+    const std::string *key,
+    const void *value,
+    dbtuple::tuple_writer_t writer)
 {
-  key_writer_type key_writer(&key);
-  const std::string * const key_str =
-    key_writer.fully_materialize(
-        Traits::stable_input_memory, this->string_allocator());
-
-  value_writer_type value_writer(value, vinfo);
-  const std::string * const value_str =
-    value_writer.fully_materialize(
-        Traits::stable_input_memory, this->string_allocator());
+  INVARIANT(key);
+  const size_t sz =
+    value ? writer(dbtuple::TUPLE_WRITER_COMPUTE_NEEDED,
+      value, nullptr, 0) : 0;
 
   // perf: ~900 tsc/alloc on istc11.csail.mit.edu
-  dbtuple * const tuple =
-    likely(value_str) ?
-      dbtuple::alloc_first(
-        (const uint8_t *) value_str->data(), value_str->size(), true) :
-      dbtuple::alloc_first(nullptr, 0, true);
+  dbtuple * const tuple = dbtuple::alloc_first(sz, true);
+  if (value)
+    writer(dbtuple::TUPLE_WRITER_DO_WRITE,
+        value, tuple->get_value_start(), 0);
   INVARIANT(find_read_set(tuple) == read_set.end());
   INVARIANT(tuple->is_latest());
   INVARIANT(tuple->version == dbtuple::MAX_TID);
   INVARIANT(tuple->is_locked());
   INVARIANT(tuple->is_write_intent());
 #ifdef TUPLE_CHECK_KEY
-  tuple->key.assign(key_str->data(), key_str->size());
+  tuple->key.assign(key->data(), key->size());
 #endif
 
   // XXX: underlying btree api should return the existing value if insert
   // fails- this would allow us to avoid having to do another search
   std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
   if (unlikely(!btr.insert_if_absent(
-          varkey(*key_str), (btree::value_type) tuple, &insert_info))) {
+          varkey(*key), (btree::value_type) tuple, &insert_info))) {
     VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(key) << std::endl);
     tuple->unlock();
     dbtuple::release_no_rcu(tuple);
@@ -470,7 +463,7 @@ transaction<Protocol, P, Traits>::try_insert_new_tuple(
   // update write_set
   // too expensive to be practical
   // INVARIANT(find_write_set(tuple) == write_set.end());
-  write_set.emplace_back(tuple, *key_str, value, vinfo, &btr, true);
+  write_set.emplace_back(tuple, key, value, writer, &btr, true);
 
   // update node #s
   INVARIANT(insert_info.first);
@@ -492,10 +485,10 @@ transaction<Protocol, P, Traits>::try_insert_new_tuple(
   return std::make_pair(tuple, false);
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 template <typename ValueReader>
 bool
-transaction<Protocol, P, Traits>::do_tuple_read(
+transaction<Protocol, Traits>::do_tuple_read(
     const dbtuple *tuple, ValueReader &value_reader)
 {
   INVARIANT(tuple);
@@ -516,7 +509,10 @@ transaction<Protocol, P, Traits>::do_tuple_read(
       ++evt_local_search_write_set_hits;
       if (!write_set_it->get_value())
         return false;
-      value_reader.dup(*write_set_it->get_value(), this->string_allocator());
+      const typename ValueReader::value_type * const px =
+        reinterpret_cast<const typename ValueReader::value_type *>(
+            write_set_it->get_value());
+      value_reader.dup(*px, this->string_allocator());
       return true;
     }
   }
@@ -551,9 +547,9 @@ transaction<Protocol, P, Traits>::do_tuple_read(
   return !v_empty;
 }
 
-template <template <typename, typename> class Protocol, typename P, typename Traits>
+template <template <typename> class Protocol, typename Traits>
 void
-transaction<Protocol, P, Traits>::do_node_read(
+transaction<Protocol, Traits>::do_node_read(
     const btree::node_opaque_t *n, uint64_t v)
 {
   INVARIANT(n);

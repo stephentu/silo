@@ -14,14 +14,14 @@
 
 // each Transaction implementation should specialize this for special
 // behavior- the default implementation is just nops
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 struct base_txn_btree_handler {
   inline void on_construct(const std::string &name, btree *underlying) {} // get a handle to the underying btree
   inline void on_destruct() {} // called at the beginning of the txn_btree's dtor
   static const bool has_background_task = false;
 };
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 class base_txn_btree {
 public:
 
@@ -152,7 +152,7 @@ protected:
             typename KeyReader, typename ValueReader>
   struct txn_search_range_callback : public btree::low_level_search_range_callback {
     constexpr txn_search_range_callback(
-          Transaction<P, Traits> *t,
+          Transaction<Traits> *t,
           Callback *caller_callback,
           KeyReader *key_reader,
           ValueReader *value_reader)
@@ -164,7 +164,7 @@ protected:
                         const btree::node_opaque_t *n, uint64_t version);
 
   private:
-    Transaction<P, Traits> *const t;
+    Transaction<Traits> *const t;
     Callback *const caller_callback;
     KeyReader *const key_reader;
     ValueReader *const value_reader;
@@ -172,14 +172,14 @@ protected:
 
   template <typename Traits, typename ValueReader>
   inline bool
-  do_search(Transaction<P, Traits> &t,
+  do_search(Transaction<Traits> &t,
             const typename P::Key &k,
             ValueReader &value_reader);
 
   template <typename Traits, typename Callback,
             typename KeyReader, typename ValueReader>
   inline void
-  do_search_range_call(Transaction<P, Traits> &t,
+  do_search_range_call(Transaction<Traits> &t,
                        const typename P::Key &lower,
                        const typename P::Key *upper,
                        Callback &callback,
@@ -188,12 +188,14 @@ protected:
 
   // expect_new indicates if we expect the record to not exist in the tree-
   // is just a hint that affects perf, not correctness. remove is put with nullptr
-  // as value
+  // as value.
+  //
+  // NOTE: both key and value are expected to be stable values already
   template <typename Traits>
-  void do_tree_put(Transaction<P, Traits> &t,
-                   const typename P::Key &k,
+  void do_tree_put(Transaction<Traits> &t,
+                   const typename P::Key *k,
                    const typename P::Value *v,
-                   typename private_::typeutil<typename P::ValueInfo>::func_param_type vinfo,
+                   dbtuple::tuple_writer_t writer,
                    bool expect_new);
 
   btree underlying_btree;
@@ -208,11 +210,11 @@ namespace private_ {
   STATIC_COUNTER_DECL(scopedperf::tsc_ctr, txn_btree_search_probe1, txn_btree_search_probe1_cg)
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 template <typename Traits, typename ValueReader>
 bool
 base_txn_btree<Transaction, P>::do_search(
-    Transaction<P, Traits> &t,
+    Transaction<Traits> &t,
     const typename P::Key &k,
     ValueReader &value_reader)
 {
@@ -236,7 +238,7 @@ base_txn_btree<Transaction, P>::do_search(
   }
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 std::map<std::string, uint64_t>
 base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
 {
@@ -255,7 +257,7 @@ base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
 #endif
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 void
 base_txn_btree<Transaction, P>::purge_tree_walker::on_node_begin(const btree::node_opaque_t *n)
 {
@@ -263,7 +265,7 @@ base_txn_btree<Transaction, P>::purge_tree_walker::on_node_begin(const btree::no
   spec_values = btree::ExtractValues(n);
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 void
 base_txn_btree<Transaction, P>::purge_tree_walker::on_node_success()
 {
@@ -302,26 +304,42 @@ done:
   spec_values.clear();
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 void
 base_txn_btree<Transaction, P>::purge_tree_walker::on_node_failure()
 {
   spec_values.clear();
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 template <typename Traits>
 void base_txn_btree<Transaction, P>::do_tree_put(
-    Transaction<P, Traits> &t,
-    const typename P::Key &k,
+    Transaction<Traits> &t,
+    const typename P::Key *k,
     const typename P::Value *v,
-    typename private_::typeutil<typename P::ValueInfo>::func_param_type vinfo,
+    dbtuple::tuple_writer_t writer,
     bool expect_new)
 {
+  INVARIANT(k);
   INVARIANT(!expect_new || v); // makes little sense to remove() a key you expect
                                // to not be present, so we assert this doesn't happen
                                // for now [since this would indicate a suboptimality]
   t.ensure_active();
+
+  //// change key to (stable) string
+  //typename P::KeyWriter key_writer(&k);
+  //const std::string * const key_str =
+  //  key_writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
+
+  //if (v && !Traits::stable_input_memory) {
+  //  const size_t sz = writer(
+  //      dbtuple::TUPLE_WRITER_COMPUTE_NEEDED, v, nullptr, 0);
+  //  std::string * const spx = t.string_allocator()();
+  //  spx->resize(sz);
+  //  writer(dbtuple::TUPLE_WRITER_DO_WRITE, v, (uint8_t *) spx->data(), 0);
+  //  v = (const typename P::Value *) spx->data();
+  //}
+
   if (unlikely(t.is_read_only())) {
     const transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
     t.abort_impl(r);
@@ -331,7 +349,7 @@ void base_txn_btree<Transaction, P>::do_tree_put(
   bool insert = false;
 retry:
   if (expect_new) {
-    auto ret = t.try_insert_new_tuple(this->underlying_btree, k, v, vinfo);
+    auto ret = t.try_insert_new_tuple(this->underlying_btree, k, v, writer);
     INVARIANT(!ret.second || ret.first);
     if (unlikely(ret.second)) {
       const transaction_base::abort_reason r = transaction_base::ABORT_REASON_WRITE_NODE_INTERFERENCE;
@@ -342,15 +360,10 @@ retry:
     if (px)
       insert = true;
   }
-  const std::string *key_str = nullptr;
   if (!px) {
     // do regular search
     btree::value_type bv = 0;
-    typename P::KeyWriter key_writer(&k);
-    key_str =
-      key_writer.fully_materialize(
-          Traits::stable_input_memory, t.string_allocator());
-    if (!this->underlying_btree.search(varkey(*key_str), bv)) {
+    if (!this->underlying_btree.search(varkey(*k), bv)) {
       // XXX(stephentu): if we are removing a key and we can't find it, then we
       // should just treat this as a read [of an empty-value], instead of
       // explicitly inserting an empty node...
@@ -361,9 +374,8 @@ retry:
   }
   INVARIANT(px);
   if (!insert) {
-    INVARIANT(key_str);
     // add to write set normally, as non-insert
-    t.write_set.emplace_back(px, *key_str, v, vinfo, &this->underlying_btree, false);
+    t.write_set.emplace_back(px, k, v, writer, &this->underlying_btree, false);
   } else {
     // should already exist in write set as insert
     // (because of try_insert_new_tuple())
@@ -374,7 +386,7 @@ retry:
   }
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 template <typename Traits, typename Callback,
           typename KeyReader, typename ValueReader>
 void
@@ -389,7 +401,7 @@ base_txn_btree<Transaction, P>
   t->do_node_read(n, version);
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 template <typename Traits, typename Callback,
           typename KeyReader, typename ValueReader>
 bool
@@ -410,12 +422,12 @@ base_txn_btree<Transaction, P>
   return true;
 }
 
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
 template <typename Traits, typename Callback,
           typename KeyReader, typename ValueReader>
 void
 base_txn_btree<Transaction, P>::do_search_range_call(
-    Transaction<P, Traits> &t,
+    Transaction<Traits> &t,
     const typename P::Key &lower,
     const typename P::Key *upper,
     Callback &callback,

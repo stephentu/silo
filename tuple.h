@@ -24,9 +24,7 @@
 // debugging tool
 //#define TUPLE_LOCK_OWNERSHIP_CHECKING
 
-template <template <typename, typename> class Protocol,
-          typename P,
-          typename Traits>
+template <template <typename> class Protocol, typename Traits>
   class transaction; // forward decl
 
 /**
@@ -166,9 +164,8 @@ private:
     return s;
   }
 
-  // creates a record with a tentative value at MAX_TID
-  dbtuple(const_record_type r,
-          size_type size, size_type alloc_size, bool acquire_lock)
+  // creates a (new) record with a tentative value at MAX_TID
+  dbtuple(size_type size, size_type alloc_size, bool acquire_lock)
     : hdr(HDR_LATEST_MASK |
           (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0)),
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
@@ -181,7 +178,6 @@ private:
   {
     INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
     INVARIANT(is_latest());
-    NDB_MEMCPY(&value_start[0], r, size);
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
@@ -761,6 +757,14 @@ public:
 
   typedef std::pair<bool, dbtuple *> write_record_ret;
 
+  // XXX: kind of hacky, but we do this to avoid virtual
+  // functions / passing multiple function pointers around
+  enum TupleWriterMode {
+    TUPLE_WRITER_COMPUTE_NEEDED,
+    TUPLE_WRITER_DO_WRITE,
+  };
+  typedef size_t (*tuple_writer_t)(TupleWriterMode, const void *, uint8_t *, size_t);
+
   /**
    * Always writes the record in the latest (newest) version slot,
    * not asserting whether or not inserting r @ t would violate the
@@ -768,9 +772,9 @@ public:
    *
    * XXX: document return value
    */
-  template <typename Transaction, typename Writer>
+  template <typename Transaction>
   write_record_ret
-  write_record_at(const Transaction *txn, tid_t t, Writer &writer)
+  write_record_at(const Transaction *txn, tid_t t, const void *v, tuple_writer_t writer)
   {
     INVARIANT(is_locked());
     INVARIANT(is_lock_owner());
@@ -778,7 +782,8 @@ public:
     INVARIANT(is_write_intent());
     INVARIANT(!is_deleting());
 
-    const size_t new_sz = writer.compute_needed(get_value_start(), size);
+    const size_t new_sz =
+      v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
 
     if (!new_sz)
       ++g_evt_dbtuple_logical_deletes;
@@ -789,7 +794,8 @@ public:
       if (likely(new_sz <= alloc_size)) {
         // directly update in place
         mark_modifying();
-        writer(get_value_start(), size);
+        if (v)
+          writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), size);
         version = t;
         size = new_sz;
         return write_record_ret(false, nullptr);
@@ -801,7 +807,8 @@ public:
       // XXX(stephentu): alloc_spill() should acquire the lock on
       // the returned tuple in the ctor, as an optimization
       dbtuple * const rep = alloc_spill(t, get_value_start(), size, new_sz, this, true);
-      writer(rep->get_value_start(), size);
+      if (v)
+        writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
       INVARIANT(rep->is_latest());
       INVARIANT(rep->size == new_sz);
       clear_latest();
@@ -820,14 +827,16 @@ public:
       INVARIANT(!spill->is_latest());
       mark_modifying();
       set_next(spill);
-      writer(get_value_start(), size);
+      if (v)
+        writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), size);
       version = t;
       size = new_sz;
       return write_record_ret(true, nullptr);
     }
 
     dbtuple * const rep = alloc_spill(t, get_value_start(), size, new_sz, this, true);
-    writer(rep->get_value_start(), size);
+    if (v)
+      writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
     INVARIANT(rep->size == new_sz);
     clear_latest();
@@ -840,7 +849,7 @@ public:
   // just internal vs external fragmentation)
 
   static inline dbtuple *
-  alloc_first(const_record_type value, size_type sz, bool acquire_lock)
+  alloc_first(size_type sz, bool acquire_lock)
   {
     INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
     const size_t max_alloc_sz =
@@ -853,7 +862,7 @@ public:
     INVARIANT(p);
     INVARIANT((alloc_sz - sizeof(dbtuple)) >= sz);
     return new (p) dbtuple(
-        value, sz, alloc_sz - sizeof(dbtuple), acquire_lock);
+        sz, alloc_sz - sizeof(dbtuple), acquire_lock);
   }
 
   static inline dbtuple *

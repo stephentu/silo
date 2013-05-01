@@ -39,6 +39,8 @@ struct txn_btree_ {
   // does not bother to interpret the bytes from a record
   class single_value_reader {
   public:
+    typedef std::string value_type;
+
     constexpr single_value_reader(std::string *px, size_t max_bytes_read)
       : px(px), max_bytes_read(max_bytes_read) {}
 
@@ -77,6 +79,8 @@ struct txn_btree_ {
 
   class value_reader {
   public:
+    typedef std::string value_type;
+
     constexpr value_reader(size_t max_bytes_read)
       : px(nullptr), max_bytes_read(max_bytes_read) {}
 
@@ -115,11 +119,9 @@ struct txn_btree_ {
     size_t max_bytes_read;
   };
 
-  struct dummy_ {};
-
   class value_writer {
   public:
-    constexpr value_writer(const std::string *v, const dummy_ &) : v(v) {}
+    constexpr value_writer(const std::string *v) : v(v) {}
     inline size_t
     compute_needed(const uint8_t *buf, size_t sz)
     {
@@ -148,11 +150,26 @@ struct txn_btree_ {
     const std::string *v;
   };
 
+  static size_t
+  tuple_writer(dbtuple::TupleWriterMode mode, const void *v, uint8_t *p, size_t sz)
+  {
+    const std::string * const vx = reinterpret_cast<const std::string *>(v);
+    INVARIANT(vx);
+    switch (mode) {
+    case dbtuple::TUPLE_WRITER_COMPUTE_NEEDED:
+      return vx->size();
+    case dbtuple::TUPLE_WRITER_DO_WRITE:
+      NDB_MEMCPY(p, vx->data(), vx->size());
+      return 0;
+    }
+    ALWAYS_ASSERT(false);
+    return 0;
+  }
+
   typedef std::string Key;
   typedef key_reader KeyReader;
   typedef key_writer KeyWriter;
   typedef std::string Value;
-  typedef dummy_ ValueInfo;
   typedef single_value_reader SingleValueReader;
   typedef value_reader ValueReader;
   typedef value_writer ValueWriter;
@@ -173,7 +190,7 @@ struct txn_btree_ {
  * Note that the txn_btree *manages* the memory of both keys and values internally.
  * See the specific notes on search()/insert() about memory ownership
  */
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 class txn_btree : public base_txn_btree<Transaction, txn_btree_> {
   typedef base_txn_btree<Transaction, txn_btree_> super_type;
 public:
@@ -183,8 +200,8 @@ public:
   //  typedef Transaction<txn_btree_, Traits> type;
   //};
 
-  template <typename Traits>
-    using transaction = Transaction<txn_btree_, Traits>;
+  //template <typename Traits>
+  //  using transaction = Transaction<txn_btree_, Traits>;
 
   typedef typename super_type::string_type string_type;
   typedef typename super_type::size_type size_type;
@@ -225,6 +242,35 @@ private:
     return string_type((const char *) k.data(), k.size());
   }
 
+  template <typename Traits>
+  static inline const std::string *
+  stablize(Transaction<Traits> &t, const std::string &s)
+  {
+    if (Traits::stable_input_memory)
+      return &s;
+    std::string * const px = t.string_allocator()();
+    *px = s;
+    return px;
+  }
+
+  template <typename Traits>
+  static inline const std::string *
+  stablize(Transaction<Traits> &t, const uint8_t *p, size_t sz)
+  {
+    if (!sz)
+      return nullptr;
+    std::string * const px = t.string_allocator()();
+    px->assign((const char *) p, sz);
+    return px;
+  }
+
+  template <typename Traits>
+  static inline const std::string *
+  stablize(Transaction<Traits> &t, const varkey &k)
+  {
+    return stablize(t, k.data(), k.size());
+  }
+
 public:
 
   txn_btree(size_type value_size_hint = 128,
@@ -235,7 +281,7 @@ public:
 
   template <typename Traits>
   inline bool
-  search(transaction<Traits> &t,
+  search(Transaction<Traits> &t,
          const varkey &k,
          value_type &v,
          size_t max_bytes_read = string_type::npos)
@@ -247,7 +293,7 @@ public:
   // precondition: max_bytes_read > 0
   template <typename Traits>
   inline bool
-  search(transaction<Traits> &t,
+  search(Transaction<Traits> &t,
          const key_type &k,
          value_type &v,
          size_type max_bytes_read = string_type::npos)
@@ -258,7 +304,7 @@ public:
 
   template <typename Traits>
   inline void
-  search_range_call(transaction<Traits> &t,
+  search_range_call(Transaction<Traits> &t,
                     const key_type &lower,
                     const key_type *upper,
                     search_range_callback &callback,
@@ -271,7 +317,7 @@ public:
 
   template <typename Traits>
   inline void
-  search_range_call(transaction<Traits> &t,
+  search_range_call(Transaction<Traits> &t,
                     const varkey &lower,
                     const varkey *upper,
                     search_range_callback &callback,
@@ -286,7 +332,7 @@ public:
 
   template <typename Traits, typename T>
   inline void
-  search_range(transaction<Traits> &t,
+  search_range(Transaction<Traits> &t,
                const key_type &lower,
                const key_type *upper,
                T &callback,
@@ -298,7 +344,7 @@ public:
 
   template <typename Traits, typename T>
   inline void
-  search_range(transaction<Traits> &t,
+  search_range(Transaction<Traits> &t,
                const varkey &lower,
                const varkey *upper,
                T &callback,
@@ -313,69 +359,74 @@ public:
 
   template <typename Traits>
   inline void
-  put(transaction<Traits> &t, const key_type &k, const value_type &v)
+  put(Transaction<Traits> &t, const key_type &k, const value_type &v)
   {
     INVARIANT(!v.empty());
-    this->do_tree_put(t, k, &v, txn_btree_::dummy_(), false);
+    this->do_tree_put(
+        t, stablize(t, k), stablize(t, v),
+        txn_btree_::tuple_writer, false);
   }
 
   template <typename Traits>
   inline void
-  insert(transaction<Traits> &t, const key_type &k, const value_type &v)
+  insert(Transaction<Traits> &t, const key_type &k, const value_type &v)
   {
     INVARIANT(!v.empty());
-    this->do_tree_put(t, k, &v, txn_btree_::dummy_(), true);
+    this->do_tree_put(
+        t, stablize(t, k), stablize(t, v),
+        txn_btree_::tuple_writer, true);
   }
 
   // insert() methods below are for legacy use
 
-  template <typename Traits,
-            class = typename std::enable_if<!Traits::stable_input_memory>::type>
+  template <typename Traits>
   inline void
-  insert(transaction<Traits> &t, const key_type &k, const uint8_t *v, size_type sz)
+  insert(Transaction<Traits> &t, const key_type &k, const uint8_t *v, size_type sz)
   {
     INVARIANT(v);
     INVARIANT(sz);
-    insert(t, k, string_type((const char *) v, sz));
+    this->do_tree_put(
+        t, stablize(t, k), stablize(t, v, sz),
+        txn_btree_::tuple_writer, true);
   }
 
-  template <typename Traits,
-            class = typename std::enable_if<!Traits::stable_input_memory>::type>
+  template <typename Traits>
   inline void
-  insert(transaction<Traits> &t, const varkey &k, const uint8_t *v, size_type sz)
+  insert(Transaction<Traits> &t, const varkey &k, const uint8_t *v, size_type sz)
   {
     INVARIANT(v);
     INVARIANT(sz);
-    insert(t, to_string_type(k), string_type((const char *) v, sz));
+    this->do_tree_put(
+        t, stablize(t, k), stablize(t, v, sz),
+        txn_btree_::tuple_writer, true);
   }
 
   template <typename Traits, typename T>
   inline void
-  insert_object(transaction<Traits> &t, const varkey &k, const T &obj)
+  insert_object(Transaction<Traits> &t, const varkey &k, const T &obj)
   {
     insert(t, k, (const uint8_t *) &obj, sizeof(obj));
   }
 
   template <typename Traits, typename T>
   inline void
-  insert_object(transaction<Traits> &t, const key_type &k, const T &obj)
+  insert_object(Transaction<Traits> &t, const key_type &k, const T &obj)
   {
     insert(t, k, (const uint8_t *) &obj, sizeof(obj));
   }
 
   template <typename Traits>
   inline void
-  remove(transaction<Traits> &t, const key_type &k)
+  remove(Transaction<Traits> &t, const key_type &k)
   {
-    this->do_tree_put(t, k, nullptr, txn_btree_::dummy_(), false);
+    this->do_tree_put(t, stablize(t, k), nullptr, txn_btree_::tuple_writer, false);
   }
 
-  template <typename Traits,
-            class = typename std::enable_if<!Traits::stable_input_memory>::type>
+  template <typename Traits>
   inline void
-  remove(transaction<Traits> &t, const varkey &k)
+  remove(Transaction<Traits> &t, const varkey &k)
   {
-    this->do_tree_put(t, to_string_type(k), nullptr, txn_btree_::dummy_(), false);
+    this->do_tree_put(t, stablize(t, k), nullptr, txn_btree_::tuple_writer, false);
   }
 
   static void Test();

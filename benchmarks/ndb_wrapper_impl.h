@@ -118,11 +118,11 @@ struct hint_tpcc_stock_level_read_only_traits : public hint_read_only_traits {};
   x(abstract_db::HINT_TPCC_STOCK_LEVEL, hint_tpcc_stock_level_traits) \
   x(abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY, hint_tpcc_stock_level_read_only_traits)
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 size_t
 ndb_wrapper<Transaction>::sizeof_txn_object(uint64_t txn_flags) const
 {
-#define MY_OP_X(a, b) sizeof(Transaction< b >),
+#define MY_OP_X(a, b) sizeof(typename cast< b >::type),
   const size_t xs[] = {
     TXN_PROFILE_HINT_OP(MY_OP_X)
   };
@@ -133,7 +133,7 @@ ndb_wrapper<Transaction>::sizeof_txn_object(uint64_t txn_flags) const
   return xmax;
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 void *
 ndb_wrapper<Transaction>::new_txn(uint64_t txn_flags, void *buf, TxnProfileHint hint)
 {
@@ -141,7 +141,7 @@ ndb_wrapper<Transaction>::new_txn(uint64_t txn_flags, void *buf, TxnProfileHint 
   p->hint = hint;
 #define MY_OP_X(a, b) \
   case a: \
-    new (&p->buf[0]) Transaction< b >(txn_flags); \
+    new (&p->buf[0]) typename cast< b >::type(txn_flags); \
     return p;
   switch (hint) {
     TXN_PROFILE_HINT_OP(MY_OP_X)
@@ -161,7 +161,7 @@ Destroy(T *t)
   t->~T();
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 bool
 ndb_wrapper<Transaction>::commit_txn(void *txn)
 {
@@ -183,7 +183,7 @@ ndb_wrapper<Transaction>::commit_txn(void *txn)
   return false;
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 void
 ndb_wrapper<Transaction>::abort_txn(void *txn)
 {
@@ -204,7 +204,7 @@ ndb_wrapper<Transaction>::abort_txn(void *txn)
 #undef MY_OP_X
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 void
 ndb_wrapper<Transaction>::print_txn_debug(void *txn) const
 {
@@ -224,7 +224,7 @@ ndb_wrapper<Transaction>::print_txn_debug(void *txn) const
 #undef MY_OP_X
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 std::map<std::string, uint64_t>
 ndb_wrapper<Transaction>::get_txn_counters(void *txn) const
 {
@@ -244,27 +244,27 @@ ndb_wrapper<Transaction>::get_txn_counters(void *txn) const
   return std::map<std::string, uint64_t>();
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 abstract_ordered_index *
 ndb_wrapper<Transaction>::open_index(const std::string &name, size_t value_size_hint, bool mostly_append)
 {
   return new ndb_ordered_index<Transaction>(name, value_size_hint, mostly_append);
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 void
 ndb_wrapper<Transaction>::close_index(abstract_ordered_index *idx)
 {
   delete idx;
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 ndb_ordered_index<Transaction>::ndb_ordered_index(const std::string &name, size_t value_size_hint, bool mostly_append)
   : name(name), btr(value_size_hint, mostly_append, name)
 {
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 bool
 ndb_ordered_index<Transaction>::get(
     void *txn,
@@ -298,7 +298,7 @@ ndb_ordered_index<Transaction>::get(
 
 // XXX: find way to remove code duplication below using C++ templates!
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::put(
     void *txn,
@@ -328,7 +328,7 @@ ndb_ordered_index<Transaction>::put(
   return 0;
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::put(
     void *txn,
@@ -356,7 +356,7 @@ ndb_ordered_index<Transaction>::put(
   return 0;
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::insert(
     void *txn,
@@ -386,7 +386,7 @@ ndb_ordered_index<Transaction>::insert(
   return 0;
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::insert(
     void *txn,
@@ -414,7 +414,7 @@ ndb_ordered_index<Transaction>::insert(
   return 0;
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 class ndb_wrapper_search_range_callback : public txn_btree<Transaction>::search_range_callback {
 public:
   ndb_wrapper_search_range_callback(abstract_ordered_index::scan_callback &upcall)
@@ -449,7 +449,7 @@ private:
 //  str_arena *arena;
 //};
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 void
 ndb_ordered_index<Transaction>::scan(
     void *txn,
@@ -481,7 +481,7 @@ ndb_ordered_index<Transaction>::scan(
   }
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 void
 ndb_ordered_index<Transaction>::remove(void *txn, const std::string &key)
 {
@@ -507,7 +507,7 @@ ndb_ordered_index<Transaction>::remove(void *txn, const std::string &key)
   }
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 void
 ndb_ordered_index<Transaction>::remove(void *txn, std::string &&key)
 {
@@ -531,14 +531,14 @@ ndb_ordered_index<Transaction>::remove(void *txn, std::string &&key)
   }
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 size_t
 ndb_ordered_index<Transaction>::size() const
 {
   return btr.size_estimate();
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 std::map<std::string, uint64_t>
 ndb_ordered_index<Transaction>::clear()
 {

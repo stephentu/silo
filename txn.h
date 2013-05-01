@@ -40,7 +40,7 @@
 #include "ndb_type_traits.h"
 
 // forward decl
-template <template <typename, typename> class Transaction, typename P>
+template <template <typename> class Transaction, typename P>
   class base_txn_btree;
 
 class transaction_unusable_exception {};
@@ -49,49 +49,9 @@ class transaction_read_only_exception {};
 // XXX: hacky
 extern std::string (*g_proto_version_str)(uint64_t v);
 
-template <typename T, bool enable>
-struct static_container {
-  inline ALWAYS_INLINE void
-  assign(const T &t)
-  {
-  }
-  inline ALWAYS_INLINE T *
-  get()
-  {
-    return nullptr;
-  }
-  inline ALWAYS_INLINE const T *
-  get() const
-  {
-    return nullptr;
-  }
-};
-
-// T must have no-arg ctor and be assignable
-template <typename T>
-struct static_container<T, true> {
-  inline void
-  assign(const T &t)
-  {
-    this->t = t;
-  }
-  inline T *
-  get()
-  {
-    return &t;
-  }
-  inline const T *
-  get() const
-  {
-    return &t;
-  }
-private:
-  T t;
-};
-
 // base class with very simple definitions- nothing too exciting yet
 class transaction_base : private util::noncopyable {
-  template <template <typename, typename> class T, typename P>
+  template <template <typename> class T, typename P>
     friend class base_txn_btree;
 public:
 
@@ -214,32 +174,27 @@ protected:
   friend std::ostream &
   operator<<(std::ostream &o, const read_record_t &r);
 
-  // the write set is a mapping from (tuple -> value_to_write).
-  template <typename ValueType, typename ValueInfoType, bool StableInputs>
-  struct basic_write_record_t {
-    typedef ValueType value_type;
-    typedef ValueInfoType value_info_type;
+  // the write set is logically a mapping from (tuple -> value_to_write).
+  struct write_record_t {
     enum { FLAGS_INSERT = 0x1 };
 
-    basic_write_record_t() = default;
-    basic_write_record_t(dbtuple *tuple,
-                         const string_type &k,
-                         const ValueType *r,
-                         typename private_::typeutil<ValueInfoType>::func_param_type vinfo,
-                         btree *btr,
-                         bool insert)
+    constexpr inline write_record_t()
+      : tuple(), k(), r(), w(), btr()
+    {}
+
+    // all inputs are assumed to be stable
+    inline write_record_t(dbtuple *tuple,
+                          const string_type *k,
+                          const void *r,
+                          dbtuple::tuple_writer_t w,
+                          btree *btr,
+                          bool insert)
       : tuple(tuple),
-        k(StableInputs ? &k : nullptr),
+        k(k),
         r(r),
-        vinfo(vinfo),
+        w(w),
         btr(btr)
     {
-      if (!StableInputs) {
-        // optimized away at compile time
-        key_container.assign(k);
-        if (r)
-          value_container.assign(*r);
-      }
       this->btr.set_flags(insert ? FLAGS_INSERT : 0);
     }
     inline dbtuple *
@@ -266,45 +221,28 @@ protected:
     inline const string_type &
     get_key() const
     {
-      if (StableInputs)
-        return *k;
-      else
-        return *key_container.get();
+      return *k;
     }
-    inline const ValueType *
+    inline const void *
     get_value() const
     {
-      if (StableInputs)
-        return r;
-      else
-        return r ? value_container.get() : nullptr;
+      return r;
     }
-    inline typename private_::typeutil<ValueInfoType>::func_param_type
-    get_value_info() const
+    inline dbtuple::tuple_writer_t
+    get_writer() const
     {
-      return vinfo;
+      return w;
     }
   private:
     dbtuple *tuple;
     const string_type *k;
-    const ValueType *r;
-    ValueInfoType vinfo;
+    const void *r;
+    dbtuple::tuple_writer_t w;
     marked_ptr<btree> btr; // first bit for inserted
-
-    // for configurations which don't guarantee stable put strings
-
-    // XXX: un-necessary, because key_writer guarantees us stable string
-    static_container<std::string, !StableInputs> key_container;
-
-    // necessary regardless of key_writer
-    static_container<ValueType, !StableInputs> value_container;
   };
 
-  template <typename ValueType, typename ValueInfoType, bool StableInputs>
   friend std::ostream &
-  operator<<(
-      std::ostream &o,
-      const basic_write_record_t<ValueType, ValueInfoType, StableInputs> &r);
+  operator<<(std::ostream &o, const write_record_t &r);
 
   // the absent set is a mapping from (btree_node -> version_number).
   struct absent_record_t { uint64_t version; };
@@ -393,15 +331,9 @@ namespace private_ {
     static const bool value = true;
   };
 
-  template <typename R, typename VI>
-  struct is_trivially_destructible<transaction_base::basic_write_record_t<R, VI, true>> {
-    static const bool value = is_trivially_destructible<VI>::value;
-  };
-
-  template <typename R, typename VI>
-  struct is_trivially_destructible<transaction_base::basic_write_record_t<R, VI, false>> {
-    static const bool value =
-      is_trivially_destructible<R>::value && is_trivially_destructible<VI>::value;
+  template <>
+  struct is_trivially_destructible<transaction_base::write_record_t> {
+    static const bool value = true;
   };
 
   template <>
@@ -424,11 +356,10 @@ operator<<(std::ostream &o, const transaction_base::read_record_t &r)
   return o;
 }
 
-template <typename ValueType, typename ValueInfoType, bool StableInputs>
 inline ALWAYS_INLINE std::ostream &
 operator<<(
     std::ostream &o,
-    const transaction_base::basic_write_record_t<ValueType, ValueInfoType, StableInputs> &r)
+    const transaction_base::write_record_t &r)
 {
   o << "[tuple=" << util::hexify(r.get_tuple())
     << ", key=" << util::hexify(r.get_key())
@@ -459,12 +390,12 @@ struct default_transaction_traits {
   typedef util::default_string_allocator StringAllocator;
 };
 
-template <template <typename, typename> class Protocol,
-          typename P,
-          typename Traits>
+template <template <typename> class Protocol, typename Traits>
 class transaction : public transaction_base {
-  friend class base_txn_btree<Protocol, P>;
-  friend Protocol<P, Traits>;
+  // XXX: weaker than necessary
+  template <template <typename> class, typename>
+    friend class base_txn_btree;
+  friend Protocol<Traits>;
 
 public:
 
@@ -528,12 +459,12 @@ public:
   // results() should remain valid and stable until the next call to
   // operator().
 
-  typedef typename P::Key key_type;
-  typedef typename P::Value value_type;
-  typedef typename P::ValueInfo value_info_type;
+  //typedef typename P::Key key_type;
+  //typedef typename P::Value value_type;
+  //typedef typename P::ValueInfo value_info_type;
 
-  typedef typename P::KeyWriter key_writer_type;
-  typedef typename P::ValueWriter value_writer_type;
+  //typedef typename P::KeyWriter key_writer_type;
+  //typedef typename P::ValueWriter value_writer_type;
 
   //typedef typename P::KeyReader key_reader_type;
   //typedef typename P::SingleValueReader single_value_reader_type;
@@ -545,25 +476,20 @@ public:
 protected:
   // data structures
 
-  inline ALWAYS_INLINE Protocol<P, Traits> *
+  inline ALWAYS_INLINE Protocol<Traits> *
   cast()
   {
-    return static_cast<Protocol<P, Traits> *>(this);
+    return static_cast<Protocol<Traits> *>(this);
   }
 
-  inline ALWAYS_INLINE const Protocol<P, Traits> *
+  inline ALWAYS_INLINE const Protocol<Traits> *
   cast() const
   {
-    return static_cast<const Protocol<P, Traits> *>(this);
+    return static_cast<const Protocol<Traits> *>(this);
   }
 
   // XXX: we have baked in b-tree into the protocol- other indexes are possible
   // but we would need to abstract it away. we don't bother for now.
-
-  typedef
-    basic_write_record_t<
-      value_type, value_info_type, traits_type::stable_input_memory>
-    write_record_t;
 
 #ifdef USE_SMALL_CONTAINER_OPT
 
@@ -722,12 +648,13 @@ protected:
   // if the return.first is null, then this function has no side effects.
   //
   // NOTE: !ret.first => !ret.second
+  // NOTE: assumes key/value are stable
   std::pair< dbtuple *, bool >
   try_insert_new_tuple(
       btree &btr,
-      const key_type &key,
-      const value_type *value,
-      typename private_::typeutil<value_info_type>::func_param_type vinfo);
+      const std::string *key,
+      const void *value,
+      dbtuple::tuple_writer_t writer);
 
   // reads the contents of tuple into v
   // within this transaction context
@@ -852,7 +779,7 @@ private:
 };
 
 // XXX(stephentu): stupid hacks
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 struct txn_epoch_sync {
   // block until the next epoch
   static inline void sync() {}

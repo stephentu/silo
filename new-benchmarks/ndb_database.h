@@ -8,7 +8,7 @@
 #include "../txn_impl.h"
 #include "../txn_proto2_impl.h"
 
-template <template <typename> class Transaction, typename Schema>
+template <template <typename, typename> class Transaction, typename Schema>
 class ndb_index : public abstract_ordered_index,
                   public typed_txn_btree<Transaction, Schema> {
   typedef typed_txn_btree<Transaction, Schema> super_type;
@@ -158,7 +158,7 @@ TXN_PROFILE_HINT_OP(SPECIALIZE_OP_HINTS_X)
 #undef SPECIALIZE_OP_HINTS_X
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 class ndb_database : public abstract_db {
 public:
 
@@ -171,7 +171,11 @@ public:
   template <enum abstract_db::TxnProfileHint hint>
   struct TransactionType
   {
-    typedef Transaction<typename private_::ndb_txn_type<hint>::type> type;
+    typedef
+      typename typed_txn_btree<Transaction>
+        ::template transaction<
+          typename private_::ndb_txn_type<hint>::type>
+      type;
     typedef std::shared_ptr<type> ptr_type;
   };
 

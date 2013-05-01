@@ -9,8 +9,7 @@
 #include "macros.h"
 
 // forward decl
-template <typename P, typename Traits>
-  class transaction_proto2;
+template <typename Traits> class transaction_proto2;
 
 // each txn_btree has a walker_loop associated with it
 class txn_walker_loop : public ndb_thread {
@@ -179,12 +178,12 @@ protected:
 };
 
 // protocol 2 - no global consistent TIDs
-template <typename P, typename Traits>
-class transaction_proto2 : public transaction<transaction_proto2, P, Traits>,
+template <typename Traits>
+class transaction_proto2 : public transaction<transaction_proto2, Traits>,
                            private transaction_proto2_static {
 
-  friend class transaction<transaction_proto2, P, Traits>;
-  typedef transaction<transaction_proto2, P, Traits> super_type;
+  friend class transaction<transaction_proto2, Traits>;
+  typedef transaction<transaction_proto2, Traits> super_type;
 
 public:
 
@@ -199,7 +198,7 @@ public:
 
   transaction_proto2(uint64_t flags,
                      typename Traits::StringAllocator &sa)
-    : transaction<transaction_proto2, P, Traits>(flags, sa),
+    : transaction<transaction_proto2, Traits>(flags, sa),
       current_epoch(0),
       last_consistent_tid(0)
   {
@@ -270,7 +269,7 @@ public:
   void
   dump_debug_info() const
   {
-    transaction<transaction_proto2, P, Traits>::dump_debug_info();
+    transaction<transaction_proto2, Traits>::dump_debug_info();
     std::cerr << "  current_epoch: " << current_epoch << std::endl;
     std::cerr << "  last_consistent_tid: " << g_proto_version_str(last_consistent_tid) << std::endl;
   }

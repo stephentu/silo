@@ -12,13 +12,13 @@ namespace private_ {
 
   // XXX: doesn't check to make sure you are passing in an ndbtx
   // of the right hint
-  template <template <typename> class Transaction, typename Traits>
+  template <template <typename, typename> class Transaction, typename Traits>
   struct cast_base {
-    typedef Transaction<Traits> type;
-    inline ALWAYS_INLINE Transaction<Traits> *
+    typedef typename txn_btree<Transaction>::template transaction<Traits> type;
+    inline ALWAYS_INLINE type *
     operator()(struct ndbtxn *p) const
     {
-      return reinterpret_cast<Transaction<Traits> *>(&p->buf[0]);
+      return reinterpret_cast<type *>(&p->buf[0]);
     }
   };
 
@@ -30,12 +30,12 @@ namespace private_ {
   STATIC_COUNTER_DECL(scopedperf::tsc_ctr, ndb_dtor_probe0, ndb_dtor_probe0_cg)
 }
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 class ndb_wrapper : public abstract_db {
 protected:
   typedef private_::ndbtxn ndbtxn;
-  template <typename Proto>
-    using cast = private_::cast_base<Transaction, Proto>;
+  template <typename Traits>
+    using cast = private_::cast_base<Transaction, Traits>;
 
 public:
 
@@ -70,12 +70,12 @@ public:
 
 };
 
-template <template <typename> class Transaction>
+template <template <typename, typename> class Transaction>
 class ndb_ordered_index : public abstract_ordered_index {
 protected:
   typedef private_::ndbtxn ndbtxn;
-  template <typename Proto>
-    using cast = private_::cast_base<Transaction, Proto>;
+  template <typename Traits>
+    using cast = private_::cast_base<Transaction, Traits>;
 
 public:
   ndb_ordered_index(const std::string &name, size_t value_size_hint, bool mostly_append);

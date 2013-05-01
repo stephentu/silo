@@ -9,7 +9,7 @@
 
 // protocol 1 - global consistent TIDs
 class transaction_proto1_static {
-  template <typename, typename>
+  template <typename>
     friend class transaction_proto1;
 public:
   static const size_t NMaxChainLength = 10; // XXX(stephentu): tune me?
@@ -21,11 +21,11 @@ private:
 
 // XXX(stephentu): proto1 is unmaintained for now, will
 // need to fix later
-template <typename P, typename Traits>
-class transaction_proto1 : public transaction<transaction_proto1, P, Traits>,
+template <typename Traits>
+class transaction_proto1 : public transaction<transaction_proto1, Traits>,
                            private transaction_proto1_static {
-  friend class transaction<transaction_proto1, P, Traits>;
-  typedef transaction<transaction_proto1, P, Traits> super_type;
+  friend class transaction<transaction_proto1, Traits>;
+  typedef transaction<transaction_proto1, Traits> super_type;
 
 public:
   typedef Traits traits_type;
@@ -37,8 +37,9 @@ public:
   typedef typename super_type::absent_set_map absent_set_map;
   typedef typename super_type::write_set_map write_set_map;
 
-  transaction_proto1(uint64_t flags)
-    : transaction<transaction_proto1, P, Traits>(flags),
+  transaction_proto1(uint64_t flags,
+                     typename Traits::StringAllocator &sa)
+    : transaction<transaction_proto1, Traits>(flags, sa),
       snapshot_tid(last_consistent_global_tid)
   {
   }
@@ -69,7 +70,7 @@ public:
   void
   dump_debug_info() const
   {
-    transaction<transaction_proto1, P, Traits>::dump_debug_info();
+    transaction<transaction_proto1, Traits>::dump_debug_info();
     std::cerr << "  snapshot_tid: " << snapshot_tid << std::endl;
     std::cerr << "  global_tid: " << global_tid << std::endl;
   }
