@@ -9,6 +9,7 @@
 #include <string>
 
 #include "abstract_ordered_index.h"
+#include "str_arena.h"
 
 /**
  * Abstract interface for a DB. This is to facilitate writing
@@ -90,7 +91,10 @@ public:
    *
    * [buf, buf + sizeof_txn_object(txn_flags)) is a valid ptr
    */
-  virtual void *new_txn(uint64_t txn_flags, void *buf,
+  virtual void *new_txn(
+      uint64_t txn_flags,
+      str_arena &arena,
+      void *buf,
       TxnProfileHint hint = HINT_DEFAULT) = 0;
 
   typedef std::map<std::string, uint64_t> counter_map;

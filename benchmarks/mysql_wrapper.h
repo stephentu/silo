@@ -16,7 +16,11 @@ public:
   virtual void thread_init();
   virtual void thread_end();
 
-  virtual void *new_txn(uint64_t txn_flags, void *buf, TxnProfileHint hint);
+  virtual void *new_txn(
+      uint64_t txn_flags,
+      str_arena &arena,
+      void *buf,
+      TxnProfileHint hint);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
 

@@ -14,14 +14,9 @@
 #include "../txn_proto2_impl.h"
 #include "../tuple.h"
 
-//struct default_transaction_traits {
-//  static const size_t read_set_expected_size = SMALL_SIZE_MAP;
-//  static const size_t absent_set_expected_size = EXTRA_SMALL_SIZE_MAP;
-//  static const size_t write_set_expected_size = SMALL_SIZE_MAP;
-//  static const bool stable_input_memory = false;
-//  static const bool hard_expected_sizes = false;
-//  static const bool read_own_writes = true;
-//};
+struct hint_default_traits : public default_transaction_traits {
+  typedef str_arena StringAllocator;
+};
 
 // ycsb profiles
 
@@ -32,6 +27,7 @@ struct hint_kv_get_put_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = true;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 struct hint_kv_rmw_traits : public hint_kv_get_put_traits {};
@@ -43,6 +39,7 @@ struct hint_kv_scan_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 // tpcc profiles
@@ -54,6 +51,7 @@ struct hint_read_only_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = true;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 struct hint_tpcc_new_order_traits {
@@ -63,6 +61,7 @@ struct hint_tpcc_new_order_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = true;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 struct hint_tpcc_payment_traits {
@@ -72,6 +71,7 @@ struct hint_tpcc_payment_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 struct hint_tpcc_delivery_traits {
@@ -81,6 +81,7 @@ struct hint_tpcc_delivery_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 struct hint_tpcc_order_status_traits {
@@ -90,6 +91,7 @@ struct hint_tpcc_order_status_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 struct hint_tpcc_order_status_read_only_traits : public hint_read_only_traits {};
@@ -101,12 +103,13 @@ struct hint_tpcc_stock_level_traits {
   static const bool stable_input_memory = true;
   static const bool hard_expected_sizes = false;
   static const bool read_own_writes = false;
+  typedef str_arena StringAllocator;
 };
 
 struct hint_tpcc_stock_level_read_only_traits : public hint_read_only_traits {};
 
 #define TXN_PROFILE_HINT_OP(x) \
-  x(abstract_db::HINT_DEFAULT, default_transaction_traits) \
+  x(abstract_db::HINT_DEFAULT, hint_default_traits) \
   x(abstract_db::HINT_KV_GET_PUT, hint_kv_get_put_traits) \
   x(abstract_db::HINT_KV_RMW, hint_kv_rmw_traits) \
   x(abstract_db::HINT_KV_SCAN, hint_kv_scan_traits) \
@@ -118,7 +121,7 @@ struct hint_tpcc_stock_level_read_only_traits : public hint_read_only_traits {};
   x(abstract_db::HINT_TPCC_STOCK_LEVEL, hint_tpcc_stock_level_traits) \
   x(abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY, hint_tpcc_stock_level_read_only_traits)
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 size_t
 ndb_wrapper<Transaction>::sizeof_txn_object(uint64_t txn_flags) const
 {
@@ -133,15 +136,19 @@ ndb_wrapper<Transaction>::sizeof_txn_object(uint64_t txn_flags) const
   return xmax;
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 void *
-ndb_wrapper<Transaction>::new_txn(uint64_t txn_flags, void *buf, TxnProfileHint hint)
+ndb_wrapper<Transaction>::new_txn(
+    uint64_t txn_flags,
+    str_arena &arena,
+    void *buf,
+    TxnProfileHint hint)
 {
   ndbtxn * const p = reinterpret_cast<ndbtxn *>(buf);
   p->hint = hint;
 #define MY_OP_X(a, b) \
   case a: \
-    new (&p->buf[0]) typename cast< b >::type(txn_flags); \
+    new (&p->buf[0]) typename cast< b >::type(txn_flags, arena); \
     return p;
   switch (hint) {
     TXN_PROFILE_HINT_OP(MY_OP_X)
@@ -161,7 +168,7 @@ Destroy(T *t)
   t->~T();
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 bool
 ndb_wrapper<Transaction>::commit_txn(void *txn)
 {
@@ -183,7 +190,7 @@ ndb_wrapper<Transaction>::commit_txn(void *txn)
   return false;
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 void
 ndb_wrapper<Transaction>::abort_txn(void *txn)
 {
@@ -204,7 +211,7 @@ ndb_wrapper<Transaction>::abort_txn(void *txn)
 #undef MY_OP_X
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 void
 ndb_wrapper<Transaction>::print_txn_debug(void *txn) const
 {
@@ -224,7 +231,7 @@ ndb_wrapper<Transaction>::print_txn_debug(void *txn) const
 #undef MY_OP_X
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 std::map<std::string, uint64_t>
 ndb_wrapper<Transaction>::get_txn_counters(void *txn) const
 {
@@ -244,27 +251,27 @@ ndb_wrapper<Transaction>::get_txn_counters(void *txn) const
   return std::map<std::string, uint64_t>();
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 abstract_ordered_index *
 ndb_wrapper<Transaction>::open_index(const std::string &name, size_t value_size_hint, bool mostly_append)
 {
   return new ndb_ordered_index<Transaction>(name, value_size_hint, mostly_append);
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 void
 ndb_wrapper<Transaction>::close_index(abstract_ordered_index *idx)
 {
   delete idx;
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 ndb_ordered_index<Transaction>::ndb_ordered_index(const std::string &name, size_t value_size_hint, bool mostly_append)
   : name(name), btr(value_size_hint, mostly_append, name)
 {
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 bool
 ndb_ordered_index<Transaction>::get(
     void *txn,
@@ -298,7 +305,7 @@ ndb_ordered_index<Transaction>::get(
 
 // XXX: find way to remove code duplication below using C++ templates!
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::put(
     void *txn,
@@ -328,7 +335,7 @@ ndb_ordered_index<Transaction>::put(
   return 0;
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::put(
     void *txn,
@@ -356,7 +363,7 @@ ndb_ordered_index<Transaction>::put(
   return 0;
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::insert(
     void *txn,
@@ -386,7 +393,7 @@ ndb_ordered_index<Transaction>::insert(
   return 0;
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 const char *
 ndb_ordered_index<Transaction>::insert(
     void *txn,
@@ -414,7 +421,7 @@ ndb_ordered_index<Transaction>::insert(
   return 0;
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 class ndb_wrapper_search_range_callback : public txn_btree<Transaction>::search_range_callback {
 public:
   ndb_wrapper_search_range_callback(abstract_ordered_index::scan_callback &upcall)
@@ -431,25 +438,7 @@ private:
   abstract_ordered_index::scan_callback *upcall;
 };
 
-//struct ndb_str_allocator {
-//public:
-//  ndb_str_allocator(str_arena *arena) : arena(arena) {}
-//  inline std::string *
-//  operator()()
-//  {
-//    return likely(arena) ? arena->next() : nullptr;
-//  }
-//  inline void
-//  return_last(std::string *px)
-//  {
-//    if (likely(arena))
-//      arena->return_last(px);
-//  }
-//private:
-//  str_arena *arena;
-//};
-
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 void
 ndb_ordered_index<Transaction>::scan(
     void *txn,
@@ -467,7 +456,7 @@ ndb_ordered_index<Transaction>::scan(
   case a: \
     { \
       auto t = cast< b >()(p); \
-      btr.search_range_call(*t, start_key, end_key, c, *arena); \
+      btr.search_range_call(*t, start_key, end_key, c); \
       return; \
     }
     switch (p->hint) {
@@ -481,7 +470,7 @@ ndb_ordered_index<Transaction>::scan(
   }
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 void
 ndb_ordered_index<Transaction>::remove(void *txn, const std::string &key)
 {
@@ -507,7 +496,7 @@ ndb_ordered_index<Transaction>::remove(void *txn, const std::string &key)
   }
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 void
 ndb_ordered_index<Transaction>::remove(void *txn, std::string &&key)
 {
@@ -531,14 +520,14 @@ ndb_ordered_index<Transaction>::remove(void *txn, std::string &&key)
   }
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 size_t
 ndb_ordered_index<Transaction>::size() const
 {
   return btr.size_estimate();
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 std::map<std::string, uint64_t>
 ndb_ordered_index<Transaction>::clear()
 {

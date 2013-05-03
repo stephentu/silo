@@ -89,6 +89,7 @@ protected:
   std::map<std::string, abstract_ordered_index *> open_tables;
   spin_barrier *b;
   std::string txn_obj_buf;
+  str_arena arena;
 };
 
 class bench_worker : public ndb_thread {

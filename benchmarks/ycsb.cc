@@ -43,7 +43,7 @@ public:
   txn_result
   txn_read()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
+    void * const txn = db->new_txn(txn_flags, arena, txn_buf(), abstract_db::HINT_KV_GET_PUT);
     scoped_str_arena s_arena(arena);
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
@@ -66,7 +66,7 @@ public:
   txn_result
   txn_write()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_GET_PUT);
+    void * const txn = db->new_txn(txn_flags, arena, txn_buf(), abstract_db::HINT_KV_GET_PUT);
     scoped_str_arena s_arena(arena);
     try {
       tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'b'));
@@ -88,7 +88,7 @@ public:
   txn_result
   txn_rmw()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_RMW);
+    void * const txn = db->new_txn(txn_flags, arena, txn_buf(), abstract_db::HINT_KV_RMW);
     scoped_str_arena s_arena(arena);
     try {
       ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
@@ -124,7 +124,7 @@ public:
   txn_result
   txn_scan()
   {
-    void * const txn = db->new_txn(txn_flags, txn_buf(), abstract_db::HINT_KV_SCAN);
+    void * const txn = db->new_txn(txn_flags, arena, txn_buf(), abstract_db::HINT_KV_SCAN);
     scoped_str_arena s_arena(arena);
     const size_t kstart = r.next() % nkeys;
     const string &kbegin = u64_varkey(kstart).str(obj_key0);
@@ -186,10 +186,7 @@ protected:
 
   inline ALWAYS_INLINE string &
   str() {
-    // XXX: hacky for now
-    string *px = arena.next();
-    ALWAYS_ASSERT(px);
-    return *px;
+    return *arena.next();
   }
 
 private:
@@ -222,7 +219,7 @@ protected:
       ALWAYS_ASSERT(batchsize > 0);
       const size_t nbatches = nkeys / batchsize;
       if (nbatches == 0) {
-        void *txn = db->new_txn(txn_flags, txn_buf());
+        void *txn = db->new_txn(txn_flags, arena, txn_buf());
         for (size_t j = 0; j < nkeys; j++) {
           string k = u64_varkey(j).str();
           string v(YCSBRecordSize, 'a');
@@ -234,7 +231,7 @@ protected:
       } else {
         for (size_t i = 0; i < nbatches; i++) {
           const size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
-          void *txn = db->new_txn(txn_flags, txn_buf());
+          void *txn = db->new_txn(txn_flags, arena, txn_buf());
           for (size_t j = i * batchsize; j < keyend; j++) {
             string k = u64_varkey(j).str();
             string v(YCSBRecordSize, 'a');
@@ -279,7 +276,7 @@ protected:
     ALWAYS_ASSERT(nkeys > 0);
     const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
     for (size_t batchid = 0; batchid < nbatches;) {
-      void * const txn = db->new_txn(txn_flags, txn_buf());
+      void * const txn = db->new_txn(txn_flags, arena, txn_buf());
       try {
         const size_t rend = (batchid + 1 == nbatches) ?
           keyend : keystart + ((batchid + 1) * batchsize);

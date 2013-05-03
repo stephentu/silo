@@ -12,9 +12,9 @@ namespace private_ {
 
   // XXX: doesn't check to make sure you are passing in an ndbtx
   // of the right hint
-  template <template <typename, typename> class Transaction, typename Traits>
+  template <template <typename> class Transaction, typename Traits>
   struct cast_base {
-    typedef typename txn_btree<Transaction>::template transaction<Traits> type;
+    typedef Transaction<Traits> type;
     inline ALWAYS_INLINE type *
     operator()(struct ndbtxn *p) const
     {
@@ -30,7 +30,7 @@ namespace private_ {
   STATIC_COUNTER_DECL(scopedperf::tsc_ctr, ndb_dtor_probe0, ndb_dtor_probe0_cg)
 }
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 class ndb_wrapper : public abstract_db {
 protected:
   typedef private_::ndbtxn ndbtxn;
@@ -54,7 +54,11 @@ public:
   virtual size_t
   sizeof_txn_object(uint64_t txn_flags) const;
 
-  virtual void *new_txn(uint64_t txn_flags, void *buf, TxnProfileHint hint);
+  virtual void *new_txn(
+      uint64_t txn_flags,
+      str_arena &arena,
+      void *buf,
+      TxnProfileHint hint);
   virtual bool commit_txn(void *txn);
   virtual void abort_txn(void *txn);
   virtual void print_txn_debug(void *txn) const;
@@ -70,7 +74,7 @@ public:
 
 };
 
-template <template <typename, typename> class Transaction>
+template <template <typename> class Transaction>
 class ndb_ordered_index : public abstract_ordered_index {
 protected:
   typedef private_::ndbtxn ndbtxn;

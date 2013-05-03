@@ -49,7 +49,7 @@ public:
   txn_result
   txn_read()
   {
-    void *txn = db->new_txn(txn_flags, txn_buf());
+    void *txn = db->new_txn(txn_flags, arena, txn_buf());
     const string k = u64_varkey(r.next() % nkeys).str();
     try {
       string v;
@@ -100,7 +100,7 @@ protected:
       ALWAYS_ASSERT(batchsize > 0);
       const size_t nbatches = nkeys / batchsize;
       if (nbatches == 0) {
-        void *txn = db->new_txn(txn_flags, txn_buf());
+        void *txn = db->new_txn(txn_flags, arena, txn_buf());
         for (size_t j = 0; j < nkeys; j++) {
           const encstress_rec::key key(j);
           encstress_rec::value rec;
@@ -115,7 +115,7 @@ protected:
       } else {
         for (size_t i = 0; i < nbatches; i++) {
           size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
-          void *txn = db->new_txn(txn_flags, txn_buf());
+          void *txn = db->new_txn(txn_flags, arena, txn_buf());
           for (size_t j = i * batchsize; j < keyend; j++) {
             const encstress_rec::key key(j);
             encstress_rec::value rec;

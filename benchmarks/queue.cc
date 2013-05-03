@@ -49,7 +49,7 @@ public:
   txn_result
   txn_produce()
   {
-    void *txn = db->new_txn(txn_flags, txn_buf());
+    void *txn = db->new_txn(txn_flags, arena, txn_buf());
     try {
       const string k = queue_key(id, ctr);
       tbl->insert(txn, k, queue_values);
@@ -72,7 +72,7 @@ public:
   txn_result
   txn_consume()
   {
-    void *txn = db->new_txn(txn_flags, txn_buf());
+    void *txn = db->new_txn(txn_flags, arena, txn_buf());
     try {
       const string lowk = queue_key(id, 0);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
@@ -102,7 +102,7 @@ public:
   txn_result
   txn_consume_scanhint()
   {
-    void *txn = db->new_txn(txn_flags, txn_buf());
+    void *txn = db->new_txn(txn_flags, arena, txn_buf());
     try {
       const string lowk = queue_key(id, ctr);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
@@ -135,7 +135,7 @@ public:
   txn_result
   txn_consume_noscan()
   {
-    void *txn = db->new_txn(txn_flags, txn_buf());
+    void *txn = db->new_txn(txn_flags, arena, txn_buf());
     try {
       const string k = queue_key(id, ctr);
       string v;
@@ -202,7 +202,7 @@ protected:
       const size_t nbatches = nkeys / batchsize;
       for (size_t id = 0; id < nthreads / 2; id++) {
         if (nbatches == 0) {
-          void *txn = db->new_txn(txn_flags, txn_buf());
+          void *txn = db->new_txn(txn_flags, arena, txn_buf());
           for (size_t j = 0; j < nkeys; j++) {
             const string k = queue_key(id, j);
             const string &v = queue_values;
@@ -214,7 +214,7 @@ protected:
         } else {
           for (size_t i = 0; i < nbatches; i++) {
             size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
-            void *txn = db->new_txn(txn_flags, txn_buf());
+            void *txn = db->new_txn(txn_flags, arena, txn_buf());
             for (size_t j = i * batchsize; j < keyend; j++) {
               const string k = queue_key(id, j);
               const string &v = queue_values;

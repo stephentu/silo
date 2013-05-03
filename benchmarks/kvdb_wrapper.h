@@ -20,7 +20,7 @@ public:
   }
 
   virtual void *
-  new_txn(uint64_t txn_flags, void *buf, TxnProfileHint hint)
+  new_txn(uint64_t txn_flags, str_arena &arena, void *buf, TxnProfileHint hint)
   {
     return new (buf) scoped_rcu_region;
   }
