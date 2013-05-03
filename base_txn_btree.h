@@ -193,7 +193,7 @@ protected:
   // NOTE: both key and value are expected to be stable values already
   template <typename Traits>
   void do_tree_put(Transaction<Traits> &t,
-                   const typename P::Key *k,
+                   const std::string *k,
                    const typename P::Value *v,
                    dbtuple::tuple_writer_t writer,
                    bool expect_new);
@@ -315,7 +315,7 @@ template <template <typename> class Transaction, typename P>
 template <typename Traits>
 void base_txn_btree<Transaction, P>::do_tree_put(
     Transaction<Traits> &t,
-    const typename P::Key *k,
+    const std::string *k,
     const typename P::Value *v,
     dbtuple::tuple_writer_t writer,
     bool expect_new)

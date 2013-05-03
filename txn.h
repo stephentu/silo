@@ -390,6 +390,10 @@ struct default_transaction_traits {
   typedef util::default_string_allocator StringAllocator;
 };
 
+struct default_stable_transaction_traits : public default_transaction_traits {
+  static const bool stable_input_memory = true;
+};
+
 template <template <typename> class Protocol, typename Traits>
 class transaction : public transaction_base {
   // XXX: weaker than necessary

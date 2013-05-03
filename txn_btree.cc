@@ -554,19 +554,6 @@ private:
   size_t n;
 };
 
-static constexpr uint64_t
-FieldsMask()
-{
-  return 0;
-}
-
-template <typename First, typename... Rest>
-static uint64_t
-FieldsMask(First f, Rest... rest)
-{
-  return (1UL << f) | FieldsMask(rest...);
-}
-
 }
 
 template <template <typename> class TxnType, typename Traits>
@@ -575,7 +562,8 @@ test_typed_btree()
 {
   using namespace test_typed_btree_ns;
 
-  typed_txn_btree<TxnType, schema<testrec>> btr;
+  typedef typed_txn_btree<TxnType, schema<testrec>> ttxn_btree_type;
+  ttxn_btree_type btr;
   typename Traits::StringAllocator arena;
   typedef TxnType<Traits> txn_type;
 
@@ -598,10 +586,15 @@ test_typed_btree()
     AssertSuccessfulCommit(t);
   }
 
+#define FIELDS(args...) \
+  typename ttxn_btree_type::template Fields< \
+    ttxn_btree_type::compute_fields_mask(args)>()
+
   {
     txn_type t(0, arena);
     testrec::value v;
-    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, FieldsMask(1, 2)));
+    const bool ret = btr.search(t, k0, v, FIELDS(1, 2));
+    ALWAYS_ASSERT_COND_IN_TXN(t, ret);
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v1 == v0.v1);
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v2 == v0.v2);
     AssertSuccessfulCommit(t);
@@ -610,7 +603,8 @@ test_typed_btree()
   {
     txn_type t(0, arena);
     testrec::value v;
-    ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, k0, v, FieldsMask(0, 2)));
+    const bool ret = btr.search(t, k0, v, FIELDS(0, 2));
+    ALWAYS_ASSERT_COND_IN_TXN(t, ret);
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v0 == v0.v0);
     ALWAYS_ASSERT_COND_IN_TXN(t, v.v2 == v0.v2);
     AssertSuccessfulCommit(t);
@@ -627,7 +621,7 @@ test_typed_btree()
     txn_type t(0, arena);
     const testrec::key begin(10, 0);
     scan_callback<TxnType> cb;
-    btr.search_range_call(t, begin, nullptr, cb, false, FieldsMask(2));
+    btr.search_range_call(t, begin, nullptr, cb, false, FIELDS(2));
     AssertSuccessfulCommit(t);
   }
 
@@ -1635,7 +1629,7 @@ void txn_btree_test()
   //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  //test_typed_btree<transaction_proto2, default_transaction_traits>();
+  test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
   test1<transaction_proto2, default_transaction_traits>();
   test2<transaction_proto2, default_transaction_traits>();
   test_absent_key_race<transaction_proto2, default_transaction_traits>();

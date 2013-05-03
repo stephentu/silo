@@ -224,9 +224,9 @@ struct typed_txn_btree_ {
     const value_type *vx = reinterpret_cast<const value_type *>(v);
     switch (mode) {
     case dbtuple::TUPLE_WRITER_COMPUTE_NEEDED:
-      return compute_needed_standalone(v, Fields, p, sz);
+      return compute_needed_standalone(vx, Fields, p, sz);
     case dbtuple::TUPLE_WRITER_DO_WRITE:
-      do_write_standalone(v, Fields, p, sz);
+      do_write_standalone(vx, Fields, p, sz);
       return 0;
     }
     ALWAYS_ASSERT(false);
@@ -319,6 +319,10 @@ private:
   typedef txn_btree_::value_reader bytes_value_reader;
 
   typedef
+    typename typed_txn_btree_<Schema>::key_writer
+    key_writer;
+
+  typedef
     typename typed_txn_btree_<Schema>::key_reader
     key_reader;
   typedef
@@ -328,9 +332,29 @@ private:
     typename typed_txn_btree_<Schema>::value_reader
     value_reader;
 
+public:
+
   static const uint64_t AllFieldsMask = typed_txn_btree_<Schema>::AllFieldsMask;
 
-public:
+  static constexpr uint64_t
+  compute_fields_mask()
+  {
+    return 0;
+  }
+
+  template <typename First, typename... Rest>
+  static constexpr uint64_t
+  compute_fields_mask(First f, Rest... rest)
+  {
+    return (1UL << f) | compute_fields_mask(rest...);
+  }
+
+  template <uint64_t Mask>
+  struct Fields {
+    static const uint64_t value = Mask;
+  };
+
+  typedef Fields<AllFieldsMask> AllFields;
 
   struct search_range_callback {
   public:
@@ -350,15 +374,16 @@ public:
     : super_type(value_size_hint, mostly_append, name)
   {}
 
-  template <typename Traits, uint64_t FieldsMask = AllFieldsMask>
+  template <typename Traits, typename FieldsMask = AllFields>
   inline bool search(
-      Transaction<Traits> &t, const key_type &k, value_type &v);
+      Transaction<Traits> &t, const key_type &k, value_type &v, FieldsMask fm = FieldsMask());
 
-  template <typename Traits, uint64_t FieldsMask = AllFieldsMask>
+  template <typename Traits, typename FieldsMask = AllFields>
   inline void search_range_call(
       Transaction<Traits> &t, const key_type &lower, const key_type *upper,
       search_range_callback &callback,
-      bool no_key_results = false /* skip decoding of keys? */);
+      bool no_key_results = false /* skip decoding of keys? */,
+      FieldsMask fm = FieldsMask());
 
   // a lower-level variant which does not bother to decode the key/values
   template <typename Traits>
@@ -367,15 +392,19 @@ public:
       bytes_search_range_callback &callback,
       size_type value_fields_prefix = std::numeric_limits<size_type>::max());
 
-  template <typename Traits, uint64_t FieldsMask = AllFieldsMask>
+  template <typename Traits, typename FieldsMask = AllFields,
+            class = typename std::enable_if<Traits::stable_input_memory>::type>
   inline void put(
-      Transaction<Traits> &t, const key_type &k, const value_type &v);
+      Transaction<Traits> &t, const key_type &k, const value_type &v,
+      FieldsMask fm = FieldsMask());
 
-  template <typename Traits>
+  template <typename Traits,
+            class = typename std::enable_if<Traits::stable_input_memory>::type>
   inline void insert(
       Transaction<Traits> &t, const key_type &k, const value_type &v);
 
-  template <typename Traits>
+  template <typename Traits,
+            class = typename std::enable_if<Traits::stable_input_memory>::type>
   inline void remove(
       Transaction<Traits> &t, const key_type &k);
 
@@ -385,27 +414,29 @@ private:
 };
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits, uint64_t FieldsMask>
+template <typename Traits, typename FieldsMask>
 bool
 typed_txn_btree<Transaction, Schema>::search(
-    Transaction<Traits> &t, const key_type &k, value_type &v)
+    Transaction<Traits> &t, const key_type &k, value_type &v,
+    FieldsMask fm)
 {
   // XXX: template single_value_reader with mask
-  single_value_reader vr(v, FieldsMask);
+  single_value_reader vr(v, FieldsMask::value);
   return this->do_search(t, k, vr);
 }
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits, uint64_t FieldsMask>
+template <typename Traits, typename FieldsMask>
 void
 typed_txn_btree<Transaction, Schema>::search_range_call(
     Transaction<Traits> &t,
     const key_type &lower, const key_type *upper,
     search_range_callback &callback,
-    bool no_key_results)
+    bool no_key_results,
+    FieldsMask fm)
 {
   key_reader kr(no_key_results);
-  value_reader vr(FieldsMask);
+  value_reader vr(FieldsMask::value);
   this->do_search_range_call(t, lower, upper, callback, kr, vr);
 }
 
@@ -426,36 +457,45 @@ typed_txn_btree<Transaction, Schema>::bytes_search_range_call(
 }
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits, uint64_t FieldsMask>
+template <typename Traits, typename FieldsMask, class>
 void
 typed_txn_btree<Transaction, Schema>::put(
-    Transaction<Traits> &t, const key_type &k, const value_type &v)
+    Transaction<Traits> &t, const key_type &k, const value_type &v, FieldsMask fm)
 {
+  key_writer writer(&k);
+  const std::string * const kstr =
+    writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
   const dbtuple::tuple_writer_t tw =
-    &typed_txn_btree_<Schema>::template tuple_writer<FieldsMask>;
-  this->do_tree_put(t, k, &v, tw, false);
+    &typed_txn_btree_<Schema>::template tuple_writer<FieldsMask::value>;
+  this->do_tree_put(t, kstr, &v, tw, false);
 }
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits>
+template <typename Traits, class>
 void
 typed_txn_btree<Transaction, Schema>::insert(
     Transaction<Traits> &t, const key_type &k, const value_type &v)
 {
+  key_writer writer(&k);
+  const std::string * const kstr =
+    writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
   const dbtuple::tuple_writer_t tw =
     &typed_txn_btree_<Schema>::template tuple_writer<AllFieldsMask>;
-  this->do_tree_put(t, k, &v, tw, true);
+  this->do_tree_put(t, kstr, &v, tw, true);
 }
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits>
+template <typename Traits, class>
 void
 typed_txn_btree<Transaction, Schema>::remove(
     Transaction<Traits> &t, const key_type &k)
 {
+  key_writer writer(&k);
+  const std::string * const kstr =
+    writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
   const dbtuple::tuple_writer_t tw =
     &typed_txn_btree_<Schema>::template tuple_writer<0>;
-  this->do_tree_put(t, k, nullptr, tw, false);
+  this->do_tree_put(t, kstr, nullptr, tw, false);
 }
 
 #endif /* _NDB_TYPED_TXN_BTREE_H_ */
