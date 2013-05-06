@@ -33,14 +33,17 @@ public:
   std::string *
   next()
   {
-    if (n < NStrs) {
+    if (likely(n < NStrs)) {
       std::string * const px = &strs[n++];
       px->clear();
       INVARIANT(manages(px));
       return px;
     }
-    ALWAYS_ASSERT(false); // for now, to catch inefficiencies
-    return nullptr;
+    // only loaders need this- and this allows us to use a unified
+    // str_arena for loaders/workers
+    overflow.emplace_back(new std::string);
+    ++n;
+    return overflow.back();
   }
 
   inline std::string *
@@ -53,12 +56,19 @@ public:
   return_last(std::string *px)
   {
     INVARIANT(n > 0);
-    INVARIANT(&strs[n - 1] == px);
     --n;
   }
 
   bool
   manages(const std::string *px) const
+  {
+    return manages_local(px) || manages_overflow(px);
+  }
+
+private:
+
+  bool
+  manages_local(const std::string *px) const
   {
     if (px < &strs[0])
       return false;
@@ -68,19 +78,26 @@ public:
                   reinterpret_cast<const char *>(&strs[0])) % sizeof(std::string));
   }
 
+  bool
+  manages_overflow(const std::string *px) const
+  {
+    return std::find(overflow.begin(), overflow.end(), px) != overflow.end();
+  }
+
 private:
   std::string strs[NStrs];
+  std::vector<std::string *> overflow;
   size_t n;
 };
 
 class scoped_str_arena {
 public:
-  constexpr scoped_str_arena(str_arena *arena)
+  scoped_str_arena(str_arena *arena)
     : arena(arena)
   {
   }
 
-  constexpr scoped_str_arena(str_arena &arena)
+  scoped_str_arena(str_arena &arena)
     : arena(&arena)
   {
   }

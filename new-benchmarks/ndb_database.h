@@ -44,7 +44,7 @@ namespace private_ {
 
   template <enum abstract_db::TxnProfileHint> struct ndb_txn_type {};
 
-  struct default_traits : public default_stable_transaction_traits {
+  struct default_traits : public default_transaction_traits {
     typedef str_arena StringAllocator;
   };
 
