@@ -18,6 +18,12 @@ struct typed_txn_btree_ {
   static_assert(value_descriptor_type::nfields() <= 64, "xx");
   static const uint64_t AllFieldsMask = (1UL << value_descriptor_type::nfields()) - 1;
 
+  static inline constexpr bool
+  IsAllFields(uint64_t m)
+  {
+    return (m & AllFieldsMask) == AllFieldsMask;
+  }
+
   class key_reader {
   public:
     constexpr key_reader(bool no_key_results) : no_key_results(no_key_results) {}
@@ -37,7 +43,7 @@ struct typed_txn_btree_ {
   static inline bool
   do_record_read(const uint8_t *data, size_t sz, uint64_t fields_mask, value_type *v)
   {
-    if ((fields_mask & AllFieldsMask) == AllFieldsMask) {
+    if (IsAllFields(fields_mask)) {
       // read the entire record
       const value_encoder_type value_encoder;
       return value_encoder.failsafe_read(data, sz, v);
@@ -159,6 +165,13 @@ struct typed_txn_btree_ {
       INVARIANT(!v);
       return 0;
     }
+    INVARIANT(v);
+    if (sz == 0) {
+      // new record (insert)
+      INVARIANT(IsAllFields(fields));
+      const value_encoder_type value_encoder;
+      return value_encoder.nbytes(v);
+    }
 
     ssize_t new_updates_sum = 0;
     for (uint64_t i = 0; i < value_descriptor_type::nfields(); i++) {
@@ -200,7 +213,7 @@ struct typed_txn_btree_ {
       INVARIANT(!v);
       return;
     }
-    if (fields == AllFieldsMask) {
+    if (IsAllFields(fields)) {
       // special case, just use the standard encoder (faster)
       // because it's straight-line w/ no branching
       const value_encoder_type value_encoder;
@@ -252,7 +265,7 @@ struct typed_txn_btree_ {
     inline const std::string *
     fully_materialize(bool stable_input, StringAllocator &sa)
     {
-      INVARIANT(fields == AllFieldsMask || fields == 0);
+      INVARIANT(IsAllFields(fields) || fields == 0);
       if (fields == 0) {
         // delete
         INVARIANT(!v);
