@@ -457,6 +457,34 @@ private:
   std::vector<std::shared_ptr<std::string>> strs;
 };
 
+static constexpr uint64_t
+compute_fields_mask()
+{
+  return 0;
+}
+
+template <typename First, typename... Rest>
+static constexpr uint64_t
+compute_fields_mask(First f, Rest... rest)
+{
+  return (1UL << f) | compute_fields_mask(rest...);
+}
+
+template <uint64_t Mask>
+struct Fields {
+  static const uint64_t value = Mask;
+};
+
+#define FIELDS(args...) \
+  ::util::Fields<::util::compute_fields_mask(args)>()
+
+#ifdef CHECK_INVARIANTS
+#define GUARDED_FIELDS(args...) \
+  ::util::Fields<::std::numeric_limits<uint64_t>::max()>()
+#else
+#define GUARDED_FIELDS(args...) FIELDS(args)
+#endif
+
 } // namespace util
 
 // pretty printer for std::pair<A, B>

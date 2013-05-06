@@ -104,6 +104,9 @@ Size(const T &t)
 #define STRUCT_PRINTER_REST_X(tpe, name) \
   << ", " << #name << "=" << obj.name
 
+#define STRUCT_FIELDPOS_X(tpe, name) \
+  name ## _field,
+
 #define SERIALIZE_WRITE_FIELD(tpe, name, compress, trfm) \
   do { \
     buf = serializer< tpe, compress >::write(buf, trfm(tpe, obj->name)); \
@@ -383,6 +386,9 @@ Size(const T &t)
     { \
       return !operator==(other); \
     } \
+    enum { \
+      APPLY_X_AND_Y(valuefields, STRUCT_FIELDPOS_X) \
+    }; \
   } PACKED; \
   struct value_descriptor { \
     static inline generic_write_fn \
@@ -476,6 +482,12 @@ Size(const T &t)
     o << "{" << valuefields(STRUCT_PRINTER_FIRST_X, STRUCT_PRINTER_REST_X) << "}"; \
     return o; \
   } \
+  namespace private_ { \
+  template <> \
+  struct is_trivially_destructible< name::key > { \
+    static const bool value = true; \
+  }; \
+  } \
   template <> \
   struct encoder< name::key > { \
   inline void \
@@ -524,6 +536,12 @@ Size(const T &t)
   DO_STRUCT_COMMON(name::key) \
   DO_STRUCT_ENCODE_REST(name::key) \
   }; \
+  namespace private_ { \
+  template <> \
+  struct is_trivially_destructible< name::value > { \
+    static const bool value = true; \
+  }; \
+  } \
   template <> \
   struct encoder< name::value > { \
   inline void \

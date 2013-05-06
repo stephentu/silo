@@ -586,10 +586,6 @@ test_typed_btree()
     AssertSuccessfulCommit(t);
   }
 
-#define FIELDS(args...) \
-  typename ttxn_btree_type::template Fields< \
-    ttxn_btree_type::compute_fields_mask(args)>()
-
   {
     txn_type t(0, arena);
     testrec::value v;

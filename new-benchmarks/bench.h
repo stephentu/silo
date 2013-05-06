@@ -37,20 +37,6 @@ extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
 
-namespace {
-inline size_t constexpr
-Prefix(size_t prefix)
-{
-#ifdef CHECK_INVARIANTS
-  return std::numeric_limits<size_t>::max();
-#else
-  INVARIANT(prefix > 0);
-  INVARIANT(prefix <= sizeof(size_t) * 8);
-  return (1UL << prefix) - 1;
-#endif
-}
-}
-
 // NOTE: the typed_* versions of classes exist so we don't have to convert all
 // classes to templatetized [for sanity in compliation times]; we trade off
 // a bit of type-safety for more rapid development cycles
@@ -101,6 +87,7 @@ protected:
   util::fast_random r;
   abstract_db *const db;
   spin_barrier *b;
+  str_arena arena;
 };
 
 template <typename Database>

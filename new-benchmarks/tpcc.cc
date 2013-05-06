@@ -525,12 +525,13 @@ protected:
   virtual void
   load()
   {
-    default_string_allocator arena;
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
       vector<warehouse::value> warehouses;
       {
-        typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags);
+        scoped_str_arena s_arena(this->arena);
+        typename Database::template
+          TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags, this->arena);
         for (uint i = 1; i <= NumWarehouses(); i++) {
           const warehouse::key k(i);
 
@@ -555,17 +556,19 @@ protected:
           const size_t sz = Size(v);
           warehouse_total_sz += sz;
           n_warehouses++;
-          tables.tbl_warehouse(i)->insert(txn, k, v, arena);
+          tables.tbl_warehouse(i)->insert(txn, k, v);
           warehouses.push_back(v);
         }
         ALWAYS_ASSERT(txn.commit());
       }
       {
-        typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags);
+        scoped_str_arena s_arena(this->arena);
+        typename Database::template
+          TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags, this->arena);
         for (uint i = 1; i <= NumWarehouses(); i++) {
           const warehouse::key k(i);
           warehouse::value v;
-          ALWAYS_ASSERT(tables.tbl_warehouse(i)->search(txn, k, v, arena));
+          ALWAYS_ASSERT(tables.tbl_warehouse(i)->search(txn, k, v));
           ALWAYS_ASSERT(warehouses[i - 1] == v);
           checker::SanityCheckWarehouse(&k, &v);
         }
@@ -601,9 +604,8 @@ protected:
   virtual void
   load()
   {
-    default_string_allocator arena;
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
-    auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags);
+    auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
     uint64_t total_sz = 0;
     try {
       for (uint i = 1; i <= NumItems(); i++) {
@@ -629,11 +631,12 @@ protected:
         const size_t sz = Size(v);
         total_sz += sz;
         // XXX: replicate items table across all NUMA nodes
-        tables.tbl_item(1)->insert(*txn, k, v, arena); // this table is shared, so any partition is OK
+        tables.tbl_item(1)->insert(*txn, k, v); // this table is shared, so any partition is OK
 
         if (bsize != -1 && !(i % bsize)) {
           ALWAYS_ASSERT(txn->commit());
-          txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags);
+          txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
+          this->arena.reset();
         }
       }
       ALWAYS_ASSERT(txn->commit());
@@ -673,7 +676,6 @@ protected:
   virtual void
   load()
   {
-    default_string_allocator arena;
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
@@ -690,7 +692,8 @@ protected:
         PinToWarehouseId(w);
 
       for (uint b = 0; b < nbatches;) {
-        auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags);
+        scoped_str_arena s_arena(this->arena);
+        auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
         try {
           const size_t iend = std::min((b + 1) * batchsize + 1, NumItems());
           for (uint i = (b * batchsize + 1); i <= iend; i++) {
@@ -729,8 +732,8 @@ protected:
             const size_t sz = Size(v);
             stock_total_sz += sz;
             n_stocks++;
-            tables.tbl_stock(w)->insert(*txn, k, v, arena);
-            tables.tbl_stock_data(w)->insert(*txn, k_data, v_data, arena);
+            tables.tbl_stock(w)->insert(*txn, k, v);
+            tables.tbl_stock_data(w)->insert(*txn, k_data, v_data);
           }
           if (txn->commit()) {
             b++;
@@ -779,9 +782,8 @@ protected:
   virtual void
   load()
   {
-    default_string_allocator arena;
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
-    auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags);
+    auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
     uint64_t district_total_sz = 0, n_districts = 0;
     try {
       uint cnt = 0;
@@ -806,11 +808,12 @@ protected:
           const size_t sz = Size(v);
           district_total_sz += sz;
           n_districts++;
-          tables.tbl_district(w)->insert(*txn, k, v, arena);
+          tables.tbl_district(w)->insert(*txn, k, v);
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
             ALWAYS_ASSERT(txn->commit());
-            txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags);
+            txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
+            this->arena.reset();
           }
         }
       }
@@ -851,7 +854,6 @@ protected:
   virtual void
   load()
   {
-    default_string_allocator arena;
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
     const uint w_end   = (warehouse_id == -1) ?
@@ -863,7 +865,8 @@ protected:
       if (pin_cpus)
         PinToWarehouseId(w);
       for (uint d = 1; d <= NumDistrictsPerWarehouse();) {
-        typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags);
+        scoped_str_arena s_arena(this->arena);
+        typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags, this->arena);
         try {
           for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
             const customer::key k(w, d, c);
@@ -901,7 +904,7 @@ protected:
             checker::SanityCheckCustomer(&k, &v);
             const size_t sz = Size(v);
             total_sz += sz;
-            tables.tbl_customer(w)->insert(txn, k, v, arena);
+            tables.tbl_customer(w)->insert(txn, k, v);
 
             // customer name index
             const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -910,7 +913,7 @@ protected:
             // index structure is:
             // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-            tables.tbl_customer_name_idx(w)->insert(txn, k_idx, v_idx, arena);
+            tables.tbl_customer_name_idx(w)->insert(txn, k_idx, v_idx);
 
             history::key k_hist;
             k_hist.h_c_id = c;
@@ -924,7 +927,7 @@ protected:
             v_hist.h_amount = 10;
             v_hist.h_data.assign(RandomStr(this->r, RandomNumber(this->r, 10, 24)));
 
-            tables.tbl_history(w)->insert(txn, k_hist, v_hist, arena);
+            tables.tbl_history(w)->insert(txn, k_hist, v_hist);
           }
 
           if (txn.commit()) {
@@ -983,7 +986,6 @@ protected:
   virtual void
   load()
   {
-    default_string_allocator arena;
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
     uint64_t oorder_total_sz = 0, n_oorders = 0;
     uint64_t new_order_total_sz = 0, n_new_orders = 0;
@@ -1007,7 +1009,8 @@ protected:
           c_ids.emplace_back(x);
         }
         for (uint c = 1; c <= NumCustomersPerDistrict();) {
-          typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags);
+          scoped_str_arena s_arena(this->arena);
+          typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags, this->arena);
           try {
             const oorder::key k_oo(w, d, c);
 
@@ -1025,12 +1028,12 @@ protected:
             const size_t sz = Size(v_oo);
             oorder_total_sz += sz;
             n_oorders++;
-            tables.tbl_oorder(w)->insert(txn, k_oo, v_oo, arena);
+            tables.tbl_oorder(w)->insert(txn, k_oo, v_oo);
 
             const oorder_c_id_idx::key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
             const oorder_c_id_idx::value v_oo_idx(0);
 
-            tables.tbl_oorder_c_id_idx(w)->insert(txn, k_oo_idx, v_oo_idx, arena);
+            tables.tbl_oorder_c_id_idx(w)->insert(txn, k_oo_idx, v_oo_idx);
 
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
@@ -1040,7 +1043,7 @@ protected:
               const size_t sz = Size(v_no);
               new_order_total_sz += sz;
               n_new_orders++;
-              tables.tbl_new_order(w)->insert(txn, k_no, v_no, arena);
+              tables.tbl_new_order(w)->insert(txn, k_no, v_no);
             }
 
             for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -1066,7 +1069,7 @@ protected:
               const size_t sz = Size(v_ol);
               order_line_total_sz += sz;
               n_order_lines++;
-              tables.tbl_order_line(w)->insert(txn, k_ol, v_ol, arena);
+              tables.tbl_order_line(w)->insert(txn, k_ol, v_ol);
             }
             if (txn.commit()) {
               c++;
@@ -1159,7 +1162,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
   //   max_read_set_size : 15
   //   max_write_set_size : 15
   //   num_txn_contexts : 9
-  typename Database::template TransactionType<abstract_db::HINT_TPCC_NEW_ORDER>::type txn(txn_flags);
+  typename Database::template TransactionType<abstract_db::HINT_TPCC_NEW_ORDER>::type txn(txn_flags, this->arena);
   scoped_str_arena s_arena(this->arena);
   scoped_multilock<spinlock> mlock;
   if (g_enable_partition_locks) {
@@ -1182,28 +1185,40 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
     customer::value v_c;
-    ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c, this->arena, Prefix(3)));
+    ALWAYS_ASSERT(
+        tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c,
+          GUARDED_FIELDS(
+            customer::value::c_discount_field,
+            customer::value::c_last_field,
+            customer::value::c_credit_field)));
     checker::SanityCheckCustomer(&k_c, &v_c);
 
     const warehouse::key k_w(warehouse_id);
     warehouse::value v_w;
-    ALWAYS_ASSERT(tables.tbl_warehouse(warehouse_id)->search(txn, k_w, v_w, this->arena, Prefix(2)));
+    ALWAYS_ASSERT(
+        tables.tbl_warehouse(warehouse_id)->search(txn, k_w, v_w,
+          GUARDED_FIELDS(warehouse::value::w_tax_field)));
     checker::SanityCheckWarehouse(&k_w, &v_w);
 
     const district::key k_d(warehouse_id, districtID);
     district::value v_d;
-    ALWAYS_ASSERT(tables.tbl_district(warehouse_id)->search(txn, k_d, v_d, this->arena));
+    ALWAYS_ASSERT(
+        tables.tbl_district(warehouse_id)->search(txn, k_d, v_d,
+          GUARDED_FIELDS(
+            district::value::d_next_o_id_field,
+            district::value::d_tax_field)));
     checker::SanityCheckDistrict(&k_d, &v_d);
 
     const new_order::key k_no(warehouse_id, districtID, v_d.d_next_o_id);
     const new_order::value v_no(0);
     const size_t new_order_sz = Size(v_no);
-    tables.tbl_new_order(warehouse_id)->insert(txn, k_no, v_no, this->arena);
+    tables.tbl_new_order(warehouse_id)->insert(txn, k_no, v_no);
     ret += new_order_sz;
 
     v_d.d_next_o_id++;
 
-    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d, this->arena);
+    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d,
+        GUARDED_FIELDS(district::value::d_next_o_id_field));
 
     const oorder::key k_oo(warehouse_id, districtID, k_no.no_o_id);
     oorder::value v_oo;
@@ -1214,13 +1229,13 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
     v_oo.o_entry_d = GetCurrentTimeMillis();
 
     const size_t oorder_sz = Size(v_oo);
-    tables.tbl_oorder(warehouse_id)->insert(txn, k_oo, v_oo, this->arena);
+    tables.tbl_oorder(warehouse_id)->insert(txn, k_oo, v_oo);
     ret += oorder_sz;
 
     const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
     const oorder_c_id_idx::value v_oo_idx(0);
 
-    tables.tbl_oorder_c_id_idx(warehouse_id)->insert(txn, k_oo_idx, v_oo_idx, this->arena);
+    tables.tbl_oorder_c_id_idx(warehouse_id)->insert(txn, k_oo_idx, v_oo_idx);
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
       const uint ol_supply_w_id = supplierWarehouseIDs[ol_number - 1];
@@ -1229,12 +1244,16 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
 
       const item::key k_i(ol_i_id);
       item::value v_i;
-      ALWAYS_ASSERT(tables.tbl_item(1)->search(txn, k_i, v_i, this->arena, Prefix(3)));
+      ALWAYS_ASSERT(tables.tbl_item(1)->search(txn, k_i, v_i,
+            GUARDED_FIELDS(
+              item::value::i_price_field,
+              item::value::i_name_field,
+              item::value::i_data_field)));
       checker::SanityCheckItem(&k_i, &v_i);
 
       const stock::key k_s(ol_supply_w_id, ol_i_id);
       stock::value v_s;
-      ALWAYS_ASSERT(tables.tbl_stock(ol_supply_w_id)->search(txn, k_s, v_s, this->arena));
+      ALWAYS_ASSERT(tables.tbl_stock(ol_supply_w_id)->search(txn, k_s, v_s));
       checker::SanityCheckStock(&k_s, &v_s);
 
       stock::value v_s_new(v_s);
@@ -1245,7 +1264,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
       v_s_new.s_ytd += ol_quantity;
       v_s_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
 
-      tables.tbl_stock(ol_supply_w_id)->put(txn, k_s, v_s_new, this->arena);
+      tables.tbl_stock(ol_supply_w_id)->put(txn, k_s, v_s_new);
 
       const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
       order_line::value v_ol;
@@ -1256,7 +1275,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
       v_ol.ol_quantity = int8_t(ol_quantity);
 
       const size_t order_line_sz = Size(v_ol);
-      tables.tbl_order_line(warehouse_id)->insert(txn, k_ol, v_ol, this->arena);
+      tables.tbl_order_line(warehouse_id)->insert(txn, k_ol, v_ol);
       ret += order_line_sz;
     }
 
@@ -1318,7 +1337,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
   //   max_read_set_size : 133
   //   max_write_set_size : 133
   //   num_txn_contexts : 4
-  typename Database::template TransactionType<abstract_db::HINT_TPCC_DELIVERY>::type txn(txn_flags);
+  typename Database::template TransactionType<abstract_db::HINT_TPCC_DELIVERY>::type txn(txn_flags, this->arena);
   scoped_str_arena s_arena(this->arena);
   scoped_lock_guard<spinlock> slock(LockForWarehouse(warehouse_id));
   try {
@@ -1330,7 +1349,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
       {
         ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
         tables.tbl_new_order(warehouse_id)->search_range_call(
-            txn, k_no_0, &k_no_1, new_order_c, this->arena);
+            txn, k_no_0, &k_no_1, new_order_c);
       }
 
       const new_order::key &k_no = new_order_c.get_key();
@@ -1338,7 +1357,10 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
 
       const oorder::key k_oo(warehouse_id, d, k_no.no_o_id);
       oorder::value v_oo;
-      if (unlikely(!tables.tbl_oorder(warehouse_id)->search(txn, k_oo, v_oo, this->arena))) {
+      if (unlikely(!tables.tbl_oorder(warehouse_id)->search(txn, k_oo, v_oo,
+              GUARDED_FIELDS(
+                oorder::value::o_c_id_field,
+                oorder::value::o_carrier_id_field)))) {
         // even if we read the new order entry, there's no guarantee
         // we will read the oorder entry: in this case the txn will abort,
         // but we're simply bailing out early
@@ -1354,7 +1376,10 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
 
       // XXX(stephentu): mutable scans would help here
       tables.tbl_order_line(warehouse_id)->search_range_call(
-          txn, k_oo_0, &k_oo_1, c, this->arena);
+          txn, k_oo_0, &k_oo_1, c, false,
+          GUARDED_FIELDS(
+            order_line::value::ol_amount_float,
+            order_line::value::ol_delivery_d_float));
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
 #ifdef CHECK_INVARIANTS
@@ -1362,16 +1387,18 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
 #endif
         sum += c.value(i).ol_amount;
         c.value(i).ol_delivery_d = ts;
-        tables.tbl_order_line(warehouse_id)->put(txn, c.key(i), c.value(i), this->arena);
+        tables.tbl_order_line(warehouse_id)->put(txn, c.key(i), c.value(i),
+            GUARDED_FIELDS(order_line::value::ol_delivery_d_float));
       }
 
       // delete new order
-      tables.tbl_new_order(warehouse_id)->remove(txn, k_no, this->arena);
+      tables.tbl_new_order(warehouse_id)->remove(txn, k_no);
       ret -= 0 /*new_order_c.get_value_size()*/;
 
       // update oorder
       v_oo.o_carrier_id = o_carrier_id;
-      tables.tbl_oorder(warehouse_id)->put(txn, k_oo, v_oo, this->arena);
+      tables.tbl_oorder(warehouse_id)->put(txn, k_oo, v_oo,
+          GUARDED_FIELDS(oorder::value::o_carrier_id_field));
 
       const uint c_id = v_oo.o_c_id;
       const float ol_total = sum;
@@ -1379,9 +1406,11 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
       // update customer
       const customer::key k_c(warehouse_id, d, c_id);
       customer::value v_c;
-      ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c, this->arena));
+      ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c,
+            GUARDED_FIELDS(customer::value::c_balance_field)));
       v_c.c_balance += ol_total;
-      tables.tbl_customer(warehouse_id)->put(txn, k_c, v_c, this->arena);
+      tables.tbl_customer(warehouse_id)->put(txn, k_c, v_c,
+            GUARDED_FIELDS(customer::value::c_balance_field));
     }
     //measure_txn_counters(txn, "txn_delivery");
     if (likely(txn.commit()))
@@ -1422,7 +1451,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
   //   max_read_set_size : 71
   //   max_write_set_size : 1
   //   num_txn_contexts : 5
-  typename Database::template TransactionType<abstract_db::HINT_TPCC_PAYMENT>::type txn(txn_flags);
+  typename Database::template TransactionType<abstract_db::HINT_TPCC_PAYMENT>::type txn(txn_flags, this->arena);
   scoped_str_arena s_arena(this->arena);
   scoped_multilock<spinlock> mlock;
   if (g_enable_partition_locks) {
@@ -1438,19 +1467,34 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
 
     const warehouse::key k_w(warehouse_id);
     warehouse::value v_w;
-    ALWAYS_ASSERT(tables.tbl_warehouse(warehouse_id)->search(txn, k_w, v_w, this->arena));
+    ALWAYS_ASSERT(
+        tables.tbl_warehouse(warehouse_id)->search(txn, k_w, v_w, GUARDED_FIELDS(
+            warehouse::value::w_ytd_field,
+            warehouse::value::w_street_1_field,
+            warehouse::value::w_street_1_field,
+            warehouse::value::w_city_field,
+            warehouse::value::w_state_field,
+            warehouse::value::w_zip_field,
+            warehouse::value::w_name_field)));
     checker::SanityCheckWarehouse(&k_w, &v_w);
 
     v_w.w_ytd += paymentAmount;
-    tables.tbl_warehouse(warehouse_id)->put(txn, k_w, v_w, this->arena);
+    tables.tbl_warehouse(warehouse_id)->put(txn, k_w, v_w, GUARDED_FIELDS(warehouse::value::w_ytd_field));
 
     const district::key k_d(warehouse_id, districtID);
     district::value v_d;
-    ALWAYS_ASSERT(tables.tbl_district(warehouse_id)->search(txn, k_d, v_d, this->arena));
+    ALWAYS_ASSERT(tables.tbl_district(warehouse_id)->search(txn, k_d, v_d, GUARDED_FIELDS(
+            district::value::d_ytd_field,
+            district::value::d_street_1_field,
+            district::value::d_street_1_field,
+            district::value::d_city_field,
+            district::value::d_state_field,
+            district::value::d_zip_field,
+            district::value::d_name_field)));
     checker::SanityCheckDistrict(&k_d, &v_d);
 
     v_d.d_ytd += paymentAmount;
-    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d, this->arena);
+    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d, GUARDED_FIELDS(distict::value::d_ytd_field));
 
     customer::key k_c;
     customer::value v_c;
@@ -1481,7 +1525,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
         typename Database::template IndexType<schema<customer_name_idx>>::type,
         NMaxCustomerIdxScanElems, true> c(s_arena.get());
       tables.tbl_customer_name_idx(customerWarehouseID)->bytes_search_range_call(
-        txn, k_c_idx_0, &k_c_idx_1, c, this->arena);
+        txn, k_c_idx_0, &k_c_idx_1, c);
       ALWAYS_ASSERT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
@@ -1495,14 +1539,14 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
       k_c.c_w_id = customerWarehouseID;
       k_c.c_d_id = customerDistrictID;
       k_c.c_id = v_c_idx->c_id;
-      ALWAYS_ASSERT(tables.tbl_customer(customerWarehouseID)->search(txn, k_c, v_c, this->arena));
+      ALWAYS_ASSERT(tables.tbl_customer(customerWarehouseID)->search(txn, k_c, v_c));
     } else {
       // cust by ID
       const uint customerID = GetCustomerId(r);
       k_c.c_w_id = customerWarehouseID;
       k_c.c_d_id = customerDistrictID;
       k_c.c_id = customerID;
-      ALWAYS_ASSERT(tables.tbl_customer(customerWarehouseID)->search(txn, k_c, v_c, this->arena));
+      ALWAYS_ASSERT(tables.tbl_customer(customerWarehouseID)->search(txn, k_c, v_c));
     }
     checker::SanityCheckCustomer(&k_c, &v_c);
 
@@ -1524,7 +1568,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
       NDB_MEMCPY((void *) v_c.c_data.data(), &buf[0], v_c.c_data.size());
     }
 
-    tables.tbl_customer(customerWarehouseID)->put(txn, k_c, v_c, this->arena);
+    tables.tbl_customer(customerWarehouseID)->put(txn, k_c, v_c);
 
     const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
     history::value v_h;
@@ -1537,7 +1581,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
     v_h.h_data.resize_junk(min(static_cast<size_t>(n), v_h.h_data.max_size()));
 
     const size_t history_sz = Size(v_h);
-    tables.tbl_history(warehouse_id)->insert(txn, k_h, v_h, this->arena);
+    tables.tbl_history(warehouse_id)->insert(txn, k_h, v_h);
     ret += history_sz;
 
     //measure_txn_counters(txn, "txn_payment");
@@ -1598,7 +1642,8 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
   typename Database::template TransactionType<
     AllowReadOnlyScans ?
       abstract_db::HINT_TPCC_ORDER_STATUS_READ_ONLY :
-      abstract_db::HINT_TPCC_ORDER_STATUS>::type txn(txn_flags | read_only_mask);
+      abstract_db::HINT_TPCC_ORDER_STATUS>::type txn(
+          txn_flags | read_only_mask, this->arena);
   scoped_str_arena s_arena(this->arena);
   // NB: since txn_order_status() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
@@ -1633,7 +1678,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
         typename Database::template IndexType<schema<customer_name_idx>>::type,
         NMaxCustomerIdxScanElems, true> c(s_arena.get());
       tables.tbl_customer_name_idx(warehouse_id)->bytes_search_range_call(
-          txn, k_c_idx_0, &k_c_idx_1, c, this->arena);
+          txn, k_c_idx_0, &k_c_idx_1, c);
       ALWAYS_ASSERT(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
@@ -1647,7 +1692,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
       k_c.c_w_id = warehouse_id;
       k_c.c_d_id = districtID;
       k_c.c_id = v_c_idx->c_id;
-      ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c, this->arena));
+      ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c));
 
     } else {
       // cust by ID
@@ -1655,7 +1700,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
       k_c.c_w_id = warehouse_id;
       k_c.c_d_id = districtID;
       k_c.c_id = customerID;
-      ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c, this->arena));
+      ALWAYS_ASSERT(tables.tbl_customer(warehouse_id)->search(txn, k_c, v_c));
     }
     checker::SanityCheckCustomer(&k_c, &v_c);
 
@@ -1676,7 +1721,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
     {
       ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
       tables.tbl_oorder_c_id_idx(warehouse_id)->bytes_search_range_call(
-          txn, k_oo_idx_0, &k_oo_idx_1, c_oorder, this->arena);
+          txn, k_oo_idx_0, &k_oo_idx_1, c_oorder);
     }
     ALWAYS_ASSERT(c_oorder.size());
 
@@ -1690,7 +1735,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
     const order_line::key k_ol_0(warehouse_id, districtID, o_id, 0);
     const order_line::key k_ol_1(warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
     tables.tbl_order_line(warehouse_id)->bytes_search_range_call(
-        txn, k_ol_0, &k_ol_1, c_order_line, this->arena);
+        txn, k_ol_0, &k_ol_1, c_order_line);
     ALWAYS_ASSERT(c_order_line.n >= 5 && c_order_line.n <= 15);
 
     //measure_txn_counters(txn, "txn_order_status");
@@ -1712,16 +1757,17 @@ public:
       const string &value)
   {
     INVARIANT(key.size() == sizeof(order_line::key));
-    order_line::value v_ol_temp;
-    const order_line::value *v_ol = PrefixDecode(value, v_ol_temp, Prefix(1));
+    order_line::value v_ol;
+    typed_txn_btree_<schema<order_line>>::do_record_read(
+        (const uint8_t *) value.data(), value.size(), compute_fields_mask(0), &v_ol);
 
 #ifdef CHECK_INVARIANTS
     order_line::key k_ol_temp;
     const order_line::key *k_ol = Decode(key, k_ol_temp);
-    checker::SanityCheckOrderLine(k_ol, v_ol);
+    checker::SanityCheckOrderLine(k_ol, &v_ol);
 #endif
 
-    s_i_ids[v_ol->ol_i_id] = 1;
+    s_i_ids[v_ol.ol_i_id] = 1;
     n++;
     return true;
   }
@@ -1753,21 +1799,18 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
   //   num_txn_contexts : 3
   const uint64_t read_only_mask =
     !AllowReadOnlyScans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
-  //const abstract_db::TxnProfileHint hint =
-  //  g_disable_read_only_scans ?
-  //    abstract_db::HINT_TPCC_STOCK_LEVEL :
-  //    abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY;
   typename Database::template TransactionType<
     AllowReadOnlyScans ?
       abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY :
-      abstract_db::HINT_TPCC_STOCK_LEVEL>::type txn(txn_flags | read_only_mask);
+      abstract_db::HINT_TPCC_STOCK_LEVEL>::type txn(
+          txn_flags | read_only_mask, this->arena);
   scoped_str_arena s_arena(this->arena);
   // NB: since txn_stock_level() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
   try {
     const district::key k_d(warehouse_id, districtID);
     district::value v_d;
-    ALWAYS_ASSERT(tables.tbl_district(warehouse_id)->search(txn, k_d, v_d, this->arena));
+    ALWAYS_ASSERT(tables.tbl_district(warehouse_id)->search(txn, k_d, v_d));
     checker::SanityCheckDistrict(&k_d, &v_d);
 
     // manual joins are fun!
@@ -1776,10 +1819,15 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
     const order_line::key k_ol_0(warehouse_id, districtID, lower, 0);
     const order_line::key k_ol_1(warehouse_id, districtID, v_d.d_next_o_id, 0);
     {
-      // Prefix(1) must be kept in sync w/ order_line_scan_callback
+      // mask must be kept in sync w/ order_line_scan_callback
+#ifdef CHECK_INVARIANTS
+      const uint64_t nbytes = numeric_limits<uint64_t>::max();
+#else
+      const uint64_t nbytes = encoder<order_line::value>().encode_max_nbytes_prefix(1);
+#endif
       ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
       tables.tbl_order_line(warehouse_id)->bytes_search_range_call(
-          txn, k_ol_0, &k_ol_1, c, this->arena, Prefix(1));
+          txn, k_ol_0, &k_ol_1, c, nbytes);
     }
     {
       small_unordered_map<uint, bool, 512> s_i_ids_distinct;
@@ -1790,7 +1838,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
         INVARIANT(p.first >= 1 && p.first <= NumItems());
         {
           ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
-          ALWAYS_ASSERT(tables.tbl_stock(warehouse_id)->search(txn, k_s, v_s, this->arena, Prefix(1)));
+          ALWAYS_ASSERT(tables.tbl_stock(warehouse_id)->search(txn, k_s, v_s, GUARDED_FIELDS(stock::value::s_quantity)));
         }
         if (v_s.s_quantity < int(threshold))
           s_i_ids_distinct[p.first] = 1;

@@ -332,29 +332,21 @@ private:
     typename typed_txn_btree_<Schema>::value_reader
     value_reader;
 
+  template <typename Traits>
+  static constexpr inline bool
+  IsSupportable()
+  {
+    return Traits::stable_input_memory ||
+      (private_::is_trivially_copyable<key_type>::value &&
+       private_::is_trivially_destructible<key_type>::value &&
+       private_::is_trivially_copyable<value_type>::value &&
+       private_::is_trivially_destructible<value_type>::value);
+  }
+
 public:
 
   static const uint64_t AllFieldsMask = typed_txn_btree_<Schema>::AllFieldsMask;
-
-  static constexpr uint64_t
-  compute_fields_mask()
-  {
-    return 0;
-  }
-
-  template <typename First, typename... Rest>
-  static constexpr uint64_t
-  compute_fields_mask(First f, Rest... rest)
-  {
-    return (1UL << f) | compute_fields_mask(rest...);
-  }
-
-  template <uint64_t Mask>
-  struct Fields {
-    static const uint64_t value = Mask;
-  };
-
-  typedef Fields<AllFieldsMask> AllFields;
+  typedef util::Fields<AllFieldsMask> AllFields;
 
   struct search_range_callback {
   public:
@@ -376,7 +368,8 @@ public:
 
   template <typename Traits, typename FieldsMask = AllFields>
   inline bool search(
-      Transaction<Traits> &t, const key_type &k, value_type &v, FieldsMask fm = FieldsMask());
+      Transaction<Traits> &t, const key_type &k, value_type &v,
+      FieldsMask fm = FieldsMask());
 
   template <typename Traits, typename FieldsMask = AllFields>
   inline void search_range_call(
@@ -392,23 +385,41 @@ public:
       bytes_search_range_callback &callback,
       size_type value_fields_prefix = std::numeric_limits<size_type>::max());
 
-  template <typename Traits, typename FieldsMask = AllFields,
-            class = typename std::enable_if<Traits::stable_input_memory>::type>
+  template <typename Traits, typename FieldsMask = AllFields>
   inline void put(
       Transaction<Traits> &t, const key_type &k, const value_type &v,
       FieldsMask fm = FieldsMask());
 
-  template <typename Traits,
-            class = typename std::enable_if<Traits::stable_input_memory>::type>
+  template <typename Traits>
   inline void insert(
       Transaction<Traits> &t, const key_type &k, const value_type &v);
 
-  template <typename Traits,
-            class = typename std::enable_if<Traits::stable_input_memory>::type>
+  template <typename Traits>
   inline void remove(
       Transaction<Traits> &t, const key_type &k);
 
 private:
+
+  template <typename Traits>
+  static inline const std::string *
+  stablize(Transaction<Traits> &t, const key_type &k)
+  {
+    key_writer writer(&k);
+    return writer.fully_materialize(
+        Traits::stable_input_memory, t.string_allocator());
+  }
+
+  template <typename Traits>
+  static inline const value_type *
+  stablize(Transaction<Traits> &t, const value_type &v)
+  {
+    if (Traits::stable_input_memory)
+      return &v;
+    std::string * const px = t.string_allocator()();
+    px->assign(reinterpret_cast<const char *>(&v), sizeof(v));
+    return reinterpret_cast<const value_type *>(px->data());
+  }
+
   key_encoder_type key_encoder;
   value_encoder_type value_encoder;
 };
@@ -457,45 +468,39 @@ typed_txn_btree<Transaction, Schema>::bytes_search_range_call(
 }
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits, typename FieldsMask, class>
+template <typename Traits, typename FieldsMask>
 void
 typed_txn_btree<Transaction, Schema>::put(
     Transaction<Traits> &t, const key_type &k, const value_type &v, FieldsMask fm)
 {
-  key_writer writer(&k);
-  const std::string * const kstr =
-    writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
+  static_assert(IsSupportable<Traits>(), "xx");
   const dbtuple::tuple_writer_t tw =
     &typed_txn_btree_<Schema>::template tuple_writer<FieldsMask::value>;
-  this->do_tree_put(t, kstr, &v, tw, false);
+  this->do_tree_put(t, stablize(t, k), stablize(t, v), tw, false);
 }
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits, class>
+template <typename Traits>
 void
 typed_txn_btree<Transaction, Schema>::insert(
     Transaction<Traits> &t, const key_type &k, const value_type &v)
 {
-  key_writer writer(&k);
-  const std::string * const kstr =
-    writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
+  static_assert(IsSupportable<Traits>(), "xx");
   const dbtuple::tuple_writer_t tw =
     &typed_txn_btree_<Schema>::template tuple_writer<AllFieldsMask>;
-  this->do_tree_put(t, kstr, &v, tw, true);
+  this->do_tree_put(t, stablize(t, k), stablize(t, v), tw, true);
 }
 
 template <template <typename> class Transaction, typename Schema>
-template <typename Traits, class>
+template <typename Traits>
 void
 typed_txn_btree<Transaction, Schema>::remove(
     Transaction<Traits> &t, const key_type &k)
 {
-  key_writer writer(&k);
-  const std::string * const kstr =
-    writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
+  static_assert(IsSupportable<Traits>(), "xx");
   const dbtuple::tuple_writer_t tw =
     &typed_txn_btree_<Schema>::template tuple_writer<0>;
-  this->do_tree_put(t, kstr, nullptr, tw, false);
+  this->do_tree_put(t, stablize(t, k), nullptr, tw, false);
 }
 
 #endif /* _NDB_TYPED_TXN_BTREE_H_ */

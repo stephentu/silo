@@ -19,6 +19,10 @@ namespace private_ {
       is_trivially_destructible<V>::value;
   };
 
+  // XXX: same for now
+  template <typename T>
+  struct is_trivially_copyable : public is_trivially_destructible<T> {};
+
   // user types should add their own specializations
 
   template <typename T>
