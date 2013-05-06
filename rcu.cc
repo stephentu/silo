@@ -100,9 +100,12 @@ rcu::unregister_sync(pthread_t p)
 void *
 rcu::sync::alloc(size_t sz)
 {
+  if (pin_cpu == -1)
+    // fallback to regular allocator
+    return malloc(sz);
   auto sizes = ::allocator::ArenaSize(sz);
   auto arena = sizes.second;
-  if (pin_cpu == -1 || arena >= ::allocator::MAX_ARENAS)
+  if (arena >= ::allocator::MAX_ARENAS)
     // fallback to regular allocator
     return malloc(sz);
   ensure_arena(arena);

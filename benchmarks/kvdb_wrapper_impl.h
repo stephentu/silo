@@ -15,8 +15,6 @@
 #include "../scopedperf.hh"
 #include "../counter.h"
 
-#define MUTABLE_RECORDS
-
 namespace private_ {
   static event_avg_counter evt_avg_kvdb_stable_version_spins("avg_kvdb_stable_version_spins");
   static event_avg_counter evt_avg_kvdb_lock_acquire_spins("avg_kvdb_lock_acquire_spins");
@@ -29,8 +27,6 @@ namespace private_ {
   STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_scan_probe0, kvdb_scan_probe0_cg);
   STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_remove_probe0, kvdb_remove_probe0_cg);
 }
-
-#ifdef MUTABLE_RECORDS
 
 // defines single-threaded version
 template <bool UseConcurrencyControl>
@@ -205,11 +201,12 @@ struct record_version<true> {
 template <bool UseConcurrencyControl>
 struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
   typedef record_version<UseConcurrencyControl> super_type;
-
+  uint16_t alloc_size;
   char data[0];
 
-  basic_kvdb_record(const std::string &s)
-    : record_version<UseConcurrencyControl>()
+  basic_kvdb_record(uint16_t alloc_size, const std::string &s)
+    : record_version<UseConcurrencyControl>(),
+      alloc_size(alloc_size)
   {
 #ifdef CHECK_INVARIANTS
     this->lock();
@@ -259,11 +256,8 @@ struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
   inline bool
   do_write(const std::string &s)
   {
-    if (UseConcurrencyControl)
-      INVARIANT(this->is_locked());
-    const size_t max_r =
-      util::round_up<size_t, /* lgbase*/ 4>(sizeof(*this) + this->size()) - sizeof(*this);
-    if (unlikely(s.size() > max_r))
+    INVARIANT(!UseConcurrencyControl || this->is_locked());
+    if (unlikely(s.size() > alloc_size))
       return false;
     this->set_size(s.size());
     NDB_MEMCPY(&data[0], s.data(), s.size());
@@ -274,67 +268,38 @@ struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
   alloc(const std::string &s)
   {
     const size_t sz = s.size();
-    const size_t alloc_sz = util::round_up<size_t, 4>(sizeof(basic_kvdb_record) + sz);
-    void * const p = malloc(alloc_sz);
+    const size_t max_alloc_sz =
+      std::numeric_limits<uint16_t>::max() + sizeof(basic_kvdb_record);
+    const size_t alloc_sz =
+      std::min(
+          util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(basic_kvdb_record) + sz),
+          max_alloc_sz);
+    char * const p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
     INVARIANT(p);
-    return new (p) basic_kvdb_record(s);
+    return new (p) basic_kvdb_record(alloc_sz - sizeof(basic_kvdb_record), s);
   }
 
+private:
+  static inline void
+  deleter(void *r)
+  {
+    basic_kvdb_record * const px =
+      reinterpret_cast<basic_kvdb_record *>(r);
+    const size_t alloc_sz = px->alloc_size + sizeof(*px);
+    px->~basic_kvdb_record();
+    rcu::dealloc(px, alloc_sz);
+  }
+
+public:
   static void
   release(basic_kvdb_record *r)
   {
     if (unlikely(!r))
       return;
-    rcu::free_with_fn(r, free);
+    rcu::free_with_fn(r, deleter);
   }
 
 } PACKED;
-
-#else
-
-template <bool>
-struct basic_kvdb_record {
-  uint16_t size;
-  char data[0];
-
-  static kvdb_record *
-  alloc(const std::string &s)
-  {
-    INVARIANT(s.size() <= std::numeric_limits<uint16_t>::max());
-    kvdb_record *r = (kvdb_record *)
-      malloc(sizeof(uint16_t) + s.size());
-    INVARIANT(r);
-    r->size = s.size();
-    NDB_MEMCPY(&r->data[0], s.data(), s.size());
-    return r;
-  }
-
-  static void
-  release(kvdb_record *r)
-  {
-    if (unlikely(!r))
-      return;
-    rcu::free_with_fn(r, free);
-  }
-
-  inline void
-  prefetch() const
-  {
-#ifdef TUPLE_PREFETCH
-    prefetch_bytes(this, sizeof(*this) + size);
-#endif
-  }
-
-  inline void
-  do_read(std::string &s, size_t max_bytes_read) const
-  {
-    const size_t sz = std::min(static_cast<size_t>(size), max_bytes_read);
-    s.assign(&r->data[0], sz);
-  }
-
-} PACKED;
-
-#endif /* MUTABLE_RECORDS */
 
 template <bool UseConcurrencyControl>
 bool
@@ -365,7 +330,6 @@ kvdb_ordered_index<UseConcurrencyControl>::put(
 {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::put:", &private_::kvdb_put_probe0_cg);
-#ifdef MUTABLE_RECORDS
   btree::value_type v = 0, v_old = 0;
   if (btr.search(varkey(key), v)) {
     // easy
@@ -388,14 +352,6 @@ kvdb_ordered_index<UseConcurrencyControl>::put(
     kvdb_record::release(r);
   }
   return 0;
-#else
-  btree::value_type old_v = 0;
-  if (!btr.insert(varkey(key), (btree::value_type) kvdb_record::alloc(value), &old_v, 0)) {
-    kvdb_record * const r = (kvdb_record *) old_v;
-    kvdb_record::release(r);
-  }
-#endif
-  return 0;
 }
 
 template <bool UseConcurrencyControl>
@@ -406,7 +362,6 @@ kvdb_ordered_index<UseConcurrencyControl>::insert(void *txn,
 {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::insert:", &private_::kvdb_insert_probe0_cg);
-#ifdef MUTABLE_RECORDS
   kvdb_record * const rnew = kvdb_record::alloc(value);
   btree::value_type v_old = 0;
   if (!btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0)) {
@@ -414,9 +369,6 @@ kvdb_ordered_index<UseConcurrencyControl>::insert(void *txn,
     kvdb_record::release(r);
   }
   return 0;
-#else
-  return put(txn, key, value);
-#endif
 }
 
 template <bool UseConcurrencyControl>

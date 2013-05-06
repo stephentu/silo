@@ -906,7 +906,7 @@ private:
   static inline void
   destruct_and_free(dbtuple *n)
   {
-    const size_t alloc_sz = n->alloc_size + sizeof(dbtuple);
+    const size_t alloc_sz = n->alloc_size + sizeof(*n);
     n->~dbtuple();
     rcu::dealloc(n, alloc_sz);
   }
