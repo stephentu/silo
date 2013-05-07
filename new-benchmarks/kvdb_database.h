@@ -569,6 +569,12 @@ public:
       kvdb_txn &t, const key_type &k);
 
 private:
+
+  template <typename Callback, typename KeyReader, typename ValueReader>
+  inline void do_search_range_call(
+      kvdb_txn &t, const key_type &lower, const key_type *upper,
+      Callback &callback, KeyReader &kr, ValueReader &vr);
+
   std::string name;
   btree btr;
 };
@@ -656,22 +662,8 @@ kvdb_index<Schema, UseConcurrencyControl>::search_range_call(
 {
   key_reader kr(no_key_results);
   value_reader vr(FieldsMask::value);
-  key_writer lower_key_writer(&lower);
-  key_writer upper_key_writer(upper);
-  const std::string * const lower_str =
-    lower_key_writer.fully_materialize(false, t.string_allocator());
-  const std::string * const upper_str =
-    upper_key_writer.fully_materialize(false, t.string_allocator());
 
-  kvdb_wrapper_search_range_callback<
-    search_range_callback,
-    key_reader,
-    value_reader> c(callback, kr, vr, t.string_allocator());
-
-  varkey uppervk;
-  if (upper_str)
-    uppervk = varkey(*upper_str);
-  btr.search_range_call(varkey(*lower_str), upper_str ? &uppervk : nullptr, c, t.string_allocator()());
+  do_search_range_call(t, lower, upper, callback, kr, vr);
 }
 
 template <typename Schema, bool UseConcurrencyControl>
@@ -686,22 +678,8 @@ kvdb_index<Schema, UseConcurrencyControl>::bytes_search_range_call(
     value_encoder.encode_max_nbytes_prefix(value_fields_prefix);
   bytes_key_reader kr;
   bytes_value_reader vr(max_bytes_read);
-  key_writer lower_key_writer(&lower);
-  key_writer upper_key_writer(upper);
-  const std::string * const lower_str =
-    lower_key_writer.fully_materialize(false, t.string_allocator());
-  const std::string * const upper_str =
-    upper_key_writer.fully_materialize(false, t.string_allocator());
 
-  kvdb_wrapper_search_range_callback<
-    bytes_search_range_callback,
-    bytes_key_reader,
-    bytes_value_reader> c(callback, kr, vr, t.string_allocator());
-
-  varkey uppervk;
-  if (upper_str)
-    uppervk = varkey(*upper_str);
-  btr.search_range_call(varkey(*lower_str), upper_str ? &uppervk : nullptr, c, t.string_allocator()());
+  do_search_range_call(t, lower, upper, callback, kr, vr);
 }
 
 template <typename Schema, bool UseConcurrencyControl>
@@ -785,6 +763,31 @@ kvdb_index<Schema, UseConcurrencyControl>::remove(
     kvdb_record * const r = reinterpret_cast<kvdb_record *>(v);
     kvdb_record::release(r);
   }
+}
+
+template <typename Schema, bool UseConcurrencyControl>
+template <typename Callback, typename KeyReader, typename ValueReader>
+void
+kvdb_index<Schema, UseConcurrencyControl>::do_search_range_call(
+      kvdb_txn &t, const key_type &lower, const key_type *upper,
+      Callback &callback, KeyReader &kr, ValueReader &vr)
+{
+  key_writer lower_key_writer(&lower);
+  key_writer upper_key_writer(upper);
+  const std::string * const lower_str =
+    lower_key_writer.fully_materialize(false, t.string_allocator());
+  const std::string * const upper_str =
+    upper_key_writer.fully_materialize(false, t.string_allocator());
+
+  kvdb_wrapper_search_range_callback<
+    Callback,
+    KeyReader,
+    ValueReader> c(callback, kr, vr, t.string_allocator());
+
+  varkey uppervk;
+  if (upper_str)
+    uppervk = varkey(*upper_str);
+  btr.search_range_call(varkey(*lower_str), upper_str ? &uppervk : nullptr, c, t.string_allocator()());
 }
 
 #endif /* _KVDB_WRAPPER_IMPL_H_ */
