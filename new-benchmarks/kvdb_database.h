@@ -261,7 +261,7 @@ public:
 #endif
     } else {
       const bool ret = do_guarded_read(reader, sa);
-      if (ret)
+      if (!ret)
         INVARIANT(false);
     }
   }

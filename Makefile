@@ -132,6 +132,7 @@ NEWBENCH_HEADERS = $(HEADERS) \
 	new-benchmarks/abstract_db.h \
 	new-benchmarks/abstract_ordered_index.h \
 	new-benchmarks/bench.h \
+	new-benchmarks/kvdb_database.h \
 	new-benchmarks/ndb_database.h \
 	new-benchmarks/str_arena.h \
 	new-benchmarks/tpcc.h
