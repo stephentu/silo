@@ -25,6 +25,7 @@
 #include "tpcc.h"
 
 #include "ndb_database.h"
+#include "kvdb_database.h"
 
 using namespace std;
 using namespace util;
@@ -1993,6 +1994,16 @@ private:
   tpcc_tables<Database> tables;
 };
 
+template <typename Database>
+static unique_ptr<bench_runner>
+MakeBenchRunner(Database *db)
+{
+  return unique_ptr<bench_runner>(
+    g_disable_read_only_scans ?
+      static_cast<bench_runner *>(new tpcc_bench_runner<Database, false>(db)) :
+      static_cast<bench_runner *>(new tpcc_bench_runner<Database, true>(db)));
+}
+
 void
 tpcc_do_test(const string &dbtype, int argc, char **argv)
 {
@@ -2074,10 +2085,12 @@ tpcc_do_test(const string &dbtype, int argc, char **argv)
     typedef ndb_database<transaction_proto2> Database;
     Database *raw = new Database;
     db.reset(raw);
-    r.reset(
-        g_disable_read_only_scans ?
-          static_cast<bench_runner *>(new tpcc_bench_runner<Database, false>(raw)) :
-          static_cast<bench_runner *>(new tpcc_bench_runner<Database, true>(raw)));
+    r = MakeBenchRunner(raw);
+  } else if (dbtype == "kvdb-st") {
+    typedef kvdb_database<false> Database;
+    Database *raw = new Database;
+    db.reset(raw);
+    r = MakeBenchRunner(raw);
   } else
     ALWAYS_ASSERT(false);
 

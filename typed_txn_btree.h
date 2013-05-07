@@ -317,14 +317,6 @@ public:
   typedef typename Schema::key_encoder_type key_encoder_type;
   typedef typename Schema::value_encoder_type value_encoder_type;
 
-  //template <typename Traits>
-  //struct transaction {
-  //  typedef Transaction<typed_txn_btree_<Schema>, Traits> type;
-  //};
-
-  //template <typename Traits>
-  //  using transaction = Transaction<typed_txn_btree_<Schema>, Traits>;
-
 private:
 
   typedef txn_btree_::key_reader bytes_key_reader;
