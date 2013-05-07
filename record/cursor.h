@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include "../macros.h"
+#include "../counter.h"
+#include "../util.h"
 
 // cursors can only move forward, or reset completely
 template <typename T>
@@ -127,6 +129,8 @@ public:
   inline void
   write_current_and_advance(const value_type *v, uint8_t *old_v = nullptr)
   {
+    static event_counter evt_write_memmove(
+        util::cxx_typename<T>::value() + std::string("_write_memmove"));
     const uint8_t * const buf = reinterpret_cast<const uint8_t *>(v) +
       value_descriptor_type::cstruct_offsetof(n);
     const size_t newsz = value_descriptor_type::nbytes_fn(n)(buf);
@@ -136,6 +140,7 @@ public:
     const size_t oldsz = value_descriptor_type::skip_fn(n)(px_cur, old_buf);
     INVARIANT(oldsz <= value_descriptor_type::max_nbytes(n));
     if (unlikely(oldsz != newsz)) {
+      ++evt_write_memmove;
       compute_end();
       memmove(px_cur + newsz, px_cur + oldsz, px_end - px_cur - oldsz);
       if (oldsz > newsz)

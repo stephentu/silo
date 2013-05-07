@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <cxxabi.h>
 
 #include "macros.h"
 #include "xbuf.h"
@@ -484,6 +485,21 @@ struct Fields {
 #else
 #define GUARDED_FIELDS(args...) FIELDS(args)
 #endif
+
+template <typename T>
+struct cxx_typename {
+  static std::string
+  value()
+  {
+    int st;
+    char *name = abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &st);
+    if (unlikely(st))
+      return std::string(typeid(T).name()) + "<demangle failed>";
+    std::string ret(name);
+    free(name);
+    return ret;
+  }
+};
 
 } // namespace util
 
