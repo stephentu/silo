@@ -1376,7 +1376,7 @@ tpcc_worker::txn_delivery()
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-      const new_order::key k_no_0(warehouse_id, d, last_no_o_ids[d]);
+      const new_order::key k_no_0(warehouse_id, d, last_no_o_ids[d - 1]);
       const new_order::key k_no_1(warehouse_id, d, numeric_limits<int32_t>::max());
       new_order_scan_callback new_order_c;
       {
@@ -1387,7 +1387,7 @@ tpcc_worker::txn_delivery()
       const new_order::key *k_no = new_order_c.get_key();
       if (unlikely(!k_no))
         continue;
-      last_no_o_ids[d] = k_no->no_o_id + 1; // XXX: update last seen
+      last_no_o_ids[d - 1] = k_no->no_o_id + 1; // XXX: update last seen
 
       const oorder::key k_oo(warehouse_id, d, k_no->no_o_id);
       if (unlikely(!tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k_oo), obj_v))) {

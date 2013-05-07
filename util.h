@@ -478,7 +478,7 @@ struct Fields {
 #define FIELDS(args...) \
   ::util::Fields<::util::compute_fields_mask(args)>()
 
-#ifdef CHECK_INVARIANTS
+#ifdef DISABLE_FIELD_SELECTION
 #define GUARDED_FIELDS(args...) \
   ::util::Fields<::std::numeric_limits<uint64_t>::max()>()
 #else

@@ -203,8 +203,6 @@ Size(const T &t)
   &generic_serializer< serializer< tpe, true > >::skip,
 #define DESCRIPTOR_VALUE_FAILSAFE_SKIP_FN_X(tpe, name) \
   &generic_serializer< serializer< tpe, true > >::failsafe_skip,
-#define DESCRIPTOR_VALUE_NFIELDS_X(tpe, name) \
-  + 1
 #define DESCRIPTOR_VALUE_MAX_NBYTES_X(tpe, name) \
   serializer< tpe, true >::max_nbytes(),
 #define DESCRIPTOR_VALUE_OFFSETOF_X(tpe, name) \
@@ -369,6 +367,10 @@ Size(const T &t)
     { \
       return !operator==(other); \
     } \
+    enum { \
+      APPLY_X_AND_Y(keyfields, STRUCT_FIELDPOS_X) \
+      NFIELDS \
+    }; \
   } PACKED; \
   struct value { \
     inline value() {} \
@@ -388,6 +390,7 @@ Size(const T &t)
     } \
     enum { \
       APPLY_X_AND_Y(valuefields, STRUCT_FIELDPOS_X) \
+      NFIELDS \
     }; \
   } PACKED; \
   struct value_descriptor { \
@@ -442,7 +445,7 @@ Size(const T &t)
     static inline constexpr size_t \
     nfields() \
     { \
-      return 0 + APPLY_X_AND_Y(valuefields, DESCRIPTOR_VALUE_NFIELDS_X); \
+      return static_cast<size_t>(value::NFIELDS); \
     } \
     static inline size_t \
     max_nbytes(size_t i) \
@@ -528,7 +531,7 @@ Size(const T &t)
   { \
     size_t ret = 0; \
     size_t i = 0; \
-    if (likely(nfields == std::numeric_limits<size_t>::max())) \
+    if (likely(nfields >= name::key::NFIELDS)) \
       return std::numeric_limits<size_t>::max(); \
     APPLY_X_AND_Y(keyfields, SERIALIZE_MAX_NBYTES_PREFIX_KEY_FIELD_X) \
     return ret; \
@@ -584,7 +587,7 @@ Size(const T &t)
   { \
     size_t ret = 0; \
     size_t i = 0; \
-    if (likely(nfields == std::numeric_limits<size_t>::max())) \
+    if (likely(nfields >= name::value::NFIELDS)) \
       return std::numeric_limits<size_t>::max(); \
     APPLY_X_AND_Y(valuefields, SERIALIZE_MAX_NBYTES_PREFIX_VALUE_FIELD_X) \
     return ret; \

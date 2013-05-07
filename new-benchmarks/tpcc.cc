@@ -1344,7 +1344,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-      const new_order::key k_no_0(warehouse_id, d, last_no_o_ids[d]);
+      const new_order::key k_no_0(warehouse_id, d, last_no_o_ids[d - 1]);
       const new_order::key k_no_1(warehouse_id, d, numeric_limits<int32_t>::max());
       new_order_scan_callback<Database> new_order_c;
       {
@@ -1354,7 +1354,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
       }
 
       const new_order::key &k_no = new_order_c.get_key();
-      last_no_o_ids[d] = k_no.no_o_id + 1; // XXX: update last seen
+      last_no_o_ids[d - 1] = k_no.no_o_id + 1; // XXX: update last seen
 
       const oorder::key k_oo(warehouse_id, d, k_no.no_o_id);
       oorder::value v_oo;
@@ -1383,7 +1383,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
             order_line::value::ol_delivery_d_field));
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
-#ifdef CHECK_INVARIANTS
+#if defined(CHECK_INVARIANTS) && defined(DISABLE_FIELD_SELECTION)
         checker::SanityCheckOrderLine(&c.key(i), &c.value(i));
 #endif
         sum += c.value(i).ol_amount;
@@ -1759,10 +1759,17 @@ public:
   {
     INVARIANT(key.size() == sizeof(order_line::key));
     order_line::value v_ol;
-    typed_txn_btree_<schema<order_line>>::do_record_read(
-        (const uint8_t *) value.data(), value.size(), compute_fields_mask(0), &v_ol);
 
-#ifdef CHECK_INVARIANTS
+#ifdef DISABLE_FIELD_SELECTION
+    const uint64_t mask = numeric_limits<uint64_t>::max();
+#else
+    const uint64_t mask = compute_fields_mask(0);
+#endif
+
+    typed_txn_btree_<schema<order_line>>::do_record_read(
+        (const uint8_t *) value.data(), value.size(), mask, &v_ol);
+
+#if defined(CHECK_INVARIANTS) && defined(DISABLE_FIELD_SELECTION)
     order_line::key k_ol_temp;
     const order_line::key *k_ol = Decode(key, k_ol_temp);
     checker::SanityCheckOrderLine(k_ol, &v_ol);
@@ -1821,14 +1828,14 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
     const order_line::key k_ol_1(warehouse_id, districtID, v_d.d_next_o_id, 0);
     {
       // mask must be kept in sync w/ order_line_scan_callback
-#ifdef CHECK_INVARIANTS
-      const uint64_t nbytes = numeric_limits<uint64_t>::max();
+#ifdef DISABLE_FIELD_SELECTION
+      const size_t nfields = order_line::value::NFIELDS;
 #else
-      const uint64_t nbytes = encoder<order_line::value>().encode_max_nbytes_prefix(1);
+      const size_t nfields = 1;
 #endif
       ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
       tables.tbl_order_line(warehouse_id)->bytes_search_range_call(
-          txn, k_ol_0, &k_ol_1, c, nbytes);
+          txn, k_ol_0, &k_ol_1, c, nfields);
     }
     {
       small_unordered_map<uint, bool, 512> s_i_ids_distinct;
