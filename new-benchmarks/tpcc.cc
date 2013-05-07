@@ -164,16 +164,20 @@ struct checker {
     INVARIANT(k->c_w_id >= 1 && static_cast<size_t>(k->c_w_id) <= NumWarehouses());
     INVARIANT(k->c_d_id >= 1 && static_cast<size_t>(k->c_d_id) <= NumDistrictsPerWarehouse());
     INVARIANT(k->c_id >= 1 && static_cast<size_t>(k->c_id) <= NumCustomersPerDistrict());
+#ifdef DISABLE_FIELD_SELECTION
     INVARIANT(v->c_credit == "BC" || v->c_credit == "GC");
     INVARIANT(v->c_middle == "OE");
+#endif
   }
 
   static inline ALWAYS_INLINE void
   SanityCheckWarehouse(const warehouse::key *k, const warehouse::value *v)
   {
     INVARIANT(k->w_id >= 1 && static_cast<size_t>(k->w_id) <= NumWarehouses());
+#ifdef DISABLE_FIELD_SELECTION
     INVARIANT(v->w_state.size() == 2);
     INVARIANT(v->w_zip == "123456789");
+#endif
   }
 
   static inline ALWAYS_INLINE void
@@ -181,16 +185,20 @@ struct checker {
   {
     INVARIANT(k->d_w_id >= 1 && static_cast<size_t>(k->d_w_id) <= NumWarehouses());
     INVARIANT(k->d_id >= 1 && static_cast<size_t>(k->d_id) <= NumDistrictsPerWarehouse());
+#ifdef DISABLE_FIELD_SELECTION
     INVARIANT(v->d_next_o_id >= 3001);
     INVARIANT(v->d_state.size() == 2);
     INVARIANT(v->d_zip == "123456789");
+#endif
   }
 
   static inline ALWAYS_INLINE void
   SanityCheckItem(const item::key *k, const item::value *v)
   {
     INVARIANT(k->i_id >= 1 && static_cast<size_t>(k->i_id) <= NumItems());
+#ifdef DISABLE_FIELD_SELECTION
     INVARIANT(v->i_price >= 1.0 && v->i_price <= 100.0);
+#endif
   }
 
   static inline ALWAYS_INLINE void
@@ -212,9 +220,11 @@ struct checker {
   {
     INVARIANT(k->o_w_id >= 1 && static_cast<size_t>(k->o_w_id) <= NumWarehouses());
     INVARIANT(k->o_d_id >= 1 && static_cast<size_t>(k->o_d_id) <= NumDistrictsPerWarehouse());
+#ifdef DISABLE_FIELD_SELECTION
     INVARIANT(v->o_c_id >= 1 && static_cast<size_t>(v->o_c_id) <= NumCustomersPerDistrict());
     INVARIANT(v->o_carrier_id >= 0 && static_cast<size_t>(v->o_carrier_id) <= NumDistrictsPerWarehouse());
     INVARIANT(v->o_ol_cnt >= 5 && v->o_ol_cnt <= 15);
+#endif
   }
 
   static inline ALWAYS_INLINE void
@@ -223,7 +233,9 @@ struct checker {
     INVARIANT(k->ol_w_id >= 1 && static_cast<size_t>(k->ol_w_id) <= NumWarehouses());
     INVARIANT(k->ol_d_id >= 1 && static_cast<size_t>(k->ol_d_id) <= NumDistrictsPerWarehouse());
     INVARIANT(k->ol_number >= 1 && k->ol_number <= 15);
+#ifdef DISABLE_FIELD_SELECTION
     INVARIANT(v->ol_i_id >= 1 && static_cast<size_t>(v->ol_i_id) <= NumItems());
+#endif
   }
 };
 
