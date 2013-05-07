@@ -326,20 +326,6 @@ void base_txn_btree<Transaction, P>::do_tree_put(
                                // for now [since this would indicate a suboptimality]
   t.ensure_active();
 
-  //// change key to (stable) string
-  //typename P::KeyWriter key_writer(&k);
-  //const std::string * const key_str =
-  //  key_writer.fully_materialize(Traits::stable_input_memory, t.string_allocator());
-
-  //if (v && !Traits::stable_input_memory) {
-  //  const size_t sz = writer(
-  //      dbtuple::TUPLE_WRITER_COMPUTE_NEEDED, v, nullptr, 0);
-  //  std::string * const spx = t.string_allocator()();
-  //  spx->resize(sz);
-  //  writer(dbtuple::TUPLE_WRITER_DO_WRITE, v, (uint8_t *) spx->data(), 0);
-  //  v = (const typename P::Value *) spx->data();
-  //}
-
   if (unlikely(t.is_read_only())) {
     const transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
     t.abort_impl(r);
