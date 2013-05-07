@@ -1379,8 +1379,8 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
       tables.tbl_order_line(warehouse_id)->search_range_call(
           txn, k_oo_0, &k_oo_1, c, false,
           GUARDED_FIELDS(
-            order_line::value::ol_amount_float,
-            order_line::value::ol_delivery_d_float));
+            order_line::value::ol_amount_field,
+            order_line::value::ol_delivery_d_field));
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
 #ifdef CHECK_INVARIANTS
@@ -1389,7 +1389,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
         sum += c.value(i).ol_amount;
         c.value(i).ol_delivery_d = ts;
         tables.tbl_order_line(warehouse_id)->put(txn, c.key(i), c.value(i),
-            GUARDED_FIELDS(order_line::value::ol_delivery_d_float));
+            GUARDED_FIELDS(order_line::value::ol_delivery_d_field));
       }
 
       // delete new order
@@ -1495,7 +1495,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
     checker::SanityCheckDistrict(&k_d, &v_d);
 
     v_d.d_ytd += paymentAmount;
-    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d, GUARDED_FIELDS(distict::value::d_ytd_field));
+    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d, GUARDED_FIELDS(district::value::d_ytd_field));
 
     customer::key k_c;
     customer::value v_c;
@@ -1839,7 +1839,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
         INVARIANT(p.first >= 1 && p.first <= NumItems());
         {
           ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
-          ALWAYS_ASSERT(tables.tbl_stock(warehouse_id)->search(txn, k_s, v_s, GUARDED_FIELDS(stock::value::s_quantity)));
+          ALWAYS_ASSERT(tables.tbl_stock(warehouse_id)->search(txn, k_s, v_s, GUARDED_FIELDS(stock::value::s_quantity_field)));
         }
         if (v_s.s_quantity < int(threshold))
           s_i_ids_distinct[p.first] = 1;
