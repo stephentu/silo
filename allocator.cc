@@ -164,6 +164,7 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
       ALWAYS_ASSERT(false);
     }
     INVARIANT(x == mypx);
+    //if (madvise(x, hugepgsize, MADV_HUGEPAGE | MADV_WILLNEED)) {
     if (madvise(x, hugepgsize, MADV_HUGEPAGE)) {
       perror("madvise");
       ALWAYS_ASSERT(false);
@@ -240,6 +241,7 @@ allocator::FaultRegion(size_t cpu)
     ALWAYS_ASSERT(false);
   }
   INVARIANT(x == pc.region_begin);
+  //if (madvise(x, sz, MADV_HUGEPAGE | MADV_WILLNEED)) {
   if (madvise(x, sz, MADV_HUGEPAGE)) {
     perror("madvise");
     ALWAYS_ASSERT(false);
