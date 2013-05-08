@@ -1,6 +1,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <map>
+#include <iostream>
 
 #include "allocator.h"
 #include "spinlock.h"
@@ -243,7 +244,10 @@ allocator::FaultRegion(size_t cpu)
     perror("madvise");
     ALWAYS_ASSERT(false);
   }
-  NDB_MEMSET(pc.region_begin, 0, sz);
+  std::cerr << "cpu" << cpu << " starting faulting region" << std::endl;
+  for (char *px = (char *) pc.region_begin; px < (char *) pc.region_end; px += hugepgsize)
+    *px = 0;
+  std::cerr << "cpu" << cpu << " finished faulting region" << std::endl;
   pc.region_faulted = true;
 }
 
