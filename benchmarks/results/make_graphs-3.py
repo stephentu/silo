@@ -77,18 +77,18 @@ if __name__ == '__main__':
       return '%.1fK' % v
 
     descs = [
-      #{
-      #  'name' : 'scale',
-      #  'x-axis' : 'threads',
-      #  'x-axis-func' : lambda x: x,
-      #  'y-axis' : deal_with_pos0_res,
-      #  'lines' : ['db'], # each line holds this constant
-      #  'x-label' : 'threads',
-      #  'y-label' : 'throughput (txns/sec)',
-      #  'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
-      #  'x-axis-set-major-locator' : True,
-      #  #'title' : 'ycsb throughput graph',
-      #},
+      {
+        'name' : 'scale',
+        'x-axis' : 'threads',
+        'x-axis-func' : lambda x: x,
+        'y-axis' : deal_with_pos0_res,
+        'lines' : ['db'], # each line holds this constant
+        'x-label' : 'threads',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+        'x-axis-set-major-locator' : True,
+        #'title' : 'ycsb throughput graph',
+      },
       {
         'name' : 'scale_tpcc',
         'x-axis' : 'threads',
@@ -101,19 +101,19 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : True,
         #'title' : 'tpcc throughput graph',
       },
-      #{
-      #  'name' : 'multipart:pct',
-      #  'x-axis' : 'bench_opts',
-      #  'x-axis-func' : extract_pct,
-      #  'y-axis' : deal_with_pos0_res,
-      #  'lines' : ['db'], # each line holds this constant
-      #  'x-label' : '% cross-partition',
-      #  'y-label' : 'throughput (txns/sec)',
-      #  'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
-      #  'x-axis-set-major-locator' : False,
-      #  #'title' : 'tpcc new-order throughput graph',
-      #  'legend' : 'upper right',
-      #},
+      {
+        'name' : 'multipart:pct',
+        'x-axis' : 'bench_opts',
+        'x-axis-func' : extract_pct,
+        'y-axis' : deal_with_pos0_res,
+        'lines' : ['db'], # each line holds this constant
+        'x-label' : '% cross-partition',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+        'x-axis-set-major-locator' : False,
+        #'title' : 'tpcc new-order throughput graph',
+        'legend' : 'upper right',
+      },
       #{
       #  'name' : 'multipart:cpu',
       #  'x-axis-process' : multipart_cpu_process,
@@ -123,26 +123,26 @@ if __name__ == '__main__':
       #  'y-label' : 'txns/sec',
       #  'title' : 'tpcc full workload throughput graph',
       #},
-      #{
-      #  'name' : 'readonly',
-      #  'x-axis' : 'bench_opts',
-      #  'x-axis-func' : extract_p,
-      #  'y-axis' : deal_with_pos0_res,
-      #  'lines-func' : readonly_lines_func,
-      #  'x-label' : '% remote warehouse stock',
-      #  'y-label' : 'throughput (txns/sec)',
-      #  'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
-      #  'x-axis-set-major-locator' : True,
-      #  #'title' : 'tpcc read only throughput graph',
-      #  'legend' : 'right',
-      #},
+      {
+        'name' : 'readonly',
+        'x-axis' : 'bench_opts',
+        'x-axis-func' : extract_p,
+        'y-axis' : deal_with_pos0_res,
+        'lines-func' : readonly_lines_func,
+        'x-label' : '% remote warehouse stock',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : True,
+        #'title' : 'tpcc read only throughput graph',
+        'legend' : 'right',
+      },
     ]
 
     def label_transform(x):
       if x == 'kvdb':
         return 'Key-Value'
       if x == 'ndb-proto2':
-        return 'Maflingo'
+        return 'Malflingo'
       if x == 'kvdb-st':
         return 'Partitioned-Store'
       return x
