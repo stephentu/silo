@@ -53,7 +53,7 @@ rcu::rcu_mutex()
 rcu::sync *
 rcu::register_sync(pthread_t p)
 {
-  lock_guard<spinlock> l(rcu_mutex());
+  ::lock_guard<spinlock> l(rcu_mutex());
   map<pthread_t, sync *>::iterator it = sync_map.find(p);
   ALWAYS_ASSERT(it == sync_map.end());
   return (sync_map[p] = new sync(global_epoch));
@@ -62,7 +62,7 @@ rcu::register_sync(pthread_t p)
 rcu::sync *
 rcu::unregister_sync(pthread_t p)
 {
-  lock_guard<spinlock> l(rcu_mutex());
+  ::lock_guard<spinlock> l(rcu_mutex());
   map<pthread_t, sync *>::iterator it = sync_map.find(p);
   if (it == sync_map.end())
     return NULL;
@@ -157,7 +157,7 @@ void
 rcu::enable_slowpath()
 {
   {
-    lock_guard<spinlock> l(rcu_mutex());
+    ::lock_guard<spinlock> l(rcu_mutex());
     if (gc_thread_started)
       return;
     gc_thread_started = true;
@@ -323,7 +323,7 @@ public:
     for (;;) {
       // see if any elems to process
       {
-        lock_guard<spinlock> l(lock);
+        ::lock_guard<spinlock> l(lock);
         stack_queue.swap(queue);
       }
       if (stack_queue.empty()) {
@@ -352,7 +352,7 @@ public:
   {
     if (local_queue.empty())
       return;
-    lock_guard<spinlock> l0(lock);
+    ::lock_guard<spinlock> l0(lock);
     const size_t xfer = queue.accept_from(local_queue);
     evt_avg_rcu_delete_queue_len.offer(xfer);
     queue.transfer_freelist(local_queue, xfer); // push the memory back to the thread
@@ -396,7 +396,7 @@ rcu::gc_thread_loop(void *p)
     // now wait for each thread to finish any outstanding critical sections
     // from the previous epoch, and advance it forward to the global epoch
     {
-      lock_guard<spinlock> l(rcu_mutex()); // prevents new threads from joining
+      ::lock_guard<spinlock> l(rcu_mutex()); // prevents new threads from joining
 
       // force all threads to advance to new epoch
       for (map<pthread_t, sync *>::iterator it = sync_map.begin();
@@ -408,7 +408,7 @@ rcu::gc_thread_loop(void *p)
                   local_epoch == new_cleaning_epoch);
 #endif
         if (local_epoch != global_epoch) {
-          lock_guard<spinlock> l0(s->local_critical_mutex);
+          ::lock_guard<spinlock> l0(s->local_critical_mutex);
           if (s->local_epoch == global_epoch)
             continue;
           // reap
@@ -433,7 +433,7 @@ rcu::gc_thread_loop(void *p)
         INVARIANT(s->local_epoch == global_epoch);
         INVARIANT(new_cleaning_epoch != s->local_epoch);
 
-        lock_guard<spinlock> l0(s->local_critical_mutex);
+        ::lock_guard<spinlock> l0(s->local_critical_mutex);
         // need a lock here because a thread-local cleanup could
         // be happening concurrently
         px_queue &q = s->local_queues[new_cleaning_epoch % 2];

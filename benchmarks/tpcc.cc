@@ -66,14 +66,6 @@ NumCustomersPerDistrict()
   return 3000;
 }
 
-// helpers
-
-static size_t
-MaxCpuForPinning()
-{
-  return min(coreid::num_cpus_online(), nthreads);
-}
-
 // T must implement lock()/unlock(). Both must *not* throw exceptions
 template <typename T>
 class scoped_multilock {

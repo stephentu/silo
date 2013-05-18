@@ -67,7 +67,7 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
     return true;
 
   bool ret = false;
-  lock_guard<dbtuple> lock(tuple, false); // not for write (just for cleanup)
+  ::lock_guard<dbtuple> lock(tuple, false); // not for write (just for cleanup)
 
   if (!tuple->is_latest())
     // was replaced, so get it the next time around
@@ -149,7 +149,7 @@ transaction_proto2_static::epoch_loop::run()
     // wait for each core to finish epoch (g_current_epoch - 1)
     const size_t l_core_count = coreid::core_count();
     for (size_t i = 0; i < l_core_count; i++) {
-      lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
+      ::lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
     }
 
     COMPILER_MEMORY_FENCE;
@@ -165,7 +165,7 @@ transaction_proto2_static::epoch_loop::run()
     // threads will finish any oustanding consistent reads at
     // g_consistent_epoch - 1
     for (size_t i = 0; i < l_core_count; i++) {
-      lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
+      ::lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
     }
 
     // sync point 2: all consistent reads will be operating at

@@ -100,6 +100,20 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
   s_init = true;
 }
 
+void
+allocator::DumpStats()
+{
+  std::cerr << "[allocator] ncpus=" << g_ncpus << std::endl;
+  for (size_t i = 0; i < g_ncpus; i++) {
+    const bool f = g_regions[i]->region_faulted;
+    const size_t remaining =
+      intptr_t(g_regions[i]->region_end) -
+      intptr_t(g_regions[i]->region_begin);
+    std::cerr << "[allocator] cpu=" << i << " fully_faulted?=" << f
+              << " remaining=" << remaining << " bytes" << std::endl;
+  }
+}
+
 static void *
 initialize_page(void *page, const size_t pagesize, const size_t unit)
 {
@@ -125,30 +139,24 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
   INVARIANT(g_maxpercore);
   static const size_t hugepgsize = GetHugepageSize();
 
-  // check w/o locking first
   percore &pc = g_regions[cpu].elem;
+  pc.lock.lock();
   if (pc.arenas[arena]) {
-    lock_guard<spinlock> l(pc.lock);
-    if (pc.arenas[arena]) {
-      // claim
-      void *ret = pc.arenas[arena];
-      pc.arenas[arena] = nullptr;
-      return ret;
-    }
+    // claim
+    void *ret = pc.arenas[arena];
+    pc.arenas[arena] = nullptr;
+    pc.lock.unlock();
+    return ret;
   }
 
   // out of memory?
   ALWAYS_ASSERT(pc.region_begin < pc.region_end);
 
   // do allocation in region
-  void *mypx = nullptr;
-  bool needs_mmap = false;
-  {
-    lock_guard<spinlock> l(pc.lock);
-    mypx = pc.region_begin;
-    pc.region_begin = reinterpret_cast<char *>(pc.region_begin) + hugepgsize;
-    needs_mmap = !pc.region_faulted;
-  }
+  void * const mypx = pc.region_begin;
+  const bool needs_mmap = !pc.region_faulted;
+  pc.region_begin = reinterpret_cast<char *>(pc.region_begin) + hugepgsize;
+  pc.lock.unlock();
 
   // out of memory?
   ALWAYS_ASSERT(mypx < pc.region_end);
@@ -221,11 +229,13 @@ void
 allocator::FaultRegion(size_t cpu)
 {
   static const size_t hugepgsize = GetHugepageSize();
+  //static const size_t pgsize = GetPageSize();
   INVARIANT(cpu < g_ncpus);
   percore &pc = g_regions[cpu].elem;
   if (pc.region_faulted)
     return;
-  lock_guard<spinlock> l(pc.lock);
+  lock_guard<std::mutex> l1(pc.fault_lock);
+  lock_guard<spinlock> l(pc.lock); // exclude other users of the allocator
   if (pc.region_faulted)
     return;
   // mmap the entire region + memset it for faulting
@@ -241,12 +251,16 @@ allocator::FaultRegion(size_t cpu)
     ALWAYS_ASSERT(false);
   }
   INVARIANT(x == pc.region_begin);
-  //if (madvise(x, sz, MADV_HUGEPAGE | MADV_WILLNEED)) {
-  if (madvise(x, sz, MADV_HUGEPAGE)) {
+  static const bool s_use_madv_willneed = getenv("USE_MADV_WILLNEED");
+  const int advice =
+    s_use_madv_willneed ? (MADV_HUGEPAGE | MADV_WILLNEED) : MADV_HUGEPAGE;
+  if (madvise(x, sz, advice)) {
     perror("madvise");
     ALWAYS_ASSERT(false);
   }
-  std::cerr << "cpu" << cpu << " starting faulting region" << std::endl;
+  std::cerr << "cpu" << cpu << " starting faulting region ("
+            << intptr_t(pc.region_end) - intptr_t(pc.region_begin) << " bytes)"
+            << std::endl;
   for (char *px = (char *) pc.region_begin; px < (char *) pc.region_end; px += hugepgsize)
     *px = 0;
   std::cerr << "cpu" << cpu << " finished faulting region" << std::endl;

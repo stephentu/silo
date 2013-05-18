@@ -38,6 +38,12 @@ extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
 
+static inline size_t
+MaxCpuForPinning()
+{
+  return std::min(coreid::num_cpus_online(), nthreads);
+}
+
 class scoped_db_thread_ctx : private util::noncopyable {
 public:
   scoped_db_thread_ctx(abstract_db *db)

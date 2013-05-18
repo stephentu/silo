@@ -14,6 +14,7 @@
 
 #include "../counter.h"
 #include "../scopedperf.hh"
+#include "../allocator.h"
 
 #ifdef USE_JEMALLOC
 //cannot include this header b/c conflicts with malloc.h
@@ -265,6 +266,8 @@ bench_runner::run()
       cerr << it->first << ": " << it->second << endl;
     cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
     PERF_EXPR(scopedperf::perfsum_base::printall());
+    cerr << "--- allocator stats ---" << endl;
+    ::allocator::DumpStats();
     cerr << "---------------------------------------" << endl;
 
 #ifdef USE_JEMALLOC

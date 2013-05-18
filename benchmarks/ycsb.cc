@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <numa.h>
 
 #include "../macros.h"
 #include "../varkey.h"
@@ -184,6 +185,14 @@ public:
 
 protected:
 
+  virtual void
+  on_run_setup() OVERRIDE
+  {
+    if (!pin_cpus)
+      return;
+    rcu::pin_current_thread(worker_id % MaxCpuForPinning());
+  }
+
   inline ALWAYS_INLINE string &
   str() {
     return *arena.next();
@@ -219,6 +228,7 @@ protected:
       ALWAYS_ASSERT(batchsize > 0);
       const size_t nbatches = nkeys / batchsize;
       if (nbatches == 0) {
+        scoped_str_arena s_arena(arena);
         void *txn = db->new_txn(txn_flags, arena, txn_buf());
         for (size_t j = 0; j < nkeys; j++) {
           string k = u64_varkey(j).str();
@@ -230,6 +240,7 @@ protected:
         ALWAYS_ASSERT(db->commit_txn(txn));
       } else {
         for (size_t i = 0; i < nbatches; i++) {
+          scoped_str_arena s_arena(arena);
           const size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
           void *txn = db->new_txn(txn_flags, arena, txn_buf());
           for (size_t j = i * batchsize; j < keyend; j++) {
@@ -256,10 +267,11 @@ public:
   ycsb_parallel_usertable_loader(unsigned long seed,
                                  abstract_db *db,
                                  const map<string, abstract_ordered_index *> &open_tables,
+                                 unsigned int id,
                                  uint64_t keystart,
                                  uint64_t keyend)
     : bench_loader(seed, db, open_tables),
-      keystart(keystart), keyend(keyend)
+      id(id), keystart(keystart), keyend(keyend)
   {
     INVARIANT(keyend > keystart);
   }
@@ -268,6 +280,13 @@ protected:
   virtual void
   load()
   {
+    if (pin_cpus) {
+      rcu::pin_current_thread(id % MaxCpuForPinning());
+      rcu::fault_region();
+      ALWAYS_ASSERT(!numa_run_on_node(-1)); // XXX: HACK
+      ALWAYS_ASSERT(!sched_yield());
+    }
+
     abstract_ordered_index *tbl = open_tables.at("USERTABLE");
     const size_t batchsize = (db->txn_max_batch_size() == -1) ?
       10000 : db->txn_max_batch_size();
@@ -276,6 +295,7 @@ protected:
     ALWAYS_ASSERT(nkeys > 0);
     const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
     for (size_t batchid = 0; batchid < nbatches;) {
+      scoped_str_arena s_arena(arena);
       void * const txn = db->new_txn(txn_flags, arena, txn_buf());
       try {
         const size_t rend = (batchid + 1 == nbatches) ?
@@ -300,9 +320,9 @@ protected:
   }
 
 private:
+  unsigned int id;
   uint64_t keystart;
   uint64_t keyend;
-
 };
 
 
@@ -321,9 +341,11 @@ protected:
     vector<bench_loader *> ret;
     const unsigned long ncpus = coreid::num_cpus_online();
     if (enable_parallel_loading && nkeys >= ncpus) {
+      if (verbose)
+        cerr << "[INFO] parallel loading with ncpus=" << ncpus << endl;
       const size_t nkeysperthd = nkeys / ncpus;
       for (size_t i = 0; i < ncpus; i++)
-        ret.push_back(new ycsb_parallel_usertable_loader(0, db, open_tables, i * nkeysperthd, min((i + 1) * nkeysperthd, nkeys)));
+        ret.push_back(new ycsb_parallel_usertable_loader(0, db, open_tables, i, i * nkeysperthd, min((i + 1) * nkeysperthd, nkeys)));
     } else {
       ret.push_back(new ycsb_usertable_loader(0, db, open_tables));
     }

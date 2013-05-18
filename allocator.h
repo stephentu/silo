@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <iterator>
+#include <mutex>
 
 #include "util.h"
 #include "macros.h"
@@ -17,6 +18,8 @@ public:
   //
   // w/o calling Initialize(), behavior for this class is undefined
   static void Initialize(size_t ncpus, size_t maxpercore);
+
+  static void DumpStats();
 
   // returns an arena linked-list
   static void *
@@ -91,6 +94,7 @@ private:
     bool region_faulted;
 
     spinlock lock;
+    std::mutex fault_lock; // XXX: hacky
     void *arenas[MAX_ARENAS];
   };
   static util::aligned_padded_elem<percore> g_regions[NMAXCORES];

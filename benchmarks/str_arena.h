@@ -2,6 +2,7 @@
 #define _STR_ARENA_H_
 
 #include <string>
+#include <memory>
 #include "../small_vector.h"
 
 // XXX: str arena hardcoded now to handle at most 1024 strings
@@ -27,6 +28,7 @@ public:
   reset()
   {
     n = 0;
+    overflow.clear();
   }
 
   // next() is guaranteed to return an empty string
@@ -43,7 +45,7 @@ public:
     // str_arena for loaders/workers
     overflow.emplace_back(new std::string);
     ++n;
-    return overflow.back();
+    return overflow.back().get();
   }
 
   inline std::string *
@@ -81,12 +83,15 @@ private:
   bool
   manages_overflow(const std::string *px) const
   {
-    return std::find(overflow.begin(), overflow.end(), px) != overflow.end();
+    for (auto &p : overflow)
+      if (p.get() == px)
+        return true;
+    return false;
   }
 
 private:
   std::string strs[NStrs];
-  std::vector<std::string *> overflow;
+  std::vector<std::unique_ptr<std::string>> overflow;
   size_t n;
 };
 
