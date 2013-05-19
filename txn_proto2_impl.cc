@@ -450,6 +450,7 @@ volatile uint64_t transaction_proto2_static::g_consistent_epoch = 1;
 volatile uint64_t transaction_proto2_static::g_reads_finished_epoch = 0;
 
 aligned_padded_elem<spinlock> transaction_proto2_static::g_epoch_spinlocks[NMaxCores];
+aligned_padded_elem<transaction_proto2_static::hackstruct> transaction_proto2_static::g_hack;
 
 // put at bottom
 bool transaction_proto2_static::_init_epoch_scheme_flag = InitEpochScheme();

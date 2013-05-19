@@ -153,6 +153,12 @@ public:
     return try_dbtuple_cleanup(ctx.btr, ctx.key, ctx.ln);
   }
 
+  static inline void
+  set_hack_status(bool hack_status)
+  {
+    g_hack->status = hack_status;
+  }
+
 protected:
 
   // XXX(stephentu): think about if the vars below really need to be volatile
@@ -175,6 +181,15 @@ protected:
   // for synchronizing with the epoch incrementor loop
   static util::aligned_padded_elem<spinlock>
     g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
+
+  struct hackstruct {
+    bool status;
+    volatile uint64_t global_tid;
+    constexpr hackstruct() : status(false), global_tid(0) {}
+  };
+
+  static util::aligned_padded_elem<hackstruct>
+    g_hack CACHE_ALIGNED;
 };
 
 // protocol 2 - no global consistent TIDs
@@ -285,6 +300,10 @@ public:
 
     // XXX(stephentu): wrap-around messes this up
     INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);
+
+    if (g_hack->status) {
+      __sync_add_and_fetch(&g_hack->global_tid, 1);
+    }
 
     tid_t ret = l_last_commit_tid;
 
