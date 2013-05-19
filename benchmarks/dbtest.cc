@@ -184,10 +184,12 @@ main(int argc, char **argv)
     db = new bdb_wrapper("db", bench_type + ".db");
   } else if (db_type == "ndb-proto1") {
     // XXX: hacky simulation of proto1
-    transaction_proto2_static::set_hack_status(true);
     db = new ndb_wrapper<transaction_proto2>;
+    transaction_proto2_static::set_hack_status(true);
+    ALWAYS_ASSERT(transaction_proto2_static::get_hack_status());
   } else if (db_type == "ndb-proto2") {
     db = new ndb_wrapper<transaction_proto2>;
+    ALWAYS_ASSERT(!transaction_proto2_static::get_hack_status());
   } else if (db_type == "kvdb") {
     db = new kvdb_wrapper<true>;
   } else if (db_type == "kvdb-st") {

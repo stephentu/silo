@@ -159,6 +159,12 @@ public:
     g_hack->status = hack_status;
   }
 
+  static inline bool
+  get_hack_status()
+  {
+    return g_hack->status;
+  }
+
 protected:
 
   // XXX(stephentu): think about if the vars below really need to be volatile
