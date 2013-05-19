@@ -141,6 +141,8 @@ if __name__ == '__main__':
     def label_transform(x):
       if x == 'kvdb':
         return 'Key-Value'
+      if x == 'ndb-proto1':
+        return 'Malflingo-Star'
       if x == 'ndb-proto2':
         return 'Malflingo'
       if x == 'kvdb-st':
