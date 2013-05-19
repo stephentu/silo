@@ -8,7 +8,8 @@ import sys
 #DBS = ('mysql', 'bdb', 'ndb-proto1', 'ndb-proto2')
 #DBS = ('ndb-proto1', 'ndb-proto2')
 #DBS = ('ndb-proto2', 'kvdb')
-DBS = ('kvdb', 'ndb-proto2')
+#DBS = ('kvdb', 'ndb-proto2')
+DBS = ('ndb-proto1',)
 
 # config for tom
 #THREADS = (1, 2, 4, 8, 12, 18, 24, 30, 36, 42, 48)
@@ -32,6 +33,11 @@ NTRIALS = 3
 
 ### NOTE: for TPC-C, in general, allocate 4GB of memory per thread for the experiments.
 ### this is over-conservative
+
+KNOB_ENABLE_YCSB_SCALE=True
+KNOB_ENABLE_TPCC_SCALE=True
+KNOB_ENABLE_TPCC_MULTIPART=False
+KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
 grids = []
 
@@ -86,8 +92,10 @@ def mk_ycsb_entries(nthds):
       'numa_memory' : ['%dG' % int(100 + 1.4*nthds)],
     },
   ]
-for nthds in THREADS:
-  grids += mk_ycsb_entries(nthds)
+
+if KNOB_ENABLE_YCSB_SCALE:
+  for nthds in THREADS:
+    grids += mk_ycsb_entries(nthds)
 
 # exp 2:
 def mk_grid(name, bench, nthds):
@@ -102,37 +110,39 @@ def mk_grid(name, bench, nthds):
     'retry' : [False],
     'numa_memory' : ['%dG' % (4 * 28)],
   }
-grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+if KNOB_ENABLE_TPCC_SCALE:
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 # exp 3:
 #   x-axis varies the % multi-partition for new order. hold scale_factor constant @ 28,
 #   nthreads also constant at 28
-D_RANGE = range(0, 11)
-grids += [
-  {
-    'name' : 'multipart:pct',
-    'dbs' : ['ndb-proto2'],
-    'threads' : [28],
-    'scale_factors': [28],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
-    'par_load' : [False],
-    'retry' : [False],
-    'numa_memory' : ['%dG' % (4 * 28)],
-  },
-  {
-    'name' : 'multipart:pct',
-    'dbs' : ['kvdb-st'],
-    'threads' : [28],
-    'scale_factors': [28],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' :
-      ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
-    'par_load' : [True],
-    'retry' : [False],
-    'numa_memory' : ['%dG' % (4 * 28)],
-  },
-]
+if KNOB_ENABLE_TPCC_MULTIPART:
+  D_RANGE = range(0, 11)
+  grids += [
+    {
+      'name' : 'multipart:pct',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
+      'par_load' : [False],
+      'retry' : [False],
+      'numa_memory' : ['%dG' % (4 * 28)],
+    },
+    {
+      'name' : 'multipart:pct',
+      'dbs' : ['kvdb-st'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' :
+        ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
+      'par_load' : [True],
+      'retry' : [False],
+      'numa_memory' : ['%dG' % (4 * 28)],
+    },
+  ]
 
 # exp 4:
 #  * standard workload mix
@@ -166,31 +176,32 @@ grids += [
 #  * 50% new order, 50% stock level
 #  * scale factor 8, n-threads 16
 #  * x-axis is --new-order-remote-item-pct from [0, 20, 40, 60, 80, 100]
-RO_DRANGE = [0, 20, 40, 60, 80, 100]
-grids += [
-  {
-    'name' : 'readonly',
-    'dbs' : ['ndb-proto2'],
-    'threads' : [16],
-    'scale_factors': [8],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' : ['--workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
-    'par_load' : [False],
-    'retry' : [True],
-    'numa_memory' : ['%dG' % (4 * 16)],
-  },
-  {
-    'name' : 'readonly',
-    'dbs' : ['ndb-proto2'],
-    'threads' : [16],
-    'scale_factors': [8],
-    'benchmarks' : ['tpcc'],
-    'bench_opts' : ['--disable-read-only-snapshots --workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
-    'par_load' : [False],
-    'retry' : [True],
-    'numa_memory' : ['%dG' % (4 * 16)],
-  },
-]
+if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
+  RO_DRANGE = [0, 20, 40, 60, 80, 100]
+  grids += [
+    {
+      'name' : 'readonly',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [16],
+      'scale_factors': [8],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
+      'par_load' : [False],
+      'retry' : [True],
+      'numa_memory' : ['%dG' % (4 * 16)],
+    },
+    {
+      'name' : 'readonly',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [16],
+      'scale_factors': [8],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--disable-read-only-snapshots --workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
+      'par_load' : [False],
+      'retry' : [True],
+      'numa_memory' : ['%dG' % (4 * 16)],
+    },
+  ]
 
 def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts, par_load, retry_aborted_txn, numa_memory):
   args = [
