@@ -158,6 +158,9 @@ new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
 test: test.o $(OBJFILES)
 	$(CXX) -o test $^ $(LDFLAGS)
 
+persist_test: persist_test.o
+	$(CXX) -o persist_test $^ $(LDFLAGS)
+
 .PHONY: dbtest
 dbtest: benchmarks/dbtest
 
@@ -178,6 +181,6 @@ new-benchmarks/dbtest: new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES)
 
 .PHONY: clean
 clean:
-	rm -f *.o test benchmarks/*.o benchmarks/dbtest \
+	rm -f *.o test persist_test benchmarks/*.o benchmarks/dbtest \
 		benchmarks/masstree/*.o benchmarks/masstree/kvtest \
 		new-benchmarks/*.o new-benchmarks/dbtest
