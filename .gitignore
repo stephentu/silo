@@ -4,6 +4,7 @@
 core
 tags
 test
+persist_test
 benchmarks/dbtest
 benchmarks/masstree/kvtest
 new-benchmarks/dbtest
