@@ -99,6 +99,7 @@ public:
   inline void
   enq(Tp *p)
   {
+    assert(p);
     assert(!buf_[head_]);
     buf_[postincr(head_)] = p;
   }
@@ -109,7 +110,9 @@ public:
   {
     while (!buf_[tail_])
       nop_pause();
-    return buf_[postincr(tail_)];
+    Tp *ret = buf_[tail_];
+    buf_[postincr(tail_)] = nullptr;
+    return ret;
   }
 
   inline Tp *
@@ -206,7 +209,10 @@ simulateworker(unsigned int id)
 
     const uint64_t tidmax = vecmax(readset);
     const uint64_t tidcommit =
-      tidhelpers::MakeTid(id, tidhelpers::NumId(tidmax) + 1, tidhelpers::EpochId(tidmax));
+      tidhelpers::MakeTid(
+          id,
+          tidhelpers::NumId(tidmax) + 1,
+          tidhelpers::EpochId(tidmax));
 
     // compute how much space we need for this entry
     size_t space_needed = 0;
@@ -263,6 +269,7 @@ simulateworker(unsigned int id)
     }
 
     curbuf->curoff_ += space_needed;
+    ((logbuf_header *) curbuf->buf_.data())->nentries++;
   }
 }
 
@@ -355,7 +362,7 @@ logger(int fd)
         uint64_t committid;
         bool allsat = true;
 
-        while (allsat) {
+        while (px->remaining_ && allsat) {
           allsat = true;
           const uint8_t *nextp =
             read_log_entry(p, committid, [&allsat](uint64_t readdep) {
@@ -371,16 +378,20 @@ logger(int fd)
             g_persistence_vc[i] = committid;
             changed = true;
             p = nextp;
-          } else {
+            px->remaining_--;
             px->curoff_ = intptr_t(p) - intptr_t(px->buf_.data());
+          } else {
             // done, no further entries will be satisfied
           }
         }
 
         if (allsat) {
+          assert(px->remaining_ == 0);
           // finished entire buffer
           g_persist_buffers[i].deq();
           g_all_buffers[i].enq(px);
+        } else {
+          assert(px->remaining_ > 0);
         }
       }
     }
@@ -390,6 +401,22 @@ logger(int fd)
 int
 main(int argc, char **argv)
 {
+  {
+    // test circbuf
+    int values[] = {0, 1, 2, 3, 4};
+    circbuf<int, ARRAY_NELEMS(values)> b;
+    assert(b.empty());
+    for (size_t i = 0; i < ARRAY_NELEMS(values); i++)
+      b.enq(&values[i]);
+    for (size_t i = 0; i < ARRAY_NELEMS(values); i++) {
+      assert(!b.empty());
+      assert(b.peek() == &values[i]);
+      assert(*b.peek() == values[i]);
+      assert(b.deq() == &values[i]);
+    }
+    assert(b.empty());
+  }
+
   g_database.resize(g_nrecords); // all start at TID=0
 
   for (size_t i = 0; i < NMAXCORES; i++) {
