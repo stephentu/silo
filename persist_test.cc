@@ -93,7 +93,9 @@ public:
   inline bool
   empty() const
   {
-    return head_ == tail_ && !buf_[head_];
+    return head_.load(memory_order_acquire) ==
+           tail_.load(memory_order_acquire) &&
+           !buf_[head_.load(memory_order_acquire)].load(memory_order_acquire);
   }
 
 
@@ -102,39 +104,40 @@ public:
   enq(Tp *p)
   {
     assert(p);
-    assert(!buf_[head_]);
-    buf_[postincr(head_)] = p;
+    assert(!buf_[head_.load(memory_order_acquire)].load(memory_order_acquire));
+    buf_[postincr(head_)].store(p, memory_order_release);
   }
 
   // blocks until something deqs()
   inline Tp *
   deq()
   {
-    while (!buf_[tail_])
+    while (!buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire))
       nop_pause();
-    Tp *ret = buf_[tail_];
-    buf_[postincr(tail_)] = nullptr;
+    Tp *ret = buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire);
+    buf_[postincr(tail_)].store(nullptr, memory_order_release);
+    assert(ret);
     return ret;
   }
 
   inline Tp *
   peek()
   {
-    return buf_[tail_];
+    return buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire);
   }
 
 private:
   static inline unsigned
-  postincr(unsigned &i)
+  postincr(atomic<unsigned> &i)
   {
-    const unsigned ret = i;
-    i = (i + 1) % Capacity;
+    const unsigned ret = i.load(memory_order_acquire);
+    i.store((ret + 1) % Capacity, memory_order_release);
     return ret;
   }
 
-  Tp *buf_[Capacity];
-  unsigned head_;
-  unsigned tail_;
+  atomic<Tp *> buf_[Capacity];
+  atomic<unsigned> head_;
+  atomic<unsigned> tail_;
 };
 
 /** simulate global database state and workload*/
@@ -217,6 +220,9 @@ simulateworker(unsigned int id)
     const uint64_t tidcommit = tidhelpers::MakeTid(id, idmax + 1, 0);
     lasttid = tidcommit;
 
+    for (size_t j = 0; j < g_writeset; j++)
+      g_database[dist(prng)] = lasttid;
+
     // compute how much space we need for this entry
     size_t space_needed = 0;
 
@@ -246,6 +252,8 @@ simulateworker(unsigned int id)
     }
 
     if (g_buffer_size - curbuf->curoff_ < space_needed) {
+      //cerr << "pushing to logger" << endl;
+
       // push to logger
       g_persist_buffers[id].enq(curbuf);
 
@@ -274,6 +282,9 @@ simulateworker(unsigned int id)
     curbuf->curoff_ += space_needed;
     ((logbuf_header *) curbuf->buf_.data())->nentries++;
   }
+
+  if (curbuf)
+    g_persist_buffers[id].enq(curbuf);
 }
 
 template <typename OnReadRecord>
@@ -339,17 +350,24 @@ logger(int fd)
       }
     }
 
+    if (!nwritten) {
+      nop_pause();
+      continue;
+    }
+
     ssize_t ret = writev(fd, &iov[0], nwritten);
     if (ret == -1) {
       perror("writev");
       exit(1);
     }
 
+    //cerr << "fsync begin" << endl;
     int fret = fdatasync(fd);
     if (fret == -1) {
       perror("fdatasync");
       exit(1);
     }
+    //cerr << "...fsync done" << endl;
 
     bool changed = true;
     while (changed) {
@@ -393,7 +411,9 @@ logger(int fd)
         if (allsat) {
           assert(px->remaining_ == 0);
           // finished entire buffer
-          g_persist_buffers[i].deq();
+          struct pbuffer *pxcheck = g_persist_buffers[i].deq();
+          if (pxcheck != px)
+            assert(false);
           g_all_buffers[i].enq(px);
         } else {
           assert(px->remaining_ > 0);
