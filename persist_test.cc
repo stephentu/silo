@@ -66,16 +66,16 @@ struct tidhelpers {
     static_assert((NumIdMask & EpochMask) == 0, "xx");
     return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
   }
-};
 
-template <typename T>
-static T vecmax(const vector<T> &v)
-{
-  T ret = v.front();
-  for (size_t i = 1; i < v.size(); i++)
-    ret = max(ret, v[i]);
-  return ret;
-}
+  static uint64_t
+  vecidmax(uint64_t coremax, const vector<uint64_t> &v)
+  {
+    uint64_t ret = NumId(coremax);
+    for (size_t i = 0; i < v.size(); i++)
+      ret = max(ret, NumId(v[i]));
+    return ret;
+  }
+};
 
 // only one concurrent reader + writer allowed
 
@@ -203,16 +203,15 @@ simulateworker(unsigned int id)
 
   struct pbuffer *curbuf = nullptr;
 
+  uint64_t lasttid = 0;
+
   for (size_t i = 0; i < g_ntxns_worker; i++) {
     for (size_t j = 0; j < g_readset; j++)
       readset[j] = g_database[dist(prng)];
 
-    const uint64_t tidmax = vecmax(readset);
-    const uint64_t tidcommit =
-      tidhelpers::MakeTid(
-          id,
-          tidhelpers::NumId(tidmax) + 1,
-          tidhelpers::EpochId(tidmax));
+    const uint64_t idmax = tidhelpers::vecidmax(lasttid, readset);
+    const uint64_t tidcommit = tidhelpers::MakeTid(id, idmax + 1, 0);
+    lasttid = tidcommit;
 
     // compute how much space we need for this entry
     size_t space_needed = 0;
@@ -373,6 +372,7 @@ logger(int fd)
                 allsat = false;
             });
           if (allsat) {
+            //cerr << "committid=" << committid << endl;
             assert(tidhelpers::CoreId(committid) == i);
             assert(g_persistence_vc[i] < committid);
             g_persistence_vc[i] = committid;
@@ -435,7 +435,7 @@ main(int argc, char **argv)
   thread logger_thread(logger, fd);
   logger_thread.detach();
 
-  const unsigned nworkers = 4;
+  const unsigned nworkers = 1;
   vector<thread> workers;
   for (size_t i = 0; i < nworkers; i++)
     workers.emplace_back(simulateworker, i);
