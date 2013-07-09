@@ -399,7 +399,7 @@ main(int argc, char **argv)
     }
   }
 
-  int fd = open("data.log", O_CREAT);
+  int fd = open("data.log", O_CREAT|O_WRONLY|O_TRUNC, 0664);
   if (fd == -1) {
     perror("open");
     return 1;
