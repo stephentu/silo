@@ -16,10 +16,12 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <libaio.h>
+#include <getopt.h>
 
 #include "macros.h"
 #include "amd64.h"
 #include "record/serializer.h"
+#include "util.h"
 
 using namespace std;
 
@@ -139,6 +141,8 @@ private:
 
 static vector<uint64_t> g_database;
 
+static size_t g_ntxns_committed = 0;
+
 static const size_t g_nrecords = 1000000;
 
 static const size_t g_readset = 30;
@@ -153,7 +157,7 @@ static const size_t g_perthread_buffers = 4; // 4 outstanding buffers
 // persistent. note that the prefix of the DB which is totally persistent is
 // simply the max of this table.
 
-static const size_t g_ntxns_worker = 10000;
+static const size_t g_ntxns_worker = 100000;
 static const size_t g_buffer_size = (1<<14); // in bytes
 
 struct pbuffer {
@@ -380,6 +384,7 @@ logger(int fd)
             p = nextp;
             px->remaining_--;
             px->curoff_ = intptr_t(p) - intptr_t(px->buf_.data());
+            g_ntxns_committed++;
           } else {
             // done, no further entries will be satisfied
           }
@@ -401,6 +406,40 @@ logger(int fd)
 int
 main(int argc, char **argv)
 {
+  unsigned nworkers = 1;
+
+  while (1) {
+    static struct option long_options[] =
+    {
+      {"num-threads" , required_argument , 0 , 't'} ,
+      {0, 0, 0, 0}
+    };
+    int option_index = 0;
+    int c = getopt_long(argc, argv, "t:", long_options, &option_index);
+    if (c == -1)
+      break;
+
+    switch (c) {
+    case 0:
+      if (long_options[option_index].flag != 0)
+        break;
+      abort();
+      break;
+
+    case 't':
+      nworkers = strtoul(optarg, nullptr, 10);
+      break;
+
+    case '?':
+      /* getopt_long already printed an error message. */
+      exit(1);
+
+    default:
+      abort();
+    }
+  }
+  assert(nworkers >= 1);
+
   {
     // test circbuf
     int values[] = {0, 1, 2, 3, 4};
@@ -435,12 +474,16 @@ main(int argc, char **argv)
   thread logger_thread(logger, fd);
   logger_thread.detach();
 
-  const unsigned nworkers = 1;
+
   vector<thread> workers;
+  util::timer tt;
   for (size_t i = 0; i < nworkers; i++)
     workers.emplace_back(simulateworker, i);
-
   for (auto &p: workers)
     p.join();
+  const double xsec = tt.lap_ms() / 1000.0;
+  const double rate = double(g_ntxns_committed) / xsec;
+  cout << rate << endl;
+
   return 0;
 }
