@@ -206,7 +206,7 @@ timespec_subtract(const struct timespec *x,
 static vector<uint64_t> g_database;
 static size_t g_ntxns_committed = 0;
 static const size_t g_nrecords = 1000000;
-static const size_t g_ntxns_worker = 100000;
+static const size_t g_ntxns_worker = 1000000;
 
 static size_t g_readset = 30;
 static size_t g_writeset = 16;
@@ -761,6 +761,13 @@ main(int argc, char **argv)
   assert(g_writeset > 0);
   assert(g_keysize > 0);
   assert(g_valuesize >= 0);
+
+  cerr << "{nworkers=" << nworkers
+       << ", readset=" << g_readset
+       << ", writeset=" << g_writeset
+       << ", keysize=" << g_keysize
+       << ", valuesize=" << g_valuesize
+       << "}" << endl;
 
   if (strategy != "deptracking" &&
       strategy != "epoch")
