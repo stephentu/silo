@@ -8,7 +8,7 @@ else
         CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 endif
 
-LDFLAGS := -lpthread -lnuma
+LDFLAGS := -lpthread -lnuma -lrt
 
 # 0 = libc malloc
 # 1 = jemalloc

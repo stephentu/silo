@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <random>
 #include <vector>
+#include <set>
 #include <atomic>
 #include <thread>
 
@@ -17,6 +18,7 @@
 #include <fcntl.h>
 #include <libaio.h>
 #include <getopt.h>
+#include <time.h>
 
 #include "macros.h"
 #include "amd64.h"
@@ -126,7 +128,33 @@ public:
     return buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire);
   }
 
+  // takes a current snapshot of all entries in the queue
+  inline void
+  peekall(vector<Tp *> &ps)
+  {
+    ps.clear();
+    const unsigned t = tail_.load(memory_order_acquire);
+    unsigned i = t;
+    Tp *p;
+    while ((p = buf_[i].load(memory_order_acquire))) {
+      ps.push_back(p);
+      postincr(i);
+      if (i == t)
+        // have fully wrapped around
+        break;
+    }
+  }
+
 private:
+
+  static inline unsigned
+  postincr(unsigned &i)
+  {
+    const unsigned ret = i;
+    i = (i + 1) % Capacity;
+    return ret;
+  }
+
   static inline unsigned
   postincr(atomic<unsigned> &i)
   {
@@ -146,6 +174,31 @@ fillstring(std::string &s, size_t t)
   s.clear();
   for (size_t i = 0; i < t; i++)
     s[i] = (char) i;
+}
+
+// thanks austin
+static void
+timespec_subtract(const struct timespec *x,
+                  const struct timespec *y,
+                  struct timespec *out)
+{
+  // Perform the carry for the later subtraction by updating y.
+  struct timespec y2 = *y;
+  if (x->tv_nsec < y2.tv_nsec) {
+    int sec = (y2.tv_nsec - x->tv_nsec) / 1e9 + 1;
+    y2.tv_nsec -= 1e9 * sec;
+    y2.tv_sec += sec;
+  }
+  if (x->tv_nsec - y2.tv_nsec > 1e9) {
+    int sec = (x->tv_nsec - y2.tv_nsec) / 1e9;
+    y2.tv_nsec += 1e9 * sec;
+    y2.tv_sec -= sec;
+  }
+
+  // Compute the time remaining to wait.  tv_nsec is certainly
+  // positive.
+  out->tv_sec  = x->tv_sec - y2.tv_sec;
+  out->tv_nsec = x->tv_nsec - y2.tv_nsec;
 }
 
 /** simulate global database state */
@@ -189,8 +242,8 @@ struct logbuf_header {
 
 class onecopy_logbased_simulation : public database_simulation {
 public:
-  static const size_t g_perthread_buffers = 4; // 4 outstanding buffers
-  static const size_t g_buffer_size = (1<<14); // in bytes
+  static const size_t g_perthread_buffers = 16; // 16 outstanding buffers
+  static const size_t g_buffer_size = (1<<20); // in bytes
 
   static circbuf<pbuffer, g_perthread_buffers> g_all_buffers[NMAXCORES];
   static circbuf<pbuffer, g_perthread_buffers> g_persist_buffers[NMAXCORES];
@@ -212,7 +265,10 @@ protected:
                    const string &repvalue) = 0;
 
   virtual void
-  logger_on_io_completion() = 0;
+  logger_before_io_schedule() {};
+
+  virtual void
+  logger_on_io_completion() {};
 
 public:
   void
@@ -272,6 +328,8 @@ public:
         // push to logger
         g_persist_buffers[id].enq(curbuf);
 
+        //cerr << "pushed " << curbuf << " to logger" << endl;
+
         // get a new buf
         curbuf = nullptr;
         goto renew;
@@ -290,7 +348,7 @@ public:
   void
   logger(int fd) OVERRIDE
   {
-    struct iovec iov[NMAXCORES];
+    struct iovec iov[NMAXCORES * g_perthread_buffers];
     for (;;) {
       // logger is simple:
       // 1) iterate over g_persist_buffers. if there is a top entry that is not
@@ -303,12 +361,15 @@ public:
       // 3) once all IO has been fsynced() + persistence computed, return the
       // buffers we can return
 
+      logger_before_io_schedule();
+
       size_t nwritten = 0;
       for (size_t i = 0; i < NMAXCORES; i++) {
-        struct pbuffer *px = g_persist_buffers[i].peek();
-        if (!px)
-          continue;
-        if (px && !px->io_scheduled_) {
+        g_persist_buffers[i].peekall(pxs_);
+        for (auto px : pxs_) {
+          assert(px);
+          if (px->io_scheduled_)
+            continue;
           iov[nwritten].iov_base = (void *) px->buf_.data();
           iov[nwritten].iov_len = px->curoff_;
           px->io_scheduled_ = true;
@@ -329,17 +390,18 @@ public:
         exit(1);
       }
 
-      //cerr << "fsync begin" << endl;
       int fret = fdatasync(fd);
       if (fret == -1) {
         perror("fdatasync");
         exit(1);
       }
-      //cerr << "...fsync done" << endl;
 
       logger_on_io_completion();
     }
   }
+
+protected:
+  vector<pbuffer *> pxs_; // just some scratch space
 };
 
 circbuf<pbuffer, onecopy_logbased_simulation::g_perthread_buffers>
@@ -445,50 +507,55 @@ protected:
     while (changed) {
       changed = false;
       for (size_t i = 0; i < NMAXCORES; i++) {
-        struct pbuffer *px = g_persist_buffers[i].peek();
-        if (!px || !px->io_scheduled_)
-          continue;
-        assert(px->remaining_ > 0);
-        assert(px->curoff_ < g_buffer_size);
+        g_persist_buffers[i].peekall(pxs_);
+        for (auto px : pxs_) {
+          assert(px);
+          if (!px->io_scheduled_)
+            break;
 
-        const uint8_t *p = px->pointer();
-        uint64_t committid;
-        bool allsat = true;
-
-        while (px->remaining_ && allsat) {
-          allsat = true;
-          const uint8_t *nextp =
-            read_log_entry(p, committid, [&allsat](uint64_t readdep) {
-              if (!allsat)
-                return;
-              const uint64_t cid = tidhelpers::CoreId(readdep);
-              if (readdep > g_persistence_vc[cid])
-                allsat = false;
-            });
-          if (allsat) {
-            //cerr << "committid=" << committid << endl;
-            assert(tidhelpers::CoreId(committid) == i);
-            assert(g_persistence_vc[i] < committid);
-            g_persistence_vc[i] = committid;
-            changed = true;
-            p = nextp;
-            px->remaining_--;
-            px->curoff_ = intptr_t(p) - intptr_t(px->buf_.data());
-            g_ntxns_committed++;
-          } else {
-            // done, no further entries will be satisfied
-          }
-        }
-
-        if (allsat) {
-          assert(px->remaining_ == 0);
-          // finished entire buffer
-          struct pbuffer *pxcheck = g_persist_buffers[i].deq();
-          if (pxcheck != px)
-            assert(false);
-          g_all_buffers[i].enq(px);
-        } else {
           assert(px->remaining_ > 0);
+          assert(px->curoff_ < g_buffer_size);
+
+          const uint8_t *p = px->pointer();
+          uint64_t committid;
+          bool allsat = true;
+
+          while (px->remaining_ && allsat) {
+            allsat = true;
+            const uint8_t *nextp =
+              read_log_entry(p, committid, [&allsat](uint64_t readdep) {
+                if (!allsat)
+                  return;
+                const uint64_t cid = tidhelpers::CoreId(readdep);
+                if (readdep > g_persistence_vc[cid])
+                  allsat = false;
+              });
+            if (allsat) {
+              //cerr << "committid=" << committid << ", g_persistence_vc=" << g_persistence_vc[i] << endl;
+              assert(tidhelpers::CoreId(committid) == i);
+              assert(g_persistence_vc[i] < committid);
+              g_persistence_vc[i] = committid;
+              changed = true;
+              p = nextp;
+              px->remaining_--;
+              px->curoff_ = intptr_t(p) - intptr_t(px->buf_.data());
+              g_ntxns_committed++;
+            } else {
+              // done, no further entries will be satisfied
+            }
+          }
+
+          if (allsat) {
+            assert(px->remaining_ == 0);
+            // finished entire buffer
+            struct pbuffer *pxcheck = g_persist_buffers[i].deq();
+            if (pxcheck != px)
+              assert(false);
+            g_all_buffers[i].enq(px);
+          } else {
+            assert(px->remaining_ > 0);
+            break; // cannot process core's list any further
+          }
         }
       }
     }
@@ -499,6 +566,12 @@ protected:
 uint64_t explicit_deptracking_simulation::g_persistence_vc[NMAXCORES] = {0};
 
 class epochbased_simulation : public onecopy_logbased_simulation {
+public:
+  epochbased_simulation()
+  {
+    clock_gettime(CLOCK_MONOTONIC, &last_io_completed_);
+  }
+
 protected:
 
   const uint8_t *
@@ -564,19 +637,52 @@ protected:
   }
 
   void
+  logger_before_io_schedule() OVERRIDE
+  {
+    // don't schedule another IO until at least 20ms have passed
+    struct timespec now, diff;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    timespec_subtract(&now, &last_io_completed_, &diff);
+    const unsigned long delaytimens = 20000000; /* 20ms in ns */
+    if (diff.tv_sec == 0 && diff.tv_nsec < long(delaytimens)) {
+      // need to sleep it out
+      struct timespec ts;
+      ts.tv_sec = 0;
+      ts.tv_nsec = delaytimens - diff.tv_nsec;
+      nanosleep(&ts, nullptr);
+    }
+  }
+
+  void
   logger_on_io_completion() OVERRIDE
   {
     for (size_t i = 0; i < NMAXCORES; i++) {
-      struct pbuffer *px = g_persist_buffers[i].peek();
-      if (!px || !px->io_scheduled_)
+      g_persist_buffers[i].peekall(pxs_);
+      if (pxs_.empty())
         continue;
-      g_ntxns_committed += ((logbuf_header *) px->buf_.data())->nentries;
-      struct pbuffer *pxcheck = g_persist_buffers[i].deq();
-      if (pxcheck != px)
-        assert(false);
-      g_all_buffers[i].enq(px);
+      //cerr << "i=" << i << ", size=" << pxs_.size() << endl;
+      //cerr << "head before: " << g_persist_buffers[i].peek() << endl;
+      for (auto px : pxs_) {
+        assert(px);
+        //cerr << "px=" << px << ", io_sched?=" << px->io_scheduled_ << endl;
+        if (!px->io_scheduled_)
+          break;
+        g_ntxns_committed +=
+          reinterpret_cast<const logbuf_header *>(px->buf_.data())->nentries;
+        struct pbuffer *pxcheck = g_persist_buffers[i].deq();
+        if (pxcheck != px)
+          assert(false);
+        g_all_buffers[i].enq(px);
+      }
+      //cerr << "head now: " << g_persist_buffers[i].peek() << endl;
+      //cerr << "--" << endl;
     }
+
+    clock_gettime(CLOCK_MONOTONIC, &last_io_completed_);
   }
+
+private:
+  timespec last_io_completed_;
 };
 
 int
@@ -633,6 +739,12 @@ main(int argc, char **argv)
     assert(b.empty());
     for (size_t i = 0; i < ARRAY_NELEMS(values); i++)
       b.enq(&values[i]);
+    vector<int *> pxs;
+    b.peekall(pxs);
+    assert(pxs.size() == ARRAY_NELEMS(values));
+    assert(set<int *>(pxs.begin(), pxs.end()).size() == pxs.size());
+    for (size_t i = 0; i < ARRAY_NELEMS(values); i++)
+      assert(pxs[i] == &values[i]);
     for (size_t i = 0; i < ARRAY_NELEMS(values); i++) {
       assert(!b.empty());
       assert(b.peek() == &values[i]);
@@ -640,6 +752,17 @@ main(int argc, char **argv)
       assert(b.deq() == &values[i]);
     }
     assert(b.empty());
+
+    b.enq(&values[0]);
+    b.enq(&values[1]);
+    b.enq(&values[2]);
+    b.peekall(pxs);
+    auto testlist = vector<int *>({&values[0], &values[1], &values[2]});
+    assert(pxs == testlist);
+
+    assert(b.deq() == &values[0]);
+    assert(b.deq() == &values[1]);
+    assert(b.deq() == &values[2]);
   }
 
   g_database.resize(g_nrecords); // all start at TID=0
