@@ -400,7 +400,7 @@ protected:
     // 8 bytes to indicate TID
     space_needed += sizeof(uint64_t);
 
-    // one byte to indicate # of deps
+    // one byte to indicate # of read deps
     space_needed += 1;
 
     // each dep occupies 8 bytes
@@ -498,19 +498,102 @@ protected:
 
 uint64_t explicit_deptracking_simulation::g_persistence_vc[NMAXCORES] = {0};
 
+class epochbased_simulation : public onecopy_logbased_simulation {
+protected:
+
+  const uint8_t *
+  read_log_entry(const uint8_t *p, uint64_t &tid,
+                 std::function<void(uint64_t)> readfunctor) OVERRIDE
+  {
+    serializer<uint8_t, false> s_uint8_t;
+    serializer<uint64_t, false> s_uint64_t;
+
+    uint8_t writeset_sz, key_sz, value_sz;
+
+    p = s_uint64_t.read(p, &tid);
+    p = s_uint8_t.read(p, &writeset_sz);
+    assert(size_t(writeset_sz) == g_writeset);
+    for (size_t i = 0; i < size_t(writeset_sz); i++) {
+      p = s_uint8_t.read(p, &key_sz);
+      assert(size_t(key_sz) == g_keysize);
+      p += size_t(key_sz);
+      p = s_uint8_t.read(p, &value_sz);
+      assert(size_t(value_sz) == g_valuesize);
+      p += size_t(value_sz);
+    }
+
+    return p;
+  }
+
+  uint64_t
+  compute_log_record_space() OVERRIDE
+  {
+    // compute how much space we need for this entry
+    uint64_t space_needed = 0;
+
+    // 8 bytes to indicate TID
+    space_needed += sizeof(uint64_t);
+
+    // one byte to indicate # of records written
+    space_needed += 1;
+
+    // each record occupies (1 + key_length + 1 + value_length) bytes
+    space_needed += g_writeset * (1 + g_keysize + 1 + g_valuesize);
+
+    return space_needed;
+  }
+
+  void
+  write_log_record(uint8_t *p,
+                   uint64_t tidcommit,
+                   const vector<uint64_t> &readset,
+                   const string &repkey,
+                   const string &repvalue) OVERRIDE
+  {
+    serializer<uint8_t, false> s_uint8_t;
+    serializer<uint64_t, false> s_uint64_t;
+
+    p = s_uint64_t.write(p, tidcommit);
+    p = s_uint8_t.write(p, g_writeset);
+    for (size_t i = 0; i < g_writeset; i++) {
+      p = s_uint8_t.write(p, g_keysize);
+      memcpy(p, repkey.data(), g_keysize); p += g_keysize;
+      p = s_uint8_t.write(p, g_valuesize);
+      memcpy(p, repvalue.data(), g_valuesize); p += g_valuesize;
+    }
+  }
+
+  void
+  logger_on_io_completion() OVERRIDE
+  {
+    for (size_t i = 0; i < NMAXCORES; i++) {
+      struct pbuffer *px = g_persist_buffers[i].peek();
+      if (!px || !px->io_scheduled_)
+        continue;
+      g_ntxns_committed += ((logbuf_header *) px->buf_.data())->nentries;
+      struct pbuffer *pxcheck = g_persist_buffers[i].deq();
+      if (pxcheck != px)
+        assert(false);
+      g_all_buffers[i].enq(px);
+    }
+  }
+};
+
 int
 main(int argc, char **argv)
 {
   unsigned nworkers = 1;
+  string strategy = "deptracking";
 
   while (1) {
     static struct option long_options[] =
     {
       {"num-threads" , required_argument , 0 , 't'} ,
+      {"strategy"    , required_argument , 0 , 's'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:s:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -525,6 +608,10 @@ main(int argc, char **argv)
       nworkers = strtoul(optarg, nullptr, 10);
       break;
 
+    case 's':
+      strategy = optarg;
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -534,6 +621,10 @@ main(int argc, char **argv)
     }
   }
   assert(nworkers >= 1);
+
+  if (strategy != "deptracking" &&
+      strategy != "epoch")
+    assert(false);
 
   {
     // test circbuf
@@ -559,16 +650,22 @@ main(int argc, char **argv)
     return 1;
   }
 
-  explicit_deptracking_simulation sim;
-  sim.init();
+  unique_ptr<database_simulation> sim;
+  if (strategy == "deptracking")
+    sim.reset(new explicit_deptracking_simulation);
+  else if (strategy == "epoch")
+    sim.reset(new epochbased_simulation);
+  else
+    assert(false);
+  sim->init();
 
-  thread logger_thread(&explicit_deptracking_simulation::logger, &sim, fd);
+  thread logger_thread(&database_simulation::logger, sim.get(), fd);
   logger_thread.detach();
 
   vector<thread> workers;
   util::timer tt;
   for (size_t i = 0; i < nworkers; i++)
-    workers.emplace_back(&explicit_deptracking_simulation::worker, &sim, i);
+    workers.emplace_back(&database_simulation::worker, sim.get(), i);
   for (auto &p: workers)
     p.join();
   const double xsec = tt.lap_ms() / 1000.0;
