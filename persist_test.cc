@@ -216,10 +216,19 @@ static const size_t g_ntxns_worker = 100000;
 
 class database_simulation {
 public:
+  database_simulation() : keep_going_(true) {}
   virtual ~database_simulation() {}
   virtual void init() = 0;
   virtual void worker(unsigned id) = 0;
   virtual void logger(int fd) = 0;
+  virtual void
+  terminate()
+  {
+    keep_going_.store(false, memory_order_release);
+  }
+
+protected:
+  atomic<bool> keep_going_;
 };
 
 struct pbuffer {
@@ -349,7 +358,7 @@ public:
   logger(int fd) OVERRIDE
   {
     struct iovec iov[NMAXCORES * g_perthread_buffers];
-    for (;;) {
+    while (keep_going_.load(memory_order_acquire)) {
       // logger is simple:
       // 1) iterate over g_persist_buffers. if there is a top entry that is not
       // done, then schedule for IO.
@@ -783,7 +792,6 @@ main(int argc, char **argv)
   sim->init();
 
   thread logger_thread(&database_simulation::logger, sim.get(), fd);
-  logger_thread.detach();
 
   vector<thread> workers;
   util::timer tt;
@@ -794,6 +802,9 @@ main(int argc, char **argv)
   const double xsec = tt.lap_ms() / 1000.0;
   const double rate = double(g_ntxns_committed) / xsec;
   cout << rate << endl;
+
+  sim->terminate();
+  logger_thread.join();
 
   return 0;
 }
