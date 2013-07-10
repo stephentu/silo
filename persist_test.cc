@@ -140,28 +140,34 @@ private:
   atomic<unsigned> tail_;
 };
 
-/** simulate global database state and workload*/
+static void
+fillstring(std::string &s, size_t t)
+{
+  s.clear();
+  for (size_t i = 0; i < t; i++)
+    s[i] = (char) i;
+}
+
+/** simulate global database state */
 
 static vector<uint64_t> g_database;
-
 static size_t g_ntxns_committed = 0;
-
 static const size_t g_nrecords = 1000000;
-
 static const size_t g_readset = 30;
 static const size_t g_writeset = 5;
 static const size_t g_keysize = 16; // in bytes
 static const size_t g_valuesize = 30; // in bytes
-static const size_t g_perthread_buffers = 4; // 4 outstanding buffers
-
-/** global state about our persistence calculations */
-
-// contains the latest TID inclusive, per core, which is (transitively)
-// persistent. note that the prefix of the DB which is totally persistent is
-// simply the max of this table.
-
 static const size_t g_ntxns_worker = 100000;
-static const size_t g_buffer_size = (1<<14); // in bytes
+
+/** simulation framework */
+
+class database_simulation {
+public:
+  virtual ~database_simulation() {}
+  virtual void init() = 0;
+  virtual void worker(unsigned id) = 0;
+  virtual void logger(int fd) = 0;
+};
 
 struct pbuffer {
   bool io_scheduled_; // has the logger scheduled IO yet?
@@ -177,54 +183,219 @@ struct pbuffer {
   }
 };
 
-static uint64_t g_persistence_vc[NMAXCORES] = {0};
-static circbuf<pbuffer, g_perthread_buffers> g_all_buffers[NMAXCORES];
-static circbuf<pbuffer, g_perthread_buffers> g_persist_buffers[NMAXCORES];
-
-// a simulated worker
-
-static void
-fillstring(std::string &s, size_t t)
-{
-  s.clear();
-  for (size_t i = 0; i < t; i++)
-    s[i] = (char) i;
-}
-
 struct logbuf_header {
   uint64_t nentries;
 } PACKED;
 
-static void
-simulateworker(unsigned int id)
-{
-  mt19937 prng(id);
+class onecopy_logbased_simulation : public database_simulation {
+public:
+  static const size_t g_perthread_buffers = 4; // 4 outstanding buffers
+  static const size_t g_buffer_size = (1<<14); // in bytes
 
-  // read/write sets are uniform for now
-  uniform_int_distribution<unsigned> dist(0, g_nrecords - 1);
+  static circbuf<pbuffer, g_perthread_buffers> g_all_buffers[NMAXCORES];
+  static circbuf<pbuffer, g_perthread_buffers> g_persist_buffers[NMAXCORES];
 
-  vector<uint64_t> readset(g_readset);
-  string key, value;
-  fillstring(key, g_keysize);
-  fillstring(value, g_valuesize);
+protected:
 
-  struct pbuffer *curbuf = nullptr;
+  virtual const uint8_t *
+  read_log_entry(const uint8_t *p, uint64_t &tid,
+                 std::function<void(uint64_t)> readfunctor) = 0;
 
-  uint64_t lasttid = 0;
+  virtual uint64_t
+  compute_log_record_space() = 0;
 
-  for (size_t i = 0; i < g_ntxns_worker; i++) {
-    for (size_t j = 0; j < g_readset; j++)
-      readset[j] = g_database[dist(prng)];
+  virtual void
+  write_log_record(uint8_t *p,
+                   uint64_t tidcommit,
+                   const vector<uint64_t> &readset,
+                   const string &repkey,
+                   const string &repvalue) = 0;
 
-    const uint64_t idmax = tidhelpers::vecidmax(lasttid, readset);
-    const uint64_t tidcommit = tidhelpers::MakeTid(id, idmax + 1, 0);
-    lasttid = tidcommit;
+  virtual void
+  logger_on_io_completion() = 0;
 
-    for (size_t j = 0; j < g_writeset; j++)
-      g_database[dist(prng)] = lasttid;
+public:
+  void
+  init() OVERRIDE
+  {
+    for (size_t i = 0; i < NMAXCORES; i++) {
+      for (size_t j = 0; j < g_perthread_buffers; j++) {
+        struct pbuffer *p = new pbuffer;
+        g_all_buffers[i].enq(p);
+      }
+    }
+  }
 
+  void
+  worker(unsigned id) OVERRIDE
+  {
+    mt19937 prng(id);
+
+    // read/write sets are uniform for now
+    uniform_int_distribution<unsigned> dist(0, g_nrecords - 1);
+
+    vector<uint64_t> readset(g_readset);
+    string key, value;
+    fillstring(key, g_keysize);
+    fillstring(value, g_valuesize);
+
+    struct pbuffer *curbuf = nullptr;
+
+    uint64_t lasttid = 0;
+
+    for (size_t i = 0; i < g_ntxns_worker; i++) {
+      for (size_t j = 0; j < g_readset; j++)
+        readset[j] = g_database[dist(prng)];
+
+      const uint64_t idmax = tidhelpers::vecidmax(lasttid, readset);
+      const uint64_t tidcommit = tidhelpers::MakeTid(id, idmax + 1, 0);
+      lasttid = tidcommit;
+
+      for (size_t j = 0; j < g_writeset; j++)
+        g_database[dist(prng)] = lasttid;
+
+      uint64_t space_needed = compute_log_record_space();
+
+    renew:
+      if (!curbuf) {
+        // block until we get a buf
+        curbuf = g_all_buffers[id].deq();
+        curbuf->io_scheduled_ = false;
+        curbuf->buf_.assign(g_buffer_size, 0);
+        curbuf->curoff_ = sizeof(logbuf_header);
+        curbuf->remaining_ = 0;
+      }
+
+      if (g_buffer_size - curbuf->curoff_ < space_needed) {
+        //cerr << "pushing to logger" << endl;
+
+        // push to logger
+        g_persist_buffers[id].enq(curbuf);
+
+        // get a new buf
+        curbuf = nullptr;
+        goto renew;
+      }
+
+      uint8_t *p = curbuf->pointer();
+      write_log_record(p, tidcommit, readset, key, value);
+      curbuf->curoff_ += space_needed;
+      ((logbuf_header *) curbuf->buf_.data())->nentries++;
+    }
+
+    if (curbuf)
+      g_persist_buffers[id].enq(curbuf);
+  }
+
+  void
+  logger(int fd) OVERRIDE
+  {
+    struct iovec iov[NMAXCORES];
+    for (;;) {
+      // logger is simple:
+      // 1) iterate over g_persist_buffers. if there is a top entry that is not
+      // done, then schedule for IO.
+      //
+      // 2) (should be done during IO) compute persistence by iterating
+      // over each entry and checking if deps satisfied. this yields an
+      // O(n^2) algorithm for now.
+      //
+      // 3) once all IO has been fsynced() + persistence computed, return the
+      // buffers we can return
+
+      size_t nwritten = 0;
+      for (size_t i = 0; i < NMAXCORES; i++) {
+        struct pbuffer *px = g_persist_buffers[i].peek();
+        if (!px)
+          continue;
+        if (px && !px->io_scheduled_) {
+          iov[nwritten].iov_base = (void *) px->buf_.data();
+          iov[nwritten].iov_len = px->curoff_;
+          px->io_scheduled_ = true;
+          px->curoff_ = sizeof(logbuf_header);
+          px->remaining_ = reinterpret_cast<const logbuf_header *>(px->buf_.data())->nentries;
+          nwritten++;
+        }
+      }
+
+      if (!nwritten) {
+        nop_pause();
+        continue;
+      }
+
+      ssize_t ret = writev(fd, &iov[0], nwritten);
+      if (ret == -1) {
+        perror("writev");
+        exit(1);
+      }
+
+      //cerr << "fsync begin" << endl;
+      int fret = fdatasync(fd);
+      if (fret == -1) {
+        perror("fdatasync");
+        exit(1);
+      }
+      //cerr << "...fsync done" << endl;
+
+      logger_on_io_completion();
+    }
+  }
+};
+
+circbuf<pbuffer, onecopy_logbased_simulation::g_perthread_buffers>
+  onecopy_logbased_simulation::g_all_buffers[NMAXCORES];
+circbuf<pbuffer, onecopy_logbased_simulation::g_perthread_buffers>
+  onecopy_logbased_simulation::g_persist_buffers[NMAXCORES];
+
+class explicit_deptracking_simulation : public onecopy_logbased_simulation {
+public:
+
+  /** global state about our persistence calculations */
+
+  // contains the latest TID inclusive, per core, which is (transitively)
+  // persistent. note that the prefix of the DB which is totally persistent is
+  // simply the max of this table.
+  static uint64_t g_persistence_vc[NMAXCORES];
+
+protected:
+
+  const uint8_t *
+  read_log_entry(const uint8_t *p, uint64_t &tid,
+                 std::function<void(uint64_t)> readfunctor) OVERRIDE
+  {
+    serializer<uint8_t, false> s_uint8_t;
+    serializer<uint64_t, false> s_uint64_t;
+
+    uint8_t readset_sz, writeset_sz, key_sz, value_sz;
+    uint64_t v;
+
+    p = s_uint64_t.read(p, &tid);
+    p = s_uint8_t.read(p, &readset_sz);
+    assert(size_t(readset_sz) == g_readset);
+    for (size_t i = 0; i < size_t(readset_sz); i++) {
+      p = s_uint64_t.read(p, &v);
+      readfunctor(v);
+    }
+
+    p = s_uint8_t.read(p, &writeset_sz);
+    assert(size_t(writeset_sz) == g_writeset);
+    for (size_t i = 0; i < size_t(writeset_sz); i++) {
+      p = s_uint8_t.read(p, &key_sz);
+      assert(size_t(key_sz) == g_keysize);
+      p += size_t(key_sz);
+      p = s_uint8_t.read(p, &value_sz);
+      assert(size_t(value_sz) == g_valuesize);
+      p += size_t(value_sz);
+    }
+
+    return p;
+  }
+
+  uint64_t
+  compute_log_record_space() OVERRIDE
+  {
     // compute how much space we need for this entry
-    size_t space_needed = 0;
+    uint64_t space_needed = 0;
 
     // 8 bytes to indicate TID
     space_needed += sizeof(uint64_t);
@@ -241,29 +412,16 @@ simulateworker(unsigned int id)
     // each record occupies (1 + key_length + 1 + value_length) bytes
     space_needed += g_writeset * (1 + g_keysize + 1 + g_valuesize);
 
-  renew:
-    if (!curbuf) {
-      // block until we get a buf
-      curbuf = g_all_buffers[id].deq();
-      curbuf->io_scheduled_ = false;
-      curbuf->buf_.assign(g_buffer_size, 0);
-      curbuf->curoff_ = sizeof(logbuf_header);
-      curbuf->remaining_ = 0;
-    }
+    return space_needed;
+  }
 
-    if (g_buffer_size - curbuf->curoff_ < space_needed) {
-      //cerr << "pushing to logger" << endl;
-
-      // push to logger
-      g_persist_buffers[id].enq(curbuf);
-
-      // get a new buf
-      curbuf = nullptr;
-      goto renew;
-    }
-
-    uint8_t *p = curbuf->pointer();
-
+  void
+  write_log_record(uint8_t *p,
+                   uint64_t tidcommit,
+                   const vector<uint64_t> &readset,
+                   const string &repkey,
+                   const string &repvalue) OVERRIDE
+  {
     serializer<uint8_t, false> s_uint8_t;
     serializer<uint64_t, false> s_uint64_t;
 
@@ -274,101 +432,15 @@ simulateworker(unsigned int id)
     p = s_uint8_t.write(p, g_writeset);
     for (size_t i = 0; i < g_writeset; i++) {
       p = s_uint8_t.write(p, g_keysize);
-      memcpy(p, key.data(), g_keysize); p += g_keysize;
+      memcpy(p, repkey.data(), g_keysize); p += g_keysize;
       p = s_uint8_t.write(p, g_valuesize);
-      memcpy(p, value.data(), g_valuesize); p += g_valuesize;
+      memcpy(p, repvalue.data(), g_valuesize); p += g_valuesize;
     }
-
-    curbuf->curoff_ += space_needed;
-    ((logbuf_header *) curbuf->buf_.data())->nentries++;
   }
 
-  if (curbuf)
-    g_persist_buffers[id].enq(curbuf);
-}
-
-template <typename OnReadRecord>
-static const uint8_t *
-read_log_entry(const uint8_t *p, uint64_t &tid, OnReadRecord readfunctor)
-{
-  serializer<uint8_t, false> s_uint8_t;
-  serializer<uint64_t, false> s_uint64_t;
-
-  uint8_t readset_sz, writeset_sz, key_sz, value_sz;
-  uint64_t v;
-
-  p = s_uint64_t.read(p, &tid);
-  p = s_uint8_t.read(p, &readset_sz);
-  assert(size_t(readset_sz) == g_readset);
-  for (size_t i = 0; i < size_t(readset_sz); i++) {
-    p = s_uint64_t.read(p, &v);
-    readfunctor(v);
-  }
-
-  p = s_uint8_t.read(p, &writeset_sz);
-  assert(size_t(writeset_sz) == g_writeset);
-  for (size_t i = 0; i < size_t(writeset_sz); i++) {
-    p = s_uint8_t.read(p, &key_sz);
-    assert(size_t(key_sz) == g_keysize);
-    p += size_t(key_sz);
-    p = s_uint8_t.read(p, &value_sz);
-    assert(size_t(value_sz) == g_valuesize);
-    p += size_t(value_sz);
-  }
-
-  return p;
-}
-
-static void
-logger(int fd)
-{
-  struct iovec iov[NMAXCORES];
-  for (;;) {
-    // logger is simple:
-    // 1) iterate over g_persist_buffers. if there is a top entry that is not
-    // done, then schedule for IO.
-    //
-    // 2) (should be done during IO) compute persistence by iterating
-    // over each entry and checking if deps satisfied. this yields an
-    // O(n^2) algorithm for now.
-    //
-    // 3) once all IO has been fsynced() + persistence computed, return the
-    // buffers we can return
-
-    size_t nwritten = 0;
-    for (size_t i = 0; i < NMAXCORES; i++) {
-      struct pbuffer *px = g_persist_buffers[i].peek();
-      if (!px)
-        continue;
-      if (px && !px->io_scheduled_) {
-        iov[nwritten].iov_base = (void *) px->buf_.data();
-        iov[nwritten].iov_len = px->curoff_;
-        px->io_scheduled_ = true;
-        px->curoff_ = sizeof(logbuf_header);
-        px->remaining_ = reinterpret_cast<const logbuf_header *>(px->buf_.data())->nentries;
-        nwritten++;
-      }
-    }
-
-    if (!nwritten) {
-      nop_pause();
-      continue;
-    }
-
-    ssize_t ret = writev(fd, &iov[0], nwritten);
-    if (ret == -1) {
-      perror("writev");
-      exit(1);
-    }
-
-    //cerr << "fsync begin" << endl;
-    int fret = fdatasync(fd);
-    if (fret == -1) {
-      perror("fdatasync");
-      exit(1);
-    }
-    //cerr << "...fsync done" << endl;
-
+  void
+  logger_on_io_completion() OVERRIDE
+  {
     bool changed = true;
     while (changed) {
       changed = false;
@@ -421,7 +493,10 @@ logger(int fd)
       }
     }
   }
-}
+
+};
+
+uint64_t explicit_deptracking_simulation::g_persistence_vc[NMAXCORES] = {0};
 
 int
 main(int argc, char **argv)
@@ -478,27 +553,22 @@ main(int argc, char **argv)
 
   g_database.resize(g_nrecords); // all start at TID=0
 
-  for (size_t i = 0; i < NMAXCORES; i++) {
-    for (size_t j = 0; j < g_perthread_buffers; j++) {
-      struct pbuffer *p = new pbuffer;
-      g_all_buffers[i].enq(p);
-    }
-  }
-
   int fd = open("data.log", O_CREAT|O_WRONLY|O_TRUNC, 0664);
   if (fd == -1) {
     perror("open");
     return 1;
   }
 
-  thread logger_thread(logger, fd);
-  logger_thread.detach();
+  explicit_deptracking_simulation sim;
+  sim.init();
 
+  thread logger_thread(&explicit_deptracking_simulation::logger, &sim, fd);
+  logger_thread.detach();
 
   vector<thread> workers;
   util::timer tt;
   for (size_t i = 0; i < nworkers; i++)
-    workers.emplace_back(simulateworker, i);
+    workers.emplace_back(&explicit_deptracking_simulation::worker, &sim, i);
   for (auto &p: workers)
     p.join();
   const double xsec = tt.lap_ms() / 1000.0;
