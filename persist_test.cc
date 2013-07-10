@@ -206,11 +206,12 @@ timespec_subtract(const struct timespec *x,
 static vector<uint64_t> g_database;
 static size_t g_ntxns_committed = 0;
 static const size_t g_nrecords = 1000000;
-static const size_t g_readset = 30;
-static const size_t g_writeset = 5;
-static const size_t g_keysize = 16; // in bytes
-static const size_t g_valuesize = 30; // in bytes
 static const size_t g_ntxns_worker = 100000;
+
+static size_t g_readset = 30;
+static size_t g_writeset = 16;
+static size_t g_keysize = 8; // in bytes
+static size_t g_valuesize = 32; // in bytes
 
 /** simulation framework */
 
@@ -705,10 +706,14 @@ main(int argc, char **argv)
     {
       {"num-threads" , required_argument , 0 , 't'} ,
       {"strategy"    , required_argument , 0 , 's'} ,
+      {"readset"     , required_argument , 0 , 'r'} ,
+      {"writeset"    , required_argument , 0 , 'w'} ,
+      {"keysize"     , required_argument , 0 , 'k'} ,
+      {"valuesize"   , required_argument , 0 , 'v'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:s:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:s:r:w:k:v:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -727,6 +732,22 @@ main(int argc, char **argv)
       strategy = optarg;
       break;
 
+    case 'r':
+      g_readset = strtoul(optarg, nullptr, 10);
+      break;
+
+    case 'w':
+      g_writeset = strtoul(optarg, nullptr, 10);
+      break;
+
+    case 'k':
+      g_keysize = strtoul(optarg, nullptr, 10);
+      break;
+
+    case 'v':
+      g_valuesize = strtoul(optarg, nullptr, 10);
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -736,6 +757,10 @@ main(int argc, char **argv)
     }
   }
   assert(nworkers >= 1);
+  assert(g_readset >= 0);
+  assert(g_writeset > 0);
+  assert(g_keysize > 0);
+  assert(g_valuesize >= 0);
 
   if (strategy != "deptracking" &&
       strategy != "epoch")
