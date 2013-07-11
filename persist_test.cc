@@ -361,8 +361,8 @@ public:
       }
 
       if (g_buffer_size - curbuf->curoff_ < space_needed) {
-        cerr << "pushing " << curbuf << " to logger" << endl;
-        cerr << "  tidcommit=" << tidhelpers::Str(tidcommit) << endl;
+        //cerr << "pushing " << curbuf << " to logger" << endl;
+        //cerr << "  tidcommit=" << tidhelpers::Str(tidcommit) << endl;
 
         // push to logger
         g_persist_buffers[id].enq(curbuf);
@@ -376,13 +376,6 @@ public:
 
       uint8_t *p = curbuf->pointer();
       write_log_record(p, tidcommit, readset, key, value);
-      if (tidhelpers::NumId(tidcommit) == 1138) {
-        cerr << "p=" << intptr_t(p) << endl;
-        uint64_t mycommittid;
-        read_log_entry(p, mycommittid, [](uint64_t readdep) {});
-        cerr << "committid=" << tidhelpers::Str(mycommittid) << endl;
-
-      }
       //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
       curbuf->curoff_ += space_needed;
       ((logbuf_header *) curbuf->buf_.data())->nentries++;
@@ -401,7 +394,7 @@ private:
       channel.recv(i, true);
 
       if (i == 1) {
-        cerr << "writer got exit signal" << endl;
+        //cerr << "writer got exit signal" << endl;
         return;
       }
 
@@ -463,7 +456,7 @@ public:
           struct iovec iov;
           iov.iov_base = (void *) px->buf_.data();
           iov.iov_len = px->curoff_;
-          iovs[nwritten].emplace_back(iov);
+          iovs[nwritten % fds.size()].emplace_back(iov);
           px->io_scheduled_ = true;
           px->curoff_ = sizeof(logbuf_header);
           px->remaining_ = reinterpret_cast<const logbuf_header *>(px->buf_.data())->nentries;
@@ -622,8 +615,8 @@ protected:
           uint64_t committid;
           bool allsat = true;
 
-          cerr << "processing buffer " << px << " with curoff_=" << px->curoff_ << endl
-               << "  p=" << intptr_t(p) << endl;
+          //cerr << "processing buffer " << px << " with curoff_=" << px->curoff_ << endl
+          //     << "  p=" << intptr_t(p) << endl;
 
           while (px->remaining_ && allsat) {
             allsat = true;
@@ -636,9 +629,9 @@ protected:
                   allsat = false;
               });
             if (allsat) {
-              cerr << "committid=" << tidhelpers::Str(committid)
-                   << ", g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i])
-                   << endl;
+              //cerr << "committid=" << tidhelpers::Str(committid)
+              //     << ", g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i])
+              //     << endl;
               assert(tidhelpers::CoreId(committid) == i);
               assert(g_persistence_vc[i] < committid);
               g_persistence_vc[i] = committid;
@@ -659,7 +652,7 @@ protected:
             if (pxcheck != px)
               assert(false);
             g_all_buffers[i].enq(px);
-            cerr << "buffer flused at g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i]) << endl;
+            //cerr << "buffer flused at g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i]) << endl;
           } else {
             assert(px->remaining_ > 0);
             break; // cannot process core's list any further
