@@ -182,11 +182,32 @@ private:
   atomic<unsigned> tail_;
 };
 
-static void
-fillstring(std::string &s, size_t t)
+//static void
+//fillstring(std::string &s, size_t t)
+//{
+//  s.clear();
+//  for (size_t i = 0; i < t; i++)
+//    s[i] = (char) i;
+//}
+
+template <typename PRNG>
+static inline void
+fillkey(std::string &s, uint64_t idx, size_t sz, PRNG &prng)
 {
-  s.clear();
-  for (size_t i = 0; i < t; i++)
+  s.resize(sz);
+  serializer<uint64_t, false> ser;
+  ser.write((uint8_t *) s.data(), idx);
+}
+
+template <typename PRNG>
+static inline void
+fillvalue(std::string &s, uint64_t idx, size_t sz, PRNG &prng)
+{
+  //uniform_int_distribution<unsigned> dist(0, 255);
+  s.resize(sz);
+  serializer<uint64_t, false> ser;
+  ser.write((uint8_t *) s.data(), idx);
+  for (size_t i = sizeof(uint64_t); i < sz; i++)
     s[i] = (char) i;
 }
 
@@ -238,6 +259,7 @@ static size_t g_ntxns_committed = 0;
 static const size_t g_nrecords = 1000000;
 static const size_t g_ntxns_worker = 1000000;
 
+static int g_verbose = 0;
 static size_t g_readset = 30;
 static size_t g_writeset = 16;
 static size_t g_keysize = 8; // in bytes
@@ -302,8 +324,7 @@ protected:
   write_log_record(uint8_t *p,
                    uint64_t tidcommit,
                    const vector<uint64_t> &readset,
-                   const string &repkey,
-                   const string &repvalue) = 0;
+                   const vector<pair<string, string>> &writeset) = 0;
 
   virtual void
   logger_before_io_schedule() {}
@@ -346,6 +367,9 @@ public:
     size_t horizon_p = 0, horizon_nentries = 0;
       // where are we in the window, how many elems in this window?
 
+    double cratios = 0.0;
+    unsigned long ncompressions = 0;
+
     void *lz4ctx = nullptr; // holds a heap-allocated LZ4 hash table
     if (compress)
       lz4ctx = LZ4_create();
@@ -356,14 +380,14 @@ public:
     uniform_int_distribution<unsigned> dist(0, g_nrecords - 1);
 
     vector<uint64_t> readset(g_readset);
-    string key, value;
-    fillstring(key, g_keysize);
-    fillstring(value, g_valuesize);
+    vector<pair<string, string>> writeset(g_writeset);
+    for (auto &pr : writeset) {
+      pr.first.reserve(g_keysize);
+      pr.second.reserve(g_valuesize);
+    }
 
     struct pbuffer *curbuf = nullptr;
-
     uint64_t lasttid = 0;
-
     for (size_t i = 0; i < g_ntxns_worker; i++) {
       for (size_t j = 0; j < g_readset; j++)
         readset[j] = g_database[dist(prng)];
@@ -372,8 +396,12 @@ public:
       const uint64_t tidcommit = tidhelpers::MakeTid(id, idmax + 1, 0);
       lasttid = tidcommit;
 
-      for (size_t j = 0; j < g_writeset; j++)
-        g_database[dist(prng)] = lasttid;
+      for (size_t j = 0; j < g_writeset; j++) {
+        auto idx = dist(prng);
+        g_database[idx] = lasttid;
+        fillkey(writeset[j].first, idx, g_keysize, prng);
+        fillvalue(writeset[j].second, idx, g_valuesize, prng);
+      }
 
       uint64_t space_needed = compute_log_record_space();
       if (compress) {
@@ -399,6 +427,10 @@ public:
           serializer<uint32_t, false> s_uint32_t;
           s_uint32_t.write(curbuf->pointer(), ret);
 
+          const double cratio = double(horizon_p) / double(ret);
+          cratios += cratio;
+          ncompressions++;
+
           curbuf->curoff_ += sizeof(uint32_t) + ret;
 
           // can reset horizon
@@ -406,7 +438,7 @@ public:
           horizon_p = horizon_nentries = 0;
         }
 
-        write_log_record(&horizon[0] + horizon_p, tidcommit, readset, key, value);
+        write_log_record(&horizon[0] + horizon_p, tidcommit, readset, writeset);
         horizon_p += space_needed;
         horizon_nentries++;
       } else {
@@ -420,7 +452,7 @@ public:
             assert(g_buffer_size - curbuf->curoff_ >= space_needed);
           }
           uint8_t *p = curbuf->pointer();
-          write_log_record(p, tidcommit, readset, key, value);
+          write_log_record(p, tidcommit, readset, writeset);
           //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
           curbuf->curoff_ += space_needed;
           ((logbuf_header *) curbuf->buf_.data())->nentries++;
@@ -433,6 +465,9 @@ public:
     }
     if (curbuf)
       g_persist_buffers[id].enq(curbuf);
+
+    if (g_verbose)
+      cerr << "Average compression ratio: " << cratios / double(ncompressions) << endl;
   }
 
 private:
@@ -628,22 +663,21 @@ protected:
   write_log_record(uint8_t *p,
                    uint64_t tidcommit,
                    const vector<uint64_t> &readset,
-                   const string &repkey,
-                   const string &repvalue) OVERRIDE
+                   const vector<pair<string, string>> &writeset) OVERRIDE
   {
     serializer<uint8_t, false> s_uint8_t;
     serializer<uint64_t, false> s_uint64_t;
 
     p = s_uint64_t.write(p, tidcommit);
-    p = s_uint8_t.write(p, g_readset);
+    p = s_uint8_t.write(p, readset.size());
     for (auto t : readset)
       p = s_uint64_t.write(p, t);
-    p = s_uint8_t.write(p, g_writeset);
-    for (size_t i = 0; i < g_writeset; i++) {
-      p = s_uint8_t.write(p, g_keysize);
-      memcpy(p, repkey.data(), g_keysize); p += g_keysize;
-      p = s_uint8_t.write(p, g_valuesize);
-      memcpy(p, repvalue.data(), g_valuesize); p += g_valuesize;
+    p = s_uint8_t.write(p, writeset.size());
+    for (auto &pr : writeset) {
+      p = s_uint8_t.write(p, pr.first.size());
+      memcpy(p, pr.first.data(), pr.first.size()); p += pr.first.size();
+      p = s_uint8_t.write(p, pr.second.size());
+      memcpy(p, pr.second.data(), pr.second.size()); p += pr.second.size();
     }
   }
 
@@ -775,19 +809,18 @@ protected:
   write_log_record(uint8_t *p,
                    uint64_t tidcommit,
                    const vector<uint64_t> &readset,
-                   const string &repkey,
-                   const string &repvalue) OVERRIDE
+                   const vector<pair<string, string>> &writeset) OVERRIDE
   {
     serializer<uint8_t, false> s_uint8_t;
     serializer<uint64_t, false> s_uint64_t;
 
     p = s_uint64_t.write(p, tidcommit);
-    p = s_uint8_t.write(p, g_writeset);
-    for (size_t i = 0; i < g_writeset; i++) {
-      p = s_uint8_t.write(p, g_keysize);
-      memcpy(p, repkey.data(), g_keysize); p += g_keysize;
-      p = s_uint8_t.write(p, g_valuesize);
-      memcpy(p, repvalue.data(), g_valuesize); p += g_valuesize;
+    p = s_uint8_t.write(p, writeset.size());
+    for (auto &pr : writeset) {
+      p = s_uint8_t.write(p, pr.first.size());
+      memcpy(p, pr.first.data(), pr.first.size()); p += pr.first.size();
+      p = s_uint8_t.write(p, pr.second.size());
+      memcpy(p, pr.second.data(), pr.second.size()); p += pr.second.size();
     }
   }
 
@@ -851,13 +884,14 @@ main(int argc, char **argv)
   while (1) {
     static struct option long_options[] =
     {
-      {"num-threads" , required_argument , 0 , 't'} ,
-      {"strategy"    , required_argument , 0 , 's'} ,
-      {"readset"     , required_argument , 0 , 'r'} ,
-      {"writeset"    , required_argument , 0 , 'w'} ,
-      {"keysize"     , required_argument , 0 , 'k'} ,
-      {"valuesize"   , required_argument , 0 , 'v'} ,
-      {"logfile"     , required_argument , 0 , 'l'} ,
+      {"verbose"     , no_argument       , &g_verbose , 1}   ,
+      {"num-threads" , required_argument , 0          , 't'} ,
+      {"strategy"    , required_argument , 0          , 's'} ,
+      {"readset"     , required_argument , 0          , 'r'} ,
+      {"writeset"    , required_argument , 0          , 'w'} ,
+      {"keysize"     , required_argument , 0          , 'k'} ,
+      {"valuesize"   , required_argument , 0          , 'v'} ,
+      {"logfile"     , required_argument , 0          , 'l'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
@@ -915,14 +949,15 @@ main(int argc, char **argv)
   assert(g_valuesize >= 0);
   assert(!logfiles.empty());
 
-  cerr << "{nworkers=" << nworkers
-       << ", readset=" << g_readset
-       << ", writeset=" << g_writeset
-       << ", keysize=" << g_keysize
-       << ", valuesize=" << g_valuesize
-       << ", logfiles=" << logfiles
-       << ", strategy=" << strategy
-       << "}" << endl;
+  if (g_verbose)
+    cerr << "{nworkers=" << nworkers
+         << ", readset=" << g_readset
+         << ", writeset=" << g_writeset
+         << ", keysize=" << g_keysize
+         << ", valuesize=" << g_valuesize
+         << ", logfiles=" << logfiles
+         << ", strategy=" << strategy
+         << "}" << endl;
 
   if (strategy != "deptracking" &&
       strategy != "epoch" &&
