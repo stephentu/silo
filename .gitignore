@@ -1,6 +1,7 @@
 *.o
 *.swp
 *.heap
+*.so
 core
 tags
 test

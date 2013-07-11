@@ -3,9 +3,9 @@
 DEBUG ?= 0
 
 ifeq ($(strip $(DEBUG)),1)
-        CXXFLAGS := -Wall -g -fno-omit-frame-pointer --std=c++0x
+        CXXFLAGS := -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x
 else
-        CXXFLAGS := -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
+        CXXFLAGS := -Ithird-parth/lz4 -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 endif
 
 LDFLAGS := -lpthread -lnuma -lrt
@@ -158,8 +158,11 @@ new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
 test: test.o $(OBJFILES)
 	$(CXX) -o test $^ $(LDFLAGS)
 
-persist_test: persist_test.o
-	$(CXX) -o persist_test $^ $(LDFLAGS)
+third-party/lz4/liblz4.so: 
+	make -C third-party/lz4 library
+
+persist_test: persist_test.o third-party/lz4/liblz4.so
+	$(CXX) -o persist_test persist_test.o $(LDFLAGS) -Lthird-party/lz4 -llz4 -Wl,-rpath,third-parth/lz4
 
 .PHONY: dbtest
 dbtest: benchmarks/dbtest
