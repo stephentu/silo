@@ -20,6 +20,8 @@
 #include <getopt.h>
 #include <time.h>
 
+#include <lz4.h>
+
 #include "macros.h"
 #include "amd64.h"
 #include "record/serializer.h"
@@ -282,6 +284,7 @@ class onecopy_logbased_simulation : public database_simulation {
 public:
   static const size_t g_perthread_buffers = 16; // 16 outstanding buffers
   static const size_t g_buffer_size = (1<<20); // in bytes
+  static const size_t g_horizon_size = (1<<16); // in bytes, for compression only
 
   static circbuf<pbuffer, g_perthread_buffers> g_all_buffers[NMAXCORES];
   static circbuf<pbuffer, g_perthread_buffers> g_persist_buffers[NMAXCORES];
@@ -303,10 +306,25 @@ protected:
                    const string &repvalue) = 0;
 
   virtual void
-  logger_before_io_schedule() {};
+  logger_before_io_schedule() {}
 
   virtual void
-  logger_on_io_completion() {};
+  logger_on_io_completion() {}
+
+  virtual bool
+  do_compression() const = 0;
+
+  pbuffer *
+  getbuffer(unsigned id)
+  {
+    // block until we get a buf
+    pbuffer *ret = g_all_buffers[id].deq();
+    ret->io_scheduled_ = false;
+    ret->buf_.assign(g_buffer_size, 0);
+    ret->curoff_ = sizeof(logbuf_header);
+    ret->remaining_ = 0;
+    return ret;
+  }
 
 public:
   void
@@ -323,6 +341,15 @@ public:
   void
   worker(unsigned id) OVERRIDE
   {
+    const bool compress = do_compression();
+    uint8_t horizon[g_horizon_size]; // LZ4 looks at 65kb windows
+    size_t horizon_p = 0, horizon_nentries = 0;
+      // where are we in the window, how many elems in this window?
+
+    void *lz4ctx = nullptr; // holds a heap-allocated LZ4 hash table
+    if (compress)
+      lz4ctx = LZ4_create();
+
     mt19937 prng(id);
 
     // read/write sets are uniform for now
@@ -349,38 +376,61 @@ public:
         g_database[dist(prng)] = lasttid;
 
       uint64_t space_needed = compute_log_record_space();
+      if (compress) {
+        if (horizon_p + space_needed > g_horizon_size) {
+          // need to compress and write horizon
+          if (!curbuf)
+            curbuf = getbuffer(id);
+          if (g_buffer_size - curbuf->curoff_ <
+              sizeof(uint32_t) + LZ4_compressBound(g_horizon_size)) {
+            g_persist_buffers[id].enq(curbuf);
+            curbuf = getbuffer(id);
+            assert(g_buffer_size - curbuf->curoff_ >=
+                   sizeof(uint32_t) + LZ4_compressBound(g_horizon_size));
+          }
 
-    renew:
-      if (!curbuf) {
-        // block until we get a buf
-        curbuf = g_all_buffers[id].deq();
-        curbuf->io_scheduled_ = false;
-        curbuf->buf_.assign(g_buffer_size, 0);
-        curbuf->curoff_ = sizeof(logbuf_header);
-        curbuf->remaining_ = 0;
+          // curbuf good at this point
+          int ret = LZ4_compress_heap(
+              lz4ctx,
+              (const char *) &horizon[0],
+              (char *) curbuf->pointer() + sizeof(uint32_t),
+              horizon_p);
+          assert(ret > 0);
+          serializer<uint32_t, false> s_uint32_t;
+          s_uint32_t.write(curbuf->pointer(), ret);
+
+          curbuf->curoff_ += sizeof(uint32_t) + ret;
+
+          // can reset horizon
+          ((logbuf_header *) curbuf->buf_.data())->nentries += horizon_nentries;
+          horizon_p = horizon_nentries = 0;
+        }
+
+        write_log_record(&horizon[0] + horizon_p, tidcommit, readset, key, value);
+        horizon_p += space_needed;
+        horizon_nentries++;
+      } else {
+          if (!curbuf)
+            curbuf = getbuffer(id);
+          if (g_buffer_size - curbuf->curoff_ < space_needed) {
+            // push to logger
+            g_persist_buffers[id].enq(curbuf);
+            // get a new buf
+            curbuf = getbuffer(id);
+            assert(g_buffer_size - curbuf->curoff_ >= space_needed);
+          }
+          uint8_t *p = curbuf->pointer();
+          write_log_record(p, tidcommit, readset, key, value);
+          //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
+          curbuf->curoff_ += space_needed;
+          ((logbuf_header *) curbuf->buf_.data())->nentries++;
       }
-
-      if (g_buffer_size - curbuf->curoff_ < space_needed) {
-        //cerr << "pushing " << curbuf << " to logger" << endl;
-        //cerr << "  tidcommit=" << tidhelpers::Str(tidcommit) << endl;
-
-        // push to logger
-        g_persist_buffers[id].enq(curbuf);
-
-        //cerr << "pushed " << curbuf << " to logger" << endl;
-
-        // get a new buf
-        curbuf = nullptr;
-        goto renew;
-      }
-
-      uint8_t *p = curbuf->pointer();
-      write_log_record(p, tidcommit, readset, key, value);
-      //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
-      curbuf->curoff_ += space_needed;
-      ((logbuf_header *) curbuf->buf_.data())->nentries++;
     }
 
+    if (compress) {
+      // drop the horizon stuff for now
+      LZ4_free(lz4ctx);
+    }
     if (curbuf)
       g_persist_buffers[id].enq(curbuf);
   }
@@ -515,6 +565,8 @@ public:
   static uint64_t g_persistence_vc[NMAXCORES];
 
 protected:
+
+  bool do_compression() const OVERRIDE { return false; }
 
   const uint8_t *
   read_log_entry(const uint8_t *p, uint64_t &tid,
@@ -668,12 +720,14 @@ uint64_t explicit_deptracking_simulation::g_persistence_vc[NMAXCORES] = {0};
 
 class epochbased_simulation : public onecopy_logbased_simulation {
 public:
-  epochbased_simulation()
+  epochbased_simulation(bool compress) : compress_(compress)
   {
     clock_gettime(CLOCK_MONOTONIC, &last_io_completed_);
   }
 
 protected:
+
+  bool do_compression() const OVERRIDE { return compress_; }
 
   const uint8_t *
   read_log_entry(const uint8_t *p, uint64_t &tid,
@@ -784,6 +838,7 @@ protected:
 
 private:
   timespec last_io_completed_;
+  bool compress_;
 };
 
 int
@@ -870,7 +925,8 @@ main(int argc, char **argv)
        << "}" << endl;
 
   if (strategy != "deptracking" &&
-      strategy != "epoch")
+      strategy != "epoch" &&
+      strategy != "epoch-compress")
     assert(false);
 
   {
@@ -922,7 +978,9 @@ main(int argc, char **argv)
   if (strategy == "deptracking")
     sim.reset(new explicit_deptracking_simulation);
   else if (strategy == "epoch")
-    sim.reset(new epochbased_simulation);
+    sim.reset(new epochbased_simulation(false));
+  else if (strategy == "epoch-compress")
+    sim.reset(new epochbased_simulation(true));
   else
     assert(false);
   sim->init();

@@ -5,9 +5,10 @@ DEBUG ?= 0
 ifeq ($(strip $(DEBUG)),1)
         CXXFLAGS := -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x
 else
-        CXXFLAGS := -Ithird-parth/lz4 -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
+        CXXFLAGS := -Ithird-party/lz4 -Wall -Werror -g -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 endif
 
+TOP     := $(shell echo $${PWD-`pwd`})
 LDFLAGS := -lpthread -lnuma -lrt
 
 # 0 = libc malloc
@@ -162,7 +163,7 @@ third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
 persist_test: persist_test.o third-party/lz4/liblz4.so
-	$(CXX) -o persist_test persist_test.o $(LDFLAGS) -Lthird-party/lz4 -llz4 -Wl,-rpath,third-parth/lz4
+	$(CXX) -o persist_test persist_test.o $(LDFLAGS) -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
 
 .PHONY: dbtest
 dbtest: benchmarks/dbtest
@@ -186,4 +187,5 @@ new-benchmarks/dbtest: new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES)
 clean:
 	rm -f *.o test persist_test benchmarks/*.o benchmarks/dbtest \
 		benchmarks/masstree/*.o benchmarks/masstree/kvtest \
-		new-benchmarks/*.o new-benchmarks/dbtest
+		new-benchmarks/*.o new-benchmarks/dbtest 
+	make -C third-party/lz4 clean

@@ -145,6 +145,18 @@ int LZ4_decompress_fast_withPrefix64k (const char* source, char* dest, int outpu
     These functions are used for decoding inter-dependant blocks.
 */
 
+//****************************
+// Exposed Functions
+//****************************
+
+void* LZ4_create();
+int   LZ4_free(void* ctx);
+
+int LZ4_compress_heap(
+                 void* ctx,
+                 const char* source,
+                 char* dest,
+                 int inputSize);
 
 //****************************
 // Obsolete Functions
