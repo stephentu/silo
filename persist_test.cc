@@ -11,6 +11,7 @@
 #include <set>
 #include <atomic>
 #include <thread>
+#include <sstream>
 
 #include <unistd.h>
 #include <sys/uio.h>
@@ -23,6 +24,7 @@
 #include "amd64.h"
 #include "record/serializer.h"
 #include "util.h"
+#include "ping_pong_channel.h"
 
 using namespace std;
 
@@ -78,6 +80,17 @@ struct tidhelpers {
       ret = max(ret, NumId(v[i]));
     return ret;
   }
+
+  static string
+  Str(uint64_t v)
+  {
+    ostringstream b;
+    b << "[core=" << CoreId(v) << " | n="
+      << NumId(v) << " | epoch="
+      << EpochId(v) << "]";
+    return b.str();
+  }
+
 };
 
 // only one concurrent reader + writer allowed
@@ -200,6 +213,22 @@ timespec_subtract(const struct timespec *x,
   out->tv_nsec = x->tv_nsec - y2.tv_nsec;
 }
 
+template <typename T, typename Alloc>
+static ostream &
+operator<<(ostream &o, const vector<T, Alloc> &v)
+{
+  bool first = true;
+  o << "[";
+  for (auto &p : v) {
+    if (!first)
+      o << ", ";
+    first = false;
+    o << p;
+  }
+  o << "]";
+  return o;
+}
+
 /** simulate global database state */
 
 static vector<uint64_t> g_database;
@@ -220,7 +249,7 @@ public:
   virtual ~database_simulation() {}
   virtual void init() = 0;
   virtual void worker(unsigned id) = 0;
-  virtual void logger(int fd) = 0;
+  virtual void logger(const vector<int> &fd) = 0;
   virtual void
   terminate()
   {
@@ -332,7 +361,8 @@ public:
       }
 
       if (g_buffer_size - curbuf->curoff_ < space_needed) {
-        //cerr << "pushing to logger" << endl;
+        cerr << "pushing " << curbuf << " to logger" << endl;
+        cerr << "  tidcommit=" << tidhelpers::Str(tidcommit) << endl;
 
         // push to logger
         g_persist_buffers[id].enq(curbuf);
@@ -346,6 +376,14 @@ public:
 
       uint8_t *p = curbuf->pointer();
       write_log_record(p, tidcommit, readset, key, value);
+      if (tidhelpers::NumId(tidcommit) == 1138) {
+        cerr << "p=" << intptr_t(p) << endl;
+        uint64_t mycommittid;
+        read_log_entry(p, mycommittid, [](uint64_t readdep) {});
+        cerr << "committid=" << tidhelpers::Str(mycommittid) << endl;
+
+      }
+      //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
       curbuf->curoff_ += space_needed;
       ((logbuf_header *) curbuf->buf_.data())->nentries++;
     }
@@ -354,10 +392,53 @@ public:
       g_persist_buffers[id].enq(curbuf);
   }
 
+private:
   void
-  logger(int fd) OVERRIDE
+  writer(int fd, const vector<iovec> *vs, ping_pong_channel<int> &channel)
   {
-    struct iovec iov[NMAXCORES * g_perthread_buffers];
+    while (keep_going_.load(memory_order_acquire)) {
+      int i;
+      channel.recv(i, true);
+
+      if (i == 1) {
+        cerr << "writer got exit signal" << endl;
+        return;
+      }
+
+      ssize_t ret = writev(fd, &((*vs)[0]), vs->size());
+      if (ret == -1) {
+        perror("writev");
+        exit(1);
+      }
+
+      int fret = fdatasync(fd);
+      if (fret == -1) {
+        perror("fdatasync");
+        exit(1);
+      }
+
+      channel.send(0, true);
+    }
+  }
+
+public:
+  void
+  logger(const vector<int> &fds) OVERRIDE
+  {
+    vector<vector<iovec>> iovs(fds.size());
+    for (auto &v : iovs)
+      v.reserve(NMAXCORES * g_perthread_buffers);
+
+    vector<unique_ptr<ping_pong_channel<int>>> channels;
+    for (size_t i = 0; i < fds.size(); i++)
+      channels.emplace_back(new ping_pong_channel<int>(false));
+
+    vector<thread> writers;
+    for (size_t i = 0; i < fds.size(); i++)
+      writers.emplace_back(
+          &onecopy_logbased_simulation::writer,
+          this, fds[i], &iovs[i], std::ref(*(channels[i].get())));
+
     while (keep_going_.load(memory_order_acquire)) {
       // logger is simple:
       // 1) iterate over g_persist_buffers. if there is a top entry that is not
@@ -379,8 +460,10 @@ public:
           assert(px);
           if (px->io_scheduled_)
             continue;
-          iov[nwritten].iov_base = (void *) px->buf_.data();
-          iov[nwritten].iov_len = px->curoff_;
+          struct iovec iov;
+          iov.iov_base = (void *) px->buf_.data();
+          iov.iov_len = px->curoff_;
+          iovs[nwritten].emplace_back(iov);
           px->io_scheduled_ = true;
           px->curoff_ = sizeof(logbuf_header);
           px->remaining_ = reinterpret_cast<const logbuf_header *>(px->buf_.data())->nentries;
@@ -393,20 +476,30 @@ public:
         continue;
       }
 
-      ssize_t ret = writev(fd, &iov[0], nwritten);
-      if (ret == -1) {
-        perror("writev");
-        exit(1);
+      // dispatch all writes
+      for (size_t i = 0; i < fds.size(); i++) {
+        if (iovs[i].empty())
+          continue;
+        //cerr << "logger dispatching" << endl;
+        channels[i]->send(0, false);
       }
 
-      int fret = fdatasync(fd);
-      if (fret == -1) {
-        perror("fdatasync");
-        exit(1);
+      // wait
+      for (size_t i = 0; i < fds.size(); i++) {
+        if (iovs[i].empty())
+          continue;
+        int j;
+        channels[i]->recv(j, false);
+        iovs[i].clear();
       }
 
       logger_on_io_completion();
     }
+
+    for (auto &pxc : channels)
+      pxc->send(1, false);
+    for (auto &t : writers)
+      t.join();
   }
 
 protected:
@@ -529,6 +622,9 @@ protected:
           uint64_t committid;
           bool allsat = true;
 
+          cerr << "processing buffer " << px << " with curoff_=" << px->curoff_ << endl
+               << "  p=" << intptr_t(p) << endl;
+
           while (px->remaining_ && allsat) {
             allsat = true;
             const uint8_t *nextp =
@@ -540,7 +636,9 @@ protected:
                   allsat = false;
               });
             if (allsat) {
-              //cerr << "committid=" << committid << ", g_persistence_vc=" << g_persistence_vc[i] << endl;
+              cerr << "committid=" << tidhelpers::Str(committid)
+                   << ", g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i])
+                   << endl;
               assert(tidhelpers::CoreId(committid) == i);
               assert(g_persistence_vc[i] < committid);
               g_persistence_vc[i] = committid;
@@ -561,6 +659,7 @@ protected:
             if (pxcheck != px)
               assert(false);
             g_all_buffers[i].enq(px);
+            cerr << "buffer flused at g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i]) << endl;
           } else {
             assert(px->remaining_ > 0);
             break; // cannot process core's list any further
@@ -699,6 +798,7 @@ main(int argc, char **argv)
 {
   unsigned nworkers = 1;
   string strategy = "deptracking";
+  vector<string> logfiles;
 
   while (1) {
     static struct option long_options[] =
@@ -709,10 +809,11 @@ main(int argc, char **argv)
       {"writeset"    , required_argument , 0 , 'w'} ,
       {"keysize"     , required_argument , 0 , 'k'} ,
       {"valuesize"   , required_argument , 0 , 'v'} ,
+      {"logfile"     , required_argument , 0 , 'l'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:s:r:w:k:v:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:s:r:w:k:v:l:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -747,6 +848,10 @@ main(int argc, char **argv)
       g_valuesize = strtoul(optarg, nullptr, 10);
       break;
 
+    case 'l':
+      logfiles.emplace_back(optarg);
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -760,12 +865,14 @@ main(int argc, char **argv)
   assert(g_writeset > 0);
   assert(g_keysize > 0);
   assert(g_valuesize >= 0);
+  assert(!logfiles.empty());
 
   cerr << "{nworkers=" << nworkers
        << ", readset=" << g_readset
        << ", writeset=" << g_writeset
        << ", keysize=" << g_keysize
        << ", valuesize=" << g_valuesize
+       << ", logfiles=" << logfiles
        << "}" << endl;
 
   if (strategy != "deptracking" &&
@@ -807,10 +914,14 @@ main(int argc, char **argv)
 
   g_database.resize(g_nrecords); // all start at TID=0
 
-  int fd = open("data.log", O_CREAT|O_WRONLY|O_TRUNC, 0664);
-  if (fd == -1) {
-    perror("open");
-    return 1;
+  vector<int> fds;
+  for (auto &fname : logfiles) {
+    int fd = open(fname.c_str(), O_CREAT|O_WRONLY|O_TRUNC, 0664);
+    if (fd == -1) {
+      perror("open");
+      return 1;
+    }
+    fds.push_back(fd);
   }
 
   unique_ptr<database_simulation> sim;
@@ -822,7 +933,7 @@ main(int argc, char **argv)
     assert(false);
   sim->init();
 
-  thread logger_thread(&database_simulation::logger, sim.get(), fd);
+  thread logger_thread(&database_simulation::logger, sim.get(), fds);
 
   vector<thread> workers;
   util::timer tt;
