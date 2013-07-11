@@ -16,7 +16,6 @@
 #include <sys/uio.h>
 #include <sys/types.h>
 #include <fcntl.h>
-#include <libaio.h>
 #include <getopt.h>
 #include <time.h>
 
