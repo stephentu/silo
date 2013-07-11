@@ -203,12 +203,15 @@ template <typename PRNG>
 static inline void
 fillvalue(std::string &s, uint64_t idx, size_t sz, PRNG &prng)
 {
-  //uniform_int_distribution<unsigned> dist(0, 255);
+  uniform_int_distribution<uint32_t> dist(0, 10000);
   s.resize(sz);
-  serializer<uint64_t, false> ser;
-  ser.write((uint8_t *) s.data(), idx);
-  for (size_t i = sizeof(uint64_t); i < sz; i++)
-    s[i] = (char) i;
+  serializer<uint32_t, false> s_uint32_t;
+  for (size_t i = 0; i < sz; i += sizeof(uint32_t)) {
+    if (i + sizeof(uint32_t) <= sz) {
+      const uint32_t x = dist(prng);
+      s_uint32_t.write((uint8_t *) &s[i], x);
+    }
+  }
 }
 
 // thanks austin
