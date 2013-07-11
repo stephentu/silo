@@ -866,6 +866,7 @@ main(int argc, char **argv)
        << ", keysize=" << g_keysize
        << ", valuesize=" << g_valuesize
        << ", logfiles=" << logfiles
+       << ", strategy=" << strategy
        << "}" << endl;
 
   if (strategy != "deptracking" &&
