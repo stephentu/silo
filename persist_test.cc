@@ -477,7 +477,7 @@ public:
              ncommits_currentepoch = 0,
              last_checked_sync_epoch = 0,
              ncommits_synced = 0;
-    vector<uint64_t> outstanding_commits;
+    vector<pair<uint64_t, uint64_t>> outstanding_commits;
     for (size_t i = 0; i < g_ntxns_worker; i++) {
 
       // update epoch info
@@ -489,16 +489,23 @@ public:
         assert(curepoch == (lastepoch + 1));
         const size_t cursyncepoch = system_sync_epoch_.load(memory_order_acquire);
         assert(last_checked_sync_epoch <= cursyncepoch);
-        const size_t diff = cursyncepoch - last_checked_sync_epoch;
-        assert(outstanding_commits.size() >= diff);
-        for (size_t i = 0; i < diff; i++, last_checked_sync_epoch++)
-          ncommits_synced += outstanding_commits[i];
+
+        // can erase all entries with x.first <= cursyncepoch
+        size_t idx = 0;
+        for (; idx < outstanding_commits.size(); idx++) {
+          if (outstanding_commits[idx].first <= cursyncepoch)
+            ncommits_synced += outstanding_commits[idx].second;
+          else
+            break;
+        }
+
+        // erase entries [0, idx)
         // XXX: slow
         outstanding_commits.erase(outstanding_commits.begin(),
-                                  outstanding_commits.begin() + diff);
+                                  outstanding_commits.begin() + idx);
 
         // add information about the last epoch
-        outstanding_commits.push_back(ncommits_currentepoch);
+        outstanding_commits.emplace_back(lastepoch, ncommits_currentepoch);
         ncommits_currentepoch = 0;
       }
 
