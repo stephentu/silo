@@ -698,7 +698,7 @@ public:
           MakeRange<unsigned>(
               i * threads_per_logger,
               ((i + 1) == fds.size()) ?
-                fds.size() :
+                g_nworkers :
                 (i + 1) * threads_per_logger));
       }
     }
