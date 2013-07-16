@@ -368,6 +368,8 @@ protected:
     CACHE_PADOUT;
   } per_thread_sync_epochs_[g_nmax_loggers] CACHE_ALIGNED;
 
+  // conservative estimate (<=) for:
+  //   min_{core} max_{logger} per_thread_sync_epochs_[logger].epochs_[core]
   aligned_padded_elem<atomic<uint64_t>> system_sync_epoch_;
 };
 
@@ -457,6 +459,31 @@ public:
     }
   }
 
+private:
+  inline size_t
+  inplace_update_persistent_info(
+      vector<pair<uint64_t, uint64_t>> &outstanding_commits,
+      uint64_t cursyncepoch)
+  {
+    size_t ncommits_synced = 0;
+    // can erase all entries with x.first <= cursyncepoch
+    size_t idx = 0;
+    for (; idx < outstanding_commits.size(); idx++) {
+      if (outstanding_commits[idx].first <= cursyncepoch)
+        ncommits_synced += outstanding_commits[idx].second;
+      else
+        break;
+    }
+
+    // erase entries [0, idx)
+    // XXX: slow
+    outstanding_commits.erase(outstanding_commits.begin(),
+        outstanding_commits.begin() + idx);
+
+    return ncommits_synced;
+  }
+
+protected:
   void
   worker(unsigned id) OVERRIDE
   {
@@ -501,20 +528,8 @@ public:
         // try to sync outstanding commits
         INVARIANT(curepoch == (lastepoch + 1));
         const size_t cursyncepoch = system_sync_epoch_->load(memory_order_acquire);
-
-        // can erase all entries with x.first <= cursyncepoch
-        size_t idx = 0;
-        for (; idx < outstanding_commits.size(); idx++) {
-          if (outstanding_commits[idx].first <= cursyncepoch)
-            ncommits_synced += outstanding_commits[idx].second;
-          else
-            break;
-        }
-
-        // erase entries [0, idx)
-        // XXX: slow
-        outstanding_commits.erase(outstanding_commits.begin(),
-                                  outstanding_commits.begin() + idx);
+        ncommits_synced +=
+          inplace_update_persistent_info(outstanding_commits, cursyncepoch);
 
         // add information about the last epoch
         outstanding_commits.emplace_back(lastepoch, ncommits_currentepoch);
@@ -602,13 +617,36 @@ public:
     }
 
     if (compress) {
-      // drop the horizon stuff for now
       LZ4_free(lz4ctx);
+      // XXX: need to flush the horizon
+      if (g_verbose) {
+        cerr << "[WARNING] results will be bad b/c we haven't flushed horizon"
+             << endl;
+      }
     }
-    if (curbuf)
-      g_persist_buffers[id].enq(curbuf);
 
-    if (g_verbose)
+    if (curbuf) {
+      // XXX: hacky - an agreed upon future epoch for all threads to converge
+      // on upon finishing
+      const uint64_t FutureEpoch = 100000;
+      const uint64_t waitfor = tidhelpers::EpochId(
+          curbuf->header()->last_tid_);
+      INVARIANT(per_thread_epochs_[id]->load(memory_order_acquire) == waitfor);
+      ALWAYS_ASSERT(waitfor < FutureEpoch);
+      curbuf->header()->last_tid_ =
+        tidhelpers::MakeTid(id, 0, FutureEpoch);
+      g_persist_buffers[id].enq(curbuf);
+      outstanding_commits.emplace_back(waitfor, ncommits_currentepoch);
+      //cerr << "worker " << id << " waitfor epoch " << waitfor << endl;
+      // get these commits persisted
+      while (system_sync_epoch_->load(memory_order_acquire) < waitfor)
+        nop_pause();
+      ncommits_synced +=
+        inplace_update_persistent_info(outstanding_commits, waitfor);
+      ALWAYS_ASSERT(outstanding_commits.empty());
+    }
+
+    if (g_verbose && compress)
       cerr << "Average compression ratio: " << cratios / double(ncompressions) << endl;
 
     g_ntxns_committed.fetch_add(ncommits_synced, memory_order_release);
@@ -694,8 +732,9 @@ private:
           INVARIANT(tidhelpers::CoreId(px->header()->last_tid_) == idx);
           INVARIANT(epoch_prefixes[sense][idx] <=
                     tidhelpers::EpochId(px->header()->last_tid_));
+          INVARIANT(tidhelpers::EpochId(px->header()->last_tid_) > 0);
           epoch_prefixes[sense][idx] =
-            tidhelpers::EpochId(px->header()->last_tid_);
+            tidhelpers::EpochId(px->header()->last_tid_) - 1;
         }
       }
 
@@ -731,9 +770,14 @@ private:
       }
 
       // update metadata from previous write
-      for (size_t i = 0; i < g_nworkers; i++)
-        per_thread_sync_epochs_[id].epochs_[i].store(
-            epoch_prefixes[dosense][i], memory_order_release);
+      for (size_t i = 0; i < g_nworkers; i++) {
+        const uint64_t x0 =
+          per_thread_sync_epochs_[id].epochs_[i].load(memory_order_acquire);
+        const uint64_t x1 = epoch_prefixes[dosense][i];
+        if (x1 > x0)
+          per_thread_sync_epochs_[id].epochs_[i].store(
+              x1, memory_order_release);
+      }
       total_nbytes_written += nbytes_written[dosense];
       total_txns_written += txns_written[dosense];
 
@@ -765,6 +809,20 @@ private:
     for (T i = start; i < end; i++)
       ret.push_back(i);
     return ret;
+  }
+
+  inline void
+  advance_system_sync_epoch(const vector<vector<unsigned>> &assignments)
+  {
+    uint64_t min_so_far = numeric_limits<uint64_t>::max();
+    for (size_t i = 0; i < assignments.size(); i++)
+      for (auto j : assignments[i])
+        min_so_far =
+          min(per_thread_sync_epochs_[i].epochs_[j].load(memory_order_acquire), min_so_far);
+
+    const uint64_t syssync = system_sync_epoch_->load(memory_order_acquire);
+    INVARIANT(syssync <= min_so_far);
+    system_sync_epoch_->store(min_so_far, memory_order_release);
   }
 
 public:
@@ -808,15 +866,7 @@ public:
       t.tv_nsec = g_epoch_time_ns % ONE_SECOND_NS;
       nanosleep(&t, nullptr);
 
-      uint64_t min_so_far = numeric_limits<uint64_t>::max();
-      for (size_t i = 0; i < assignments.size(); i++)
-        for (auto j : assignments[i])
-          min_so_far =
-            min(per_thread_sync_epochs_[i].epochs_[j].load(memory_order_acquire), min_so_far);
-
-      //cerr << "advancing system_sync_epoch_: " << min_so_far << endl;
-      INVARIANT(system_sync_epoch_->load(memory_order_acquire) <= min_so_far);
-      system_sync_epoch_->store(min_so_far, memory_order_release);
+      advance_system_sync_epoch(assignments);
     }
 
     for (auto &t : writers)
@@ -1239,19 +1289,22 @@ main(int argc, char **argv)
     workers.emplace_back(&database_simulation::worker, sim.get(), i);
   for (auto &p: workers)
     p.join();
-  const double ntxns_committed = g_ntxns_committed.load();
-  const double xsec = tt.lap_ms() / 1000.0;
-  const double rate = double(ntxns_committed) / xsec;
-  cout << rate << endl;
-
   sim->terminate();
   logger_thread.join();
 
+  const double ntxns_committed = g_ntxns_committed.load();
+  const double xsec = tt.lap_ms() / 1000.0;
+  const double rate = double(ntxns_committed) / xsec;
   if (g_verbose) {
+    cerr << "txns commited rate: " << rate << " txns/sec" << endl;
+    cerr << "  (" << size_t(ntxns_committed) << " in " << xsec << " sec)" << endl;
+
     const double ntxns_written = g_ntxns_written.load();
-    const double xsec1 = tt1.lap_ms() / 1000.0;
-    const double rate1 = double(ntxns_written) / xsec1;
+    const double rate1 = double(ntxns_written) / xsec;
     cerr << "txns written rate: " << rate1 << " txns/sec" << endl;
+    cerr << "  (" << size_t(ntxns_written) << " in " << xsec << " sec)" << endl;
+  } else {
+    cout << rate << endl;
   }
 
   return 0;
