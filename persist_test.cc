@@ -654,12 +654,11 @@ protected:
 
 private:
   void
-  fsyncer(unsigned id, int fd, ping_pong_channel<int> &channel)
+  fsyncer(unsigned id, int fd, one_way_post<int> &channel)
   {
-    channel.send(0, true); // bootstrap it
     for (;;) {
       int ret;
-      channel.recv(ret, true);
+      channel.peek(ret);
       if (ret == -1)
         return;
       ret = fdatasync(fd);
@@ -667,7 +666,7 @@ private:
         perror("fdatasync");
         exit(1);
       }
-      channel.send(0, true);
+      channel.consume(ret);
     }
   }
 
@@ -677,8 +676,8 @@ private:
     vector<iovec> iovs(g_nworkers * g_perthread_buffers);
     vector<pbuffer *> pxs;
     struct timespec last_io_completed;
-    ping_pong_channel<int> *channel =
-      g_fsync_background ? new ping_pong_channel<int>(true) : nullptr;
+    one_way_post<int> *channel =
+      g_fsync_background ? new one_way_post<int> : nullptr;
     uint64_t total_nbytes_written = 0,
              total_txns_written = 0;
 
@@ -741,12 +740,16 @@ private:
       if (!nwritten) {
         // XXX: should probably sleep here
         nop_pause();
-        continue;
+        if (!g_fsync_background || !channel->can_post()) {
+          //cerr << "writer skipping because no work to do" << endl;
+          continue;
+        }
       }
 
       //cerr << "writer " << id << " nwritten " << nwritten << endl;
 
-      const ssize_t ret = writev(fd, &iovs[0], nwritten);
+      const ssize_t ret =
+        nwritten ? writev(fd, &iovs[0], nwritten) : 0;
       if (ret == -1) {
         perror("writev");
         exit(1);
@@ -755,10 +758,10 @@ private:
       bool dosense;
       if (g_fsync_background) {
         // wait for fsync from the previous write
-        int ret;
-        channel->recv(ret, false);
-        // now request another fsync
-        channel->send(0, false);
+        if (nwritten)
+          channel->post(0, true);
+        else
+          INVARIANT(channel->can_post());
         dosense = !sense;
       } else {
         int ret = fdatasync(fd);
