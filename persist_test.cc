@@ -120,8 +120,8 @@ public:
   inline void
   enq(Tp *p)
   {
-    assert(p);
-    assert(!buf_[head_.load(memory_order_acquire)].load(memory_order_acquire));
+    INVARIANT(p);
+    INVARIANT(!buf_[head_.load(memory_order_acquire)].load(memory_order_acquire));
     buf_[postincr(head_)].store(p, memory_order_release);
   }
 
@@ -133,7 +133,7 @@ public:
       nop_pause();
     Tp *ret = buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire);
     buf_[postincr(tail_)].store(nullptr, memory_order_release);
-    assert(ret);
+    INVARIANT(ret);
     return ret;
   }
 
@@ -486,7 +486,6 @@ public:
     struct pbuffer *curbuf = nullptr;
     uint64_t lasttid = 0,
              ncommits_currentepoch = 0,
-             last_checked_sync_epoch = 0,
              ncommits_synced = 0;
     vector<pair<uint64_t, uint64_t>> outstanding_commits;
     for (size_t i = 0; i < g_ntxns_worker; i++) {
@@ -497,9 +496,8 @@ public:
 
       if (lastepoch != curepoch) {
         // try to sync outstanding commits
-        assert(curepoch == (lastepoch + 1));
+        INVARIANT(curepoch == (lastepoch + 1));
         const size_t cursyncepoch = system_sync_epoch_->load(memory_order_acquire);
-        assert(last_checked_sync_epoch <= cursyncepoch);
 
         // can erase all entries with x.first <= cursyncepoch
         size_t idx = 0;
@@ -548,7 +546,7 @@ public:
               sizeof(uint32_t) + LZ4_compressBound(g_horizon_size)) {
             g_persist_buffers[id].enq(curbuf);
             curbuf = getbuffer(id);
-            assert(g_buffer_size - curbuf->curoff_ >=
+            INVARIANT(g_buffer_size - curbuf->curoff_ >=
                    sizeof(uint32_t) + LZ4_compressBound(g_horizon_size));
           }
 
@@ -558,7 +556,7 @@ public:
               (const char *) &horizon[0],
               (char *) curbuf->pointer() + sizeof(uint32_t),
               horizon_p);
-          assert(ret > 0);
+          INVARIANT(ret > 0);
           serializer<uint32_t, false> s_uint32_t;
           s_uint32_t.write(curbuf->pointer(), ret);
 
@@ -588,7 +586,7 @@ public:
             g_persist_buffers[id].enq(curbuf);
             // get a new buf
             curbuf = getbuffer(id);
-            assert(g_buffer_size - curbuf->curoff_ >= space_needed);
+            INVARIANT(g_buffer_size - curbuf->curoff_ >= space_needed);
           }
           uint8_t *p = curbuf->pointer();
           write_log_record(p, tidcommit, readset, writeset);
@@ -641,23 +639,19 @@ private:
 
       size_t nwritten = 0;
       for (auto idx : assignment) {
-        assert(idx >= 0 && idx < g_nworkers);
+        INVARIANT(idx >= 0 && idx < g_nworkers);
         g_persist_buffers[idx].peekall(pxs);
-        //if (idx == 0)
-        //  cerr << "worker 0: pxs.size(): " << pxs.size() << endl;
-        //if (idx == (g_nworkers - 1))
-        //  cerr << "worker " << (g_nworkers - 1) << ": pxs.size(): " << pxs.size() << endl;
         for (auto px : pxs) {
-          assert(px);
-          assert(!px->io_scheduled_);
+          INVARIANT(px);
+          INVARIANT(!px->io_scheduled_);
           iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
           px->io_scheduled_ = true;
           px->curoff_ = sizeof(logbuf_header);
           px->remaining_ = px->header()->nentries_;
           nwritten++;
-          assert(tidhelpers::CoreId(px->header()->last_tid_) == idx);
-          assert(epoch_prefixes[idx] <= tidhelpers::EpochId(px->header()->last_tid_));
+          INVARIANT(tidhelpers::CoreId(px->header()->last_tid_) == idx);
+          INVARIANT(epoch_prefixes[idx] <= tidhelpers::EpochId(px->header()->last_tid_));
           epoch_prefixes[idx] =
             tidhelpers::EpochId(px->header()->last_tid_);
         }
@@ -688,7 +682,8 @@ private:
       for (size_t i = 0; i < g_nworkers; i++)
         per_thread_sync_epochs_[id].epochs_[i].store(epoch_prefixes[i], memory_order_release);
 
-      // return buffers
+      // return buffers - we can do this as soon as
+      // write returns
       size_t acc = 0;
       for (auto idx : assignment) {
         pbuffer *px;
@@ -761,7 +756,7 @@ public:
             min(per_thread_sync_epochs_[i].epochs_[j].load(memory_order_acquire), min_so_far);
 
       //cerr << "advancing system_sync_epoch_: " << min_so_far << endl;
-      assert(system_sync_epoch_->load(memory_order_acquire) <= min_so_far);
+      INVARIANT(system_sync_epoch_->load(memory_order_acquire) <= min_so_far);
       system_sync_epoch_->store(min_so_far, memory_order_release);
     }
 
@@ -804,20 +799,20 @@ protected:
 
     p = s_uint64_t.read(p, &tid);
     p = s_uint8_t.read(p, &readset_sz);
-    assert(size_t(readset_sz) == g_readset);
+    INVARIANT(size_t(readset_sz) == g_readset);
     for (size_t i = 0; i < size_t(readset_sz); i++) {
       p = s_uint64_t.read(p, &v);
       readfunctor(v);
     }
 
     p = s_uint8_t.read(p, &writeset_sz);
-    assert(size_t(writeset_sz) == g_writeset);
+    INVARIANT(size_t(writeset_sz) == g_writeset);
     for (size_t i = 0; i < size_t(writeset_sz); i++) {
       p = s_uint8_t.read(p, &key_sz);
-      assert(size_t(key_sz) == g_keysize);
+      INVARIANT(size_t(key_sz) == g_keysize);
       p += size_t(key_sz);
       p = s_uint8_t.read(p, &value_sz);
-      assert(size_t(value_sz) == g_valuesize);
+      INVARIANT(size_t(value_sz) == g_valuesize);
       p += size_t(value_sz);
     }
 
@@ -873,19 +868,19 @@ protected:
   void
   logger_on_io_completion() OVERRIDE
   {
-    assert(false); // currently broken
+    ALWAYS_ASSERT(false); // currently broken
     bool changed = true;
     while (changed) {
       changed = false;
       for (size_t i = 0; i < NMAXCORES; i++) {
         g_persist_buffers[i].peekall(pxs_);
         for (auto px : pxs_) {
-          assert(px);
+          INVARIANT(px);
           if (!px->io_scheduled_)
             break;
 
-          assert(px->remaining_ > 0);
-          assert(px->curoff_ < g_buffer_size);
+          INVARIANT(px->remaining_ > 0);
+          INVARIANT(px->curoff_ < g_buffer_size);
 
           const uint8_t *p = px->pointer();
           uint64_t committid;
@@ -908,8 +903,8 @@ protected:
               //cerr << "committid=" << tidhelpers::Str(committid)
               //     << ", g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i])
               //     << endl;
-              assert(tidhelpers::CoreId(committid) == i);
-              assert(g_persistence_vc[i] < committid);
+              INVARIANT(tidhelpers::CoreId(committid) == i);
+              INVARIANT(g_persistence_vc[i] < committid);
               g_persistence_vc[i] = committid;
               changed = true;
               p = nextp;
@@ -922,15 +917,15 @@ protected:
           }
 
           if (allsat) {
-            assert(px->remaining_ == 0);
+            INVARIANT(px->remaining_ == 0);
             // finished entire buffer
             struct pbuffer *pxcheck = g_persist_buffers[i].deq();
             if (pxcheck != px)
-              assert(false);
+              INVARIANT(false);
             g_all_buffers[i].enq(px);
             //cerr << "buffer flused at g_persistence_vc=" << tidhelpers::Str(g_persistence_vc[i]) << endl;
           } else {
-            assert(px->remaining_ > 0);
+            INVARIANT(px->remaining_ > 0);
             break; // cannot process core's list any further
           }
         }
@@ -964,13 +959,13 @@ protected:
 
     p = s_uint64_t.read(p, &tid);
     p = s_uint8_t.read(p, &writeset_sz);
-    assert(size_t(writeset_sz) == g_writeset);
+    INVARIANT(size_t(writeset_sz) == g_writeset);
     for (size_t i = 0; i < size_t(writeset_sz); i++) {
       p = s_uint8_t.read(p, &key_sz);
-      assert(size_t(key_sz) == g_keysize);
+      INVARIANT(size_t(key_sz) == g_keysize);
       p += size_t(key_sz);
       p = s_uint8_t.read(p, &value_sz);
-      assert(size_t(value_sz) == g_valuesize);
+      INVARIANT(size_t(value_sz) == g_valuesize);
       p += size_t(value_sz);
     }
 
@@ -1085,13 +1080,13 @@ main(int argc, char **argv)
       abort();
     }
   }
-  assert(g_nworkers >= 1);
-  assert(g_readset >= 0);
-  assert(g_writeset > 0);
-  assert(g_keysize > 0);
-  assert(g_valuesize >= 0);
-  assert(!logfiles.empty());
-  assert(logfiles.size() <= g_nmax_loggers);
+  ALWAYS_ASSERT(g_nworkers >= 1);
+  ALWAYS_ASSERT(g_readset >= 0);
+  ALWAYS_ASSERT(g_writeset > 0);
+  ALWAYS_ASSERT(g_keysize > 0);
+  ALWAYS_ASSERT(g_valuesize >= 0);
+  ALWAYS_ASSERT(!logfiles.empty());
+  ALWAYS_ASSERT(logfiles.size() <= g_nmax_loggers);
 
   if (g_verbose)
     cerr << "{nworkers=" << g_nworkers
@@ -1106,39 +1101,39 @@ main(int argc, char **argv)
   if (strategy != "deptracking" &&
       strategy != "epoch" &&
       strategy != "epoch-compress")
-    assert(false);
+    ALWAYS_ASSERT(false);
 
   {
     // test circbuf
     int values[] = {0, 1, 2, 3, 4};
     circbuf<int, ARRAY_NELEMS(values)> b;
-    assert(b.empty());
+    ALWAYS_ASSERT(b.empty());
     for (size_t i = 0; i < ARRAY_NELEMS(values); i++)
       b.enq(&values[i]);
     vector<int *> pxs;
     b.peekall(pxs);
-    assert(pxs.size() == ARRAY_NELEMS(values));
-    assert(set<int *>(pxs.begin(), pxs.end()).size() == pxs.size());
+    ALWAYS_ASSERT(pxs.size() == ARRAY_NELEMS(values));
+    ALWAYS_ASSERT(set<int *>(pxs.begin(), pxs.end()).size() == pxs.size());
     for (size_t i = 0; i < ARRAY_NELEMS(values); i++)
-      assert(pxs[i] == &values[i]);
+      ALWAYS_ASSERT(pxs[i] == &values[i]);
     for (size_t i = 0; i < ARRAY_NELEMS(values); i++) {
-      assert(!b.empty());
-      assert(b.peek() == &values[i]);
-      assert(*b.peek() == values[i]);
-      assert(b.deq() == &values[i]);
+      ALWAYS_ASSERT(!b.empty());
+      ALWAYS_ASSERT(b.peek() == &values[i]);
+      ALWAYS_ASSERT(*b.peek() == values[i]);
+      ALWAYS_ASSERT(b.deq() == &values[i]);
     }
-    assert(b.empty());
+    ALWAYS_ASSERT(b.empty());
 
     b.enq(&values[0]);
     b.enq(&values[1]);
     b.enq(&values[2]);
     b.peekall(pxs);
     auto testlist = vector<int *>({&values[0], &values[1], &values[2]});
-    assert(pxs == testlist);
+    ALWAYS_ASSERT(pxs == testlist);
 
-    assert(b.deq() == &values[0]);
-    assert(b.deq() == &values[1]);
-    assert(b.deq() == &values[2]);
+    ALWAYS_ASSERT(b.deq() == &values[0]);
+    ALWAYS_ASSERT(b.deq() == &values[1]);
+    ALWAYS_ASSERT(b.deq() == &values[2]);
   }
 
   g_database.resize(g_nrecords); // all start at TID=0
@@ -1161,7 +1156,7 @@ main(int argc, char **argv)
   else if (strategy == "epoch-compress")
     sim.reset(new epochbased_simulation(true));
   else
-    assert(false);
+    ALWAYS_ASSERT(false);
   sim->init();
 
   thread logger_thread(&database_simulation::logger, sim.get(), fds);
