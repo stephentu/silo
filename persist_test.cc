@@ -269,6 +269,7 @@ static atomic<uint64_t> g_bytes_written[g_nmax_loggers];
 
 static size_t g_nworkers = 1;
 static int g_verbose = 0;
+static int g_fsync_background = 0;
 static size_t g_readset = 30;
 static size_t g_writeset = 16;
 static size_t g_keysize = 8; // in bytes
@@ -615,16 +616,51 @@ public:
 
 private:
   void
+  fsyncer(unsigned id, int fd, ping_pong_channel<int> &channel)
+  {
+    channel.send(0, true); // bootstrap it
+    for (;;) {
+      int ret;
+      channel.recv(ret, true);
+      if (ret == -1)
+        return;
+      ret = fdatasync(fd);
+      if (ret == -1) {
+        perror("fdatasync");
+        exit(1);
+      }
+      channel.send(0, true);
+    }
+  }
+
+  void
   writer(unsigned id, int fd, const vector<unsigned> &assignment)
   {
     vector<iovec> iovs(g_nworkers * g_perthread_buffers);
     vector<pbuffer *> pxs;
-    uint64_t nbytes_written = 0, epoch_prefixes[g_nworkers];
-    memset(&epoch_prefixes[0], 0, g_nworkers * sizeof(epoch_prefixes[0]));
     struct timespec last_io_completed;
+    ping_pong_channel<int> *channel =
+      g_fsync_background ? new ping_pong_channel<int>(true) : nullptr;
+    uint64_t total_nbytes_written = 0,
+             total_txns_written = 0;
+
+    bool sense = false; // cur is at sense, prev is at !sense
+    uint64_t nbytes_written[2], txns_written[2], epoch_prefixes[2][g_nworkers];
+    memset(&nbytes_written[0], 0, sizeof(nbytes_written));
+    memset(&txns_written[0], 0, sizeof(txns_written));
+    memset(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
+    memset(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
+
     clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
+    thread fsync_thread;
+    if (g_fsync_background) {
+      fsync_thread = move(thread(
+            &onecopy_logbased_simulation::fsyncer, this, id, fd, ref(*channel)));
+      fsync_thread.detach();
+    }
 
     while (keep_going_->load(memory_order_acquire)) {
+
       // don't allow this loop to proceed less than an epoch's worth of time,
       // so we can batch IO
       struct timespec now, diff;
@@ -639,7 +675,8 @@ private:
       }
       clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
-      size_t nwritten = 0, nbytes = 0;
+      size_t nwritten = 0;
+      nbytes_written[sense] = txns_written[sense] = 0;
       for (auto idx : assignment) {
         INVARIANT(idx >= 0 && idx < g_nworkers);
         g_persist_buffers[idx].peekall(pxs);
@@ -648,14 +685,16 @@ private:
           INVARIANT(!px->io_scheduled_);
           iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
-          nbytes += px->curoff_;
+          nbytes_written[sense] += px->curoff_;
           px->io_scheduled_ = true;
           px->curoff_ = sizeof(logbuf_header);
           px->remaining_ = px->header()->nentries_;
+          txns_written[sense] += px->header()->nentries_;
           nwritten++;
           INVARIANT(tidhelpers::CoreId(px->header()->last_tid_) == idx);
-          INVARIANT(epoch_prefixes[idx] <= tidhelpers::EpochId(px->header()->last_tid_));
-          epoch_prefixes[idx] =
+          INVARIANT(epoch_prefixes[sense][idx] <=
+                    tidhelpers::EpochId(px->header()->last_tid_));
+          epoch_prefixes[sense][idx] =
             tidhelpers::EpochId(px->header()->last_tid_);
         }
       }
@@ -674,35 +713,47 @@ private:
         exit(1);
       }
 
-      // XXX: should dispatch in background thread so we can overlap the next
-      // write
-      const int fret = fdatasync(fd);
-      if (fret == -1) {
-        perror("fdatasync");
-        exit(1);
+      bool dosense;
+      if (g_fsync_background) {
+        // wait for fsync from the previous write
+        int ret;
+        channel->recv(ret, false);
+        // now request another fsync
+        channel->send(0, false);
+        dosense = !sense;
+      } else {
+        int ret = fdatasync(fd);
+        if (ret == -1) {
+          perror("fdatasync");
+          exit(1);
+        }
+        dosense = sense;
       }
 
+      // update metadata from previous write
       for (size_t i = 0; i < g_nworkers; i++)
-        per_thread_sync_epochs_[id].epochs_[i].store(epoch_prefixes[i], memory_order_release);
+        per_thread_sync_epochs_[id].epochs_[i].store(
+            epoch_prefixes[dosense][i], memory_order_release);
+      total_nbytes_written += nbytes_written[dosense];
+      total_txns_written += txns_written[dosense];
 
-      // return buffers - we can do this as soon as
-      // write returns
-      size_t acc = 0;
+      // bump the sense
+      sense = !sense;
+
+      // return all buffers that have been io_scheduled_ - we can do this as
+      // soon as write returns
       for (auto idx : assignment) {
         pbuffer *px;
         while ((px = g_persist_buffers[idx].peek()) &&
                px->io_scheduled_) {
-          acc += px->header()->nentries_;
           g_persist_buffers[idx].deq();
           g_all_buffers[idx].enq(px);
         }
       }
-      g_ntxns_written += acc;
-
-      nbytes_written += nbytes;
     }
 
-    g_bytes_written[id].store(nbytes_written, memory_order_release);
+    g_bytes_written[id].store(total_nbytes_written, memory_order_release);
+    g_ntxns_written.fetch_add(total_txns_written, memory_order_release);
   }
 
   // returns a vector of [start, ..., end)
@@ -772,6 +823,8 @@ public:
       t.join();
 
     if (g_verbose) {
+      cerr << "current epoch: " << epoch_number_->load(memory_order_acquire) << endl;
+      cerr << "sync epoch   : " << system_sync_epoch_->load(memory_order_acquire) << endl;
       const double xsec = tt.lap_ms() / 1000.0;
       for (size_t i = 0; i < writers.size(); i++)
         cerr << "writer " << i << " " <<
@@ -1040,6 +1093,7 @@ main(int argc, char **argv)
     static struct option long_options[] =
     {
       {"verbose"     , no_argument       , &g_verbose , 1}   ,
+      {"fsync-back"  , no_argument       , &g_fsync_background, 1},
       {"num-threads" , required_argument , 0          , 't'} ,
       {"strategy"    , required_argument , 0          , 's'} ,
       {"readset"     , required_argument , 0          , 'r'} ,
@@ -1113,6 +1167,7 @@ main(int argc, char **argv)
          << ", valuesize=" << g_valuesize
          << ", logfiles=" << logfiles
          << ", strategy=" << strategy
+         << ", fsync_background=" << g_fsync_background
          << "}" << endl;
 
   if (strategy != "deptracking" &&
@@ -1179,21 +1234,25 @@ main(int argc, char **argv)
   thread logger_thread(&database_simulation::logger, sim.get(), fds);
 
   vector<thread> workers;
-  util::timer tt;
+  util::timer tt, tt1;
   for (size_t i = 0; i < g_nworkers; i++)
     workers.emplace_back(&database_simulation::worker, sim.get(), i);
   for (auto &p: workers)
     p.join();
   const double ntxns_committed = g_ntxns_committed.load();
-  const double ntxns_written = g_ntxns_written.load();
   const double xsec = tt.lap_ms() / 1000.0;
   const double rate = double(ntxns_committed) / xsec;
   cout << rate << endl;
-  if (g_verbose)
-    cerr << "written rate: " << ntxns_written / xsec << endl;
 
   sim->terminate();
   logger_thread.join();
+
+  if (g_verbose) {
+    const double ntxns_written = g_ntxns_written.load();
+    const double xsec1 = tt1.lap_ms() / 1000.0;
+    const double rate1 = double(ntxns_written) / xsec1;
+    cerr << "txns written rate: " << rate1 << " txns/sec" << endl;
+  }
 
   return 0;
 }
