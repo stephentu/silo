@@ -258,14 +258,16 @@ operator<<(ostream &o, const vector<T, Alloc> &v)
 
 /** simulate global database state */
 
-static vector<uint64_t> g_database;
-static atomic<uint64_t> g_ntxns_committed(0);
-static atomic<uint64_t> g_ntxns_written(0);
-static size_t g_nworkers = 1;
 static const size_t g_nrecords = 1000000;
 static const size_t g_ntxns_worker = 1000000;
 static const size_t g_nmax_loggers = 16;
 
+static vector<uint64_t> g_database;
+static atomic<uint64_t> g_ntxns_committed(0);
+static atomic<uint64_t> g_ntxns_written(0);
+static atomic<uint64_t> g_bytes_written[g_nmax_loggers];
+
+static size_t g_nworkers = 1;
 static int g_verbose = 0;
 static size_t g_readset = 30;
 static size_t g_writeset = 16;
@@ -608,7 +610,7 @@ public:
     if (g_verbose)
       cerr << "Average compression ratio: " << cratios / double(ncompressions) << endl;
 
-    g_ntxns_committed.fetch_add(ncommits_synced);
+    g_ntxns_committed.fetch_add(ncommits_synced, memory_order_release);
   }
 
 private:
@@ -617,7 +619,7 @@ private:
   {
     vector<iovec> iovs(g_nworkers * g_perthread_buffers);
     vector<pbuffer *> pxs;
-    uint64_t epoch_prefixes[g_nworkers];
+    uint64_t nbytes_written = 0, epoch_prefixes[g_nworkers];
     memset(&epoch_prefixes[0], 0, g_nworkers * sizeof(epoch_prefixes[0]));
     struct timespec last_io_completed;
     clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
@@ -637,7 +639,7 @@ private:
       }
       clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
-      size_t nwritten = 0;
+      size_t nwritten = 0, nbytes = 0;
       for (auto idx : assignment) {
         INVARIANT(idx >= 0 && idx < g_nworkers);
         g_persist_buffers[idx].peekall(pxs);
@@ -646,6 +648,7 @@ private:
           INVARIANT(!px->io_scheduled_);
           iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
+          nbytes += px->curoff_;
           px->io_scheduled_ = true;
           px->curoff_ = sizeof(logbuf_header);
           px->remaining_ = px->header()->nentries_;
@@ -695,7 +698,11 @@ private:
         }
       }
       g_ntxns_written += acc;
+
+      nbytes_written += nbytes;
     }
+
+    g_bytes_written[id].store(nbytes_written, memory_order_release);
   }
 
   // returns a vector of [start, ..., end)
@@ -734,12 +741,13 @@ public:
       }
     }
 
+    timer tt;
     for (size_t i = 0; i < assignments.size(); i++)
       writers.emplace_back(
         &onecopy_logbased_simulation::writer,
         this, i, fds[i], ref(assignments[i]));
-
-    cerr << "assignments: " << assignments << endl;
+    if (g_verbose)
+      cerr << "assignments: " << assignments << endl;
     while (keep_going_->load(memory_order_acquire)) {
       // periodically compute which epoch is the persistence epoch,
       // and update system_sync_epoch_
@@ -762,6 +770,15 @@ public:
 
     for (auto &t : writers)
       t.join();
+
+    if (g_verbose) {
+      const double xsec = tt.lap_ms() / 1000.0;
+      for (size_t i = 0; i < writers.size(); i++)
+        cerr << "writer " << i << " " <<
+          (double(g_bytes_written[i].load(memory_order_acquire)) /
+           double(1UL << 20) /
+           xsec) << " MB/sec" << endl;
+    }
   }
 
 protected:
