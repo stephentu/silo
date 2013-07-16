@@ -823,8 +823,10 @@ private:
         min_so_far =
           min(per_thread_sync_epochs_[i].epochs_[j].load(memory_order_acquire), min_so_far);
 
+#ifdef CHECK_INVARIANTS
     const uint64_t syssync = system_sync_epoch_->load(memory_order_acquire);
     INVARIANT(syssync <= min_so_far);
+#endif
     system_sync_epoch_->store(min_so_far, memory_order_release);
   }
 
