@@ -23,7 +23,9 @@ namespace util {
 // padded, aligned primitives
 template <typename T>
 struct aligned_padded_elem {
-  aligned_padded_elem() : elem() {}
+  template <class... Args>
+  aligned_padded_elem(Args &&... args)
+    : elem(std::forward<Args>(args)...) {}
   T elem;
   // syntactic sugar- can treat like a pointer
   inline T & operator*() { return elem; }

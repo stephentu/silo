@@ -29,6 +29,7 @@
 #include "ping_pong_channel.h"
 
 using namespace std;
+using namespace util;
 
 struct tidhelpers {
   // copied from txn_proto2_impl.h
@@ -144,13 +145,13 @@ public:
 
   // takes a current snapshot of all entries in the queue
   inline void
-  peekall(vector<Tp *> &ps)
+  peekall(vector<Tp *> &ps, size_t limit = numeric_limits<size_t>::max())
   {
     ps.clear();
     const unsigned t = tail_.load(memory_order_acquire);
     unsigned i = t;
     Tp *p;
-    while ((p = buf_[i].load(memory_order_acquire))) {
+    while ((p = buf_[i].load(memory_order_acquire)) && ps.size() < limit) {
       ps.push_back(p);
       postincr(i);
       if (i == t)
@@ -214,30 +215,30 @@ fillvalue(std::string &s, uint64_t idx, size_t sz, PRNG &prng)
   }
 }
 
-//// thanks austin
-//static void
-//timespec_subtract(const struct timespec *x,
-//                  const struct timespec *y,
-//                  struct timespec *out)
-//{
-//  // Perform the carry for the later subtraction by updating y.
-//  struct timespec y2 = *y;
-//  if (x->tv_nsec < y2.tv_nsec) {
-//    int sec = (y2.tv_nsec - x->tv_nsec) / 1e9 + 1;
-//    y2.tv_nsec -= 1e9 * sec;
-//    y2.tv_sec += sec;
-//  }
-//  if (x->tv_nsec - y2.tv_nsec > 1e9) {
-//    int sec = (x->tv_nsec - y2.tv_nsec) / 1e9;
-//    y2.tv_nsec += 1e9 * sec;
-//    y2.tv_sec -= sec;
-//  }
-//
-//  // Compute the time remaining to wait.  tv_nsec is certainly
-//  // positive.
-//  out->tv_sec  = x->tv_sec - y2.tv_sec;
-//  out->tv_nsec = x->tv_nsec - y2.tv_nsec;
-//}
+// thanks austin
+static void
+timespec_subtract(const struct timespec *x,
+                  const struct timespec *y,
+                  struct timespec *out)
+{
+  // Perform the carry for the later subtraction by updating y.
+  struct timespec y2 = *y;
+  if (x->tv_nsec < y2.tv_nsec) {
+    int sec = (y2.tv_nsec - x->tv_nsec) / 1e9 + 1;
+    y2.tv_nsec -= 1e9 * sec;
+    y2.tv_sec += sec;
+  }
+  if (x->tv_nsec - y2.tv_nsec > 1e9) {
+    int sec = (x->tv_nsec - y2.tv_nsec) / 1e9;
+    y2.tv_nsec += 1e9 * sec;
+    y2.tv_sec -= sec;
+  }
+
+  // Compute the time remaining to wait.  tv_nsec is certainly
+  // positive.
+  out->tv_sec  = x->tv_sec - y2.tv_sec;
+  out->tv_nsec = x->tv_nsec - y2.tv_nsec;
+}
 
 template <typename T, typename Alloc>
 static ostream &
@@ -259,6 +260,7 @@ operator<<(ostream &o, const vector<T, Alloc> &v)
 
 static vector<uint64_t> g_database;
 static atomic<uint64_t> g_ntxns_committed(0);
+static atomic<uint64_t> g_ntxns_written(0);
 static size_t g_nworkers = 1;
 static const size_t g_nrecords = 1000000;
 static const size_t g_ntxns_worker = 1000000;
@@ -275,7 +277,7 @@ static size_t g_valuesize = 32; // in bytes
 // all simulations are epoch based
 class database_simulation {
 public:
-  static const unsigned long g_epoch_time_ns = 20000000; /* 20ms in ns */
+  static const unsigned long g_epoch_time_ns = 30000000; /* 30ms in ns */
 
   database_simulation()
     : keep_going_(true),
@@ -283,11 +285,12 @@ public:
       epoch_number_(1), // start at 1 so 0 can be fully persistent initially
       system_sync_epoch_(0)
   {
-    for (size_t i = 0; i < NMAXCORES; i++)
-      per_thread_epochs_[i].store(1, memory_order_release);
+    // XXX: depends on g_nworkers to be set by now
+    for (size_t i = 0; i < g_nworkers; i++)
+      per_thread_epochs_[i]->store(1, memory_order_release);
     for (size_t i = 0; i < g_nmax_loggers; i++)
-      for (size_t j = 0; j < NMAXCORES; j++)
-        per_thread_sync_epochs_[i][j].store(0, memory_order_release);
+      for (size_t j = 0; j < g_nworkers; j++)
+        per_thread_sync_epochs_[i].epochs_[j].store(0, memory_order_release);
   }
 
   virtual ~database_simulation() {}
@@ -305,7 +308,7 @@ public:
   virtual void
   terminate()
   {
-    keep_going_.store(false, memory_order_release);
+    keep_going_->store(false, memory_order_release);
     epoch_thread_.join();
   }
 
@@ -313,48 +316,56 @@ protected:
   void
   epoch_thread()
   {
-    while (keep_going_.load(memory_order_acquire)) {
+    while (keep_going_->load(memory_order_acquire)) {
       struct timespec t;
       t.tv_sec  = g_epoch_time_ns / ONE_SECOND_NS;
       t.tv_nsec = g_epoch_time_ns % ONE_SECOND_NS;
       nanosleep(&t, nullptr);
 
       // make sure all threads are at the current epoch
-      const uint64_t curepoch = epoch_number_.load(memory_order_acquire);
+      const uint64_t curepoch = epoch_number_->load(memory_order_acquire);
 
     retry:
       bool allthere = true;
       for (size_t i = 0;
-           i < g_nworkers && keep_going_.load(memory_order_acquire);
+           i < g_nworkers && keep_going_->load(memory_order_acquire);
            i++) {
-        if (per_thread_epochs_[i].load(memory_order_acquire) < curepoch) {
+        if (per_thread_epochs_[i]->load(memory_order_acquire) < curepoch) {
           allthere = false;
           break;
         }
       }
-      if (!keep_going_.load(memory_order_acquire))
+      if (!keep_going_->load(memory_order_acquire))
         return;
       if (!allthere) {
         nop_pause();
         goto retry;
       }
 
-      epoch_number_.store(curepoch + 1, memory_order_release); // bump it
+      //cerr << "bumping epoch" << endl;
+      epoch_number_->store(curepoch + 1, memory_order_release); // bump it
     }
   }
 
-  atomic<bool> keep_going_;
-  thread epoch_thread_;
-  atomic<uint64_t> epoch_number_;
-  atomic<uint64_t> per_thread_epochs_[NMAXCORES];
+  aligned_padded_elem<atomic<bool>> keep_going_;
 
-  // v = per_thread_sync_epochs_[i][j]: logger i has persisted up through
-  // (including) all transactions <= epoch v on core j. since core => logger
-  // mapping is static, taking:
-  //   min_{core} max_{logger} per_thread_sync_epochs_[logger][core]
+  thread epoch_thread_;
+
+  aligned_padded_elem<atomic<uint64_t>> epoch_number_;
+
+  aligned_padded_elem<atomic<uint64_t>> per_thread_epochs_[NMAXCORES];
+
+  // v = per_thread_sync_epochs_[i].epochs_[j]: logger i has persisted up
+  // through (including) all transactions <= epoch v on core j. since core =>
+  // logger mapping is static, taking:
+  //   min_{core} max_{logger} per_thread_sync_epochs_[logger].epochs_[core]
   // yields the entire system's persistent epoch
-  atomic<uint64_t> per_thread_sync_epochs_[g_nmax_loggers][NMAXCORES];
-  atomic<uint64_t> system_sync_epoch_;
+  struct {
+    atomic<uint64_t> epochs_[NMAXCORES];
+    CACHE_PADOUT;
+  } per_thread_sync_epochs_[g_nmax_loggers] CACHE_ALIGNED;
+
+  aligned_padded_elem<atomic<uint64_t>> system_sync_epoch_;
 };
 
 struct logbuf_header {
@@ -390,7 +401,7 @@ struct pbuffer {
 
 class onecopy_logbased_simulation : public database_simulation {
 public:
-  static const size_t g_perthread_buffers = 16; // 16 outstanding buffers
+  static const size_t g_perthread_buffers = 64; // 64 outstanding buffers
   static const size_t g_buffer_size = (1<<20); // in bytes
   static const size_t g_horizon_size = (1<<16); // in bytes, for compression only
 
@@ -481,13 +492,13 @@ public:
     for (size_t i = 0; i < g_ntxns_worker; i++) {
 
       // update epoch info
-      const uint64_t lastepoch = per_thread_epochs_[id].load(memory_order_acquire);
-      const uint64_t curepoch = epoch_number_.load(memory_order_acquire);
+      const uint64_t lastepoch = per_thread_epochs_[id]->load(memory_order_acquire);
+      const uint64_t curepoch = epoch_number_->load(memory_order_acquire);
 
       if (lastepoch != curepoch) {
         // try to sync outstanding commits
         assert(curepoch == (lastepoch + 1));
-        const size_t cursyncepoch = system_sync_epoch_.load(memory_order_acquire);
+        const size_t cursyncepoch = system_sync_epoch_->load(memory_order_acquire);
         assert(last_checked_sync_epoch <= cursyncepoch);
 
         // can erase all entries with x.first <= cursyncepoch
@@ -507,9 +518,9 @@ public:
         // add information about the last epoch
         outstanding_commits.emplace_back(lastepoch, ncommits_currentepoch);
         ncommits_currentepoch = 0;
-      }
 
-      per_thread_epochs_[id].store(curepoch, memory_order_release);
+        per_thread_epochs_[id]->store(curepoch, memory_order_release);
+      }
 
       for (size_t j = 0; j < g_readset; j++)
         readset[j] = g_database[dist(prng)];
@@ -610,11 +621,32 @@ private:
     vector<pbuffer *> pxs;
     uint64_t epoch_prefixes[g_nworkers];
     memset(&epoch_prefixes[0], 0, g_nworkers * sizeof(epoch_prefixes[0]));
-    while (keep_going_.load(memory_order_acquire)) {
+    struct timespec last_io_completed;
+    clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
+
+    while (keep_going_->load(memory_order_acquire)) {
+      // don't allow this loop to proceed less than an epoch's worth of time,
+      // so we can batch IO
+      struct timespec now, diff;
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      timespec_subtract(&now, &last_io_completed, &diff);
+      if (diff.tv_sec == 0 && diff.tv_nsec < long(g_epoch_time_ns)) {
+        // need to sleep it out
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = g_epoch_time_ns - diff.tv_nsec;
+        nanosleep(&ts, nullptr);
+      }
+      clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
+
       size_t nwritten = 0;
       for (auto idx : assignment) {
         assert(idx >= 0 && idx < g_nworkers);
         g_persist_buffers[idx].peekall(pxs);
+        //if (idx == 0)
+        //  cerr << "worker 0: pxs.size(): " << pxs.size() << endl;
+        //if (idx == (g_nworkers - 1))
+        //  cerr << "worker " << (g_nworkers - 1) << ": pxs.size(): " << pxs.size() << endl;
         for (auto px : pxs) {
           assert(px);
           assert(!px->io_scheduled_);
@@ -637,6 +669,8 @@ private:
         continue;
       }
 
+      //cerr << "writer " << id << " nwritten " << nwritten << endl;
+
       const ssize_t ret = writev(fd, &iovs[0], nwritten);
       if (ret == -1) {
         perror("writev");
@@ -652,17 +686,20 @@ private:
       }
 
       for (size_t i = 0; i < g_nworkers; i++)
-        per_thread_sync_epochs_[id][i].store(epoch_prefixes[i], memory_order_release);
+        per_thread_sync_epochs_[id].epochs_[i].store(epoch_prefixes[i], memory_order_release);
 
       // return buffers
+      size_t acc = 0;
       for (auto idx : assignment) {
         pbuffer *px;
         while ((px = g_persist_buffers[idx].peek()) &&
                px->io_scheduled_) {
+          acc += px->header()->nentries_;
           g_persist_buffers[idx].deq();
           g_all_buffers[idx].enq(px);
         }
       }
+      g_ntxns_written += acc;
     }
   }
 
@@ -708,7 +745,7 @@ public:
         this, i, fds[i], ref(assignments[i]));
 
     cerr << "assignments: " << assignments << endl;
-    while (keep_going_.load(memory_order_acquire)) {
+    while (keep_going_->load(memory_order_acquire)) {
       // periodically compute which epoch is the persistence epoch,
       // and update system_sync_epoch_
 
@@ -721,11 +758,11 @@ public:
       for (size_t i = 0; i < assignments.size(); i++)
         for (auto j : assignments[i])
           min_so_far =
-            min(per_thread_sync_epochs_[i][j].load(memory_order_acquire), min_so_far);
+            min(per_thread_sync_epochs_[i].epochs_[j].load(memory_order_acquire), min_so_far);
 
       //cerr << "advancing system_sync_epoch_: " << min_so_far << endl;
-      assert(system_sync_epoch_.load(memory_order_acquire) <= min_so_far);
-      system_sync_epoch_.store(min_so_far, memory_order_release);
+      assert(system_sync_epoch_->load(memory_order_acquire) <= min_so_far);
+      system_sync_epoch_->store(min_so_far, memory_order_release);
     }
 
     for (auto &t : writers)
@@ -1135,9 +1172,13 @@ main(int argc, char **argv)
     workers.emplace_back(&database_simulation::worker, sim.get(), i);
   for (auto &p: workers)
     p.join();
+  const double ntxns_committed = g_ntxns_committed.load();
+  const double ntxns_written = g_ntxns_written.load();
   const double xsec = tt.lap_ms() / 1000.0;
-  const double rate = double(g_ntxns_committed.load()) / xsec;
+  const double rate = double(ntxns_committed) / xsec;
   cout << rate << endl;
+  if (g_verbose)
+    cerr << "written rate: " << ntxns_written / xsec << endl;
 
   sim->terminate();
   logger_thread.join();
