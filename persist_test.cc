@@ -280,11 +280,11 @@ public:
   database_simulation()
     : keep_going_(true),
       epoch_thread_(),
-      epoch_number_(0),
+      epoch_number_(1), // start at 1 so 0 can be fully persistent initially
       system_sync_epoch_(0)
   {
     for (size_t i = 0; i < NMAXCORES; i++)
-      per_thread_epochs_[i].store(0, memory_order_release);
+      per_thread_epochs_[i].store(1, memory_order_release);
     for (size_t i = 0; i < g_nmax_loggers; i++)
       for (size_t j = 0; j < NMAXCORES; j++)
         per_thread_sync_epochs_[i][j].store(0, memory_order_release);
@@ -324,12 +324,16 @@ protected:
 
     retry:
       bool allthere = true;
-      for (size_t i = 0; i < g_nworkers; i++) {
+      for (size_t i = 0;
+           i < g_nworkers && keep_going_.load(memory_order_acquire);
+           i++) {
         if (per_thread_epochs_[i].load(memory_order_acquire) < curepoch) {
           allthere = false;
           break;
         }
       }
+      if (!keep_going_.load(memory_order_acquire))
+        return;
       if (!allthere) {
         nop_pause();
         goto retry;
@@ -355,18 +359,7 @@ protected:
 
 struct logbuf_header {
   uint64_t nentries_; // > 0 for all valid log buffers
-  uint64_t last_epoch_prefix_;
-    // *INCLUDING* this log buffer, what is the (inclusive) prefix of log
-    // entries which has been passed to any logger by CoreId(Entry[0].tid).
-    // prefixes are defined by entire epochs, so this means that epochs [0,
-    // last_epoch_prefix_] have been passed to a logger after this buffer.
-    // Because workers are sticky to loggers, then this means if we take the
-    // max over all loggers per core, then we know which is the durable prefix
-    // of epochs for each core (then we take the min over each core, and this
-    // yields the durable prefix of the system)
-  uint64_t last_epoch_count_;
-    // how many txns did CoreId(Entry[0].tid) commit in epoch
-    // last_epoch_prefix_
+  uint64_t last_tid_; // TID of the last commit
 } PACKED;
 
 struct pbuffer {
@@ -455,8 +448,10 @@ public:
   {
     const bool compress = do_compression();
     uint8_t horizon[g_horizon_size]; // LZ4 looks at 65kb windows
+
+    // where are we in the window, how many elems in this window?
     size_t horizon_p = 0, horizon_nentries = 0;
-      // where are we in the window, how many elems in this window?
+    uint64_t horizon_last_tid = 0; // last committed TID in the horizon
 
     double cratios = 0.0;
     unsigned long ncompressions = 0;
@@ -488,7 +483,9 @@ public:
       // update epoch info
       const uint64_t lastepoch = per_thread_epochs_[id].load(memory_order_acquire);
       const uint64_t curepoch = epoch_number_.load(memory_order_acquire);
+
       if (lastepoch != curepoch) {
+        // try to sync outstanding commits
         assert(curepoch == (lastepoch + 1));
         const size_t cursyncepoch = system_sync_epoch_.load(memory_order_acquire);
         assert(last_checked_sync_epoch <= cursyncepoch);
@@ -499,6 +496,10 @@ public:
         // XXX: slow
         outstanding_commits.erase(outstanding_commits.begin(),
                                   outstanding_commits.begin() + diff);
+
+        // add information about the last epoch
+        outstanding_commits.push_back(ncommits_currentepoch);
+        ncommits_currentepoch = 0;
       }
 
       per_thread_epochs_[id].store(curepoch, memory_order_release);
@@ -524,13 +525,6 @@ public:
           // need to compress and write horizon
           if (!curbuf)
             curbuf = getbuffer(id);
-
-          if (lastepoch != curepoch) {
-            curbuf->header()->last_epoch_prefix_ = lastepoch;
-            curbuf->header()->last_epoch_count_  = ncommits_currentepoch;
-            outstanding_commits.push_back(ncommits_currentepoch);
-            ncommits_currentepoch = 0;
-          }
 
           if (g_buffer_size - curbuf->curoff_ <
               sizeof(uint32_t) + LZ4_compressBound(g_horizon_size)) {
@@ -558,23 +552,18 @@ public:
 
           // can reset horizon
           curbuf->header()->nentries_ += horizon_nentries;
-          horizon_p = horizon_nentries = 0;
+          curbuf->header()->last_tid_ = horizon_last_tid;
+          horizon_p = horizon_nentries = horizon_last_tid = 0;
         }
 
         write_log_record(&horizon[0] + horizon_p, tidcommit, readset, writeset);
         horizon_p += space_needed;
         horizon_nentries++;
+        horizon_last_tid = tidcommit;
         ncommits_currentepoch++;
       } else {
           if (!curbuf)
             curbuf = getbuffer(id);
-
-          if (lastepoch != curepoch) {
-            curbuf->header()->last_epoch_prefix_ = lastepoch;
-            curbuf->header()->last_epoch_count_  = ncommits_currentepoch;
-            outstanding_commits.push_back(ncommits_currentepoch);
-            ncommits_currentepoch = 0;
-          }
 
           if (g_buffer_size - curbuf->curoff_ < space_needed) {
             // push to logger
@@ -588,6 +577,7 @@ public:
           //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
           curbuf->curoff_ += space_needed;
           curbuf->header()->nentries_++;
+          curbuf->header()->last_tid_ = tidcommit;
           ncommits_currentepoch++;
       }
     }
@@ -627,8 +617,10 @@ private:
           px->curoff_ = sizeof(logbuf_header);
           px->remaining_ = px->header()->nentries_;
           nwritten++;
-          assert(epoch_prefixes[idx] <= px->header()->last_epoch_prefix_);
-          epoch_prefixes[idx] = px->header()->last_epoch_prefix_;
+          assert(tidhelpers::CoreId(px->header()->last_tid_) == idx);
+          assert(epoch_prefixes[idx] <= tidhelpers::EpochId(px->header()->last_tid_));
+          epoch_prefixes[idx] =
+            tidhelpers::EpochId(px->header()->last_tid_);
         }
       }
 
