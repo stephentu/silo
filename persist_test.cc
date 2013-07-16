@@ -306,13 +306,36 @@ public:
 
   virtual void worker(unsigned id) = 0;
 
-  virtual void logger(const vector<int> &fd) = 0;
+  virtual void logger(const vector<int> &fd,
+                      const vector<vector<unsigned>> &assignments) = 0;
 
   virtual void
   terminate()
   {
     keep_going_->store(false, memory_order_release);
     epoch_thread_.join();
+  }
+
+  static bool
+  AssignmentsValid(const vector<vector<unsigned>> &assignments,
+                   unsigned nfds,
+                   unsigned nworkers)
+  {
+    // each worker must be assigned exactly once in the assignment
+    // there must be <= nfds assignments
+
+    if (assignments.size() > nfds)
+      return false;
+
+    set<unsigned> seen;
+    for (auto &assignment : assignments)
+      for (auto w : assignment) {
+        if (seen.count(w) || w >= nworkers)
+          return false;
+        seen.insert(w);
+      }
+
+    return seen.size() == nworkers;
   }
 
 protected:
@@ -830,28 +853,35 @@ private:
 
 public:
   void
-  logger(const vector<int> &fds) OVERRIDE
+  logger(const vector<int> &fds,
+         const vector<vector<unsigned>> &assignments_given) OVERRIDE
   {
     // compute thread => logger assignment
     vector<thread> writers;
-    vector<vector<unsigned>> assignments;
-    if (g_nworkers <= fds.size()) {
-      // each thread gets its own logging worker
-      for (size_t i = 0; i < g_nworkers; i++)
-        assignments.push_back({(unsigned) i});
-    } else {
-      // XXX: currently we assume each logger is equally as fast- we should
-      // adjust ratios accordingly for non-homogenous loggers
-      const size_t threads_per_logger = g_nworkers / fds.size();
-      for (size_t i = 0; i < fds.size(); i++) {
-        assignments.emplace_back(
-          MakeRange<unsigned>(
-              i * threads_per_logger,
-              ((i + 1) == fds.size()) ?
-                g_nworkers :
-                (i + 1) * threads_per_logger));
+    vector<vector<unsigned>> assignments(assignments_given);
+
+    if (assignments.empty()) {
+      // compute assuming homogenous disks
+      if (g_nworkers <= fds.size()) {
+        // each thread gets its own logging worker
+        for (size_t i = 0; i < g_nworkers; i++)
+          assignments.push_back({(unsigned) i});
+      } else {
+        // XXX: currently we assume each logger is equally as fast- we should
+        // adjust ratios accordingly for non-homogenous loggers
+        const size_t threads_per_logger = g_nworkers / fds.size();
+        for (size_t i = 0; i < fds.size(); i++) {
+          assignments.emplace_back(
+            MakeRange<unsigned>(
+                i * threads_per_logger,
+                ((i + 1) == fds.size()) ?
+                  g_nworkers :
+                  (i + 1) * threads_per_logger));
+        }
       }
     }
+
+    INVARIANT(AssignmentsValid(assignments, fds.size(), g_nworkers));
 
     timer tt;
     for (size_t i = 0; i < assignments.size(); i++)
@@ -1136,11 +1166,50 @@ private:
   bool compress_;
 };
 
+template <typename T>
+struct RangeAwareParser {
+  inline vector<T>
+  operator()(const string &s) const
+  {
+    vector<T> ret;
+    if (s.find('-') == string::npos) {
+      T t;
+      istringstream iss(s);
+      iss >> t;
+      ret.emplace_back(t);
+    } else {
+      vector<string> toks(split(s, '-'));
+      ALWAYS_ASSERT(toks.size() == 2);
+      T t0, t1;
+      istringstream iss0(toks[0]), iss1(toks[1]);
+      iss0 >> t0;
+      iss1 >> t1;
+      for (T t = t0; t <= t1; t++)
+        ret.emplace_back(t);
+    }
+    return ret;
+  }
+};
+
+template <typename T, typename Parser>
+static vector<T>
+ParseCSVString(const string &s, Parser p = Parser())
+{
+  vector<T> ret;
+  vector<string> toks(split(s, ','));
+  for (auto &s : toks) {
+    auto values = p(s);
+    ret.insert(ret.end(), values.begin(), values.end());
+  }
+  return ret;
+}
+
 int
 main(int argc, char **argv)
 {
   string strategy = "epoch";
   vector<string> logfiles;
+  vector<vector<unsigned>> assignments;
 
   while (1) {
     static struct option long_options[] =
@@ -1154,10 +1223,11 @@ main(int argc, char **argv)
       {"keysize"     , required_argument , 0          , 'k'} ,
       {"valuesize"   , required_argument , 0          , 'v'} ,
       {"logfile"     , required_argument , 0          , 'l'} ,
+      {"assignment"  , required_argument , 0          , 'a'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:s:r:w:k:v:l:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:s:r:w:k:v:l:a:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -1196,6 +1266,11 @@ main(int argc, char **argv)
       logfiles.emplace_back(optarg);
       break;
 
+    case 'a':
+      assignments.emplace_back(
+          ParseCSVString<unsigned, RangeAwareParser<unsigned>>(optarg));
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -1211,6 +1286,10 @@ main(int argc, char **argv)
   ALWAYS_ASSERT(g_valuesize >= 0);
   ALWAYS_ASSERT(!logfiles.empty());
   ALWAYS_ASSERT(logfiles.size() <= g_nmax_loggers);
+  ALWAYS_ASSERT(
+      assignments.empty() ||
+      database_simulation::AssignmentsValid(
+        assignments, logfiles.size(), g_nworkers));
 
   if (g_verbose)
     cerr << "{nworkers=" << g_nworkers
@@ -1221,6 +1300,7 @@ main(int argc, char **argv)
          << ", logfiles=" << logfiles
          << ", strategy=" << strategy
          << ", fsync_background=" << g_fsync_background
+         << ", assignments=" << assignments
          << "}" << endl;
 
   if (strategy != "deptracking" &&
@@ -1284,7 +1364,8 @@ main(int argc, char **argv)
     ALWAYS_ASSERT(false);
   sim->init();
 
-  thread logger_thread(&database_simulation::logger, sim.get(), fds);
+  thread logger_thread(
+      &database_simulation::logger, sim.get(), fds, ref(assignments));
 
   vector<thread> workers;
   util::timer tt, tt1;
