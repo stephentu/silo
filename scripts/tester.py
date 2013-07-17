@@ -59,6 +59,7 @@ def run(cmd):
   return r
 
 if __name__ == '__main__':
+  STRATEGIES = ['epoch', 'epoch-compress']
   NCORES = [1, 2, 4, 8, 16, 24, 32]
   WSET = [18]
 
@@ -82,7 +83,7 @@ if __name__ == '__main__':
   weights = normalize([x[1] for x in LOGGERS])
   logfile_cmds = list(itertools.chain.from_iterable([['--logfile', f] for f, _ in LOGGERS]))
 
-  for ncores, ws in itertools.product(NCORES, WSET):
+  for strat, ncores, ws in itertools.product(STRATEGIES, NCORES, WSET):
     allocations = allocate(ncores, weights)
     alloc_cmds = list(
         itertools.chain.from_iterable([['--assignment', ','.join(map(str, alloc))] for alloc in allocations]))
@@ -90,7 +91,7 @@ if __name__ == '__main__':
         logfile_cmds + \
         alloc_cmds + \
         ['--num-threads', str(ncores),
-         '--strategy', 'epoch',
+         '--strategy', strat,
          '--writeset', str(ws),
          '--valuesize', '32']
     output = run(cmd)
