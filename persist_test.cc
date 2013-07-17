@@ -511,7 +511,7 @@ private:
   {
     if (!cur) {
       cur = getbuffer(id);
-    } else {
+    } else if (g_buffer_size - cur->curoff_ < space_needed) {
       g_persist_buffers[id].enq(cur);
       cur = getbuffer(id);
     }
