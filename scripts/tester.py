@@ -59,11 +59,17 @@ if __name__ == '__main__':
   NCORES = [1, 2, 4, 8, 16, 24, 32]
   WSET = [18]
 
-  LOGGERS = [
-      ('data.log', 1.),
-      ('/data/scidb/001/2/stephentu/data.log', 1.),
-      ('/data/scidb/001/3/stephentu/data.log', 1.),
-  ]
+  node = platform.node()
+
+  if node == 'modis2':
+    LOGGERS = [
+        ('data.log', 1.),
+        ('/data/scidb/001/2/stephentu/data.log', 1.),
+        ('/data/scidb/001/3/stephentu/data.log', 1.),
+    ]
+
+  else:
+    assert False, "Unknown node!"
 
   weights = normalize(np.array([x[1] for x in LOGGERS]))
   logfile_cmds = list(itertools.chain.from_iterable([['--logfile', f] for f, _ in LOGGERS]))
