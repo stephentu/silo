@@ -72,8 +72,8 @@ if __name__ == '__main__':
     ]
   elif node == 'istc3':
     LOGGERS = [
-        ('data.log', 2./3.),
-        ('/f0/stephentu/data.log', 1.),
+        ('data.log', 1./3.),
+        ('/f0/stephentu/data.log', 2./3.),
     ]
   else:
     print "unknown node", node
