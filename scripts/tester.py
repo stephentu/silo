@@ -4,11 +4,14 @@ import itertools
 import platform
 import subprocess
 import sys
-
-import numpy as np
+import math
 
 def normalize(x):
-  return x / x.sum()
+  denom = sum(x)
+  return [e/denom for e in x]
+
+def scale(x, a):
+  return [e * a for e in x]
 
 def argcmp(x, comp, predicate):
   idx = None
@@ -31,8 +34,8 @@ def argmax(x, predicate):
   return argcmp(x, lambda a, b: a > b, predicate)
 
 def allocate(nworkers, weights):
-  approx = np.ceil(nworkers * weights).astype(int)
-  diff = approx.sum() - nworkers
+  approx = map(int, map(math.ceil, scale(weights, nworkers)))
+  diff = sum(approx) - nworkers
   if diff > 0:
     while diff > 0:
       i = argmin(approx, predicate=lambda x: x > 0)
@@ -67,11 +70,16 @@ if __name__ == '__main__':
         ('/data/scidb/001/2/stephentu/data.log', 1.),
         ('/data/scidb/001/3/stephentu/data.log', 1.),
     ]
-
+  elif node == 'istc3':
+    LOGGERS = [
+        ('data.log', 2./3.),
+        ('/f0/stephentu/data.log', 1.),
+    ]
   else:
+    print "unknown node", node
     assert False, "Unknown node!"
 
-  weights = normalize(np.array([x[1] for x in LOGGERS]))
+  weights = normalize([x[1] for x in LOGGERS])
   logfile_cmds = list(itertools.chain.from_iterable([['--logfile', f] for f, _ in LOGGERS]))
 
   for ncores, ws in itertools.product(NCORES, WSET):
