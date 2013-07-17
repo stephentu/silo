@@ -506,6 +506,54 @@ private:
     return ncommits_synced;
   }
 
+  inline pbuffer *
+  ensure_buffer_with_space(unsigned id, pbuffer *cur, size_t space_needed)
+  {
+    if (!cur) {
+      cur = getbuffer(id);
+    } else {
+      g_persist_buffers[id].enq(cur);
+      cur = getbuffer(id);
+    }
+    INVARIANT(cur);
+    INVARIANT(g_buffer_size - cur->curoff_ >= space_needed);
+    return cur;
+  }
+
+  /**
+   * write the horizon from [p, p+sz) into cur, assuming that cur has enough
+   * space. space needed is at least:
+   *   sizeof(uint32_t) + LZ4_compressBound(sz)
+   *
+   * also updates the buffer's headers and offset to reflect the write
+   *
+   * returns the compressed size of the horizon
+   */
+  inline uint64_t
+  write_horizon(void *lz4ctx,
+                const uint8_t *p, uint64_t sz,
+                uint64_t nentries, uint64_t lasttid,
+                pbuffer *cur)
+  {
+    const uint64_t needed = sizeof(uint32_t) + LZ4_compressBound(sz);
+    INVARIANT(g_buffer_size - cur->curoff_ >= needed);
+
+    const int ret = LZ4_compress_heap(
+        lz4ctx,
+        (const char *) p,
+        (char *) cur->pointer() + sizeof(uint32_t),
+        sz);
+
+    INVARIANT(ret >= 0);
+    serializer<uint32_t, false> s_uint32_t;
+    s_uint32_t.write(cur->pointer(), ret);
+    cur->curoff_ += sizeof(uint32_t) + ret;
+    cur->header()->nentries_ += nentries;
+    cur->header()->last_tid_ = lasttid;
+
+    return ret;
+  }
+
 protected:
   void
   worker(unsigned id) OVERRIDE
@@ -580,36 +628,19 @@ protected:
       if (compress) {
         if (horizon_p + space_needed > g_horizon_size) {
           // need to compress and write horizon
-          if (!curbuf)
-            curbuf = getbuffer(id);
+          curbuf = ensure_buffer_with_space(id, curbuf,
+            sizeof(uint32_t) + LZ4_compressBound(horizon_p));
 
-          if (g_buffer_size - curbuf->curoff_ <
-              sizeof(uint32_t) + LZ4_compressBound(g_horizon_size)) {
-            g_persist_buffers[id].enq(curbuf);
-            curbuf = getbuffer(id);
-            INVARIANT(g_buffer_size - curbuf->curoff_ >=
-                   sizeof(uint32_t) + LZ4_compressBound(g_horizon_size));
-          }
+          const uint64_t compsz =
+            write_horizon(lz4ctx, &horizon[0], horizon_p,
+                          horizon_nentries, horizon_last_tid,
+                          curbuf);
 
-          // curbuf good at this point
-          const int ret = LZ4_compress_heap(
-              lz4ctx,
-              (const char *) &horizon[0],
-              (char *) curbuf->pointer() + sizeof(uint32_t),
-              horizon_p);
-          INVARIANT(ret > 0);
-          serializer<uint32_t, false> s_uint32_t;
-          s_uint32_t.write(curbuf->pointer(), ret);
-
-          const double cratio = double(horizon_p) / double(ret);
+          const double cratio = double(horizon_p) / double(compsz);
           cratios += cratio;
           ncompressions++;
 
-          curbuf->curoff_ += sizeof(uint32_t) + ret;
-
           // can reset horizon
-          curbuf->header()->nentries_ += horizon_nentries;
-          curbuf->header()->last_tid_ = horizon_last_tid;
           horizon_p = horizon_nentries = horizon_last_tid = 0;
         }
 
@@ -619,33 +650,34 @@ protected:
         horizon_last_tid = tidcommit;
         ncommits_currentepoch++;
       } else {
-          if (!curbuf)
-            curbuf = getbuffer(id);
-
-          if (g_buffer_size - curbuf->curoff_ < space_needed) {
-            // push to logger
-            g_persist_buffers[id].enq(curbuf);
-            // get a new buf
-            curbuf = getbuffer(id);
-            INVARIANT(g_buffer_size - curbuf->curoff_ >= space_needed);
-          }
-          uint8_t *p = curbuf->pointer();
-          write_log_record(p, tidcommit, readset, writeset);
-          //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
-          curbuf->curoff_ += space_needed;
-          curbuf->header()->nentries_++;
-          curbuf->header()->last_tid_ = tidcommit;
-          ncommits_currentepoch++;
+        curbuf = ensure_buffer_with_space(id, curbuf, space_needed);
+        uint8_t *p = curbuf->pointer();
+        write_log_record(p, tidcommit, readset, writeset);
+        //cerr << "write tidcommit=" << tidhelpers::Str(tidcommit) << endl;
+        curbuf->curoff_ += space_needed;
+        curbuf->header()->nentries_++;
+        curbuf->header()->last_tid_ = tidcommit;
+        ncommits_currentepoch++;
       }
     }
 
     if (compress) {
-      LZ4_free(lz4ctx);
-      // XXX: need to flush the horizon
-      if (g_verbose) {
-        cerr << "[WARNING] results will be bad b/c we haven't flushed horizon"
-             << endl;
+      if (horizon_nentries) {
+        curbuf = ensure_buffer_with_space(id, curbuf,
+            sizeof(uint32_t) + LZ4_compressBound(horizon_p));
+
+        const uint64_t compsz =
+          write_horizon(lz4ctx, &horizon[0], horizon_p,
+                        horizon_nentries, horizon_last_tid,
+                        curbuf);
+
+        const double cratio = double(horizon_p) / double(compsz);
+        cratios += cratio;
+        ncompressions++;
+
+        horizon_p = horizon_nentries = horizon_last_tid = 0;
       }
+      LZ4_free(lz4ctx);
     }
 
     if (curbuf) {
