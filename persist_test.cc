@@ -535,8 +535,10 @@ private:
                 uint64_t nentries, uint64_t lasttid,
                 pbuffer *cur)
   {
+#ifdef CHECK_INVARIANTS
     const uint64_t needed = sizeof(uint32_t) + LZ4_compressBound(sz);
     INVARIANT(g_buffer_size - cur->curoff_ >= needed);
+#endif
 
     const int ret = LZ4_compress_heap(
         lz4ctx,
