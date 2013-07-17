@@ -5,6 +5,7 @@ import platform
 import subprocess
 import sys
 import math
+import pickle
 
 def normalize(x):
   denom = sum(x)
@@ -59,8 +60,14 @@ def run(cmd):
   return r
 
 if __name__ == '__main__':
-  STRATEGIES = ['epoch', 'epoch-compress']
-  NCORES = [1, 2, 4, 8, 16, 24, 32]
+  (_, outfile) = sys.argv
+
+  #STRATEGIES = ['epoch', 'epoch-compress']
+  #NCORES = [1, 2, 4, 8, 16, 24, 32]
+  #WSET = [18]
+
+  STRATEGIES = ['epoch']
+  NCORES = [1]
   WSET = [18]
 
   node = platform.node()
@@ -83,6 +90,7 @@ if __name__ == '__main__':
   weights = normalize([x[1] for x in LOGGERS])
   logfile_cmds = list(itertools.chain.from_iterable([['--logfile', f] for f, _ in LOGGERS]))
 
+  results = []
   for strat, ncores, ws in itertools.product(STRATEGIES, NCORES, WSET):
     allocations = allocate(ncores, weights)
     alloc_cmds = list(
@@ -95,4 +103,8 @@ if __name__ == '__main__':
          '--writeset', str(ws),
          '--valuesize', '32']
     output = run(cmd)
-    print output
+    res = float(output.strip())
+    results.append(((strat, ncores, ws), res))
+
+  with open(outfile, 'w') as fp:
+    pickle.dump(results, fp)
