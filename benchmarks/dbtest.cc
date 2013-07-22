@@ -264,6 +264,8 @@ main(int argc, char **argv)
     } else {
       cerr << "  numa-memory : disabled"                    << endl;
     }
+    cerr << "  logfiles : " << logfiles                     << endl;
+    cerr << "  assignments : " << assignments               << endl;
 
     cerr << "system properties:" << endl;
     cerr << "  btree_internal_node_size: " << btree::InternalNodeSize() << endl;

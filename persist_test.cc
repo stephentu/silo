@@ -129,22 +129,6 @@ fillvalue(std::string &s, uint64_t idx, size_t sz, PRNG &prng)
   }
 }
 
-template <typename T, typename Alloc>
-static ostream &
-operator<<(ostream &o, const vector<T, Alloc> &v)
-{
-  bool first = true;
-  o << "[";
-  for (auto &p : v) {
-    if (!first)
-      o << ", ";
-    first = false;
-    o << p;
-  }
-  o << "]";
-  return o;
-}
-
 /** simulate global database state */
 
 static const size_t g_nrecords = 1000000;

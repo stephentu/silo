@@ -591,4 +591,21 @@ operator<<(std::ostream &o, const std::pair<A, B> &p)
   return o;
 }
 
+// pretty printer for std::vector<T, Alloc>
+template <typename T, typename Alloc>
+static std::ostream &
+operator<<(std::ostream &o, const std::vector<T, Alloc> &v)
+{
+  bool first = true;
+  o << "[";
+  for (auto &p : v) {
+    if (!first)
+      o << ", ";
+    first = false;
+    o << p;
+  }
+  o << "]";
+  return o;
+}
+
 #endif /* _UTIL_H_ */
