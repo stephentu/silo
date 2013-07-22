@@ -892,91 +892,100 @@ protected:
       1 : static_cast<uint>(warehouse_id);
     const uint w_end   = (warehouse_id == -1) ?
       NumWarehouses() : static_cast<uint>(warehouse_id);
+    const size_t batchsize =
+      (db->txn_max_batch_size() == -1) ?
+        NumCustomersPerDistrict() : db->txn_max_batch_size();
+    const size_t nbatches =
+      (batchsize > NumCustomersPerDistrict()) ?
+        1 : (NumCustomersPerDistrict() / batchsize);
+    cerr << "num batches: " << nbatches << endl;
 
     uint64_t total_sz = 0;
 
     for (uint w = w_start; w <= w_end; w++) {
       if (pin_cpus)
         PinToWarehouseId(w);
-      for (uint d = 1; d <= NumDistrictsPerWarehouse();) {
-        scoped_str_arena s_arena(arena);
-        void * const txn = db->new_txn(txn_flags, arena, txn_buf());
-        try {
-          for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
-            const customer::key k(w, d, c);
+      for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+        for (uint batch = 0; batch < nbatches;) {
+          scoped_str_arena s_arena(arena);
+          void * const txn = db->new_txn(txn_flags, arena, txn_buf());
+          const size_t cstart = batch * batchsize;
+          const size_t cend = std::min((batch + 1) * batchsize, NumCustomersPerDistrict());
+          try {
+            for (uint cidx0 = cstart; cidx0 < cend; cidx0++) {
+              const uint c = cidx0 + 1;
+              const customer::key k(w, d, c);
 
-            customer::value v;
-            v.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
-            if (RandomNumber(r, 1, 100) <= 10)
-              v.c_credit.assign("BC");
-            else
-              v.c_credit.assign("GC");
+              customer::value v;
+              v.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
+              if (RandomNumber(r, 1, 100) <= 10)
+                v.c_credit.assign("BC");
+              else
+                v.c_credit.assign("GC");
 
-            if (c <= 1000)
-              v.c_last.assign(GetCustomerLastName(r, c - 1));
-            else
-              v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
+              if (c <= 1000)
+                v.c_last.assign(GetCustomerLastName(r, c - 1));
+              else
+                v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
 
-            v.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
-            v.c_credit_lim = 50000;
+              v.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
+              v.c_credit_lim = 50000;
 
-            v.c_balance = -10;
-            v.c_ytd_payment = 10;
-            v.c_payment_cnt = 1;
-            v.c_delivery_cnt = 0;
+              v.c_balance = -10;
+              v.c_ytd_payment = 10;
+              v.c_payment_cnt = 1;
+              v.c_delivery_cnt = 0;
 
-            v.c_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-            v.c_street_2.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-            v.c_city.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-            v.c_state.assign(RandomStr(r, 3));
-            v.c_zip.assign(RandomNStr(r, 4) + "11111");
-            v.c_phone.assign(RandomNStr(r, 16));
-            v.c_since = GetCurrentTimeMillis();
-            v.c_middle.assign("OE");
-            v.c_data.assign(RandomStr(r, RandomNumber(r, 300, 500)));
+              v.c_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+              v.c_street_2.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+              v.c_city.assign(RandomStr(r, RandomNumber(r, 10, 20)));
+              v.c_state.assign(RandomStr(r, 3));
+              v.c_zip.assign(RandomNStr(r, 4) + "11111");
+              v.c_phone.assign(RandomNStr(r, 16));
+              v.c_since = GetCurrentTimeMillis();
+              v.c_middle.assign("OE");
+              v.c_data.assign(RandomStr(r, RandomNumber(r, 300, 500)));
 
-            checker::SanityCheckCustomer(&k, &v);
-            const size_t sz = Size(v);
-            total_sz += sz;
-            tbl_customer(w)->insert(txn, Encode(k), Encode(obj_buf, v));
+              checker::SanityCheckCustomer(&k, &v);
+              const size_t sz = Size(v);
+              total_sz += sz;
+              tbl_customer(w)->insert(txn, Encode(k), Encode(obj_buf, v));
 
-            // customer name index
-            const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
-            const customer_name_idx::value v_idx(k.c_id);
+              // customer name index
+              const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
+              const customer_name_idx::value v_idx(k.c_id);
 
-            // index structure is:
-            // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
+              // index structure is:
+              // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-            tbl_customer_name_idx(w)->insert(txn, Encode(k_idx), Encode(obj_buf, v_idx));
+              tbl_customer_name_idx(w)->insert(txn, Encode(k_idx), Encode(obj_buf, v_idx));
 
-            history::key k_hist;
-            k_hist.h_c_id = c;
-            k_hist.h_c_d_id = d;
-            k_hist.h_c_w_id = w;
-            k_hist.h_d_id = d;
-            k_hist.h_w_id = w;
-            k_hist.h_date = GetCurrentTimeMillis();
+              history::key k_hist;
+              k_hist.h_c_id = c;
+              k_hist.h_c_d_id = d;
+              k_hist.h_c_w_id = w;
+              k_hist.h_d_id = d;
+              k_hist.h_w_id = w;
+              k_hist.h_date = GetCurrentTimeMillis();
 
-            history::value v_hist;
-            v_hist.h_amount = 10;
-            v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
+              history::value v_hist;
+              v_hist.h_amount = 10;
+              v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
 
-            tbl_history(w)->insert(txn, Encode(k_hist), Encode(obj_buf, v_hist));
-          }
-
-          if (db->commit_txn(txn)) {
-            d++;
-          } else {
+              tbl_history(w)->insert(txn, Encode(k_hist), Encode(obj_buf, v_hist));
+            }
+            if (db->commit_txn(txn)) {
+              batch++;
+            } else {
+              db->abort_txn(txn);
+              if (verbose)
+                cerr << "[WARNING] customer loader loading abort" << endl;
+            }
+          } catch (abstract_db::abstract_abort_exception &ex) {
             db->abort_txn(txn);
-            ALWAYS_ASSERT(warehouse_id == -1);
             if (verbose)
               cerr << "[WARNING] customer loader loading abort" << endl;
           }
-        } catch (abstract_db::abstract_abort_exception &ex) {
-          db->abort_txn(txn);
-          ALWAYS_ASSERT(warehouse_id == -1);
-          if (verbose)
-            cerr << "[WARNING] customer loader loading abort" << endl;
         }
       }
     }
