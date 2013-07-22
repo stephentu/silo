@@ -48,12 +48,15 @@ public:
   static const size_t g_horizon_size = (1<<16); // in bytes, for compression only
   static const uint64_t g_epoch_time_ns = 30000000;
 
-  // init the logging subsystem. should only be called ONCE
-  // is not thread-safe
+  // init the logging subsystem.
+  //
+  // should only be called ONCE is not thread-safe.  if assignments_used is not
+  // null, then fills it with a copy of the assignment actually computed
   static void Init(
       size_t nworkers,
       const std::vector<std::string> &logfiles,
-      const std::vector<std::vector<unsigned>> &assignments_given);
+      const std::vector<std::vector<unsigned>> &assignments_given,
+      std::vector<std::vector<unsigned>> *assignments_used = nullptr);
 
   struct logbuf_header {
     uint64_t nentries_; // > 0 for all valid log buffers

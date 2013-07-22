@@ -29,7 +29,8 @@ void
 txn_logger::Init(
     size_t nworkers,
     const std::vector<std::string> &logfiles,
-    const std::vector<std::vector<unsigned>> &assignments_given)
+    const std::vector<std::vector<unsigned>> &assignments_given,
+    std::vector<std::vector<unsigned>> *assignments_used)
 {
   INVARIANT(!g_persist);
   INVARIANT(g_nworkers == 0);
@@ -92,6 +93,9 @@ txn_logger::Init(
 
   std::thread persist_thread(&txn_logger::persister, assignments);
   persist_thread.detach();
+
+  if (assignments_used)
+    *assignments_used = assignments;
 }
 
 void

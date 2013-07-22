@@ -128,7 +128,12 @@ ndb_wrapper<Transaction>::ndb_wrapper(
 {
   if (logfiles.empty())
     return;
-  txn_logger::Init(nthreads, logfiles, assignments_given);
+  std::vector<std::vector<unsigned>> assignments_used;
+  txn_logger::Init(nthreads, logfiles, assignments_given, &assignments_used);
+  if (verbose) {
+    std::cerr << "[logging subsystem]" << std::endl;
+    std::cerr << "  assignments: " << assignments_used << std::endl;
+  }
 }
 
 template <template <typename> class Transaction>
