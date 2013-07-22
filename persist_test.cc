@@ -1080,44 +1080,6 @@ private:
   bool compress_;
 };
 
-template <typename T>
-struct RangeAwareParser {
-  inline vector<T>
-  operator()(const string &s) const
-  {
-    vector<T> ret;
-    if (s.find('-') == string::npos) {
-      T t;
-      istringstream iss(s);
-      iss >> t;
-      ret.emplace_back(t);
-    } else {
-      vector<string> toks(split(s, '-'));
-      ALWAYS_ASSERT(toks.size() == 2);
-      T t0, t1;
-      istringstream iss0(toks[0]), iss1(toks[1]);
-      iss0 >> t0;
-      iss1 >> t1;
-      for (T t = t0; t <= t1; t++)
-        ret.emplace_back(t);
-    }
-    return ret;
-  }
-};
-
-template <typename T, typename Parser>
-static vector<T>
-ParseCSVString(const string &s, Parser p = Parser())
-{
-  vector<T> ret;
-  vector<string> toks(split(s, ','));
-  for (auto &s : toks) {
-    auto values = p(s);
-    ret.insert(ret.end(), values.begin(), values.end());
-  }
-  return ret;
-}
-
 int
 main(int argc, char **argv)
 {

@@ -122,6 +122,16 @@ struct hint_tpcc_stock_level_read_only_traits : public hint_read_only_traits {};
   x(abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY, hint_tpcc_stock_level_read_only_traits)
 
 template <template <typename> class Transaction>
+ndb_wrapper<Transaction>::ndb_wrapper(
+    const std::vector<std::string> &logfiles,
+    const std::vector<std::vector<unsigned>> &assignments_given)
+{
+  if (logfiles.empty())
+    return;
+  txn_logger::Init(nthreads, logfiles, assignments_given);
+}
+
+template <template <typename> class Transaction>
 size_t
 ndb_wrapper<Transaction>::sizeof_txn_object(uint64_t txn_flags) const
 {

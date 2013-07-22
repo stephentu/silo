@@ -399,7 +399,8 @@ public:
   inline void
   on_tid_finish(tid_t commit_tid)
   {
-    if (this->state != transaction_base::TXN_COMMITED)
+    if (!txn_logger::g_persist ||
+        this->state != transaction_base::TXN_COMMITED)
       return;
     // need to write into log buffer
 

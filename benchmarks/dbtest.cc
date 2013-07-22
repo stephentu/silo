@@ -64,6 +64,8 @@ main(int argc, char **argv)
   size_t numa_memory = 0;
   free(curdir);
   int saw_run_spec = 0;
+  vector<string> logfiles;
+  vector<vector<unsigned>> assignments;
   while (1) {
     static struct option long_options[] =
     {
@@ -82,10 +84,12 @@ main(int argc, char **argv)
       {"ops-per-worker"             , required_argument , 0                          , 'n'} ,
       {"bench-opts"                 , required_argument , 0                          , 'o'} ,
       {"numa-memory"                , required_argument , 0                          , 'm'} , // implies --pin-cpus
+      {"logfile"                    , required_argument , 0                          , 'l'} ,
+      {"assignment"                 , required_argument , 0                          , 'a'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:l:a:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -150,6 +154,15 @@ main(int argc, char **argv)
       }
       break;
 
+    case 'l':
+      logfiles.emplace_back(optarg);
+      break;
+
+    case 'a':
+      assignments.emplace_back(
+          ParseCSVString<unsigned, RangeAwareParser<unsigned>>(optarg));
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -177,6 +190,13 @@ main(int argc, char **argv)
     ::allocator::Initialize(nthreads, maxpercpu);
   }
 
+  const set<string> can_persist({"ndb-proto2"});
+  if (!logfiles.empty() && !can_persist.count(db_type)) {
+    cerr << "[ERROR] benchmark " << db_type
+         << " does not have persistence implemented" << endl;
+    return 1;
+  }
+
   if (db_type == "bdb") {
     string cmd = "rm -rf " + basedir + "/db/*";
     // XXX(stephentu): laziness
@@ -184,11 +204,11 @@ main(int argc, char **argv)
     db = new bdb_wrapper("db", bench_type + ".db");
   } else if (db_type == "ndb-proto1") {
     // XXX: hacky simulation of proto1
-    db = new ndb_wrapper<transaction_proto2>;
+    db = new ndb_wrapper<transaction_proto2>(logfiles, assignments);
     transaction_proto2_static::set_hack_status(true);
     ALWAYS_ASSERT(transaction_proto2_static::get_hack_status());
   } else if (db_type == "ndb-proto2") {
-    db = new ndb_wrapper<transaction_proto2>;
+    db = new ndb_wrapper<transaction_proto2>(logfiles, assignments);
     ALWAYS_ASSERT(!transaction_proto2_static::get_hack_status());
   } else if (db_type == "kvdb") {
     db = new kvdb_wrapper<true>;

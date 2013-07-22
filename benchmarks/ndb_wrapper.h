@@ -39,6 +39,10 @@ protected:
 
 public:
 
+  ndb_wrapper(
+      const std::vector<std::string> &logfiles,
+      const std::vector<std::vector<unsigned>> &assignments_given);
+
   virtual void
   do_txn_epoch_sync() const
   {

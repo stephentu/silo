@@ -542,6 +542,44 @@ struct timespec_utils {
 	}
 };
 
+template <typename T>
+struct RangeAwareParser {
+  inline std::vector<T>
+  operator()(const std::string &s) const
+  {
+    std::vector<T> ret;
+    if (s.find('-') == std::string::npos) {
+      T t;
+      std::istringstream iss(s);
+      iss >> t;
+      ret.emplace_back(t);
+    } else {
+      std::vector<std::string> toks(split(s, '-'));
+      ALWAYS_ASSERT(toks.size() == 2);
+      T t0, t1;
+      std::istringstream iss0(toks[0]), iss1(toks[1]);
+      iss0 >> t0;
+      iss1 >> t1;
+      for (T t = t0; t <= t1; t++)
+        ret.emplace_back(t);
+    }
+    return ret;
+  }
+};
+
+template <typename T, typename Parser>
+static std::vector<T>
+ParseCSVString(const std::string &s, Parser p = Parser())
+{
+  std::vector<T> ret;
+  std::vector<std::string> toks(split(s, ','));
+  for (auto &s : toks) {
+    auto values = p(s);
+    ret.insert(ret.end(), values.begin(), values.end());
+  }
+  return ret;
+}
+
 } // namespace util
 
 // pretty printer for std::pair<A, B>

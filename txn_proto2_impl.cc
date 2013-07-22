@@ -31,6 +31,7 @@ txn_logger::Init(
     const std::vector<std::string> &logfiles,
     const std::vector<std::vector<unsigned>> &assignments_given)
 {
+  INVARIANT(!g_persist);
   INVARIANT(g_nworkers == 0);
   INVARIANT(nworkers > 0);
   INVARIANT(!logfiles.empty());
@@ -44,6 +45,7 @@ txn_logger::Init(
     }
     fds.push_back(fd);
   }
+  g_persist = true;
   g_nworkers = nworkers;
 
   for (size_t i = 0; i < g_nmax_loggers; i++)
