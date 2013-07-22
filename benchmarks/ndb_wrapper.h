@@ -43,6 +43,8 @@ public:
       const std::vector<std::string> &logfiles,
       const std::vector<std::vector<unsigned>> &assignments_given);
 
+  virtual ssize_t txn_max_batch_size() const OVERRIDE { return 1000; }
+
   virtual void
   do_txn_epoch_sync() const
   {

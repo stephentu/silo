@@ -1168,39 +1168,6 @@ main(int argc, char **argv)
       strategy != "epoch-compress")
     ALWAYS_ASSERT(false);
 
-  {
-    // test circbuf
-    int values[] = {0, 1, 2, 3, 4};
-    circbuf<int, ARRAY_NELEMS(values)> b;
-    ALWAYS_ASSERT(b.empty());
-    for (size_t i = 0; i < ARRAY_NELEMS(values); i++)
-      b.enq(&values[i]);
-    vector<int *> pxs;
-    b.peekall(pxs);
-    ALWAYS_ASSERT(pxs.size() == ARRAY_NELEMS(values));
-    ALWAYS_ASSERT(set<int *>(pxs.begin(), pxs.end()).size() == pxs.size());
-    for (size_t i = 0; i < ARRAY_NELEMS(values); i++)
-      ALWAYS_ASSERT(pxs[i] == &values[i]);
-    for (size_t i = 0; i < ARRAY_NELEMS(values); i++) {
-      ALWAYS_ASSERT(!b.empty());
-      ALWAYS_ASSERT(b.peek() == &values[i]);
-      ALWAYS_ASSERT(*b.peek() == values[i]);
-      ALWAYS_ASSERT(b.deq() == &values[i]);
-    }
-    ALWAYS_ASSERT(b.empty());
-
-    b.enq(&values[0]);
-    b.enq(&values[1]);
-    b.enq(&values[2]);
-    b.peekall(pxs);
-    auto testlist = vector<int *>({&values[0], &values[1], &values[2]});
-    ALWAYS_ASSERT(pxs == testlist);
-
-    ALWAYS_ASSERT(b.deq() == &values[0]);
-    ALWAYS_ASSERT(b.deq() == &values[1]);
-    ALWAYS_ASSERT(b.deq() == &values[2]);
-  }
-
   g_database.resize(g_nrecords); // all start at TID=0
 
   vector<int> fds;

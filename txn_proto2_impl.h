@@ -67,8 +67,19 @@ public:
     bool io_scheduled_; // has the logger scheduled IO yet?
     size_t curoff_; // current offset into buf_, either for writing
     // or during the dep computation phase
-    size_t remaining_; // number of deps remaining to compute
     std::string buf_; // the actual buffer, of size g_buffer_size
+
+    const unsigned core_id_; // which core does this pbuffer belong to?
+
+    pbuffer(unsigned core_id) : core_id_(core_id) { reset(); }
+
+    inline void
+    reset()
+    {
+      io_scheduled_ = false;
+      curoff_ = sizeof(logbuf_header);
+      buf_.assign(g_buffer_size, 0);
+    }
 
     inline uint8_t *
     pointer()
@@ -118,6 +129,29 @@ public:
     return seen.size() == nworkers;
   }
 
+  typedef circbuf<pbuffer, g_perthread_buffers> pbuffer_circbuf;
+
+  // the buffer which a logger thread pushes clean buffers back to the worker
+  // thread
+  static inline circbuf<pbuffer, g_perthread_buffers> &
+  logger_to_core_buffer(size_t core_id)
+  {
+    // make sure its init-ed
+    if (unlikely(!g_all_buffers_init[core_id])) {
+      for (size_t i = 0; i < g_perthread_buffers; i++)
+        g_all_buffers[core_id]->enq(new pbuffer(core_id));
+      g_all_buffers_init[core_id] = true;
+    }
+    return g_all_buffers[core_id].elem;
+  }
+
+  // the buffer which a worker thread uses to push buffers to the logger
+  static inline circbuf<pbuffer, g_perthread_buffers> &
+  core_to_logger_buffer(size_t core_id)
+  {
+    return g_persist_buffers[core_id % g_nworkers].elem;
+  }
+
 private:
 
   static void
@@ -153,9 +187,21 @@ private:
 
   static util::aligned_padded_elem<circbuf<pbuffer, g_perthread_buffers>>
     g_all_buffers[NMAXCORES];
+
+  static bool g_all_buffers_init[NMAXCORES]; // not cache aligned because
+                                             // in steady state is only read-only
+
   static util::aligned_padded_elem<circbuf<pbuffer, g_perthread_buffers>>
     g_persist_buffers[NMAXCORES];
 };
+
+static inline std::ostream &
+operator<<(std::ostream &o, txn_logger::logbuf_header &hdr)
+{
+  o << "{nentries_=" << hdr.nentries_ << ", last_tid_="
+    << g_proto_version_str(hdr.last_tid_) << "}";
+  return o;
+}
 
 class transaction_proto2_static {
 public:
@@ -438,18 +484,26 @@ public:
 
     // XXX(stephentu): spinning for now
     const unsigned long my_core_id = coreid::core_id();
+    txn_logger::pbuffer_circbuf &pull_buf =
+      txn_logger::logger_to_core_buffer(my_core_id);
 
   retry:
     txn_logger::pbuffer *px;
-    while (unlikely(!(px = txn_logger::g_all_buffers[my_core_id]->peek())))
+    while (unlikely(!(px = pull_buf.peek())))
       nop_pause();
     INVARIANT(!px->io_scheduled_);
+    INVARIANT(px->core_id_ == my_core_id);
 
     // check if enough size
     if (px->space_remaining() < space_needed) {
-      txn_logger::pbuffer *px0 = txn_logger::g_all_buffers[my_core_id]->deq();
+      if (!px->header()->nentries_)
+        std::cerr << "space_needed: " << space_needed << std::endl;
+      INVARIANT(px->header()->nentries_);
+      txn_logger::pbuffer *px0 = pull_buf.deq();
       INVARIANT(px == px0);
-      txn_logger::g_persist_buffers[my_core_id]->enq(px0);
+      txn_logger::pbuffer_circbuf &push_buf =
+        txn_logger::core_to_logger_buffer(my_core_id);
+      push_buf.enq(px0);
       goto retry;
     }
 

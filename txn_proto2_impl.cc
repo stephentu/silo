@@ -22,6 +22,8 @@ aligned_padded_elem<atomic<uint64_t>>
   txn_logger::system_sync_epoch_(0);
 aligned_padded_elem<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
   txn_logger::g_all_buffers[NMAXCORES];
+bool
+  txn_logger::g_all_buffers_init[NMAXCORES] = {false};
 aligned_padded_elem<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
   txn_logger::g_persist_buffers[NMAXCORES];
 
@@ -55,9 +57,10 @@ txn_logger::Init(
 
   for (size_t i = 0; i < g_nworkers; i++) {
     for (size_t j = 0; j < g_perthread_buffers; j++) {
-      struct pbuffer *p = new pbuffer;
+      struct pbuffer *p = new pbuffer(i);
       g_all_buffers[i]->enq(p);
     }
+    g_all_buffers_init[i] = true;
   }
 
   std::vector<std::thread> writers;
@@ -148,6 +151,8 @@ txn_logger::writer(
 
   clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
+  // NOTE: a core id in the persistence system really represets
+  // all cores in the regular system modulo g_nworkers
   for (;;) {
 
     // don't allow this loop to proceed less than an epoch's worth of time,
@@ -172,19 +177,36 @@ txn_logger::writer(
       for (auto px : pxs) {
         INVARIANT(px);
         INVARIANT(!px->io_scheduled_);
+        INVARIANT(nwritten <= iovs.size());
+        INVARIANT(px->header()->nentries_);
+        INVARIANT((px->core_id_ % g_nworkers) == id);
+        if (nwritten == iovs.size())
+          break;
         iovs[nwritten].iov_base = (void *) px->buf_.data();
         iovs[nwritten].iov_len = px->curoff_;
         nbytes_written[sense] += px->curoff_;
         px->io_scheduled_ = true;
-        px->curoff_ = sizeof(logbuf_header);
-        px->remaining_ = px->header()->nentries_;
         txns_written[sense] += px->header()->nentries_;
         nwritten++;
-        INVARIANT(transaction_proto2_static::CoreId(px->header()->last_tid_) == idx);
-        INVARIANT(epoch_prefixes[sense][idx] <=
-                  transaction_proto2_static::EpochId(px->header()->last_tid_));
-        INVARIANT(transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
-        epoch_prefixes[sense][idx] =
+
+        auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
+        auto px_cid = px->core_id_;
+        if (last_tid_cid != px_cid) {
+          cerr << "header: " << *px->header() << endl;
+          cerr << g_proto_version_str(last_tid_cid) << endl;
+          cerr << "last_tid_cid: " << last_tid_cid << endl;
+          cerr << "px_cid: " << px_cid << endl;
+        }
+
+        INVARIANT(
+            transaction_proto2_static::CoreId(px->header()->last_tid_) ==
+            px->core_id_);
+        INVARIANT(
+            epoch_prefixes[sense][id] <=
+            transaction_proto2_static::EpochId(px->header()->last_tid_));
+        INVARIANT(
+            transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
+        epoch_prefixes[sense][id] =
           transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
       }
     }
@@ -225,13 +247,16 @@ txn_logger::writer(
     sense = !sense;
 
     // return all buffers that have been io_scheduled_ - we can do this as
-    // soon as write returns
+    // soon as write returns. we take care to return to the proper buffer
+    // (not modulo)
     for (auto idx : assignment) {
-      pbuffer *px;
+      pbuffer *px, *px0;
       while ((px = g_persist_buffers[idx]->peek()) &&
              px->io_scheduled_) {
-        g_persist_buffers[idx]->deq();
-        g_all_buffers[idx]->enq(px);
+        px0 = g_persist_buffers[idx]->deq();
+        INVARIANT(px == px0);
+        px0->reset();
+        g_all_buffers[px0->core_id_]->enq(px0);
       }
     }
   }

@@ -3,12 +3,14 @@
 #include <cstring>
 #include <atomic>
 #include <vector>
+#include <limits>
 
 #include "macros.h"
 #include "amd64.h"
 
-// only one concurrent reader + writer allowed
-
+// Thread safety is ensured for many concurrent enqueuers but only one
+// concurrent dequeuer. That is, the head end is thread safe, but the tail end
+// can only be manipulated by a single thread.
 template <typename Tp, unsigned int Capacity>
 class circbuf {
 public:
@@ -26,14 +28,29 @@ public:
            !buf_[head_.load(std::memory_order_acquire)].load(std::memory_order_acquire);
   }
 
-
-  // assumes there will be capacity
+  // blocks until something enqs()
   inline void
   enq(Tp *p)
   {
     INVARIANT(p);
-    INVARIANT(!buf_[head_.load(std::memory_order_acquire)].load(std::memory_order_acquire));
-    buf_[postincr(head_)].store(p, std::memory_order_release);
+
+  retry:
+    unsigned icur = head_.load(std::memory_order_acquire);
+    INVARIANT(icur < Capacity);
+    if (buf_[icur].load(std::memory_order_acquire)) {
+      nop_pause();
+      goto retry;
+    }
+
+    // found an empty spot, so we now race for it
+    unsigned inext = (icur + 1) % Capacity;
+    if (!head_.compare_exchange_strong(icur, inext, std::memory_order_acq_rel)) {
+      nop_pause();
+      goto retry;
+    }
+
+    INVARIANT(!buf_[icur].load(std::memory_order_acquire));
+    buf_[icur].store(p, std::memory_order_release);
   }
 
   // blocks until something deqs()
