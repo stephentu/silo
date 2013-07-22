@@ -761,7 +761,9 @@ public:
   // functions / passing multiple function pointers around
   enum TupleWriterMode {
     TUPLE_WRITER_COMPUTE_NEEDED,
+    TUPLE_WRITER_COMPUTE_DELTA_NEEDED, // last two args ignored
     TUPLE_WRITER_DO_WRITE,
+    TUPLE_WRITER_DO_DELTA_WRITE,
   };
   typedef size_t (*tuple_writer_t)(TupleWriterMode, const void *, uint8_t *, size_t);
 

@@ -203,6 +203,37 @@ struct typed_txn_btree_ {
     return ret;
   }
 
+  // how many bytes do we need to encode a delta record
+  static inline size_t
+  compute_needed_delta_standalone(
+      const value_type *v, uint64_t fields)
+  {
+    size_t size_needed = 0;
+    size_needed += sizeof(uint64_t);
+    if (fields == 0) {
+      // delete
+      INVARIANT(!v);
+      return size_needed;
+    }
+    INVARIANT(v);
+    if (IsAllFields(fields)) {
+      // new record (insert)
+      const value_encoder_type value_encoder;
+      size_needed += value_encoder.nbytes(v);
+      return size_needed;
+    }
+
+    for (uint64_t i = 0; i < value_descriptor_type::nfields(); i++) {
+      if ((1UL << i) & fields) {
+        const uint8_t * px = reinterpret_cast<const uint8_t *>(v) +
+          value_descriptor_type::cstruct_offsetof(i);
+        size_needed += value_descriptor_type::nbytes_fn(i)(px);
+      }
+    }
+
+    return size_needed;
+  }
+
   static inline void
   do_write_standalone(
       const value_type *v, uint64_t fields,
@@ -229,6 +260,34 @@ struct typed_txn_btree_ {
     }
   }
 
+  static inline void
+  do_delta_write_standalone(
+      const value_type *v, uint64_t fields,
+      uint8_t *buf, size_t sz)
+  {
+    serializer<uint64_t, false> s_uint64_t;
+
+    buf = s_uint64_t.write(buf, fields);
+    if (fields == 0) {
+      // no-op for delete
+      INVARIANT(!v);
+      return;
+    }
+    if (IsAllFields(fields)) {
+      // special case, just use the standard encoder (faster)
+      // because it's straight-line w/ no branching
+      const value_encoder_type value_encoder;
+      value_encoder.write(buf, v);
+      return;
+    }
+    write_record_cursor<base_type> wc(buf);
+    for (uint64_t i = 0; i < value_descriptor_type::nfields(); i++) {
+      if ((1UL << i) & fields) {
+        wc.write_current_and_advance(v, nullptr);
+      }
+    }
+  }
+
   template <uint64_t Fields>
   static inline size_t
   tuple_writer(dbtuple::TupleWriterMode mode, const void *v, uint8_t *p, size_t sz)
@@ -238,8 +297,13 @@ struct typed_txn_btree_ {
     switch (mode) {
     case dbtuple::TUPLE_WRITER_COMPUTE_NEEDED:
       return compute_needed_standalone(vx, Fields, p, sz);
+    case dbtuple::TUPLE_WRITER_COMPUTE_DELTA_NEEDED:
+      return compute_needed_delta_standalone(vx, Fields);
     case dbtuple::TUPLE_WRITER_DO_WRITE:
       do_write_standalone(vx, Fields, p, sz);
+      return 0;
+    case dbtuple::TUPLE_WRITER_DO_DELTA_WRITE:
+      do_delta_write_standalone(vx, Fields, p, sz);
       return 0;
     }
     ALWAYS_ASSERT(false);

@@ -1,4 +1,8 @@
 #include <iostream>
+#include <thread>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/uio.h>
 
 #include "txn_proto2_impl.h"
 #include "counter.h"
@@ -9,6 +13,226 @@ using namespace util;
 
 static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
+
+bool txn_logger::g_persist = false;
+size_t txn_logger::g_nworkers = 0;
+txn_logger::epoch_array
+  txn_logger::per_thread_sync_epochs_[txn_logger::g_nmax_loggers];
+aligned_padded_elem<atomic<uint64_t>>
+  txn_logger::system_sync_epoch_(0);
+aligned_padded_elem<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
+  txn_logger::g_all_buffers[NMAXCORES];
+aligned_padded_elem<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
+  txn_logger::g_persist_buffers[NMAXCORES];
+
+void
+txn_logger::Init(
+    size_t nworkers,
+    const std::vector<std::string> &logfiles,
+    const std::vector<std::vector<unsigned>> &assignments_given)
+{
+  INVARIANT(g_nworkers == 0);
+  INVARIANT(nworkers > 0);
+  INVARIANT(!logfiles.empty());
+  INVARIANT(logfiles.size() <= g_nmax_loggers);
+  std::vector<int> fds;
+  for (auto &fname : logfiles) {
+    int fd = open(fname.c_str(), O_CREAT|O_WRONLY|O_TRUNC, 0664);
+    if (fd == -1) {
+      perror("open");
+      ALWAYS_ASSERT(false);
+    }
+    fds.push_back(fd);
+  }
+  g_nworkers = nworkers;
+
+  for (size_t i = 0; i < g_nmax_loggers; i++)
+    for (size_t j = 0; j < g_nworkers; j++)
+      per_thread_sync_epochs_[i].epochs_[j].store(0, std::memory_order_release);
+
+  for (size_t i = 0; i < g_nworkers; i++) {
+    for (size_t j = 0; j < g_perthread_buffers; j++) {
+      struct pbuffer *p = new pbuffer;
+      g_all_buffers[i]->enq(p);
+    }
+  }
+
+  std::vector<std::thread> writers;
+  std::vector<std::vector<unsigned>> assignments(assignments_given);
+
+  if (assignments.empty()) {
+    // compute assuming homogenous disks
+    if (g_nworkers <= fds.size()) {
+      // each thread gets its own logging worker
+      for (size_t i = 0; i < g_nworkers; i++)
+        assignments.push_back({(unsigned) i});
+    } else {
+      // XXX: currently we assume each logger is equally as fast- we should
+      // adjust ratios accordingly for non-homogenous loggers
+      const size_t threads_per_logger = g_nworkers / fds.size();
+      for (size_t i = 0; i < fds.size(); i++) {
+        assignments.emplace_back(
+            MakeRange<unsigned>(
+              i * threads_per_logger,
+              ((i + 1) == fds.size()) ?  g_nworkers : (i + 1) * threads_per_logger));
+      }
+    }
+  }
+
+  INVARIANT(AssignmentsValid(assignments, fds.size(), g_nworkers));
+
+  for (size_t i = 0; i < assignments.size(); i++) {
+    writers.emplace_back(
+        &txn_logger::writer,
+        i, fds[i], assignments[i]);
+    writers.back().detach();
+  }
+
+  std::thread persist_thread(&txn_logger::persister, assignments);
+  persist_thread.detach();
+}
+
+void
+txn_logger::persister(
+    std::vector<std::vector<unsigned>> assignments)
+{
+  for (;;) {
+    struct timespec t;
+    t.tv_sec  = g_epoch_time_ns / ONE_SECOND_NS;
+    t.tv_nsec = g_epoch_time_ns % ONE_SECOND_NS;
+    nanosleep(&t, nullptr);
+    advance_system_sync_epoch(assignments);
+  }
+}
+
+void
+txn_logger::advance_system_sync_epoch(
+    const std::vector<std::vector<unsigned>> &assignments)
+{
+  uint64_t min_so_far = std::numeric_limits<uint64_t>::max();
+  for (size_t i = 0; i < assignments.size(); i++)
+    for (auto j : assignments[i])
+      min_so_far =
+        std::min(per_thread_sync_epochs_[i].epochs_[j].load(std::memory_order_acquire), min_so_far);
+
+#ifdef CHECK_INVARIANTS
+  const uint64_t syssync = system_sync_epoch_->load(std::memory_order_acquire);
+  INVARIANT(syssync <= min_so_far);
+#endif
+  system_sync_epoch_->store(min_so_far, std::memory_order_release);
+}
+
+void
+txn_logger::writer(
+    unsigned id, int fd,
+    std::vector<unsigned> assignment)
+{
+  std::vector<iovec> iovs(g_nworkers * g_perthread_buffers);
+  std::vector<pbuffer *> pxs;
+  struct timespec last_io_completed;
+  uint64_t total_nbytes_written = 0,
+           total_txns_written = 0;
+
+  bool sense = false; // cur is at sense, prev is at !sense
+  uint64_t nbytes_written[2], txns_written[2], epoch_prefixes[2][g_nworkers];
+  memset(&nbytes_written[0], 0, sizeof(nbytes_written));
+  memset(&txns_written[0], 0, sizeof(txns_written));
+  memset(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
+  memset(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
+
+  clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
+
+  for (;;) {
+
+    // don't allow this loop to proceed less than an epoch's worth of time,
+    // so we can batch IO
+    struct timespec now, diff;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    timespec_utils::subtract(&now, &last_io_completed, &diff);
+    if (diff.tv_sec == 0 && diff.tv_nsec < long(g_epoch_time_ns)) {
+      // need to sleep it out
+      struct timespec ts;
+      ts.tv_sec = 0;
+      ts.tv_nsec = g_epoch_time_ns - diff.tv_nsec;
+      nanosleep(&ts, nullptr);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
+
+    size_t nwritten = 0;
+    nbytes_written[sense] = txns_written[sense] = 0;
+    for (auto idx : assignment) {
+      INVARIANT(idx >= 0 && idx < g_nworkers);
+      g_persist_buffers[idx]->peekall(pxs);
+      for (auto px : pxs) {
+        INVARIANT(px);
+        INVARIANT(!px->io_scheduled_);
+        iovs[nwritten].iov_base = (void *) px->buf_.data();
+        iovs[nwritten].iov_len = px->curoff_;
+        nbytes_written[sense] += px->curoff_;
+        px->io_scheduled_ = true;
+        px->curoff_ = sizeof(logbuf_header);
+        px->remaining_ = px->header()->nentries_;
+        txns_written[sense] += px->header()->nentries_;
+        nwritten++;
+        INVARIANT(transaction_proto2_static::CoreId(px->header()->last_tid_) == idx);
+        INVARIANT(epoch_prefixes[sense][idx] <=
+                  transaction_proto2_static::EpochId(px->header()->last_tid_));
+        INVARIANT(transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
+        epoch_prefixes[sense][idx] =
+          transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
+      }
+    }
+
+    if (!nwritten) {
+      // XXX: should probably sleep here
+      nop_pause();
+      continue;
+    }
+
+    const ssize_t ret =
+      nwritten ? writev(fd, &iovs[0], nwritten) : 0;
+    if (ret == -1) {
+      perror("writev");
+      ALWAYS_ASSERT(false);
+    }
+
+    const bool dosense = sense;
+    const int fret = fdatasync(fd);
+    if (fret == -1) {
+      perror("fdatasync");
+      ALWAYS_ASSERT(false);
+    }
+
+    // update metadata from previous write
+    for (size_t i = 0; i < g_nworkers; i++) {
+      const uint64_t x0 =
+        per_thread_sync_epochs_[id].epochs_[i].load(memory_order_acquire);
+      const uint64_t x1 = epoch_prefixes[dosense][i];
+      if (x1 > x0)
+        per_thread_sync_epochs_[id].epochs_[i].store(
+            x1, memory_order_release);
+    }
+    total_nbytes_written += nbytes_written[dosense];
+    total_txns_written += txns_written[dosense];
+
+    // bump the sense
+    sense = !sense;
+
+    // return all buffers that have been io_scheduled_ - we can do this as
+    // soon as write returns
+    for (auto idx : assignment) {
+      pbuffer *px;
+      while ((px = g_persist_buffers[idx]->peek()) &&
+             px->io_scheduled_) {
+        g_persist_buffers[idx]->deq();
+        g_all_buffers[idx]->enq(px);
+      }
+    }
+  }
+
+  //g_bytes_written[id].store(total_nbytes_written, memory_order_release);
+  //g_ntxns_written.fetch_add(total_txns_written, memory_order_release);
+}
 
 void
 transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)

@@ -23,6 +23,7 @@
 #include <lz4.h>
 
 #include "macros.h"
+#include "circbuf.h"
 #include "amd64.h"
 #include "record/serializer.h"
 #include "util.h"
@@ -96,93 +97,6 @@ struct tidhelpers {
 
 };
 
-// only one concurrent reader + writer allowed
-
-template <typename Tp, unsigned int Capacity>
-class circbuf {
-public:
-  circbuf()
-    : head_(0), tail_(0)
-  {
-    memset(&buf_[0], 0, Capacity * sizeof(buf_[0]));
-  }
-
-  inline bool
-  empty() const
-  {
-    return head_.load(memory_order_acquire) ==
-           tail_.load(memory_order_acquire) &&
-           !buf_[head_.load(memory_order_acquire)].load(memory_order_acquire);
-  }
-
-
-  // assumes there will be capacity
-  inline void
-  enq(Tp *p)
-  {
-    INVARIANT(p);
-    INVARIANT(!buf_[head_.load(memory_order_acquire)].load(memory_order_acquire));
-    buf_[postincr(head_)].store(p, memory_order_release);
-  }
-
-  // blocks until something deqs()
-  inline Tp *
-  deq()
-  {
-    while (!buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire))
-      nop_pause();
-    Tp *ret = buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire);
-    buf_[postincr(tail_)].store(nullptr, memory_order_release);
-    INVARIANT(ret);
-    return ret;
-  }
-
-  inline Tp *
-  peek()
-  {
-    return buf_[tail_.load(memory_order_acquire)].load(memory_order_acquire);
-  }
-
-  // takes a current snapshot of all entries in the queue
-  inline void
-  peekall(vector<Tp *> &ps, size_t limit = numeric_limits<size_t>::max())
-  {
-    ps.clear();
-    const unsigned t = tail_.load(memory_order_acquire);
-    unsigned i = t;
-    Tp *p;
-    while ((p = buf_[i].load(memory_order_acquire)) && ps.size() < limit) {
-      ps.push_back(p);
-      postincr(i);
-      if (i == t)
-        // have fully wrapped around
-        break;
-    }
-  }
-
-private:
-
-  static inline unsigned
-  postincr(unsigned &i)
-  {
-    const unsigned ret = i;
-    i = (i + 1) % Capacity;
-    return ret;
-  }
-
-  static inline unsigned
-  postincr(atomic<unsigned> &i)
-  {
-    const unsigned ret = i.load(memory_order_acquire);
-    i.store((ret + 1) % Capacity, memory_order_release);
-    return ret;
-  }
-
-  atomic<Tp *> buf_[Capacity];
-  atomic<unsigned> head_;
-  atomic<unsigned> tail_;
-};
-
 //static void
 //fillstring(std::string &s, size_t t)
 //{
@@ -213,31 +127,6 @@ fillvalue(std::string &s, uint64_t idx, size_t sz, PRNG &prng)
       s_uint32_t.write((uint8_t *) &s[i], x);
     }
   }
-}
-
-// thanks austin
-static void
-timespec_subtract(const struct timespec *x,
-                  const struct timespec *y,
-                  struct timespec *out)
-{
-  // Perform the carry for the later subtraction by updating y.
-  struct timespec y2 = *y;
-  if (x->tv_nsec < y2.tv_nsec) {
-    int sec = (y2.tv_nsec - x->tv_nsec) / 1e9 + 1;
-    y2.tv_nsec -= 1e9 * sec;
-    y2.tv_sec += sec;
-  }
-  if (x->tv_nsec - y2.tv_nsec > 1e9) {
-    int sec = (x->tv_nsec - y2.tv_nsec) / 1e9;
-    y2.tv_nsec += 1e9 * sec;
-    y2.tv_sec -= sec;
-  }
-
-  // Compute the time remaining to wait.  tv_nsec is certainly
-  // positive.
-  out->tv_sec  = x->tv_sec - y2.tv_sec;
-  out->tv_nsec = x->tv_nsec - y2.tv_nsec;
 }
 
 template <typename T, typename Alloc>
@@ -759,7 +648,7 @@ private:
       // so we can batch IO
       struct timespec now, diff;
       clock_gettime(CLOCK_MONOTONIC, &now);
-      timespec_subtract(&now, &last_io_completed, &diff);
+      timespec_utils::subtract(&now, &last_io_completed, &diff);
       if (diff.tv_sec == 0 && diff.tv_nsec < long(g_epoch_time_ns)) {
         // need to sleep it out
         struct timespec ts;
@@ -858,17 +747,6 @@ private:
 
     g_bytes_written[id].store(total_nbytes_written, memory_order_release);
     g_ntxns_written.fetch_add(total_txns_written, memory_order_release);
-  }
-
-  // returns a vector of [start, ..., end)
-  template <typename T>
-  static const vector<T>
-  MakeRange(T start, T end)
-  {
-    vector<T> ret;
-    for (T i = start; i < end; i++)
-      ret.push_back(i);
-    return ret;
   }
 
   inline void

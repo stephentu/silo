@@ -157,8 +157,10 @@ struct txn_btree_ {
     INVARIANT(vx);
     switch (mode) {
     case dbtuple::TUPLE_WRITER_COMPUTE_NEEDED:
+    case dbtuple::TUPLE_WRITER_COMPUTE_DELTA_NEEDED:
       return vx->size();
     case dbtuple::TUPLE_WRITER_DO_WRITE:
+    case dbtuple::TUPLE_WRITER_DO_DELTA_WRITE:
       NDB_MEMCPY(p, vx->data(), vx->size());
       return 0;
     }

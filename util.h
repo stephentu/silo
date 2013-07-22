@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <time.h>
 #include <cxxabi.h>
 
 #include "macros.h"
@@ -436,7 +437,7 @@ struct vec {
 static inline std::vector<std::string>
 split(const std::string &s, char delim)
 {
-	std::vector<std::string> elems;
+  std::vector<std::string> elems;
   std::stringstream ss(s);
   std::string item;
   while (std::getline(ss, item, delim))
@@ -501,6 +502,44 @@ struct cxx_typename {
     free(name);
     return ret;
   }
+};
+
+// returns a vector of [start, ..., end)
+template <typename T>
+static std::vector<T>
+MakeRange(T start, T end)
+{
+  std::vector<T> ret;
+  for (T i = start; i < end; i++)
+    ret.push_back(i);
+  return ret;
+}
+
+struct timespec_utils {
+	// thanks austin
+	static void
+	subtract(const struct timespec *x,
+					 const struct timespec *y,
+					 struct timespec *out)
+	{
+		// Perform the carry for the later subtraction by updating y.
+		struct timespec y2 = *y;
+		if (x->tv_nsec < y2.tv_nsec) {
+			int sec = (y2.tv_nsec - x->tv_nsec) / 1e9 + 1;
+			y2.tv_nsec -= 1e9 * sec;
+			y2.tv_sec += sec;
+		}
+		if (x->tv_nsec - y2.tv_nsec > 1e9) {
+			int sec = (x->tv_nsec - y2.tv_nsec) / 1e9;
+			y2.tv_nsec += 1e9 * sec;
+			y2.tv_sec -= sec;
+		}
+
+		// Compute the time remaining to wait.  tv_nsec is certainly
+		// positive.
+		out->tv_sec  = x->tv_sec - y2.tv_sec;
+		out->tv_nsec = x->tv_nsec - y2.tv_nsec;
+	}
 };
 
 } // namespace util

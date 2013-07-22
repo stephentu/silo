@@ -380,7 +380,6 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       }
     }
   }
-
   state = TXN_COMMITED;
   if (commit_tid.first)
     cast()->on_tid_finish(commit_tid.second);

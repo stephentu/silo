@@ -62,13 +62,13 @@ def run(cmd):
 if __name__ == '__main__':
   (_, outfile) = sys.argv
 
-  #STRATEGIES = ['epoch', 'epoch-compress']
-  #NCORES = [1, 2, 4, 8, 16, 24, 32]
-  #WSET = [18]
-
-  STRATEGIES = ['epoch']
-  NCORES = [1]
+  STRATEGIES = ['epoch', 'epoch-compress']
+  NCORES = [1, 2, 4, 8, 16, 24, 32]
   WSET = [18]
+
+  #STRATEGIES = ['epoch']
+  #NCORES = [1]
+  #WSET = [18]
 
   node = platform.node()
 

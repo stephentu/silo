@@ -496,6 +496,7 @@ protected:
   // but we would need to abstract it away. we don't bother for now.
 
 #ifdef USE_SMALL_CONTAINER_OPT
+  // XXX: use parameterized typedef to avoid duplication
 
   // small types
   typedef small_vector<
@@ -519,6 +520,14 @@ protected:
     const btree::node_opaque_t *, absent_record_t,
     traits_type::absent_set_expected_size> absent_set_map_static;
 
+  // helper types for log writing
+  typedef small_vector<
+    uint32_t,
+    traits_type::write_set_expected_size> write_set_u32_vec_small;
+  typedef static_vector<
+    uint32_t,
+    traits_type::write_set_expected_size> write_set_u32_vec_static;
+
   // use static types if the expected sizes are guarantees
   typedef
     typename std::conditional<
@@ -532,11 +541,16 @@ protected:
     typename std::conditional<
       traits_type::hard_expected_sizes,
       absent_set_map_static, absent_set_map_small>::type absent_set_map;
+  typedef
+    typename std::conditional<
+      traits_type::hard_expected_sizes,
+      write_set_u32_vec_static, write_set_u32_vec_small>::type write_set_u32_vec;
 
 #else
   typedef std::vector<read_record_t> read_set_map;
   typedef std::vector<write_record_t> write_set_map;
   typedef std::vector<absent_record_t> absent_set_map;
+  typedef std::vector<uint32_t> write_set_u32_vec;
 #endif
 
   // small type

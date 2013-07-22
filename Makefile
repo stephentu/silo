@@ -48,6 +48,7 @@ HEADERS = allocator.h \
 	amd64.h \
 	base_txn_btree.h \
 	btree.h \
+	circbuf.h \
 	core.h \
 	counter.h \
 	hash_bytes.h \
@@ -159,7 +160,7 @@ new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
 test: test.o $(OBJFILES)
 	$(CXX) -o test $^ $(LDFLAGS)
 
-third-party/lz4/liblz4.so: 
+third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
 persist_test: persist_test.o third-party/lz4/liblz4.so
@@ -187,5 +188,5 @@ new-benchmarks/dbtest: new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES)
 clean:
 	rm -f *.o test persist_test benchmarks/*.o benchmarks/dbtest \
 		benchmarks/masstree/*.o benchmarks/masstree/kvtest \
-		new-benchmarks/*.o new-benchmarks/dbtest 
+		new-benchmarks/*.o new-benchmarks/dbtest
 	make -C third-party/lz4 clean

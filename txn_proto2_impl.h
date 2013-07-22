@@ -2,11 +2,16 @@
 #define _NDB_TXN_PROTO2_IMPL_H_
 
 #include <iostream>
+#include <atomic>
+#include <vector>
+#include <set>
 
 #include "txn.h"
 #include "txn_impl.h"
 #include "txn_btree.h"
 #include "macros.h"
+#include "circbuf.h"
+#include "record/serializer.h"
 
 // forward decl
 template <typename Traits> class transaction_proto2;
@@ -28,6 +33,125 @@ private:
   static volatile bool global_running; // a hacky way to disable all cleaners temporarily
   std::string name;
   btree *btr;
+};
+
+// the system has a single logging subsystem (composed of multiple lgogers)
+class txn_logger {
+  template <typename T>
+    friend class transaction_proto2;
+public:
+  static bool g_persist; // whether or not logging is enabled
+
+  static const size_t g_nmax_loggers = 16;
+  static const size_t g_perthread_buffers = 64; // 64 outstanding buffers
+  static const size_t g_buffer_size = (1<<20); // in bytes
+  static const size_t g_horizon_size = (1<<16); // in bytes, for compression only
+  static const uint64_t g_epoch_time_ns = 30000000;
+
+  // init the logging subsystem. should only be called ONCE
+  // is not thread-safe
+  static void Init(
+      size_t nworkers,
+      const std::vector<std::string> &logfiles,
+      const std::vector<std::vector<unsigned>> &assignments_given);
+
+  struct logbuf_header {
+    uint64_t nentries_; // > 0 for all valid log buffers
+    uint64_t last_tid_; // TID of the last commit
+  } PACKED;
+
+  struct pbuffer {
+    bool io_scheduled_; // has the logger scheduled IO yet?
+    size_t curoff_; // current offset into buf_, either for writing
+    // or during the dep computation phase
+    size_t remaining_; // number of deps remaining to compute
+    std::string buf_; // the actual buffer, of size g_buffer_size
+
+    inline uint8_t *
+    pointer()
+    {
+      return (uint8_t *) buf_.data() + curoff_;
+    }
+
+    inline logbuf_header *
+    header()
+    {
+      return (logbuf_header *) buf_.data();
+    }
+
+    inline const logbuf_header *
+    header() const
+    {
+      return (const logbuf_header *) buf_.data();
+    }
+
+    inline size_t
+    space_remaining() const
+    {
+      INVARIANT(g_buffer_size >= curoff_);
+      return g_buffer_size - curoff_;
+    }
+  };
+
+  static bool
+  AssignmentsValid(const std::vector<std::vector<unsigned>> &assignments,
+                   unsigned nfds,
+                   unsigned nworkers)
+  {
+    // each worker must be assigned exactly once in the assignment
+    // there must be <= nfds assignments
+
+    if (assignments.size() > nfds)
+      return false;
+
+    std::set<unsigned> seen;
+    for (auto &assignment : assignments)
+      for (auto w : assignment) {
+        if (seen.count(w) || w >= nworkers)
+          return false;
+        seen.insert(w);
+      }
+
+    return seen.size() == nworkers;
+  }
+
+private:
+
+  static void
+  advance_system_sync_epoch(
+      const std::vector<std::vector<unsigned>> &assignments);
+
+  // makes copy on purpose
+  static void writer(
+      unsigned id, int fd,
+      std::vector<unsigned> assignment);
+
+  static void persister(
+      std::vector<std::vector<unsigned>> assignments);
+
+  static size_t g_nworkers;
+
+  // v = per_thread_sync_epochs_[i].epochs_[j]: logger i has persisted up
+  // through (including) all transactions <= epoch v on core j. since core =>
+  // logger mapping is static, taking:
+  //   min_{core} max_{logger} per_thread_sync_epochs_[logger].epochs_[core]
+  // yields the entire system's persistent epoch
+
+  struct epoch_array {
+    std::atomic<uint64_t> epochs_[NMAXCORES];
+    CACHE_PADOUT;
+  };
+
+  static epoch_array per_thread_sync_epochs_[g_nmax_loggers] CACHE_ALIGNED;
+
+  // conservative estimate (<=) for:
+  //   min_{core} max_{logger} per_thread_sync_epochs_[logger].epochs_[core]
+  static util::aligned_padded_elem<std::atomic<uint64_t>> system_sync_epoch_;
+
+  static util::aligned_padded_elem<circbuf<pbuffer, g_perthread_buffers>>
+    g_all_buffers[NMAXCORES];
+  static util::aligned_padded_elem<circbuf<pbuffer, g_perthread_buffers>>
+    g_persist_buffers[NMAXCORES];
 };
 
 class transaction_proto2_static {
@@ -194,6 +318,7 @@ protected:
     constexpr hackstruct() : status(false), global_tid(0) {}
   };
 
+  // use to simulate global TID for comparsion
   static util::aligned_padded_elem<hackstruct>
     g_hack CACHE_ALIGNED;
 };
@@ -216,6 +341,7 @@ public:
   typedef typename super_type::read_set_map read_set_map;
   typedef typename super_type::absent_set_map absent_set_map;
   typedef typename super_type::write_set_map write_set_map;
+  typedef typename super_type::write_set_u32_vec write_set_u32_vec;
 
   transaction_proto2(uint64_t flags,
                      typename Traits::StringAllocator &sa)
@@ -270,7 +396,79 @@ public:
     return EpochId(t) <= current_epoch;
   }
 
-  inline ALWAYS_INLINE void on_tid_finish(tid_t commit_tid) {}
+  inline void
+  on_tid_finish(tid_t commit_tid)
+  {
+    if (this->state != transaction_base::TXN_COMMITED)
+      return;
+    // need to write into log buffer
+
+    serializer<uint32_t, true> vs_uint32_t;
+    serializer<uint64_t, false> s_uint64_t;
+
+    // compute how much space is necessary
+    uint64_t space_needed = 0;
+
+    // 8 bytes to indicate TID
+    space_needed += sizeof(uint64_t);
+
+    // variable bytes to indicate # of records written
+    const uint32_t nwrites = this->write_set.size();
+    space_needed += vs_uint32_t.nbytes(&nwrites);
+
+    // each record needs to be recorded
+    auto it_end = this->write_set.end();
+    write_set_u32_vec value_sizes;
+    for (auto it = this->write_set.begin(); it != it_end; ++it) {
+      const uint32_t k_nbytes = it->get_key().size();
+      space_needed += vs_uint32_t.nbytes(&k_nbytes);
+      space_needed += k_nbytes;
+
+      const uint32_t v_nbytes = it->get_writer()(
+          dbtuple::TUPLE_WRITER_COMPUTE_DELTA_NEEDED, it->get_value(), nullptr, 0);
+      space_needed += vs_uint32_t.nbytes(&v_nbytes);
+      space_needed += v_nbytes;
+
+      value_sizes.push_back(v_nbytes);
+    }
+
+    // XXX(stephentu): spinning for now
+    const unsigned long my_core_id = coreid::core_id();
+
+  retry:
+    txn_logger::pbuffer *px;
+    while (unlikely(!(px = txn_logger::g_all_buffers[my_core_id]->peek())))
+      nop_pause();
+    INVARIANT(!px->io_scheduled_);
+
+    // check if enough size
+    if (px->space_remaining() < space_needed) {
+      txn_logger::pbuffer *px0 = txn_logger::g_all_buffers[my_core_id]->deq();
+      INVARIANT(px == px0);
+      txn_logger::g_persist_buffers[my_core_id]->enq(px0);
+      goto retry;
+    }
+
+    uint8_t *p = px->pointer();
+    p = s_uint64_t.write(p, commit_tid);
+    p = vs_uint32_t.write(p, nwrites);
+
+    for (size_t idx = 0; idx < this->write_set.size(); idx++) {
+      const transaction_base::write_record_t &rec = this->write_set[idx];
+      const uint32_t k_nbytes = rec.get_key().size();
+      p = vs_uint32_t.write(p, k_nbytes);
+      NDB_MEMCPY(p, rec.get_key().data(), k_nbytes);
+      p += k_nbytes;
+      const uint32_t v_nbytes = value_sizes[idx];
+      p = vs_uint32_t.write(p, v_nbytes);
+      rec.get_writer()(dbtuple::TUPLE_WRITER_DO_DELTA_WRITE, rec.get_value(), p, v_nbytes);
+      p += v_nbytes;
+    }
+
+    px->curoff_ += space_needed;
+    px->header()->nentries_++;
+    px->header()->last_tid_ = commit_tid;
+  }
 
   inline std::pair<bool, transaction_base::tid_t>
   consistent_snapshot_tid() const
