@@ -626,7 +626,7 @@ public:
     INVARIANT(tuple->is_lock_owner());
     INVARIANT(tuple->is_write_intent());
     INVARIANT(tuple->is_latest());
-    INVARIANT(rcu::in_rcu_region());
+    INVARIANT(rcu::s_instance.in_rcu_region());
     // this is too aggressive- better to let the background
     // reaper clean the chains
     //do_dbtuple_chain_cleanup(tuple);

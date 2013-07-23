@@ -2793,7 +2793,7 @@ namespace mp_test_pinning_ns {
     virtual void
     run()
     {
-      rcu::pin_current_thread(thread % coreid::num_cpus_online());
+      rcu::s_instance.pin_current_thread(thread % coreid::num_cpus_online());
       for (unsigned mode = 0; running.load(); mode++) {
         for (size_t i = thread * keys_per_thread;
              running.load() && i < (thread + 1) * keys_per_thread;

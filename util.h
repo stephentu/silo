@@ -8,6 +8,7 @@
 #include <queue>
 #include <utility>
 #include <memory>
+#include <atomic>
 
 #include <stdint.h>
 #include <pthread.h>
@@ -577,6 +578,24 @@ ParseCSVString(const std::string &s, Parser p = Parser())
     auto values = p(s);
     ret.insert(ret.end(), values.begin(), values.end());
   }
+  return ret;
+}
+
+template <typename T>
+static inline T
+non_atomic_fetch_add(std::atomic<T> &data, T arg)
+{
+  const T ret = data.load(std::memory_order_acquire);
+  data.store(ret + arg, std::memory_order_release);
+  return ret;
+}
+
+template <typename T>
+static inline T
+non_atomic_fetch_sub(std::atomic<T> &data, T arg)
+{
+  const T ret = data.load(std::memory_order_acquire);
+  data.store(ret - arg, std::memory_order_release);
   return ret;
 }
 

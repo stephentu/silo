@@ -96,7 +96,7 @@ private:
   {
     if (likely(p)) {
       if (RCU)
-        rcu::free_array(p);
+        rcu::s_instance.free_array(p);
       else
         delete [] p;
     }

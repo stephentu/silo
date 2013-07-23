@@ -274,7 +274,7 @@ struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
       std::min(
           util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(basic_kvdb_record) + sz),
           max_alloc_sz);
-    char * const p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
+    char * const p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
     return new (p) basic_kvdb_record(alloc_sz - sizeof(basic_kvdb_record), s);
   }
@@ -287,7 +287,7 @@ private:
       reinterpret_cast<basic_kvdb_record *>(r);
     const size_t alloc_sz = px->alloc_size + sizeof(*px);
     px->~basic_kvdb_record();
-    rcu::dealloc(px, alloc_sz);
+    rcu::s_instance.dealloc(px, alloc_sz);
   }
 
 public:
@@ -296,7 +296,7 @@ public:
   {
     if (unlikely(!r))
       return;
-    rcu::free_with_fn(r, deleter);
+    rcu::s_instance.free_with_fn(r, deleter);
   }
 
 } PACKED;

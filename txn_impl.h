@@ -10,8 +10,6 @@ template <template <typename> class Protocol, typename Traits>
 transaction<Protocol, Traits>::transaction(uint64_t flags, string_allocator_type &sa)
   : transaction_base(flags), sa(&sa)
 {
-  // XXX(stephentu): VERY large RCU region
-  rcu::region_begin();
 }
 
 template <template <typename> class Protocol, typename Traits>
@@ -20,7 +18,6 @@ transaction<Protocol, Traits>::~transaction()
   // transaction shouldn't fall out of scope w/o resolution
   // resolution means TXN_EMBRYO, TXN_COMMITED, and TXN_ABRT
   INVARIANT(state != TXN_ACTIVE);
-  rcu::region_end();
 }
 
 template <template <typename> class Protocol, typename Traits>

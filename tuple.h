@@ -860,7 +860,7 @@ public:
       std::min(
           util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + sz),
           max_alloc_sz);
-    char *p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
+    char *p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
     INVARIANT((alloc_sz - sizeof(dbtuple)) >= sz);
     return new (p) dbtuple(
@@ -877,7 +877,7 @@ public:
       std::min(
           util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + sz),
           max_alloc_sz);
-    char *p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
+    char *p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
     return new (p) dbtuple(
         version, value, sz,
@@ -896,7 +896,7 @@ public:
       std::min(
           util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + newsz),
           max_alloc_sz);
-    char *p = reinterpret_cast<char *>(rcu::alloc(alloc_sz));
+    char *p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
     return new (p) dbtuple(
         version, value, oldsz, newsz,
@@ -910,7 +910,7 @@ private:
   {
     const size_t alloc_sz = n->alloc_size + sizeof(*n);
     n->~dbtuple();
-    rcu::dealloc(n, alloc_sz);
+    rcu::s_instance.dealloc(n, alloc_sz);
   }
 
 public:
@@ -930,7 +930,7 @@ public:
     if (unlikely(!n))
       return;
     n->mark_deleting();
-    rcu::free_with_fn(n, deleter);
+    rcu::s_instance.free_with_fn(n, deleter);
   }
 
   static inline void

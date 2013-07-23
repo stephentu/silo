@@ -300,7 +300,7 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
 bool
 transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, dbtuple *tuple)
 {
-  INVARIANT(rcu::in_rcu_region());
+  INVARIANT(rcu::s_instance.in_rcu_region());
 
   const dbtuple::version_t vcheck = tuple->unstable_version();
 
@@ -483,7 +483,7 @@ txn_walker_loop::run()
 
     size_t nnodes = 0;
     {
-      scoped_rcu_region rcu_region(true); // do TL cleanup
+      scoped_rcu_region rcu_region;
       btree::value_type v = 0;
 
       // round up s to 8 byte boundaries for ease of computation
@@ -651,6 +651,9 @@ txn_walker_loop::run()
 
     } // end RCU region
 
+    // do TL cleanup
+    rcu::s_instance.threadpurge();
+
   recalc:
     {
       // very simple heuristic
@@ -686,7 +689,7 @@ txn_walker_loop::run()
       //  continue;
       //const uint64_t sleep_ns = (txn_epoch_us - us) * 1000;
 
-      rcu::try_release();
+      rcu::s_instance.try_release();
       const uint64_t sleep_ns = (txn_epoch_us) * 1000;
       ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
       ts.tv_nsec = sleep_ns % ONE_SECOND_NS;

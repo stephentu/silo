@@ -47,7 +47,7 @@ template <template <typename> class Transaction, class P>
  * semantics of total store order (TSO) for correctness. To fix this, we would
  * change compiler fences into actual memory fences, at the very least.
  */
-class btree : public rcu_enabled {
+class btree {
   template <template <typename> class T, typename P>
     friend class base_txn_btree;
   friend class txn_walker_loop;
@@ -532,7 +532,7 @@ private:
     static inline leaf_node*
     alloc()
     {
-      void * const p = rcu::alloc(LeafNodeAllocSize);
+      void * const p = rcu::s_instance.alloc(LeafNodeAllocSize);
       INVARIANT(p);
       return new (p) leaf_node;
     }
@@ -544,7 +544,7 @@ private:
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
       n->~leaf_node();
-      rcu::dealloc(p, LeafNodeAllocSize);
+      rcu::s_instance.dealloc(p, LeafNodeAllocSize);
     }
 
     static inline void
@@ -553,7 +553,7 @@ private:
       if (unlikely(!n))
         return;
       n->mark_deleting();
-      rcu::free_with_fn(n, deleter);
+      rcu::s_instance.free_with_fn(n, deleter);
     }
 
   } PACKED;
@@ -643,7 +643,7 @@ private:
     static inline internal_node*
     alloc()
     {
-      void * const p = rcu::alloc(InternalNodeAllocSize);
+      void * const p = rcu::s_instance.alloc(InternalNodeAllocSize);
       INVARIANT(p);
       return new (p) internal_node;
     }
@@ -655,7 +655,7 @@ private:
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
       n->~internal_node();
-      rcu::dealloc(p, InternalNodeAllocSize);
+      rcu::s_instance.dealloc(p, InternalNodeAllocSize);
     }
 
     static inline void
@@ -664,7 +664,7 @@ private:
       if (unlikely(!n))
         return;
       n->mark_deleting();
-      rcu::free_with_fn(n, deleter);
+      rcu::s_instance.free_with_fn(n, deleter);
     }
 
   } PACKED;

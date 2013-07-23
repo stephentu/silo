@@ -190,7 +190,7 @@ protected:
   {
     if (!pin_cpus)
       return;
-    rcu::pin_current_thread(worker_id % MaxCpuForPinning());
+    rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
   }
 
   inline ALWAYS_INLINE string &
@@ -281,8 +281,8 @@ protected:
   load()
   {
     if (pin_cpus) {
-      rcu::pin_current_thread(id % MaxCpuForPinning());
-      rcu::fault_region();
+      rcu::s_instance.pin_current_thread(id % MaxCpuForPinning());
+      rcu::s_instance.fault_region();
       ALWAYS_ASSERT(!numa_run_on_node(-1)); // XXX: HACK
       ALWAYS_ASSERT(!sched_yield());
     }

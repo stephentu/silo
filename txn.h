@@ -776,6 +776,9 @@ protected:
   absent_set_map absent_set;
 
   string_allocator_type *sa;
+
+  // XXX(stephentu): VERY large RCU region
+  scoped_rcu_region rcu_guard_;
 };
 
 class transaction_abort_exception : public std::exception {

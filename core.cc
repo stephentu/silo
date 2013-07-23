@@ -1,5 +1,7 @@
 #include "core.h"
-#include "unistd.h"
+#include <unistd.h>
+
+using namespace std;
 
 size_t
 coreid::num_cpus_online()
@@ -10,4 +12,4 @@ coreid::num_cpus_online()
 }
 
 __thread ssize_t coreid::tl_core_id = -1;
-volatile size_t coreid::g_core_count = 0;
+atomic<size_t> coreid::g_core_count(0);

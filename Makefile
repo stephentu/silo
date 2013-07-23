@@ -72,6 +72,7 @@ HEADERS = allocator.h \
 	static_assert.h \
 	static_unordered_map.h \
 	static_vector.h \
+	ticker.h \
 	thread.h \
 	tuple.h \
 	txn_btree.h \
@@ -93,6 +94,7 @@ SRCFILES = allocator.cc \
 	memory.cc \
 	rcu.cc \
 	thread.cc \
+	ticker.cc \
 	tuple.cc \
 	txn_btree.cc \
 	txn.cc \

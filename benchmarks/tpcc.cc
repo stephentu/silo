@@ -277,8 +277,8 @@ protected: \
   {
     ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
     const unsigned long pinid = (wid - 1) % MaxCpuForPinning();
-    rcu::pin_current_thread(pinid);
-    rcu::fault_region();
+    rcu::s_instance.pin_current_thread(pinid);
+    rcu::s_instance.fault_region();
   }
 
 public:
@@ -539,7 +539,7 @@ protected:
   {
     if (!pin_cpus)
       return;
-    rcu::pin_current_thread(worker_id % MaxCpuForPinning());
+    rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
   }
 
   inline ALWAYS_INLINE string &

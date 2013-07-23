@@ -66,7 +66,7 @@ dbtuple::~dbtuple()
 void
 dbtuple::gc_chain()
 {
-  INVARIANT(rcu::in_rcu_region());
+  INVARIANT(rcu::s_instance.in_rcu_region());
   INVARIANT(!is_latest());
   release(this); // ~dbtuple() takes care of all reachable ptrs
 }
