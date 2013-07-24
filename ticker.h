@@ -116,6 +116,13 @@ public:
       return depth_;
     }
 
+    inline const ticker &
+    impl() const
+    {
+      INVARIANT(impl_);
+      return *impl_;
+    }
+
   private:
     ticker *impl_;
     uint64_t core_;

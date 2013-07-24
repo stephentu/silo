@@ -62,11 +62,6 @@ public:
     return std::make_pair(true, snapshot_tid);
   }
 
-  inline tid_t null_entry_tid() const
-  {
-    return 0;
-  }
-
   void
   dump_debug_info() const
   {

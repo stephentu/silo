@@ -266,12 +266,13 @@ txn_logger::writer(
 }
 
 void
-transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
+transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln, uint64_t ro_epoch_clean)
 {
   // try to clean up the chain
   INVARIANT(ln->is_locked());
   INVARIANT(ln->is_lock_owner());
   INVARIANT(ln->is_latest());
+  const uint64_t e = (ro_epoch_clean + 1) * ReadOnlyEpochMultiplier - 1;
   struct dbtuple *p = ln, *pprev = 0;
   const bool has_chain = ln->get_next();
   bool do_break = false;
@@ -280,7 +281,7 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
     if (do_break)
       break;
     do_break = false;
-    if (EpochId(p->version) <= g_reads_finished_epoch)
+    if (EpochId(p->version) <= e)
       do_break = true;
     pprev = p;
     p = p->get_next();
@@ -289,7 +290,7 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
     INVARIANT(p != ln);
     INVARIANT(pprev);
     INVARIANT(!p->is_latest());
-    INVARIANT(EpochId(p->version) < g_reads_finished_epoch); // check safety
+    INVARIANT(EpochId(p->version) < e); // check safety
     pprev->set_next(NULL);
     p->gc_chain();
   }
@@ -298,8 +299,13 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln)
 }
 
 bool
-transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, dbtuple *tuple)
+transaction_proto2_static::try_dbtuple_cleanup(
+    btree *btr, const string &key, dbtuple *tuple,
+    uint64_t ro_epoch_clean)
 {
+  // note: we can clean <= ro_epoch_clean
+  const uint64_t e = (ro_epoch_clean + 1) * ReadOnlyEpochMultiplier - 1;
+
   INVARIANT(rcu::s_instance.in_rcu_region());
 
   const dbtuple::version_t vcheck = tuple->unstable_version();
@@ -312,7 +318,7 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
   dbtuple *p = tuple->get_next();
   bool has_work = !tuple->size;
   while (p && !has_work) {
-    if (EpochId(p->version) <= g_reads_finished_epoch) {
+    if (EpochId(p->version) <= e) {
       has_work = p->get_next();
       break;
     }
@@ -328,19 +334,19 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
     // was replaced, so get it the next time around
     return false;
 
-  do_dbtuple_chain_cleanup(tuple);
+  do_dbtuple_chain_cleanup(tuple, ro_epoch_clean);
 
   if (!tuple->size && !tuple->is_deleting()) {
     // latest version is a deleted entry, so try to delete
     // from the tree
     const uint64_t v = EpochId(tuple->version);
-    if (g_reads_finished_epoch < v) {
+    if (e < v) {
       ret = true;
     } else {
-      // g_reads_finished_epoch >= v: we don't require g_reads_finished_epoch > v
-      // as in tuple china cleanup, b/c removes are a special case: whether or
-      // not a consistent snapshot reads a removed element by its absense or by
-      // an empty record is irrelevant.
+      // e >= v: we don't require g_reads_finished_epoch > v as in tuple chain
+      // cleanup, b/c removes are a special case: whether or not a consistent
+      // snapshot reads a removed element by its absense or by an empty record
+      // is irrelevant.
       btree::value_type removed = 0;
       const bool did_remove = btr->remove(varkey(key), &removed);
       if (!did_remove) {
@@ -359,77 +365,6 @@ transaction_proto2_static::try_dbtuple_cleanup(btree *btr, const string &key, db
   }
 
   return ret;
-}
-
-bool
-transaction_proto2_static::InitEpochScheme()
-{
-  g_epoch_loop.start();
-  return true;
-}
-
-transaction_proto2_static::epoch_loop transaction_proto2_static::g_epoch_loop;
-
-#ifdef CHECK_INVARIANTS
-static const uint64_t txn_epoch_us = 10 * 1000; /* 10 ms */
-#else
-static const uint64_t txn_epoch_us = 1000 * 1000; /* 1 sec */
-#endif
-
-void
-transaction_proto2_static::epoch_loop::run()
-{
-  // runs as daemon thread
-  struct timespec t;
-  timer loop_timer;
-  for (;;) {
-
-    const uint64_t last_loop_usec = loop_timer.lap();
-    const uint64_t delay_time_usec = txn_epoch_us;
-    if (last_loop_usec < delay_time_usec) {
-      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
-      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
-      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
-      nanosleep(&t, NULL);
-    }
-
-    // bump epoch number
-    // NB(stephentu): no need to do this as an atomic operation because we are
-    // the only writer!
-    g_current_epoch++;
-
-    // XXX(stephentu): document why we need this memory fence
-    __sync_synchronize();
-
-    // wait for each core to finish epoch (g_current_epoch - 1)
-    const size_t l_core_count = coreid::core_count();
-    for (size_t i = 0; i < l_core_count; i++) {
-      ::lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
-    }
-
-    COMPILER_MEMORY_FENCE;
-
-    // sync point 1: l_current_epoch = (g_current_epoch - 1) is now finished.
-    // at this point, all threads will be operating at epoch=g_current_epoch,
-    // which means all values < g_current_epoch are consistent with each other
-    g_consistent_epoch++;
-    __sync_synchronize(); // XXX(stephentu): same reason as above
-
-    // XXX(stephentu): I would really like to avoid having to loop over
-    // all the threads again, but I don't know how else to ensure all the
-    // threads will finish any oustanding consistent reads at
-    // g_consistent_epoch - 1
-    for (size_t i = 0; i < l_core_count; i++) {
-      ::lock_guard<spinlock> l(g_epoch_spinlocks[i].elem);
-    }
-
-    // sync point 2: all consistent reads will be operating at
-    // g_consistent_epoch = g_current_epoch, which means they will be
-    // reading changes up to and including (g_current_epoch - 1)
-    g_reads_finished_epoch++;
-
-    COMPILER_MEMORY_FENCE; // XXX(stephentu) do we need?
-  }
 }
 
 // XXX: kind of a duplicate of btree::leaf_kvinfo
@@ -572,6 +507,16 @@ txn_walker_loop::run()
           if (unlikely(!cur->check_version(version)))
             goto process;
 
+          // figure out what the current cleanable epoch is
+          const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
+          const uint64_t ro_tick_ex = transaction_proto2_static::to_read_only_tick(last_tick_ex);
+          if (ro_tick_ex <= 1)
+            // won't have anything to clean
+            goto waitepoch;
+
+          // NOTE: consistent reads happening >= (ro_tick_ex - 1),
+          // so we can clean < (ro_tick_ex - 1) or <= (ro_tick_ex - 2)
+
           // process all values
           for (size_t i = 0; i < values.size(); i++) {
             dbtuple * const tuple = reinterpret_cast<dbtuple *>(values[i].value);
@@ -591,7 +536,7 @@ txn_walker_loop::run()
 #ifdef ENABLE_EVENT_COUNTERS
             ntuples++;
 #endif
-            transaction_proto2_static::try_dbtuple_cleanup(btr, s, tuple);
+            transaction_proto2_static::try_dbtuple_cleanup(btr, s, tuple, ro_tick_ex - 2);
           }
 
           // deal w/ the layers
@@ -690,7 +635,7 @@ txn_walker_loop::run()
       //const uint64_t sleep_ns = (txn_epoch_us - us) * 1000;
 
       rcu::s_instance.try_release();
-      const uint64_t sleep_ns = (txn_epoch_us) * 1000;
+      const uint64_t sleep_ns = transaction_proto2_static::ReadOnlyEpochUsec * 1000;
       ts.tv_sec  = sleep_ns / ONE_SECOND_NS;
       ts.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&ts, NULL);
@@ -699,16 +644,5 @@ txn_walker_loop::run()
   }
 }
 
-__thread unsigned int transaction_proto2_static::tl_nest_level = 0;
-__thread uint64_t transaction_proto2_static::tl_last_commit_tid = dbtuple::MIN_TID;
-
-// start epoch at 1, to avoid some boundary conditions
-volatile uint64_t transaction_proto2_static::g_current_epoch = 1;
-volatile uint64_t transaction_proto2_static::g_consistent_epoch = 1;
-volatile uint64_t transaction_proto2_static::g_reads_finished_epoch = 0;
-
-aligned_padded_elem<spinlock> transaction_proto2_static::g_epoch_spinlocks[NMaxCores];
+percore<uint64_t> transaction_proto2_static::g_last_commit_tids;
 aligned_padded_elem<transaction_proto2_static::hackstruct> transaction_proto2_static::g_hack;
-
-// put at bottom
-bool transaction_proto2_static::_init_epoch_scheme_flag = InitEpochScheme();

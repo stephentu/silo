@@ -206,6 +206,25 @@ operator<<(std::ostream &o, txn_logger::logbuf_header &hdr)
 class transaction_proto2_static {
 public:
 
+  // NOTE:
+  // each epoch is tied (1:1) to the ticker subsystem's tick. this is the
+  // speed of the persistence layer.
+  //
+  // however, read only txns and GC are tied to multiples of the ticker
+  // subsystem's tick
+
+  static const uint64_t ReadOnlyEpochMultiplier = 10;
+  static_assert(ReadOnlyEpochMultiplier >= 1, "XX");
+
+  static const uint64_t ReadOnlyEpochUsec =
+    ticker::tick_us * ReadOnlyEpochMultiplier;
+
+  static inline uint64_t constexpr
+  to_read_only_tick(uint64_t epoch_tick)
+  {
+    return epoch_tick / ReadOnlyEpochMultiplier;
+  }
+
   // in this protocol, the version number is:
   // (note that for tid_t's, the top bit is reserved and
   // *must* be set to zero
@@ -235,9 +254,17 @@ public:
   static void
   wait_an_epoch()
   {
-    ALWAYS_ASSERT(!tl_nest_level);
-    const uint64_t e = g_consistent_epoch;
-    while (g_consistent_epoch == e)
+    INVARIANT(!rcu::s_instance.in_rcu_region());
+    const uint64_t e = to_read_only_tick(
+        ticker::s_instance.global_last_tick_exclusive());
+    if (!e) {
+      std::cerr << "wait_an_epoch(): consistent reads happening in e-1, but e=0 so special case"
+                << std::endl;
+    } else {
+      std::cerr << "wait_an_epoch(): consistent reads happening in e-1: "
+                << (e-1) << std::endl;
+    }
+    while (to_read_only_tick(ticker::s_instance.global_last_tick_exclusive()) == e)
       nop_pause();
     COMPILER_MEMORY_FENCE;
   }
@@ -267,104 +294,34 @@ public:
     return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
   }
 
-  // XXX(stephentu): we re-implement another epoch-based scheme- we should
-  // reconcile this with the RCU-subsystem, by implementing an epoch based
-  // thread manager, which both the RCU GC and this machinery can build on top
-  // of
+  static percore<uint64_t> g_last_commit_tids;
 
-  static bool InitEpochScheme();
-  static bool _init_epoch_scheme_flag;
-
-  class epoch_loop : public ndb_thread {
-    friend class transaction_proto2_static;
-  public:
-    epoch_loop()
-      : ndb_thread(true, std::string("epochloop")), is_wq_empty(true) {}
-    virtual void run();
-  private:
-    volatile bool is_wq_empty;
-  };
-
-  static epoch_loop g_epoch_loop;
-
-  /**
-   * Get a (possibly stale) consistent TID
-   */
-  static uint64_t GetConsistentTid();
-
-  // allows a single core to run multiple transactions at the same time
-  // XXX(stephentu): should we allow this? this seems potentially troubling
-  static __thread unsigned int tl_nest_level;
-
-  static __thread uint64_t tl_last_commit_tid;
-
-  struct dbtuple_context {
-    dbtuple_context() : btr(), key(), ln() {}
-    dbtuple_context(btree *btr,
-                    const std::string &key,
-                    dbtuple *ln)
-      : btr(btr), key(key), ln(ln)
-    {
-      INVARIANT(btr);
-      INVARIANT(!key.empty());
-      INVARIANT(ln);
-    }
-    btree *btr;
-    std::string key;
-    dbtuple *ln;
-  };
-
+  // can clean <= ro_epoch_clean (note this is in RO epochs, not ticker epochs)
   static void
-  do_dbtuple_chain_cleanup(dbtuple *ln);
+  do_dbtuple_chain_cleanup(dbtuple *ln, uint64_t ro_epoch_clean);
 
   static bool
-  try_dbtuple_cleanup(btree *btr, const std::string &key, dbtuple *tuple);
-
-  static inline bool
-  try_dbtuple_cleanup(const dbtuple_context &ctx)
-  {
-    return try_dbtuple_cleanup(ctx.btr, ctx.key, ctx.ln);
-  }
+  try_dbtuple_cleanup(btree *btr, const std::string &key,
+                      dbtuple *tuple, uint64_t ro_epoch_clean);
 
   static inline void
   set_hack_status(bool hack_status)
   {
-    g_hack->status = hack_status;
+    g_hack->status_ = hack_status;
   }
 
   static inline bool
   get_hack_status()
   {
-    return g_hack->status;
+    return g_hack->status_;
   }
 
 protected:
 
-  // XXX(stephentu): think about if the vars below really need to be volatile
-
-  // contains the current epoch number, is either == g_consistent_epoch or
-  // == g_consistent_epoch + 1
-  static volatile uint64_t g_current_epoch CACHE_ALIGNED;
-
-  // contains the epoch # to take a consistent snapshot at the beginning of
-  // (this means g_consistent_epoch - 1 is the last epoch fully completed)
-  static volatile uint64_t g_consistent_epoch CACHE_ALIGNED;
-
-  // contains the latest epoch # through which it is known NO readers are in Is
-  // either g_consistent_epoch - 1 or g_consistent_epoch - 2. this means that
-  // tuples belonging to epoch < g_reads_finished_epoch are *safe* to garbage
-  // collect
-  // [if they are superceded by another tuple in epoch >= g_reads_finished_epoch]
-  static volatile uint64_t g_reads_finished_epoch CACHE_ALIGNED;
-
-  // for synchronizing with the epoch incrementor loop
-  static util::aligned_padded_elem<spinlock>
-    g_epoch_spinlocks[NMaxCores] CACHE_ALIGNED;
-
   struct hackstruct {
-    bool status;
-    volatile uint64_t global_tid;
-    constexpr hackstruct() : status(false), global_tid(0) {}
+    std::atomic<bool> status_;
+    std::atomic<uint64_t> global_tid_;
+    constexpr hackstruct() : status_(false), global_tid_(0) {}
   };
 
   // use to simulate global TID for comparsion
@@ -398,14 +355,20 @@ public:
       current_epoch(0),
       last_consistent_tid(0)
   {
-    const size_t my_core_id = coreid::core_id();
-    VERBOSE(std::cerr << "new transaction_proto2 (core=" << my_core_id
-                      << ", nest=" << tl_nest_level << ")" << std::endl);
-    if (tl_nest_level++ == 0)
-      g_epoch_spinlocks[my_core_id].elem.lock();
-    current_epoch = g_current_epoch;
-    if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY)
-      last_consistent_tid = MakeTid(0, 0, g_consistent_epoch);
+    current_epoch = this->rcu_guard_.guard().tick();
+    if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY) {
+      const uint64_t global_tick_ex =
+        this->rcu_guard_.guard().impl().global_last_tick_exclusive();
+
+      const uint64_t a = (global_tick_ex / ReadOnlyEpochMultiplier);
+      const uint64_t b = a * ReadOnlyEpochMultiplier;
+
+      // want to read entries <= b-1, special casing for b=0
+      if (!b)
+        last_consistent_tid = MakeTid(0, 0, 0);
+      else
+        last_consistent_tid = MakeTid(CoreMask, NumIdMask >> NumIdShift, b - 1);
+    }
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
     dbtuple::TupleLockRegionBegin();
 #endif
@@ -416,26 +379,20 @@ public:
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
     dbtuple::AssertAllTupleLocksReleased();
 #endif
-    const size_t my_core_id = coreid::core_id();
-    VERBOSE(std::cerr << "destroy transaction_proto2 (core=" << my_core_id
-                      << ", nest=" << tl_nest_level << ")" << std::endl);
-    ALWAYS_ASSERT(tl_nest_level > 0);
-    if (!--tl_nest_level)
-      g_epoch_spinlocks[my_core_id].elem.unlock();
   }
 
   inline bool
   can_overwrite_record_tid(tid_t prev, tid_t cur) const
   {
     INVARIANT(prev <= cur);
-    INVARIANT(EpochId(cur) >= g_consistent_epoch);
 
     // XXX(stephentu): the !prev check is a *bit* of a hack-
     // we're assuming that !prev (MIN_TID) corresponds to an
     // absent (removed) record, so it is safe to overwrite it,
     //
     // This is an OK assumption with *no TID wrap around*.
-    return EpochId(prev) == EpochId(cur) || !prev;
+    return to_read_only_tick(EpochId(prev)) ==
+           to_read_only_tick(EpochId(cur)) || !prev;
   }
 
   // can only read elements in this epoch or previous epochs
@@ -541,12 +498,6 @@ public:
       return std::make_pair(false, 0);
   }
 
-  inline transaction_base::tid_t
-  null_entry_tid() const
-  {
-    return MakeTid(0, 0, current_epoch);
-  }
-
   void
   dump_debug_info() const
   {
@@ -558,8 +509,8 @@ public:
   transaction_base::tid_t
   gen_commit_tid(const dbtuple_write_info_vec &write_tuples)
   {
-    const size_t my_core_id = coreid::core_id();
-    const tid_t l_last_commit_tid = tl_last_commit_tid;
+    const size_t my_core_id = this->rcu_guard_.guard().core();
+    const tid_t l_last_commit_tid = g_last_commit_tids[my_core_id];
     INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
               CoreId(l_last_commit_tid) == my_core_id);
     INVARIANT(!this->is_read_only());
@@ -567,9 +518,8 @@ public:
     // XXX(stephentu): wrap-around messes this up
     INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);
 
-    if (g_hack->status) {
-      __sync_add_and_fetch(&g_hack->global_tid, 1);
-    }
+    if (g_hack->status_.load(std::memory_order_acquire))
+      g_hack->global_tid_.fetch_add(1, std::memory_order_acq_rel);
 
     tid_t ret = l_last_commit_tid;
 
@@ -616,7 +566,7 @@ public:
     // XXX(stephentu): this txn hasn't actually been commited yet,
     // and could potentially be aborted - but it's ok to increase this #, since
     // subsequent txns on this core will read this # anyways
-    return (tl_last_commit_tid = ret);
+    return (g_last_commit_tids[my_core_id] = ret);
   }
 
   inline ALWAYS_INLINE void

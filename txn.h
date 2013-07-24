@@ -77,6 +77,7 @@ public:
   };
 
 #define ABORT_REASONS(x) \
+    x(ABORT_REASON_NONE) \
     x(ABORT_REASON_USER) \
     x(ABORT_REASON_UNSTABLE_READ) \
     x(ABORT_REASON_FUTURE_TID_READ) \
@@ -108,7 +109,9 @@ public:
   }
 
   inline transaction_base(uint64_t flags)
-    : state(TXN_EMBRYO), flags(flags) {}
+    : state(TXN_EMBRYO),
+      reason(ABORT_REASON_NONE),
+      flags(flags) {}
 
 protected:
 #define EVENT_COUNTER_DEF_X(x) \
@@ -691,8 +694,6 @@ public:
    * XXX: document
    */
   std::pair<bool, tid_t> consistent_snapshot_tid() const;
-
-  tid_t null_entry_tid() const;
 
   inline string_allocator_type &
   string_allocator()
