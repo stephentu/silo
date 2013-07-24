@@ -775,13 +775,109 @@ namespace mp_test2_ns {
   static const uint64_t range_begin = 100;
   static const uint64_t range_end = 150;
 
+  struct control_rec {
+    uint32_t count_;
+    uint32_t values_[range_end - range_begin];
+    control_rec()
+      : count_(0)
+    {
+      NDB_MEMSET(&values_[0], 0, sizeof(values_));
+    }
+
+    void
+    sanity_check() const
+    {
+      INVARIANT(count_ <= ARRAY_NELEMS(values_));
+      if (!count_)
+        return;
+      uint32_t last = values_[0];
+      INVARIANT(last >= range_begin && last < range_end);
+      for (size_t i = 1; i < count_; last = values_[i], i++) {
+        INVARIANT(last < values_[i]);
+        INVARIANT(values_[i] >= range_begin && values_[i] < range_end);
+      }
+    }
+
+    // assumes list is in ascending order, no dups, and there is space
+    // remaining
+    //
+    // inserts in ascending order
+    void
+    insert(uint32_t v)
+    {
+      if (count_ >= ARRAY_NELEMS(values_)) {
+        cerr << "ERROR when trying to insert " << v
+             << ": " << vectorize() << endl;
+      }
+
+      INVARIANT(count_ < ARRAY_NELEMS(values_));
+      if (!count_ || values_[count_ - 1] < v) {
+        values_[count_++] = v;
+        sanity_check();
+        INVARIANT(contains(v));
+        return;
+      }
+      for (size_t i = 0; i < count_; i++) {
+        if (values_[i] > v) {
+          // move values_[i, count_) into slots values_[i+1, count_+1)
+          memmove(&values_[i+1], &values_[i], (count_ - i) * sizeof(uint32_t));
+          values_[i] = v;
+          count_++;
+          sanity_check();
+          INVARIANT(contains(v));
+          return;
+        }
+      }
+    }
+
+    inline bool
+    contains(uint32_t v) const
+    {
+      for (size_t i = 0; i < count_; i++)
+        if (values_[i] == v)
+          return true;
+      return false;
+    }
+
+    // removes v from list, returns true if actual removal happened.
+    // assumes v is in ascending order with no dups
+    bool
+    remove(uint32_t v)
+    {
+      for (size_t i = 0; i < count_; i++) {
+        if (values_[i] == v) {
+          // move values_[i+1, count_) into slots values_[i, count_-1)
+          memmove(&values_[i], &values_[i+1], (count_ - (i+1)) * sizeof(uint32_t));
+          count_ -= 1;
+          sanity_check();
+          INVARIANT(!contains(v));
+          // no dups assumption
+          return true;
+        } else if (values_[i] > v) {
+          // ascending order assumption
+          break;
+        }
+      }
+      INVARIANT(!contains(v));
+      return false;
+    }
+
+    inline vector<uint32_t>
+    vectorize() const
+    {
+      vector<uint32_t> v;
+      for (size_t i = 0; i < count_; i++)
+        v.push_back(values_[i]);
+      return v;
+    }
+  };
+
   static volatile bool running = true;
 
   // expects the values to be monotonically increasing (as records)
   template <template <typename> class Protocol>
   class counting_scan_callback : public txn_btree<Protocol>::search_range_callback {
   public:
-    counting_scan_callback() : ctr(0), has_last(false), last(0) {}
     virtual bool
     invoke(const string &k, const string &v)
     {
@@ -793,22 +889,13 @@ namespace mp_test2_ns {
         cerr << "sizeof rec: " << sizeof(rec) << endl;
         ALWAYS_ASSERT(false);
       }
-      rec *r = (rec *) v.data();
+      const rec *r = (const rec *) v.data();
       ALWAYS_ASSERT(u64k == r->v);
       VERBOSE(cerr << "counting_scan_callback: " << hexify(k) << " => " << r->v << endl);
-      if (!has_last) {
-        last = r->v;
-        has_last = true;
-      } else {
-        ALWAYS_ASSERT(r->v > last);
-        last = r->v;
-      }
-      ctr++;
+      values_.push_back(r->v);
       return true;
     }
-    size_t ctr;
-    bool has_last;
-    uint64_t last;
+    vector<uint32_t> values_;
   };
 
   template <template <typename> class TxnType, typename Traits>
@@ -822,26 +909,27 @@ namespace mp_test2_ns {
         for (size_t i = range_begin; running && i < range_end; i++) {
         retry:
           typename Traits::StringAllocator arena;
-          bool did_remove = false;
-          uint64_t did_v = 0;
+          //bool did_remove = false;
+          //uint64_t did_v = 0;
           {
             TxnType<Traits> t(this->txn_flags, arena);
             try {
-              rec ctr_rec;
+              control_rec ctr_rec;
               string v, v_ctr;
               ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
-              ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
-              ALWAYS_ASSERT_COND_IN_TXN(t, ((const rec *) v_ctr.data())->v > 1);
+              ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(control_rec));
+              ALWAYS_ASSERT_COND_IN_TXN(t, ((const control_rec *) v_ctr.data())->count_ > 1);
+              ctr_rec = *((const control_rec *) v_ctr.data());
               if (this->btr->search(t, u64_varkey(i), v)) {
                 AssertByteEquality(rec(i), v);
                 this->btr->remove(t, u64_varkey(i));
-                ctr_rec.v = ((const rec *) v_ctr.data())->v - 1;
-                did_remove = true;
+                ALWAYS_ASSERT_COND_IN_TXN(t, ctr_rec.remove(i));
+                //did_remove = true;
               } else {
                 this->btr->insert_object(t, u64_varkey(i), rec(i));
-                ctr_rec.v = ((const rec *) v_ctr.data())->v + 1;
+                ctr_rec.insert(i);
               }
-              did_v = ctr_rec.v;
+              //did_v = ctr_rec.v;
               this->btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
               t.commit(true);
             } catch (transaction_abort_exception &e) {
@@ -850,29 +938,29 @@ namespace mp_test2_ns {
             }
           }
 
-          {
-            TxnType<Traits> t(this->txn_flags, arena);
-            try {
-              string v, v_ctr;
-              ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
-              ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
-              const bool ret = this->btr->search(t, u64_varkey(i), v);
-              t.commit(true);
-              if (reinterpret_cast<const rec *>(v_ctr.data())->v != did_v) {
-                cerr << "rec.v: " << reinterpret_cast<const rec *>(v_ctr.data())->v << ", did_v: " << did_v << endl;
-                ALWAYS_ASSERT(false);
-              }
-              if (did_remove && ret) {
-                cerr << "removed previous, but still found" << endl;
-                ALWAYS_ASSERT(false);
-              } else if (!did_remove && !ret) {
-                cerr << "did not previous, but not found" << endl;
-                ALWAYS_ASSERT(false);
-              }
-            } catch (transaction_abort_exception &e) {
-              // possibly aborts due to GC mechanism- if so, just move on
-            }
-          }
+          //{
+          //  TxnType<Traits> t(this->txn_flags, arena);
+          //  try {
+          //    string v, v_ctr;
+          //    ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
+          //    ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(control_rec));
+          //    const bool ret = this->btr->search(t, u64_varkey(i), v);
+          //    t.commit(true);
+          //    if (reinterpret_cast<const rec *>(v_ctr.data())->v != did_v) {
+          //      cerr << "rec.v: " << reinterpret_cast<const rec *>(v_ctr.data())->v << ", did_v: " << did_v << endl;
+          //      ALWAYS_ASSERT(false);
+          //    }
+          //    if (did_remove && ret) {
+          //      cerr << "removed previous, but still found" << endl;
+          //      ALWAYS_ASSERT(false);
+          //    } else if (!did_remove && !ret) {
+          //      cerr << "did not previous, but not found" << endl;
+          //      ALWAYS_ASSERT(false);
+          //    }
+          //  } catch (transaction_abort_exception &e) {
+          //    // possibly aborts due to GC mechanism- if so, just move on
+          //  }
+          //}
         }
       }
     }
@@ -892,16 +980,20 @@ namespace mp_test2_ns {
           TxnType<Traits> t(this->txn_flags, arena);
           string v_ctr;
           ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
-          ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
+          ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(control_rec));
           counting_scan_callback<TxnType> c;
           const u64_varkey kend(range_end);
           this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
           t.commit(true);
-          if (c.ctr != ((const rec *) v_ctr.data())->v) {
-            cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
-            cerr << "validations: " << validations << endl;
+
+          const control_rec *crec = (const control_rec *) v_ctr.data();
+          crec->sanity_check();
+          auto cvec = crec->vectorize();
+          if (c.values_ != cvec) {
+            cerr << "observed: " << c.values_ << endl;
+            cerr << "db value: " << cvec << endl;
+            ALWAYS_ASSERT_COND_IN_TXN(t, c.values_ == cvec);
           }
-          ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((const rec *) v_ctr.data())->v);
           validations++;
           VERBOSE(cerr << "successful validation" << endl);
         } catch (transaction_abort_exception &e) {
@@ -927,13 +1019,14 @@ mp_test2()
     typename Traits::StringAllocator arena;
     {
       TxnType<Traits> t(txn_flags, arena);
-      size_t n = 0;
+      control_rec ctrl;
       for (size_t i = range_begin; i < range_end; i++)
         if ((i % 2) == 0) {
           btr.insert_object(t, u64_varkey(i), rec(i));
-          n++;
+          ctrl.values_[ctrl.count_++] = i;
         }
-      btr.insert_object(t, u64_varkey(ctr_key), rec(n));
+      ctrl.sanity_check();
+      btr.insert_object(t, u64_varkey(ctr_key), ctrl);
       AssertSuccessfulCommit(t);
     }
 
@@ -949,15 +1042,20 @@ mp_test2()
       typename Traits::StringAllocator arena;
       string v_ctr;
       ALWAYS_ASSERT_COND_IN_TXN(t, btr.search(t, u64_varkey(ctr_key), v_ctr));
-      ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(rec));
+      ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(control_rec));
       counting_scan_callback<TxnType> c;
       const u64_varkey kend(range_end);
       btr.search_range_call(t, u64_varkey(range_begin), &kend, c);
       AssertSuccessfulCommit(t);
-      if (c.ctr != ((const rec *) v_ctr.data())->v) {
-        cerr << "ctr: " << c.ctr << ", v_ctr: " << ((const rec *) v_ctr.data())->v << endl;
+
+      const control_rec *crec = (const control_rec *) v_ctr.data();
+      crec->sanity_check();
+      auto cvec = crec->vectorize();
+      if (c.values_ != cvec) {
+        cerr << "observed: " << c.values_ << endl;
+        cerr << "db value: " << cvec << endl;
+        ALWAYS_ASSERT_COND_IN_TXN(t, c.values_ == cvec);
       }
-      ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == ((const rec *) v_ctr.data())->v);
       VERBOSE(cerr << "initial read only scan passed" << endl);
     }
 
