@@ -773,7 +773,7 @@ namespace mp_test2_ns {
 
   static const uint64_t ctr_key = 0;
   static const uint64_t range_begin = 100;
-  static const uint64_t range_end = 200;
+  static const uint64_t range_end = 150;
 
   static volatile bool running = true;
 
@@ -962,26 +962,36 @@ mp_test2()
     }
 
     mutate_worker<TxnType, Traits> w0(btr, txn_flags);
-    reader_worker<TxnType, Traits> w1(btr, txn_flags);
+    //reader_worker<TxnType, Traits> w1(btr, txn_flags);
     reader_worker<TxnType, Traits> w2(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+    reader_worker<TxnType, Traits> w3(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+    reader_worker<TxnType, Traits> w4(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
 
     running = true;
     __sync_synchronize();
     w0.start();
-    w1.start();
+    //w1.start();
     w2.start();
-    sleep(10);
+    w3.start();
+    w4.start();
+    sleep(30);
     running = false;
     __sync_synchronize();
     w0.join();
-    w1.join();
+    //w1.join();
     w2.join();
+    w3.join();
+    w4.join();
 
     cerr << "mutate naborts: " << w0.naborts << endl;
-    cerr << "reader naborts: " << w1.naborts << endl;
-    cerr << "reader validations: " << w1.validations << endl;
-    cerr << "read-only reader naborts: " << w2.naborts << endl;
-    cerr << "read-only reader validations: " << w2.validations << endl;
+    //cerr << "reader naborts: " << w1.naborts << endl;
+    //cerr << "reader validations: " << w1.validations << endl;
+    cerr << "read-only reader 1 naborts: " << w2.naborts << endl;
+    cerr << "read-only reader 1 validations: " << w2.validations << endl;
+    cerr << "read-only reader 2 naborts: " << w3.naborts << endl;
+    cerr << "read-only reader 2 validations: " << w3.validations << endl;
+    cerr << "read-only reader 3 naborts: " << w4.naborts << endl;
+    cerr << "read-only reader 3 validations: " << w4.validations << endl;
 
     txn_epoch_sync<TxnType>::sync();
     txn_epoch_sync<TxnType>::finish();
@@ -1625,22 +1635,22 @@ void txn_btree_test()
   //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
-  test1<transaction_proto2, default_transaction_traits>();
-  test2<transaction_proto2, default_transaction_traits>();
-  test_absent_key_race<transaction_proto2, default_transaction_traits>();
-  test_inc_value_size<transaction_proto2, default_transaction_traits>();
-  test_multi_btree<transaction_proto2, default_transaction_traits>();
-  test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
-  test_long_keys<transaction_proto2, default_transaction_traits>();
-  test_long_keys2<transaction_proto2, default_transaction_traits>();
+  //test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
+  //test1<transaction_proto2, default_transaction_traits>();
+  //test2<transaction_proto2, default_transaction_traits>();
+  //test_absent_key_race<transaction_proto2, default_transaction_traits>();
+  //test_inc_value_size<transaction_proto2, default_transaction_traits>();
+  //test_multi_btree<transaction_proto2, default_transaction_traits>();
+  //test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
+  //test_long_keys<transaction_proto2, default_transaction_traits>();
+  //test_long_keys2<transaction_proto2, default_transaction_traits>();
 
-  mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
-  mp_test1<transaction_proto2, default_transaction_traits>();
+  //mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
+  //mp_test1<transaction_proto2, default_transaction_traits>();
   mp_test2<transaction_proto2, default_transaction_traits>();
-  mp_test3<transaction_proto2, default_transaction_traits>();
-  mp_test_simple_write_skew<transaction_proto2, default_transaction_traits>();
-  mp_test_batch_processing<transaction_proto2, default_transaction_traits>();
+  //mp_test3<transaction_proto2, default_transaction_traits>();
+  //mp_test_simple_write_skew<transaction_proto2, default_transaction_traits>();
+  //mp_test_batch_processing<transaction_proto2, default_transaction_traits>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();

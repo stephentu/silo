@@ -27,6 +27,9 @@
 template <template <typename> class Protocol, typename Traits>
   class transaction; // forward decl
 
+// XXX: hack
+extern std::string (*g_proto_version_str)(uint64_t v);
+
 /**
  * A dbtuple is the type of value which we stick
  * into underlying (non-transactional) data structures- it
@@ -803,6 +806,12 @@ public:
         return write_record_ret(false, nullptr);
       }
 
+      //std::cerr
+      //  << "existing: " << g_proto_version_str(version) << std::endl
+      //  << "new     : " << g_proto_version_str(t)       << std::endl
+      //  << "alloc_size : " << alloc_size                << std::endl
+      //  << "new_sz     : " << new_sz                    << std::endl;
+
       // keep this tuple in the chain (it's wasteful, but not incorrect)
       // so that cleanup is easier
       //
@@ -817,6 +826,12 @@ public:
       ++g_evt_dbtuple_inplace_buf_insufficient;
       return write_record_ret(false, rep);
     }
+
+    //std::cerr
+    //  << "existing: " << g_proto_version_str(version) << std::endl
+    //  << "new     : " << g_proto_version_str(t)       << std::endl
+    //  << "alloc_size : " << alloc_size                << std::endl
+    //  << "new_sz     : " << new_sz                    << std::endl;
 
     // need to spill
     ++g_evt_dbtuple_spills;

@@ -194,7 +194,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
 
   // read_only txns require consistent snapshots
   INVARIANT(!is_read_only() || snapshot_tid_t.first);
-  INVARIANT(!is_read_only() || read_set.empty());
+  //INVARIANT(!is_read_only() || read_set.empty());
   INVARIANT(!is_read_only() || write_set.empty());
   INVARIANT(!is_read_only() || absent_set.empty());
   if (!snapshot_tid_t.first || !write_dbtuples.empty()) {
@@ -536,7 +536,7 @@ transaction<Protocol, Traits>::do_tuple_read(
   const bool v_empty = (stat == dbtuple::READ_EMPTY);
   if (v_empty)
     ++transaction_base::g_evt_read_logical_deleted_node_search;
-  if (!is_read_only_txn)
+  //if (!is_read_only_txn)
     // read-only txns do not need read-set tracking
     // (b/c we know the values are consistent)
     read_set.emplace_back(tuple, start_t);

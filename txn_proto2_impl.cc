@@ -290,7 +290,16 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln, uint64_t ro_epo
     INVARIANT(p != ln);
     INVARIANT(pprev);
     INVARIANT(!p->is_latest());
-    INVARIANT(EpochId(p->version) < e); // check safety
+    INVARIANT(EpochId(p->version) <= e);
+    // check that p can be safely removed because it is covered
+    // by pprev
+    INVARIANT(EpochId(pprev->version) <= e);
+    INVARIANT(pprev->version > p->version);
+    g_max_gc_version_inc->store(
+      std::max(
+        g_max_gc_version_inc->load(std::memory_order_acquire),
+        EpochId(p->version)),
+      std::memory_order_release);
     pprev->set_next(NULL);
     p->gc_chain();
   }
@@ -343,10 +352,9 @@ transaction_proto2_static::try_dbtuple_cleanup(
     if (e < v) {
       ret = true;
     } else {
-      // e >= v: we don't require g_reads_finished_epoch > v as in tuple chain
-      // cleanup, b/c removes are a special case: whether or not a consistent
-      // snapshot reads a removed element by its absense or by an empty record
-      // is irrelevant.
+      // e >= v: we don't require e > v as in tuple chain cleanup, b/c removes
+      // are a special case: whether or not a consistent snapshot reads a
+      // removed element by its absense or by an empty record is irrelevant.
       btree::value_type removed = 0;
       const bool did_remove = btr->remove(varkey(key), &removed);
       if (!did_remove) {
@@ -359,6 +367,10 @@ transaction_proto2_static::try_dbtuple_cleanup(
       INVARIANT(removed == (btree::value_type) tuple);
       dbtuple::release(tuple); // release() marks deleted
       ++evt_try_delete_unlinks;
+      g_max_unlink_version_inc->store(
+        std::max(
+          g_max_unlink_version_inc->load(std::memory_order_acquire), v),
+        std::memory_order_release);
     }
   } else {
     ret = tuple->get_next();
@@ -644,5 +656,11 @@ txn_walker_loop::run()
   }
 }
 
-percore<uint64_t> transaction_proto2_static::g_last_commit_tids;
-aligned_padded_elem<transaction_proto2_static::hackstruct> transaction_proto2_static::g_hack;
+percore<uint64_t>
+  transaction_proto2_static::g_last_commit_tids;
+aligned_padded_elem<atomic<uint64_t>>
+  transaction_proto2_static::g_max_gc_version_inc(0);
+aligned_padded_elem<atomic<uint64_t>>
+  transaction_proto2_static::g_max_unlink_version_inc(0);
+aligned_padded_elem<transaction_proto2_static::hackstruct>
+  transaction_proto2_static::g_hack;

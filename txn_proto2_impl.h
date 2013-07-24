@@ -213,7 +213,12 @@ public:
   // however, read only txns and GC are tied to multiples of the ticker
   // subsystem's tick
 
-  static const uint64_t ReadOnlyEpochMultiplier = 10;
+#ifdef CHECK_INVARIANTS
+  static const uint64_t ReadOnlyEpochMultiplier = 1; /* 10 ms */
+#else
+  static const uint64_t ReadOnlyEpochMultiplier = 100; /* 1 sec */
+#endif
+
   static_assert(ReadOnlyEpochMultiplier >= 1, "XX");
 
   static const uint64_t ReadOnlyEpochUsec =
@@ -315,6 +320,10 @@ public:
   {
     return g_hack->status_;
   }
+
+  // hack
+  static util::aligned_padded_elem<std::atomic<uint64_t>> g_max_gc_version_inc;
+  static util::aligned_padded_elem<std::atomic<uint64_t>> g_max_unlink_version_inc;
 
 protected:
 
@@ -502,8 +511,16 @@ public:
   dump_debug_info() const
   {
     transaction<transaction_proto2, Traits>::dump_debug_info();
-    std::cerr << "  current_epoch: " << current_epoch << std::endl;
-    std::cerr << "  last_consistent_tid: " << g_proto_version_str(last_consistent_tid) << std::endl;
+    std::cerr << "  current_epoch: "
+      << current_epoch << std::endl;
+    std::cerr << "  last_consistent_tid: "
+      << g_proto_version_str(last_consistent_tid) << std::endl;
+    std::cerr << "  max_epoch_removed_inc: "
+      << transaction_proto2_static::g_max_gc_version_inc->load(std::memory_order_acquire)
+      << std::endl;
+    std::cerr << "  max_epoch_unlinked_inc: "
+      << transaction_proto2_static::g_max_unlink_version_inc->load(std::memory_order_acquire)
+      << std::endl;
   }
 
   transaction_base::tid_t

@@ -378,6 +378,8 @@ public:
   static const uint64_t EpochTimeMultiplier = 100; /* 1 sec */
 #endif
 
+  static_assert(EpochTimeMultiplier >= 1, "XX");
+
   // legacy helpers
   static const uint64_t EpochTimeUsec = ticker::tick_us * EpochTimeMultiplier;
   static const uint64_t EpochTimeNsec = EpochTimeUsec * 1000;

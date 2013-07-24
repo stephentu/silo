@@ -101,24 +101,31 @@ operator<<(ostream &o, const dbtuple &ln)
 {
   vector<transaction_base::tid_t> tids;
   vector<transaction_base::size_type> recs;
+  vector<transaction_base::size_type> alloc_sizes;
   tids.push_back(ln.version);
   recs.push_back(ln.size);
+  alloc_sizes.push_back(ln.alloc_size);
+
   vector<string> tids_s = format_tid_list(tids);
   const bool has_spill = ln.get_next();
   o << "[v=" << dbtuple::VersionInfoStr(ln.unstable_version()) <<
     ", tids=" << format_list(tids_s.rbegin(), tids_s.rend()) <<
     ", sizes=" << format_list(recs.rbegin(), recs.rend()) <<
+    ", alloc_sizes=" << format_list(alloc_sizes.rbegin(), alloc_sizes.rend()) <<
     ", has_spill=" <<  has_spill << "]";
   o << endl;
   const struct dbtuple *p = ln.get_next();
   for (; p; p = p->get_next()) {
     vector<transaction_base::tid_t> itids;
     vector<transaction_base::size_type> irecs;
+    vector<transaction_base::size_type> ialloc_sizes;
     itids.push_back(p->version);
     irecs.push_back(p->size);
+    ialloc_sizes.push_back(p->alloc_size);
     vector<string> itids_s = format_tid_list(itids);
     o << "[tids=" << format_list(itids_s.rbegin(), itids_s.rend())
       << ", sizes=" << format_list(irecs.rbegin(), irecs.rend())
+      << ", alloc_sizes=" << format_list(ialloc_sizes.rbegin(), ialloc_sizes.rend())
       << "]" << endl;
   }
   return o;
