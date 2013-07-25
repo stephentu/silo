@@ -353,7 +353,8 @@ namespace private_ {
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::read_record_t &r)
 {
-  o << "[tuple=" << util::hexify(r.get_tuple())
+  //o << "[tuple=" << util::hexify(r.get_tuple())
+  o << "[tuple=" << *r.get_tuple()
     << ", tid_read=" << g_proto_version_str(r.get_tid())
     << "]";
   return o;
