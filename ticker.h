@@ -61,6 +61,13 @@ public:
     return is_locally_guarded(c);
   }
 
+  inline spinlock &
+  lock_for(uint64_t core_id)
+  {
+    INVARIANT(core_id < ticks_.size());
+    return ticks_[core_id].lock_;
+  }
+
   // a guard is re-entrant within a single thread
   class guard {
   public:

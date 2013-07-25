@@ -136,20 +136,22 @@ public:
   static inline circbuf<pbuffer, g_perthread_buffers> &
   logger_to_core_buffer(size_t core_id)
   {
+    INVARIANT(core_id < g_all_buffers.size());
     // make sure its init-ed
     if (unlikely(!g_all_buffers_init[core_id])) {
       for (size_t i = 0; i < g_perthread_buffers; i++)
-        g_all_buffers[core_id]->enq(new pbuffer(core_id));
+        g_all_buffers[core_id].enq(new pbuffer(core_id));
       g_all_buffers_init[core_id] = true;
     }
-    return g_all_buffers[core_id].elem;
+    return g_all_buffers[core_id];
   }
 
   // the buffer which a worker thread uses to push buffers to the logger
   static inline circbuf<pbuffer, g_perthread_buffers> &
   core_to_logger_buffer(size_t core_id)
   {
-    return g_persist_buffers[core_id % g_nworkers].elem;
+    INVARIANT(core_id < g_persist_buffers.size());
+    return g_persist_buffers[core_id];
   }
 
 private:
@@ -166,7 +168,10 @@ private:
   static void persister(
       std::vector<std::vector<unsigned>> assignments);
 
-  static size_t g_nworkers;
+  static size_t g_nworkers; // assignments are computed based on g_nworkers
+                            // but a logger responsible for core i is really
+                            // responsible for cores i + k * g_nworkers, for k
+                            // >= 0
 
   // v = per_thread_sync_epochs_[i].epochs_[j]: logger i has persisted up
   // through (including) all transactions <= epoch v on core j. since core =>
@@ -175,6 +180,7 @@ private:
   // yields the entire system's persistent epoch
 
   struct epoch_array {
+    // don't use percore<std::atomic<uint64_t>> because we don't want padding
     std::atomic<uint64_t> epochs_[NMAXCORES];
     CACHE_PADOUT;
   };
@@ -185,14 +191,12 @@ private:
   //   min_{core} max_{logger} per_thread_sync_epochs_[logger].epochs_[core]
   static util::aligned_padded_elem<std::atomic<uint64_t>> system_sync_epoch_;
 
-  static util::aligned_padded_elem<circbuf<pbuffer, g_perthread_buffers>>
-    g_all_buffers[NMAXCORES];
+  static percore<circbuf<pbuffer, g_perthread_buffers>> g_all_buffers;
 
-  static bool g_all_buffers_init[NMAXCORES]; // not cache aligned because
-                                             // in steady state is only read-only
+  static percore<bool> g_all_buffers_init; // not cache aligned because
+                                           // in steady state is only read-only
 
-  static util::aligned_padded_elem<circbuf<pbuffer, g_perthread_buffers>>
-    g_persist_buffers[NMAXCORES];
+  static percore<circbuf<pbuffer, g_perthread_buffers>> g_persist_buffers;
 };
 
 static inline std::ostream &

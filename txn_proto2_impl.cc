@@ -20,12 +20,12 @@ txn_logger::epoch_array
   txn_logger::per_thread_sync_epochs_[txn_logger::g_nmax_loggers];
 aligned_padded_elem<atomic<uint64_t>>
   txn_logger::system_sync_epoch_(0);
-aligned_padded_elem<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
-  txn_logger::g_all_buffers[NMAXCORES];
-bool
-  txn_logger::g_all_buffers_init[NMAXCORES] = {false};
-aligned_padded_elem<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
-  txn_logger::g_persist_buffers[NMAXCORES];
+percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
+  txn_logger::g_all_buffers;
+percore<bool>
+  txn_logger::g_all_buffers_init;
+percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
+  txn_logger::g_persist_buffers;
 
 void
 txn_logger::Init(
@@ -58,7 +58,7 @@ txn_logger::Init(
   for (size_t i = 0; i < g_nworkers; i++) {
     for (size_t j = 0; j < g_perthread_buffers; j++) {
       struct pbuffer *p = new pbuffer(i);
-      g_all_buffers[i]->enq(p);
+      g_all_buffers[i].enq(p);
     }
     g_all_buffers_init[i] = true;
   }
@@ -120,13 +120,56 @@ txn_logger::advance_system_sync_epoch(
     const std::vector<std::vector<unsigned>> &assignments)
 {
   uint64_t min_so_far = std::numeric_limits<uint64_t>::max();
+  const uint64_t best_tick_ex =
+    ticker::s_instance.global_current_tick();
+  // special case 0
+  const uint64_t best_tick_inc =
+    best_tick_ex ? (best_tick_ex - 1) : 0;
+
   for (size_t i = 0; i < assignments.size(); i++)
     for (auto j : assignments[i])
-      min_so_far =
-        std::min(per_thread_sync_epochs_[i].epochs_[j].load(std::memory_order_acquire), min_so_far);
+      for (size_t k = j; k < NMAXCORES; k += g_nworkers) {
+        // we need to arbitrarily advance threads which are not "doing
+        // anything", so they don't drag down the persistence of the system. if
+        // we can see that a thread is NOT in a guarded section AND its
+        // core->logger queue is empty, then that means we can advance its sync
+        // epoch up to best_tick_inc, b/c it is guaranteed that the next time
+        // it does any actions will be in epoch > best_tick_inc
+        if (!g_persist_buffers[k].peek()) {
+          spinlock &l = ticker::s_instance.lock_for(k);
+          if (!l.is_locked()) {
+            bool did_lock = false;
+            for (size_t c = 0; c < 3; c++) {
+              if (l.try_lock()) {
+                did_lock = true;
+                break;
+              }
+            }
+            if (did_lock) {
+              if (!g_persist_buffers[k].peek()) {
+                min_so_far = std::min(min_so_far, best_tick_inc);
+                per_thread_sync_epochs_[i].epochs_[k].store(
+                    best_tick_inc, std::memory_order_release);
+                l.unlock();
+                continue;
+              }
+              l.unlock();
+            }
+          }
+        }
+        min_so_far = std::min(
+            per_thread_sync_epochs_[i].epochs_[k].load(
+              std::memory_order_acquire),
+            min_so_far);
+      }
 
 #ifdef CHECK_INVARIANTS
+  INVARIANT(min_so_far < std::numeric_limits<uint64_t>::max());
   const uint64_t syssync = system_sync_epoch_->load(std::memory_order_acquire);
+  if (syssync > min_so_far) {
+    cerr << "syssync: " << syssync << endl;
+    cerr << "minsofar: " << min_so_far << endl;
+  }
   INVARIANT(syssync <= min_so_far);
 #endif
   system_sync_epoch_->store(min_so_far, std::memory_order_release);
@@ -143,8 +186,12 @@ txn_logger::writer(
   uint64_t total_nbytes_written = 0,
            total_txns_written = 0;
 
+  // XXX: sense is not useful for now, unless we want to
+  // fsync in the background...
   bool sense = false; // cur is at sense, prev is at !sense
-  uint64_t nbytes_written[2], txns_written[2], epoch_prefixes[2][g_nworkers];
+  uint64_t nbytes_written[2], txns_written[2],
+           epoch_prefixes[2][NMAXCORES];
+
   memset(&nbytes_written[0], 0, sizeof(nbytes_written));
   memset(&txns_written[0], 0, sizeof(txns_written));
   memset(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
@@ -175,41 +222,45 @@ txn_logger::writer(
     nbytes_written[sense] = txns_written[sense] = 0;
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
-      g_persist_buffers[idx]->peekall(pxs);
-      for (auto px : pxs) {
-        INVARIANT(px);
-        INVARIANT(!px->io_scheduled_);
-        INVARIANT(nwritten <= iovs.size());
-        INVARIANT(px->header()->nentries_);
-        INVARIANT((px->core_id_ % g_nworkers) == idx);
-        if (nwritten == iovs.size())
-          break;
-        iovs[nwritten].iov_base = (void *) px->buf_.data();
-        iovs[nwritten].iov_len = px->curoff_;
-        nbytes_written[sense] += px->curoff_;
-        px->io_scheduled_ = true;
-        txns_written[sense] += px->header()->nentries_;
-        nwritten++;
+      for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
+        g_persist_buffers[k].peekall(pxs);
+        for (auto px : pxs) {
+          INVARIANT(px);
+          INVARIANT(!px->io_scheduled_);
+          INVARIANT(nwritten <= iovs.size());
+          INVARIANT(px->header()->nentries_);
+          INVARIANT(px->core_id_ == k);
+          if (nwritten == iovs.size())
+            break;
+          iovs[nwritten].iov_base = (void *) px->buf_.data();
+          iovs[nwritten].iov_len = px->curoff_;
+          nbytes_written[sense] += px->curoff_;
+          px->io_scheduled_ = true;
+          txns_written[sense] += px->header()->nentries_;
+          nwritten++;
 
-        auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
-        auto px_cid = px->core_id_;
-        if (last_tid_cid != px_cid) {
-          cerr << "header: " << *px->header() << endl;
-          cerr << g_proto_version_str(last_tid_cid) << endl;
-          cerr << "last_tid_cid: " << last_tid_cid << endl;
-          cerr << "px_cid: " << px_cid << endl;
+#ifdef CHECK_INVARIANTS
+          auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
+          auto px_cid = px->core_id_;
+          if (last_tid_cid != px_cid) {
+            cerr << "header: " << *px->header() << endl;
+            cerr << g_proto_version_str(last_tid_cid) << endl;
+            cerr << "last_tid_cid: " << last_tid_cid << endl;
+            cerr << "px_cid: " << px_cid << endl;
+          }
+#endif
+
+          INVARIANT(
+              transaction_proto2_static::CoreId(px->header()->last_tid_) ==
+              px->core_id_);
+          INVARIANT(
+              epoch_prefixes[sense][k] <=
+              transaction_proto2_static::EpochId(px->header()->last_tid_));
+          INVARIANT(
+              transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
+          epoch_prefixes[sense][k] =
+            transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
         }
-
-        INVARIANT(
-            transaction_proto2_static::CoreId(px->header()->last_tid_) ==
-            px->core_id_);
-        INVARIANT(
-            epoch_prefixes[sense][idx] <=
-            transaction_proto2_static::EpochId(px->header()->last_tid_));
-        INVARIANT(
-            transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
-        epoch_prefixes[sense][idx] =
-          transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
       }
     }
 
@@ -234,13 +285,12 @@ txn_logger::writer(
     }
 
     // update metadata from previous write
-    for (size_t i = 0; i < g_nworkers; i++) {
-      const uint64_t x0 =
-        per_thread_sync_epochs_[id].epochs_[i].load(memory_order_acquire);
+    epoch_array &ea = per_thread_sync_epochs_[id];
+    for (size_t i = 0; i < NMAXCORES; i++) {
+      const uint64_t x0 = ea.epochs_[i].load(memory_order_acquire);
       const uint64_t x1 = epoch_prefixes[dosense][i];
       if (x1 > x0)
-        per_thread_sync_epochs_[id].epochs_[i].store(
-            x1, memory_order_release);
+        ea.epochs_[i].store(x1, memory_order_release);
     }
     total_nbytes_written += nbytes_written[dosense];
     total_txns_written += txns_written[dosense];
@@ -252,13 +302,15 @@ txn_logger::writer(
     // soon as write returns. we take care to return to the proper buffer
     // (not modulo)
     for (auto idx : assignment) {
-      pbuffer *px, *px0;
-      while ((px = g_persist_buffers[idx]->peek()) &&
-             px->io_scheduled_) {
-        px0 = g_persist_buffers[idx]->deq();
-        INVARIANT(px == px0);
-        px0->reset();
-        g_all_buffers[px0->core_id_]->enq(px0);
+      for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
+        pbuffer *px, *px0;
+        while ((px = g_persist_buffers[k].peek()) &&
+               px->io_scheduled_) {
+          px0 = g_persist_buffers[k].deq();
+          INVARIANT(px == px0);
+          px0->reset();
+          g_all_buffers[k].enq(px0);
+        }
       }
     }
   }
