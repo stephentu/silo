@@ -718,3 +718,6 @@ aligned_padded_elem<atomic<uint64_t>>
   transaction_proto2_static::g_max_unlink_version_inc(0);
 aligned_padded_elem<transaction_proto2_static::hackstruct>
   transaction_proto2_static::g_hack;
+event_counter
+  transaction_proto2_static::g_evt_worker_thread_wait_log_buffer(
+      "worker_thread_wait_log_buffer");

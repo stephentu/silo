@@ -340,6 +340,8 @@ protected:
   // use to simulate global TID for comparsion
   static util::aligned_padded_elem<hackstruct>
     g_hack CACHE_ALIGNED;
+
+  static event_counter g_evt_worker_thread_wait_log_buffer;
 };
 
 // protocol 2 - no global consistent TIDs
@@ -461,8 +463,10 @@ public:
 
   retry:
     txn_logger::pbuffer *px;
-    while (unlikely(!(px = pull_buf.peek())))
+    while (unlikely(!(px = pull_buf.peek()))) {
       nop_pause();
+      ++g_evt_worker_thread_wait_log_buffer;
+    }
     INVARIANT(!px->io_scheduled_);
     INVARIANT(px->core_id_ == my_core_id);
 
