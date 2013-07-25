@@ -6,6 +6,8 @@
 
 #include "core.h"
 #include "macros.h"
+#include "spinlock.h"
+#include "lockguard.h"
 
 class ticker {
 public:
@@ -67,16 +69,14 @@ public:
     guard(ticker &impl)
       : impl_(&impl), core_(coreid::core_id())
     {
+      tickinfo &ti = impl_->ticks_[core_];
       // bump the depth first
-      const uint64_t prev_depth =
-        util::non_atomic_fetch_add(impl_->ticks_[core_].depth_, 1UL);
-      if (prev_depth) {
-        tick_ = impl_->ticks_[core_].current_tick_.load(std::memory_order_acquire);
-      } else {
-        // load the epoch
-        tick_ = impl_->current_tick_.load(std::memory_order_acquire);
-        impl_->ticks_[core_].current_tick_.store(tick_, std::memory_order_release);
-      }
+      const uint64_t prev_depth = util::non_atomic_fetch_add(ti.depth_, 1UL);
+      // grab the lock
+      if (!prev_depth)
+        ti.lock_.lock();
+      INVARIANT(ti.lock_.is_locked());
+      tick_ = ti.current_tick_.load(std::memory_order_acquire);
       depth_ = prev_depth + 1;
     }
 
@@ -89,11 +89,16 @@ public:
       if (!impl_)
         return;
       INVARIANT(core_ == coreid::core_id());
-      const uint64_t prev_depth =
-        util::non_atomic_fetch_sub(impl_->ticks_[core_].depth_, 1UL);
+      tickinfo &ti = impl_->ticks_[core_];
+      INVARIANT(ti.lock_.is_locked());
+      INVARIANT(tick_ > impl_->global_last_tick_inclusive());
+      const uint64_t prev_depth = util::non_atomic_fetch_sub(ti.depth_, 1UL);
       INVARIANT(prev_depth == depth_);
       if (!prev_depth)
         INVARIANT(false);
+      // unlock
+      if (prev_depth == 1)
+        ti.lock_.unlock();
     }
 
     inline uint64_t
@@ -155,27 +160,22 @@ private:
       // bump the current tick
       // XXX: ignore overflow
       const uint64_t last_tick = util::non_atomic_fetch_add(current_tick_, 1UL);
+      const uint64_t cur_tick  = last_tick + 1;
 
       // wait for all threads to finish the last tick
-    retry:
-      uint64_t min_so_far = last_tick;
       for (size_t i = 0; i < ticks_.size(); i++) {
-        const uint64_t t = ticks_[i].current_tick_.load(std::memory_order_acquire);
-        const uint64_t d = ticks_[i].depth_.load(std::memory_order_acquire);
-        if (!d) // d=0 indicates thread is not active
-          continue;
-        INVARIANT(t);
-        min_so_far = std::min(min_so_far, t - 1);
+        tickinfo &ti = ticks_[i];
+        lock_guard<spinlock> lg(ti.lock_);
+        INVARIANT(ti.current_tick_.load(std::memory_order_acquire) == last_tick);
+        ti.current_tick_.store(cur_tick, std::memory_order_release);
       }
-      INVARIANT(min_so_far <= last_tick);
-      if (min_so_far < last_tick)
-        goto retry;
 
       last_tick_inclusive_.store(last_tick, std::memory_order_release);
     }
   }
 
   struct tickinfo {
+    spinlock lock_; // guards current_tick_ and depth_
     std::atomic<uint64_t> current_tick_; // last RCU epoch this thread has seen
                                          // (implies completion through current_tick_ - 1)
     std::atomic<uint64_t> depth_; // 0 if not in RCU section
