@@ -181,7 +181,7 @@ txn_logger::writer(
         INVARIANT(!px->io_scheduled_);
         INVARIANT(nwritten <= iovs.size());
         INVARIANT(px->header()->nentries_);
-        INVARIANT((px->core_id_ % g_nworkers) == id);
+        INVARIANT((px->core_id_ % g_nworkers) == idx);
         if (nwritten == iovs.size())
           break;
         iovs[nwritten].iov_base = (void *) px->buf_.data();
@@ -204,11 +204,11 @@ txn_logger::writer(
             transaction_proto2_static::CoreId(px->header()->last_tid_) ==
             px->core_id_);
         INVARIANT(
-            epoch_prefixes[sense][id] <=
+            epoch_prefixes[sense][idx] <=
             transaction_proto2_static::EpochId(px->header()->last_tid_));
         INVARIANT(
             transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
-        epoch_prefixes[sense][id] =
+        epoch_prefixes[sense][idx] =
           transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
       }
     }
