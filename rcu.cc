@@ -25,7 +25,6 @@ static event_counter evt_rcu_frees("rcu_frees");
 static event_counter evt_rcu_local_reaps("rcu_local_reaps");
 static event_counter evt_rcu_incomplete_local_reaps("rcu_incomplete_local_reaps");
 static event_counter evt_rcu_loop_reaps("rcu_loop_reaps");
-static event_counter evt_rcu_global_queue_reaps("rcu_global_queue_reaps");
 
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
