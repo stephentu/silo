@@ -106,9 +106,10 @@ txn_logger::persister(
     std::vector<std::vector<unsigned>> assignments)
 {
   for (;;) {
+    const uint64_t sleep_ns = ticker::tick_us * 1000;
     struct timespec t;
-    t.tv_sec  = g_epoch_time_ns / ONE_SECOND_NS;
-    t.tv_nsec = g_epoch_time_ns % ONE_SECOND_NS;
+    t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+    t.tv_nsec = sleep_ns % ONE_SECOND_NS;
     nanosleep(&t, nullptr);
     advance_system_sync_epoch(assignments);
   }
@@ -160,11 +161,12 @@ txn_logger::writer(
     struct timespec now, diff;
     clock_gettime(CLOCK_MONOTONIC, &now);
     timespec_utils::subtract(&now, &last_io_completed, &diff);
-    if (diff.tv_sec == 0 && diff.tv_nsec < long(g_epoch_time_ns)) {
+    const uint64_t epoch_ns = ticker::tick_us * 1000;
+    if (diff.tv_sec == 0 && diff.tv_nsec < long(epoch_ns)) {
       // need to sleep it out
       struct timespec ts;
-      ts.tv_sec = 0;
-      ts.tv_nsec = g_epoch_time_ns - diff.tv_nsec;
+      ts.tv_sec  = 0;
+      ts.tv_nsec = epoch_ns - diff.tv_nsec;
       nanosleep(&ts, nullptr);
     }
     clock_gettime(CLOCK_MONOTONIC, &last_io_completed);

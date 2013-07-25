@@ -36,6 +36,7 @@ private:
 };
 
 // the system has a single logging subsystem (composed of multiple lgogers)
+// NOTE: currently, the persistence epoch is tied 1:1 with the ticker's epoch
 class txn_logger {
   template <typename T>
     friend class transaction_proto2;
@@ -46,7 +47,6 @@ public:
   static const size_t g_perthread_buffers = 64; // 64 outstanding buffers
   static const size_t g_buffer_size = (1<<20); // in bytes
   static const size_t g_horizon_size = (1<<16); // in bytes, for compression only
-  static const uint64_t g_epoch_time_ns = 30000000;
 
   // init the logging subsystem.
   //
