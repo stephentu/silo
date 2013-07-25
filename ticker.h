@@ -73,10 +73,16 @@ public:
       // bump the depth first
       const uint64_t prev_depth = util::non_atomic_fetch_add(ti.depth_, 1UL);
       // grab the lock
-      if (!prev_depth)
+      if (!prev_depth) {
         ti.lock_.lock();
+        // read epoch # (try to advance forward)
+        tick_ = impl_->global_current_tick();
+        INVARIANT(ti.current_tick_.load(std::memory_order_acquire) <= tick_);
+        ti.current_tick_.store(tick_, std::memory_order_release);
+      } else {
+        tick_ = ti.current_tick_.load(std::memory_order_acquire);
+      }
       INVARIANT(ti.lock_.is_locked());
-      tick_ = ti.current_tick_.load(std::memory_order_acquire);
       depth_ = prev_depth + 1;
     }
 
@@ -165,8 +171,13 @@ private:
       // wait for all threads to finish the last tick
       for (size_t i = 0; i < ticks_.size(); i++) {
         tickinfo &ti = ticks_[i];
+        const uint64_t thread_cur_tick =
+          ti.current_tick_.load(std::memory_order_acquire);
+        INVARIANT(thread_cur_tick == last_tick ||
+                  thread_cur_tick == cur_tick);
+        if (thread_cur_tick == cur_tick)
+          continue;
         lock_guard<spinlock> lg(ti.lock_);
-        INVARIANT(ti.current_tick_.load(std::memory_order_acquire) == last_tick);
         ti.current_tick_.store(cur_tick, std::memory_order_release);
       }
 
