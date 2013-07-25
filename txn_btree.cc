@@ -784,6 +784,7 @@ namespace mp_test2_ns {
       NDB_MEMSET(&values_[0], 0, sizeof(values_));
     }
 
+#if 0
     void
     sanity_check() const
     {
@@ -797,6 +798,9 @@ namespace mp_test2_ns {
         INVARIANT(values_[i] >= range_begin && values_[i] < range_end);
       }
     }
+#else
+    inline void sanity_check() const {}
+#endif
 
     // assumes list is in ascending order, no dups, and there is space
     // remaining
@@ -930,6 +934,7 @@ namespace mp_test2_ns {
                 ctr_rec.insert(i);
               }
               //did_v = ctr_rec.v;
+              ctr_rec.sanity_check();
               this->btr->insert_object(t, u64_varkey(ctr_key), ctr_rec);
               t.commit(true);
             } catch (transaction_abort_exception &e) {
@@ -990,8 +995,8 @@ namespace mp_test2_ns {
           crec->sanity_check();
           auto cvec = crec->vectorize();
           if (c.values_ != cvec) {
-            cerr << "observed: " << c.values_ << endl;
-            cerr << "db value: " << cvec << endl;
+            cerr << "observed (" << c.values_.size() << "): " << c.values_ << endl;
+            cerr << "db value (" << cvec.size() << "): " << cvec << endl;
             ALWAYS_ASSERT_COND_IN_TXN(t, c.values_ == cvec);
           }
           validations++;
@@ -1062,34 +1067,34 @@ mp_test2()
     mutate_worker<TxnType, Traits> w0(btr, txn_flags);
     //reader_worker<TxnType, Traits> w1(btr, txn_flags);
     reader_worker<TxnType, Traits> w2(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
-    reader_worker<TxnType, Traits> w3(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
-    reader_worker<TxnType, Traits> w4(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+    //reader_worker<TxnType, Traits> w3(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+    //reader_worker<TxnType, Traits> w4(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
 
     running = true;
     __sync_synchronize();
     w0.start();
     //w1.start();
     w2.start();
-    w3.start();
-    w4.start();
+    //w3.start();
+    //w4.start();
     sleep(30);
     running = false;
     __sync_synchronize();
     w0.join();
     //w1.join();
     w2.join();
-    w3.join();
-    w4.join();
+    //w3.join();
+    //w4.join();
 
     cerr << "mutate naborts: " << w0.naborts << endl;
     //cerr << "reader naborts: " << w1.naborts << endl;
     //cerr << "reader validations: " << w1.validations << endl;
     cerr << "read-only reader 1 naborts: " << w2.naborts << endl;
     cerr << "read-only reader 1 validations: " << w2.validations << endl;
-    cerr << "read-only reader 2 naborts: " << w3.naborts << endl;
-    cerr << "read-only reader 2 validations: " << w3.validations << endl;
-    cerr << "read-only reader 3 naborts: " << w4.naborts << endl;
-    cerr << "read-only reader 3 validations: " << w4.validations << endl;
+    //cerr << "read-only reader 2 naborts: " << w3.naborts << endl;
+    //cerr << "read-only reader 2 validations: " << w3.validations << endl;
+    //cerr << "read-only reader 3 naborts: " << w4.naborts << endl;
+    //cerr << "read-only reader 3 validations: " << w4.validations << endl;
 
     txn_epoch_sync<TxnType>::sync();
     txn_epoch_sync<TxnType>::finish();
