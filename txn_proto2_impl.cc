@@ -291,14 +291,14 @@ txn_logger::writer(
     epoch_array &ea = per_thread_sync_epochs_[id];
     for (auto idx: assignment) {
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
+        const uint64_t n1 = ntxns_written[k];
+        g_npersisted_txns[k].fetch_add(n1, memory_order_release);
+        ntxns_written[k] = 0;
+
         const uint64_t x0 = ea.epochs_[k].load(memory_order_acquire);
         const uint64_t x1 = epoch_prefixes[dosense][k];
         if (x1 > x0)
           ea.epochs_[k].store(x1, memory_order_release);
-
-        const uint64_t n1 = ntxns_written[k];
-        g_npersisted_txns[k].fetch_add(n1, memory_order_release);
-        ntxns_written[k] = 0;
 
         pbuffer *px, *px0;
         while ((px = g_persist_buffers[k].peek()) && px->io_scheduled_) {
@@ -342,11 +342,19 @@ txn_logger::wait_for_idle_state()
       continue;
     pbuffer *px;
     while (!(px = g_all_buffers[i].peek()) ||
-           px->header()->nentries_)
+             px->header()->nentries_)
       nop_pause();
     while (g_persist_buffers[i].peek())
       nop_pause();
   }
+}
+
+void
+txn_logger::wait_until_current_point_persisted()
+{
+  const uint64_t e = ticker::s_instance.global_current_tick();
+  while (system_sync_epoch_->load(memory_order_acquire) < e)
+    nop_pause();
 }
 
 void

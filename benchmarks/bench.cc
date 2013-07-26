@@ -190,8 +190,8 @@ bench_runner::run()
     (*it)->start();
 
   barrier_a.wait_for(); // wait for all threads to start up
-  barrier_b.count_down(); // bombs away!
   timer t;
+  barrier_b.count_down(); // bombs away!
   if (run_mode == RUNMODE_TIME) {
     sleep(runtime);
     running = false;

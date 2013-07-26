@@ -168,6 +168,10 @@ public:
   static void
   wait_for_idle_state();
 
+  // waits until the epoch on invocation time is persisted
+  static void
+  wait_until_current_point_persisted();
+
 private:
 
   static void
@@ -212,6 +216,10 @@ private:
 
   static percore<circbuf<pbuffer, g_perthread_buffers>> g_persist_buffers;
 
+  // persisted here means the records have been written to disk, NOT that the
+  // entire system has persisted this many txns. to compute the latter, quiesce
+  // the system, wait until the current epoch is persisted (using
+  // wait_until_current_point_persisted()), and then read these values
   static percore<std::atomic<uint64_t>> g_npersisted_txns;
 
   static event_avg_counter g_evt_avg_log_entry_ntxns;
@@ -678,7 +686,7 @@ struct txn_epoch_sync<transaction_proto2> {
   {
     transaction_proto2_static::wait_an_epoch();
     if (txn_logger::g_persist)
-      txn_logger::wait_for_idle_state();
+      txn_logger::wait_until_current_point_persisted();
   }
   static void
   finish()
@@ -686,7 +694,7 @@ struct txn_epoch_sync<transaction_proto2> {
     txn_walker_loop::global_running = false;
     __sync_synchronize();
     if (txn_logger::g_persist)
-      txn_logger::wait_for_idle_state();
+      txn_logger::wait_until_current_point_persisted();
   }
   static void
   thread_end()
