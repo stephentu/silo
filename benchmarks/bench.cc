@@ -293,7 +293,9 @@ bench_runner::run()
   }
 
   // output for plotting script
-  cout << agg_throughput << " " << agg_abort_rate << endl;
+  cout << agg_throughput << " "
+       << agg_persist_throughput << " "
+       << agg_abort_rate << endl;
 
   if (!slow_exit)
     return;
