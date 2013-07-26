@@ -72,9 +72,12 @@ public:
   class guard {
   public:
 
-    guard() : impl_(nullptr), core_(0), tick_(0), depth_(0) {}
+    guard()
+      : impl_(nullptr), core_(0), tick_(0),
+        depth_(0), start_us_(0) {}
+
     guard(ticker &impl)
-      : impl_(&impl), core_(coreid::core_id())
+      : impl_(&impl), core_(coreid::core_id()), start_us_(0)
     {
       tickinfo &ti = impl_->ticks_[core_];
       // bump the depth first
@@ -86,8 +89,11 @@ public:
         tick_ = impl_->global_current_tick();
         INVARIANT(ti.current_tick_.load(std::memory_order_acquire) <= tick_);
         ti.current_tick_.store(tick_, std::memory_order_release);
+        start_us_ = util::timer::cur_usec();
+        ti.start_us_.store(start_us_, std::memory_order_release);
       } else {
         tick_ = ti.current_tick_.load(std::memory_order_acquire);
+        start_us_ = ti.start_us_.load(std::memory_order_acquire);
       }
       INVARIANT(ti.lock_.is_locked());
       depth_ = prev_depth + 1;
@@ -106,6 +112,7 @@ public:
       INVARIANT(ti.lock_.is_locked());
       INVARIANT(tick_ > impl_->global_last_tick_inclusive());
       const uint64_t prev_depth = util::non_atomic_fetch_sub(ti.depth_, 1UL);
+      ti.start_us_.store(0, std::memory_order_release);
       INVARIANT(prev_depth == depth_);
       if (!prev_depth)
         INVARIANT(false);
@@ -142,11 +149,19 @@ public:
       return *impl_;
     }
 
+    // refers to the start time of the *outermost* scope
+    inline uint64_t
+    start_us() const
+    {
+      return start_us_;
+    }
+
   private:
     ticker *impl_;
     uint64_t core_;
     uint64_t tick_;
     uint64_t depth_;
+    uint64_t start_us_;
   };
 
   static ticker s_instance; // system wide ticker
@@ -197,8 +212,9 @@ private:
     std::atomic<uint64_t> current_tick_; // last RCU epoch this thread has seen
                                          // (implies completion through current_tick_ - 1)
     std::atomic<uint64_t> depth_; // 0 if not in RCU section
+    std::atomic<uint64_t> start_us_; // 0 if not in RCU section
 
-    tickinfo() : current_tick_(1), depth_(0) {}
+    tickinfo() : current_tick_(1), depth_(0), start_us_(0) {}
   };
 
   percore<tickinfo> ticks_;

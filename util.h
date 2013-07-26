@@ -309,7 +309,9 @@ first_pos_diff(const char *p0, size_t sz0,
 
 class timer {
 private:
-  timer(const timer &t);
+  timer(const timer &) = delete;
+  timer &operator=(const timer &) = delete;
+  timer(timer &&) = delete;
 
 public:
   timer()
@@ -317,7 +319,7 @@ public:
     lap();
   }
 
-  uint64_t
+  inline uint64_t
   lap()
   {
     uint64_t t0 = start;
@@ -332,14 +334,15 @@ public:
     return lap() / 1000.0;
   }
 
-private:
-  static uint64_t
+  static inline uint64_t
   cur_usec()
   {
     struct timeval tv;
     gettimeofday(&tv, 0);
     return ((uint64_t)tv.tv_sec) * 1000000 + tv.tv_usec;
   }
+
+private:
 
   uint64_t start;
 };

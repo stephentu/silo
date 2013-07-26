@@ -47,6 +47,7 @@ public:
   static const size_t g_perthread_buffers = 64; // 64 outstanding buffers
   static const size_t g_buffer_size = (1<<20); // in bytes
   static const size_t g_horizon_size = (1<<16); // in bytes, for compression only
+  static const size_t g_max_lag_epochs = 64; // cannot lag more than 64 epochs
 
   // init the logging subsystem.
   //
@@ -64,6 +65,7 @@ public:
   } PACKED;
 
   struct pbuffer {
+    uint64_t earliest_start_us_; // start time of the earliest txn
     bool io_scheduled_; // has the logger scheduled IO yet?
     size_t curoff_; // current offset into buf_, either for writing
     // or during the dep computation phase
@@ -76,6 +78,7 @@ public:
     inline void
     reset()
     {
+      earliest_start_us_ = 0;
       io_scheduled_ = false;
       curoff_ = sizeof(logbuf_header);
       buf_.assign(g_buffer_size, 0);
@@ -216,11 +219,26 @@ private:
 
   static percore<circbuf<pbuffer, g_perthread_buffers>> g_persist_buffers;
 
-  // persisted here means the records have been written to disk, NOT that the
-  // entire system has persisted this many txns. to compute the latter, quiesce
-  // the system, wait until the current epoch is persisted (using
-  // wait_until_current_point_persisted()), and then read these values
-  static percore<std::atomic<uint64_t>> g_npersisted_txns;
+  // context per one epoch
+  struct persist_stats {
+    // how many txns this thread has persisted in total
+    std::atomic<uint64_t> ntxns_persisted_;
+
+    // sum of all latencies (divid by ntxns_persisted_ to get avg latency)
+    std::atomic<uint64_t> latency_numer_;
+
+    // per last g_max_lag_epochs information
+    struct per_epoch_stats {
+      std::atomic<uint64_t> ntxns_;
+      std::atomic<uint64_t> earliest_start_us_;
+
+      per_epoch_stats() : ntxns_(0), earliest_start_us_(0) {}
+    } d_[g_max_lag_epochs];
+
+    persist_stats() : ntxns_persisted_(0), latency_numer_(0) {}
+  };
+
+  static percore<persist_stats> g_persist_stats;
 
   static event_avg_counter g_evt_avg_log_entry_ntxns;
 };
@@ -499,10 +517,11 @@ public:
     INVARIANT(!px->io_scheduled_);
     INVARIANT(px->core_id_ == my_core_id);
 
-    // check if enough size
-    if (px->space_remaining() < space_needed) {
-      if (!px->header()->nentries_)
-        std::cerr << "space_needed: " << space_needed << std::endl;
+    // check if enough size, or if spans epoch boundary
+    // (which we currently disallow for very shoddy reasons)
+    if (px->space_remaining() < space_needed ||
+        (px->header()->nentries_ &&
+         EpochId(px->header()->last_tid_) != EpochId(commit_tid))) {
       INVARIANT(px->header()->nentries_);
       txn_logger::pbuffer *px0 = pull_buf.deq();
       INVARIANT(px == px0);
@@ -511,6 +530,9 @@ public:
       push_buf.enq(px0);
       goto retry;
     }
+
+    if (unlikely(!px->header()->nentries_))
+      px->earliest_start_us_ = this->rcu_guard_.guard().start_us();
 
     uint8_t *p = px->pointer();
     p = s_uint64_t.write(p, commit_tid);

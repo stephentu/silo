@@ -26,8 +26,8 @@ percore<bool>
   txn_logger::g_all_buffers_init;
 percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
   txn_logger::g_persist_buffers;
-percore<atomic<uint64_t>>
-  txn_logger::g_npersisted_txns;
+percore<txn_logger::persist_stats>
+  txn_logger::g_persist_stats;
 event_avg_counter
   txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns");
 
@@ -167,15 +167,27 @@ txn_logger::advance_system_sync_epoch(
             min_so_far);
       }
 
-#ifdef CHECK_INVARIANTS
+  const uint64_t syssync =
+    system_sync_epoch_->load(std::memory_order_acquire);
+
   INVARIANT(min_so_far < std::numeric_limits<uint64_t>::max());
-  const uint64_t syssync = system_sync_epoch_->load(std::memory_order_acquire);
-  if (syssync > min_so_far) {
-    cerr << "syssync: " << syssync << endl;
-    cerr << "minsofar: " << min_so_far << endl;
-  }
   INVARIANT(syssync <= min_so_far);
-#endif
+
+  // need to aggregate from [syssync + 1, min_so_far]
+  for (size_t i = 0; i < g_persist_stats.size(); i++) {
+    auto &ps = g_persist_stats[i];
+    for (uint64_t e = syssync + 1; e <= min_so_far; e++) {
+        auto &pes = ps.d_[e % g_max_lag_epochs];
+        const uint64_t ntxns_in_epoch = pes.ntxns_.load(memory_order_acquire);
+        non_atomic_fetch_add(ps.ntxns_persisted_, ntxns_in_epoch);
+        non_atomic_fetch_add(
+            ps.latency_numer_,
+            pes.earliest_start_us_.load(memory_order_acquire) * ntxns_in_epoch);
+        pes.ntxns_.store(0, std::memory_order_release);
+        pes.earliest_start_us_.store(0, std::memory_order_release);
+    }
+  }
+
   system_sync_epoch_->store(min_so_far, std::memory_order_release);
 }
 
@@ -191,12 +203,10 @@ txn_logger::writer(
   // XXX: sense is not useful for now, unless we want to
   // fsync in the background...
   bool sense = false; // cur is at sense, prev is at !sense
-  uint64_t epoch_prefixes[2][NMAXCORES],
-           ntxns_written[NMAXCORES];
+  uint64_t epoch_prefixes[2][NMAXCORES];
 
   NDB_MEMSET(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
   NDB_MEMSET(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
-  NDB_MEMSET(&ntxns_written[0], 0, sizeof(ntxns_written));
 
   clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
@@ -219,6 +229,13 @@ txn_logger::writer(
     }
     clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
+    // we need g_persist_stats[cur_sync_epoch_ex % g_nmax_loggers]
+    // to remain untouched (until the syncer can catch up), so we
+    // cannot read any buffers with epoch >=
+    // (cur_sync_epoch_ex + g_max_lag_epochs)
+    const uint64_t cur_sync_epoch_ex =
+      system_sync_epoch_->load(memory_order_acquire) + 1;
+
     size_t nwritten = 0;
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
@@ -231,6 +248,10 @@ txn_logger::writer(
           INVARIANT(px->header()->nentries_);
           INVARIANT(px->core_id_ == k);
           if (nwritten == iovs.size())
+            goto process;
+          if (transaction_proto2_static::EpochId(px->header()->last_tid_) >=
+              cur_sync_epoch_ex + g_max_lag_epochs)
+            // XXX: put a counter here
             break;
           iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
@@ -248,22 +269,24 @@ txn_logger::writer(
           }
 #endif
 
+          const uint64_t px_epoch =
+            transaction_proto2_static::EpochId(px->header()->last_tid_);
           INVARIANT(
               transaction_proto2_static::CoreId(px->header()->last_tid_) ==
               px->core_id_);
-          INVARIANT(
-              epoch_prefixes[sense][k] <=
-              transaction_proto2_static::EpochId(px->header()->last_tid_));
-          INVARIANT(
-              transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
-          epoch_prefixes[sense][k] =
-            transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
-          ntxns_written[k] += px->header()->nentries_;
+          INVARIANT(epoch_prefixes[sense][k] <= px_epoch);
+          INVARIANT(px_epoch > 0);
+          epoch_prefixes[sense][k] = px_epoch - 1;
+          auto &pes = g_persist_stats[k].d_[px_epoch % g_max_lag_epochs];
+          if (!pes.ntxns_.load(memory_order_acquire))
+            pes.earliest_start_us_.store(px->earliest_start_us_, memory_order_release);
+          non_atomic_fetch_add(pes.ntxns_, px->header()->nentries_);
           g_evt_avg_log_entry_ntxns.offer(px->header()->nentries_);
         }
       }
     }
 
+  process:
     if (!nwritten) {
       // XXX: should probably sleep here
       nop_pause();
@@ -291,10 +314,6 @@ txn_logger::writer(
     epoch_array &ea = per_thread_sync_epochs_[id];
     for (auto idx: assignment) {
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
-        const uint64_t n1 = ntxns_written[k];
-        g_npersisted_txns[k].fetch_add(n1, memory_order_release);
-        ntxns_written[k] = 0;
-
         const uint64_t x0 = ea.epochs_[k].load(memory_order_acquire);
         const uint64_t x1 = epoch_prefixes[dosense][k];
         if (x1 > x0)
@@ -307,7 +326,6 @@ txn_logger::writer(
           px0->reset();
           INVARIANT(g_all_buffers_init[k]);
           INVARIANT(px0->core_id_ == k);
-          //cerr << "enq back to core " << k << endl;
           g_all_buffers[k].enq(px0);
         }
       }
@@ -322,16 +340,24 @@ uint64_t
 txn_logger::compute_ntxns_persisted_statistics()
 {
   uint64_t acc = 0;
-  for (size_t i = 0; i < g_npersisted_txns.size(); i++)
-    acc += g_npersisted_txns[i].load(memory_order_acquire);
+  for (size_t i = 0; i < g_persist_stats.size(); i++)
+    acc += g_persist_stats[i].ntxns_persisted_.load(memory_order_acquire);
   return acc;
 }
 
 void
 txn_logger::clear_ntxns_persisted_statistics()
 {
-  for (size_t i = 0; i < g_npersisted_txns.size(); i++)
-    g_npersisted_txns[i].store(0, memory_order_release);
+  for (size_t i = 0; i < g_persist_stats.size(); i++) {
+    auto &ps = g_persist_stats[i];
+    ps.ntxns_persisted_.store(0, memory_order_release);
+    ps.latency_numer_.store(0, memory_order_release);
+    for (size_t e = 0; e < g_max_lag_epochs; e++) {
+      auto &pes = ps.d_[e];
+      pes.ntxns_.store(0, memory_order_release);
+      pes.earliest_start_us_.store(0, memory_order_release);
+    }
+  }
 }
 
 void
