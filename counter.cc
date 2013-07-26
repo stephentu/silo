@@ -30,10 +30,10 @@ event_counter::get_all_counters()
   for (vector<event_ctx *>::const_iterator it = evts.begin();
        it != evts.end(); ++it) {
     counter_data d;
-    assert(d.count == 0);
     for (size_t i = 0; i < coreid::NMaxCores; i++)
       d.count += (*it)->tl_counts[i].elem;
     if ((*it)->avg_tag) {
+      d.type = event_counter::counter_data::TYPE_AGG;
       uint64_t m = 0;
       for (size_t i = 0; i < coreid::NMaxCores; i++) {
         m = max(m, static_cast<uint64_t>(static_cast<event_ctx_avg *>(*it)->tl_highs[i].elem));
@@ -43,6 +43,7 @@ event_counter::get_all_counters()
         s += static_cast<event_ctx_avg *>(*it)->tl_sums[i].elem;
       d.sum = s;
       d.max = m;
+      ret[(*it)->name].type = event_counter::counter_data::TYPE_AGG;
     }
     ret[(*it)->name] += d;
   }

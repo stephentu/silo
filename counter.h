@@ -76,8 +76,11 @@ public:
   }
 
   struct counter_data {
-    counter_data() : count(0), sum(0), max(0) {}
+    enum Type { TYPE_COUNT, TYPE_AGG };
 
+    counter_data() : type(TYPE_COUNT), count(0), sum(0), max(0) {}
+
+    Type type;
     uint64_t count;
     uint64_t sum;
     uint64_t max;
@@ -133,7 +136,10 @@ private:
 inline std::ostream &
 operator<<(std::ostream &o, const event_counter::counter_data &d)
 {
-  o << "count=" << d.count << ", max=" << d.max << ", avg=" << d.avg();
+  if (d.type == event_counter::counter_data::TYPE_COUNT)
+    o << "count=" << d.count;
+  else
+    o << "count=" << d.count << ", max=" << d.max << ", avg=" << d.avg();
   return o;
 }
 
