@@ -185,7 +185,8 @@ main(int argc, char **argv)
 
   // initialize the numa allocator
   if (numa_memory > 0) {
-    const size_t maxpercpu = iceil(numa_memory / nthreads, ::allocator::GetHugepageSize());
+    const size_t maxpercpu = iceil(
+        numa_memory / nthreads, ::allocator::GetHugepageSize());
     numa_memory = maxpercpu * nthreads;
     ::allocator::Initialize(nthreads, maxpercpu);
   }
@@ -198,7 +199,7 @@ main(int argc, char **argv)
   }
 
   if (db_type == "bdb") {
-    string cmd = "rm -rf " + basedir + "/db/*";
+    const string cmd = "rm -rf " + basedir + "/db/*";
     // XXX(stephentu): laziness
     int ret UNUSED = system(cmd.c_str());
     db = new bdb_wrapper("db", bench_type + ".db");

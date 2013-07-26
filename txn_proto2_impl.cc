@@ -26,6 +26,8 @@ percore<bool>
   txn_logger::g_all_buffers_init;
 percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
   txn_logger::g_persist_buffers;
+percore<atomic<uint64_t>>
+  txn_logger::g_npersisted_txns;
 
 void
 txn_logger::Init(
@@ -183,19 +185,16 @@ txn_logger::writer(
   std::vector<iovec> iovs(g_nworkers * g_perthread_buffers);
   std::vector<pbuffer *> pxs;
   struct timespec last_io_completed;
-  uint64_t total_nbytes_written = 0,
-           total_txns_written = 0;
 
   // XXX: sense is not useful for now, unless we want to
   // fsync in the background...
   bool sense = false; // cur is at sense, prev is at !sense
-  uint64_t nbytes_written[2], txns_written[2],
-           epoch_prefixes[2][NMAXCORES];
+  uint64_t epoch_prefixes[2][NMAXCORES],
+           ntxns_written[NMAXCORES];
 
-  memset(&nbytes_written[0], 0, sizeof(nbytes_written));
-  memset(&txns_written[0], 0, sizeof(txns_written));
-  memset(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
-  memset(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
+  NDB_MEMSET(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
+  NDB_MEMSET(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
+  NDB_MEMSET(&ntxns_written[0], 0, sizeof(ntxns_written));
 
   clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
@@ -219,7 +218,6 @@ txn_logger::writer(
     clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
     size_t nwritten = 0;
-    nbytes_written[sense] = txns_written[sense] = 0;
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
@@ -234,9 +232,7 @@ txn_logger::writer(
             break;
           iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
-          nbytes_written[sense] += px->curoff_;
           px->io_scheduled_ = true;
-          txns_written[sense] += px->header()->nentries_;
           nwritten++;
 
 #ifdef CHECK_INVARIANTS
@@ -260,6 +256,7 @@ txn_logger::writer(
               transaction_proto2_static::EpochId(px->header()->last_tid_) > 0);
           epoch_prefixes[sense][k] =
             transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
+          ntxns_written[k] += px->header()->nentries_;
         }
       }
     }
@@ -285,38 +282,70 @@ txn_logger::writer(
     }
 
     // update metadata from previous write
-    epoch_array &ea = per_thread_sync_epochs_[id];
-    for (size_t i = 0; i < NMAXCORES; i++) {
-      const uint64_t x0 = ea.epochs_[i].load(memory_order_acquire);
-      const uint64_t x1 = epoch_prefixes[dosense][i];
-      if (x1 > x0)
-        ea.epochs_[i].store(x1, memory_order_release);
-    }
-    total_nbytes_written += nbytes_written[dosense];
-    total_txns_written += txns_written[dosense];
-
-    // bump the sense
-    sense = !sense;
-
+    //
     // return all buffers that have been io_scheduled_ - we can do this as
     // soon as write returns. we take care to return to the proper buffer
-    // (not modulo)
-    for (auto idx : assignment) {
+    epoch_array &ea = per_thread_sync_epochs_[id];
+    for (auto idx: assignment) {
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
+        const uint64_t x0 = ea.epochs_[k].load(memory_order_acquire);
+        const uint64_t x1 = epoch_prefixes[dosense][k];
+        if (x1 > x0)
+          ea.epochs_[k].store(x1, memory_order_release);
+
+        const uint64_t n0 = g_npersisted_txns[k].load(memory_order_acquire);
+        const uint64_t n1 = ntxns_written[k];
+        if (n1 > n0)
+          g_npersisted_txns[k].fetch_add(n1, memory_order_release);
+        ntxns_written[k] = 0;
+
         pbuffer *px, *px0;
-        while ((px = g_persist_buffers[k].peek()) &&
-               px->io_scheduled_) {
+        while ((px = g_persist_buffers[k].peek()) && px->io_scheduled_) {
           px0 = g_persist_buffers[k].deq();
           INVARIANT(px == px0);
           px0->reset();
+          INVARIANT(g_all_buffers_init[k]);
+          INVARIANT(px0->core_id_ == k);
+          //cerr << "enq back to core " << k << endl;
           g_all_buffers[k].enq(px0);
         }
       }
     }
-  }
 
-  //g_bytes_written[id].store(total_nbytes_written, memory_order_release);
-  //g_ntxns_written.fetch_add(total_txns_written, memory_order_release);
+    // bump the sense
+    sense = !sense;
+  }
+}
+
+uint64_t
+txn_logger::compute_ntxns_persisted_statistics()
+{
+  uint64_t acc = 0;
+  for (size_t i = 0; i < g_npersisted_txns.size(); i++)
+    acc += g_npersisted_txns[i].load(memory_order_acquire);
+  return acc;
+}
+
+void
+txn_logger::clear_ntxns_persisted_statistics()
+{
+  for (size_t i = 0; i < g_npersisted_txns.size(); i++)
+    g_npersisted_txns[i].store(0, memory_order_release);
+}
+
+void
+txn_logger::wait_for_idle_state()
+{
+  for (size_t i = 0; i < NMAXCORES; i++) {
+    if (!g_all_buffers_init[i])
+      continue;
+    pbuffer *px;
+    while (!(px = g_all_buffers[i].peek()) ||
+           px->header()->nentries_)
+      nop_pause();
+    while (g_persist_buffers[i].peek())
+      nop_pause();
+  }
 }
 
 void

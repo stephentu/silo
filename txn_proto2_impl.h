@@ -154,6 +154,20 @@ public:
     return g_persist_buffers[core_id];
   }
 
+  static uint64_t
+  compute_ntxns_persisted_statistics();
+
+  // purge counters from each thread about the number of
+  // persisted txns
+  static void
+  clear_ntxns_persisted_statistics();
+
+  // wait until the logging system appears to be idle.
+  //
+  // note that this isn't a guarantee, just a best effort attempt
+  static void
+  wait_for_idle_state();
+
 private:
 
   static void
@@ -197,6 +211,8 @@ private:
                                            // in steady state is only read-only
 
   static percore<circbuf<pbuffer, g_perthread_buffers>> g_persist_buffers;
+
+  static percore<std::atomic<uint64_t>> g_npersisted_txns;
 };
 
 static inline std::ostream &
@@ -652,16 +668,51 @@ private:
 
 template <>
 struct txn_epoch_sync<transaction_proto2> {
-  static inline void
+  static void
   sync()
   {
     transaction_proto2_static::wait_an_epoch();
+    if (txn_logger::g_persist)
+      txn_logger::wait_for_idle_state();
   }
-  static inline void
+  static void
   finish()
   {
     txn_walker_loop::global_running = false;
     __sync_synchronize();
+    if (txn_logger::g_persist)
+      txn_logger::wait_for_idle_state();
+  }
+  static void
+  thread_end()
+  {
+    if (!txn_logger::g_persist)
+      return;
+    const unsigned long my_core_id = coreid::core_id();
+    txn_logger::pbuffer_circbuf &pull_buf =
+      txn_logger::logger_to_core_buffer(my_core_id);
+    txn_logger::pbuffer *px = pull_buf.peek();
+    if (!px || !px->header()->nentries_)
+      return;
+    txn_logger::pbuffer *px0 = pull_buf.deq();
+    INVARIANT(px0 == px);
+    txn_logger::pbuffer_circbuf &push_buf =
+      txn_logger::core_to_logger_buffer(my_core_id);
+    push_buf.enq(px);
+  }
+  static uint64_t
+  compute_ntxn_persisted()
+  {
+    if (!txn_logger::g_persist)
+      return 0;
+    return txn_logger::compute_ntxns_persisted_statistics();
+  }
+  static void
+  reset_ntxn_persisted()
+  {
+    if (!txn_logger::g_persist)
+      return;
+    txn_logger::clear_ntxns_persisted_statistics();
   }
 };
 

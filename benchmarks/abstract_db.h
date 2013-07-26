@@ -66,6 +66,10 @@ public:
    */
   virtual void thread_end() {}
 
+  virtual uint64_t get_ntxn_persisted() const { return 0; }
+
+  virtual void reset_ntxn_persisted() { }
+
   enum TxnProfileHint {
     HINT_DEFAULT,
 

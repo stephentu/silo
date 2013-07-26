@@ -802,12 +802,20 @@ private:
 };
 
 // XXX(stephentu): stupid hacks
+// XXX(stephentu): txn_epoch_sync is a misnomer
 template <template <typename> class Transaction>
 struct txn_epoch_sync {
   // block until the next epoch
   static inline void sync() {}
   // finish any async jobs
   static inline void finish() {}
+  // run this code when a benchmark worker finishes
+  static inline void thread_end() {}
+  // how many txns have we persisted in total, from
+  // the last reset invocation?
+  static inline uint64_t compute_ntxn_persisted() { return 0; }
+  // reset the persisted counters
+  static inline void reset_ntxn_persisted() {}
 };
 
 #endif /* _NDB_TXN_H_ */
