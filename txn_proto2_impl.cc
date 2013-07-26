@@ -28,6 +28,8 @@ percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
   txn_logger::g_persist_buffers;
 percore<atomic<uint64_t>>
   txn_logger::g_npersisted_txns;
+event_avg_counter
+  txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns");
 
 void
 txn_logger::Init(
@@ -257,6 +259,7 @@ txn_logger::writer(
           epoch_prefixes[sense][k] =
             transaction_proto2_static::EpochId(px->header()->last_tid_) - 1;
           ntxns_written[k] += px->header()->nentries_;
+          g_evt_avg_log_entry_ntxns.offer(px->header()->nentries_);
         }
       }
     }
@@ -293,10 +296,8 @@ txn_logger::writer(
         if (x1 > x0)
           ea.epochs_[k].store(x1, memory_order_release);
 
-        const uint64_t n0 = g_npersisted_txns[k].load(memory_order_acquire);
         const uint64_t n1 = ntxns_written[k];
-        if (n1 > n0)
-          g_npersisted_txns[k].fetch_add(n1, memory_order_release);
+        g_npersisted_txns[k].fetch_add(n1, memory_order_release);
         ntxns_written[k] = 0;
 
         pbuffer *px, *px0;
@@ -750,3 +751,5 @@ aligned_padded_elem<transaction_proto2_static::hackstruct>
 event_counter
   transaction_proto2_static::g_evt_worker_thread_wait_log_buffer(
       "worker_thread_wait_log_buffer");
+event_avg_counter
+  transaction_proto2_static::g_evt_avg_log_entry_size("avg_log_entry_size");

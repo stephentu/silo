@@ -213,6 +213,8 @@ private:
   static percore<circbuf<pbuffer, g_perthread_buffers>> g_persist_buffers;
 
   static percore<std::atomic<uint64_t>> g_npersisted_txns;
+
+  static event_avg_counter g_evt_avg_log_entry_ntxns;
 };
 
 static inline std::ostream &
@@ -358,6 +360,7 @@ protected:
     g_hack CACHE_ALIGNED;
 
   static event_counter g_evt_worker_thread_wait_log_buffer;
+  static event_avg_counter g_evt_avg_log_entry_size;
 };
 
 // protocol 2 - no global consistent TIDs
@@ -471,6 +474,8 @@ public:
 
       value_sizes.push_back(v_nbytes);
     }
+
+    g_evt_avg_log_entry_size.offer(space_needed);
 
     // XXX(stephentu): spinning for now
     const unsigned long my_core_id = coreid::core_id();
