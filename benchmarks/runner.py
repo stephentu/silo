@@ -222,8 +222,8 @@ def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts
   r = p.stdout.read()
   p.wait()
   toks = r.strip().split(' ')
-  assert len(toks) == 2
-  return float(toks[0]), float(toks[1])
+  assert len(toks) == 3
+  return float(toks[0]), float(toks[1]), float(toks[2])
 
 if __name__ == '__main__':
   (_, basedir, outfile) = sys.argv
