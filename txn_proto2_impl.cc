@@ -28,6 +28,10 @@ percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
   txn_logger::g_persist_buffers;
 percore<txn_logger::persist_stats>
   txn_logger::g_persist_stats;
+event_counter
+  txn_logger::g_evt_log_buffer_epoch_boundary("log_buffer_epoch_boundary");
+event_counter
+  txn_logger::g_evt_logger_max_lag_wait("logger_max_lag_wait");
 event_avg_counter
   txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns");
 
@@ -250,9 +254,10 @@ txn_logger::writer(
           if (nwritten == iovs.size())
             goto process;
           if (transaction_proto2_static::EpochId(px->header()->last_tid_) >=
-              cur_sync_epoch_ex + g_max_lag_epochs)
-            // XXX: put a counter here
+              cur_sync_epoch_ex + g_max_lag_epochs) {
+            ++g_evt_logger_max_lag_wait;
             break;
+          }
           iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
           px->io_scheduled_ = true;

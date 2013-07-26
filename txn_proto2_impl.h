@@ -240,6 +240,8 @@ private:
 
   static percore<persist_stats> g_persist_stats;
 
+  static event_counter g_evt_log_buffer_epoch_boundary;
+  static event_counter g_evt_logger_max_lag_wait;
   static event_avg_counter g_evt_avg_log_entry_ntxns;
 };
 
@@ -519,15 +521,18 @@ public:
 
     // check if enough size, or if spans epoch boundary
     // (which we currently disallow for very shoddy reasons)
+    bool cond = false;
     if (px->space_remaining() < space_needed ||
-        (px->header()->nentries_ &&
-         EpochId(px->header()->last_tid_) != EpochId(commit_tid))) {
+        (cond = (px->header()->nentries_ &&
+         EpochId(px->header()->last_tid_) != EpochId(commit_tid)))) {
       INVARIANT(px->header()->nentries_);
       txn_logger::pbuffer *px0 = pull_buf.deq();
       INVARIANT(px == px0);
       txn_logger::pbuffer_circbuf &push_buf =
         txn_logger::core_to_logger_buffer(my_core_id);
       push_buf.enq(px0);
+      if (cond)
+        ++txn_logger::g_evt_log_buffer_epoch_boundary;
       goto retry;
     }
 
