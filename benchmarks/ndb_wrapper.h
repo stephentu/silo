@@ -63,7 +63,7 @@ public:
     txn_epoch_sync<Transaction>::thread_end();
   }
 
-  virtual uint64_t
+  virtual std::pair<uint64_t, double>
   get_ntxn_persisted() const
   {
     return txn_epoch_sync<Transaction>::compute_ntxn_persisted();

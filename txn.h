@@ -813,7 +813,8 @@ struct txn_epoch_sync {
   static inline void thread_end() {}
   // how many txns have we persisted in total, from
   // the last reset invocation?
-  static inline uint64_t compute_ntxn_persisted() { return 0; }
+  static inline std::pair<uint64_t, double>
+    compute_ntxn_persisted() { return {0, 0.0}; }
   // reset the persisted counters
   static inline void reset_ntxn_persisted() {}
 };

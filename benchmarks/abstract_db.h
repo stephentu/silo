@@ -66,7 +66,9 @@ public:
    */
   virtual void thread_end() {}
 
-  virtual uint64_t get_ntxn_persisted() const { return 0; }
+  // [ntxns, avg latency]
+  virtual std::pair<uint64_t, double>
+    get_ntxn_persisted() const { return {0, 0.0}; }
 
   virtual void reset_ntxn_persisted() { }
 

@@ -178,15 +178,18 @@ txn_logger::advance_system_sync_epoch(
   INVARIANT(syssync <= min_so_far);
 
   // need to aggregate from [syssync + 1, min_so_far]
+  const uint64_t now_us = timer::cur_usec();
   for (size_t i = 0; i < g_persist_stats.size(); i++) {
     auto &ps = g_persist_stats[i];
     for (uint64_t e = syssync + 1; e <= min_so_far; e++) {
         auto &pes = ps.d_[e % g_max_lag_epochs];
         const uint64_t ntxns_in_epoch = pes.ntxns_.load(memory_order_acquire);
+        const uint64_t start_us = pes.earliest_start_us_.load(memory_order_acquire);
+        INVARIANT(now_us >= start_us);
         non_atomic_fetch_add(ps.ntxns_persisted_, ntxns_in_epoch);
         non_atomic_fetch_add(
             ps.latency_numer_,
-            pes.earliest_start_us_.load(memory_order_acquire) * ntxns_in_epoch);
+            (now_us - start_us) * ntxns_in_epoch);
         pes.ntxns_.store(0, std::memory_order_release);
         pes.earliest_start_us_.store(0, std::memory_order_release);
     }
@@ -341,13 +344,18 @@ txn_logger::writer(
   }
 }
 
-uint64_t
+pair<uint64_t, double>
 txn_logger::compute_ntxns_persisted_statistics()
 {
   uint64_t acc = 0;
-  for (size_t i = 0; i < g_persist_stats.size(); i++)
+  uint64_t num = 0;
+
+  for (size_t i = 0; i < g_persist_stats.size(); i++) {
     acc += g_persist_stats[i].ntxns_persisted_.load(memory_order_acquire);
-  return acc;
+    num += g_persist_stats[i].latency_numer_.load(memory_order_acquire);
+  }
+
+  return {acc, double(num)/double(acc)};
 }
 
 void

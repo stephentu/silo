@@ -206,7 +206,7 @@ bench_runner::run()
     n_commits += workers[i]->get_ntxn_commits();
     n_aborts += workers[i]->get_ntxn_aborts();
   }
-  const size_t n_persisted = db->get_ntxn_persisted();
+  const auto persisted_info = db->get_ntxn_persisted();
 
   const unsigned long elapsed = t.lap(); // lap() must come after do_txn_finish(),
                                          // because do_txn_finish() potentially
@@ -219,8 +219,12 @@ bench_runner::run()
   const double agg_abort_rate = double(n_aborts) / elapsed_sec;
   const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
 
-  const double agg_persist_throughput = double(n_persisted) / elapsed_sec;
-  const double avg_per_core_persist_throughput = agg_persist_throughput / double(workers.size());
+  const double agg_persist_throughput = double(persisted_info.first) / elapsed_sec;
+  const double avg_per_core_persist_throughput =
+    agg_persist_throughput / double(workers.size());
+
+  const double avg_persist_latency_ms =
+    persisted_info.second / 1000.0;
 
   if (verbose) {
     const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
@@ -268,6 +272,7 @@ bench_runner::run()
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_persist_throughput: " << avg_per_core_persist_throughput << " ops/sec/core" << endl;
+    cerr << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;

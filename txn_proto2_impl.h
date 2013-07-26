@@ -157,7 +157,7 @@ public:
     return g_persist_buffers[core_id];
   }
 
-  static uint64_t
+  static std::pair<uint64_t, double>
   compute_ntxns_persisted_statistics();
 
   // purge counters from each thread about the number of
@@ -224,7 +224,8 @@ private:
     // how many txns this thread has persisted in total
     std::atomic<uint64_t> ntxns_persisted_;
 
-    // sum of all latencies (divid by ntxns_persisted_ to get avg latency)
+    // sum of all latencies (divid by ntxns_persisted_ to get avg latency in
+    // us)
     std::atomic<uint64_t> latency_numer_;
 
     // per last g_max_lag_epochs information
@@ -740,11 +741,11 @@ struct txn_epoch_sync<transaction_proto2> {
       txn_logger::core_to_logger_buffer(my_core_id);
     push_buf.enq(px);
   }
-  static uint64_t
+  static std::pair<uint64_t, double>
   compute_ntxn_persisted()
   {
     if (!txn_logger::g_persist)
-      return 0;
+      return {0, 0.0};
     return txn_logger::compute_ntxns_persisted_statistics();
   }
   static void
