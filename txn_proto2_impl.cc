@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/uio.h>
+#include <limits.h>
 
 #include "txn_proto2_impl.h"
 #include "counter.h"
@@ -203,7 +204,9 @@ txn_logger::writer(
     unsigned id, int fd,
     std::vector<unsigned> assignment)
 {
-  std::vector<iovec> iovs(g_nworkers * g_perthread_buffers);
+
+  std::vector<iovec> iovs(
+      std::min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
   std::vector<pbuffer *> pxs;
   struct timespec last_io_completed;
 
