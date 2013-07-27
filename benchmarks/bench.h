@@ -108,7 +108,8 @@ public:
     : worker_id(worker_id), r(seed), db(db), open_tables(open_tables),
       barrier_a(barrier_a), barrier_b(barrier_b),
       // the ntxn_* numbers are per worker
-      ntxn_commits(0), ntxn_aborts(0), size_delta(0)
+      ntxn_commits(0), ntxn_aborts(0),
+      latency_numer_us(0),  size_delta(0)
   {
     txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
   }
@@ -138,6 +139,14 @@ public:
 
   inline size_t get_ntxn_commits() const { return ntxn_commits; }
   inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
+
+  inline uint64_t get_latency_numer_us() const { return latency_numer_us; }
+
+  inline double
+  get_avg_latency_us() const
+  {
+    return double(latency_numer_us) / double(ntxn_commits);
+  }
 
   std::map<std::string, size_t> get_txn_counts() const;
 
@@ -170,6 +179,7 @@ protected:
 private:
   size_t ntxn_commits;
   size_t ntxn_aborts;
+  uint64_t latency_numer_us;
 
 protected:
 

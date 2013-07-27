@@ -117,9 +117,11 @@ bench_worker::run()
     for (size_t i = 0; i < workload.size(); i++) {
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
       retry:
-        auto ret = workload[i].fn(this);
+        timer t;
+        const auto ret = workload[i].fn(this);
         if (likely(ret.first)) {
           ++ntxn_commits;
+          latency_numer_us += t.lap();
         } else {
           ++ntxn_aborts;
           if (retry_aborted_transaction && running)
@@ -202,9 +204,11 @@ bench_runner::run()
   db->do_txn_finish(); // waits for all worker txns to persist
   size_t n_commits = 0;
   size_t n_aborts = 0;
+  uint64_t latency_numer_us = 0;
   for (size_t i = 0; i < nthreads; i++) {
     n_commits += workers[i]->get_ntxn_commits();
     n_aborts += workers[i]->get_ntxn_aborts();
+    latency_numer_us += workers[i]->get_latency_numer_us();
   }
   const auto persisted_info = db->get_ntxn_persisted();
 
@@ -223,6 +227,9 @@ bench_runner::run()
   const double avg_per_core_persist_throughput =
     agg_persist_throughput / double(workers.size());
 
+  const double avg_latency_us =
+    double(latency_numer_us) / double(n_commits);
+  const double avg_latency_ms = avg_latency_us / 1000.0;
   const double avg_persist_latency_ms =
     persisted_info.second / 1000.0;
 
@@ -272,6 +279,7 @@ bench_runner::run()
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_persist_throughput: " << avg_per_core_persist_throughput << " ops/sec/core" << endl;
+    cerr << "avg_latency: " << avg_latency_ms << " ms" << endl;
     cerr << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
@@ -300,6 +308,8 @@ bench_runner::run()
   // output for plotting script
   cout << agg_throughput << " "
        << agg_persist_throughput << " "
+       << avg_latency_ms << " "
+       << avg_persist_latency_ms << " "
        << agg_abort_rate << endl;
 
   if (!slow_exit)
