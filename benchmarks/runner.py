@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
-import itertools
+import itertools as it
 import platform
+import math
 import subprocess
 import sys
 
@@ -34,7 +35,7 @@ NTRIALS = 3
 ### NOTE: for TPC-C, in general, allocate 4GB of memory per thread for the experiments.
 ### this is over-conservative
 
-KNOB_ENABLE_YCSB_SCALE=True
+KNOB_ENABLE_YCSB_SCALE=False
 KNOB_ENABLE_TPCC_SCALE=True
 KNOB_ENABLE_TPCC_MULTIPART=False
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
@@ -67,6 +68,64 @@ grids = []
 #  },
 #]
 
+MACHINE_LOG_CONFIG = {
+  'modis2' : (
+        ('data.log', 1.),
+        ('/data/scidb/001/2/stephentu/data.log', 1.),
+        ('/data/scidb/001/3/stephentu/data.log', 1.),
+      ),
+  'istc3' : (
+        ('data.log', 1./3.),
+        ('/f0/stephentu/data.log', 2./3.),
+      ),
+}
+
+### helpers for log allocation
+def normalize(x):
+  denom = sum(x)
+  return [e/denom for e in x]
+
+def scale(x, a):
+  return [e * a for e in x]
+
+def argcmp(x, comp, predicate):
+  idx = None
+  val = None
+  for i in xrange(len(x)):
+    if not predicate(x[i]):
+      continue
+    if idx is None or comp(x[i], val):
+      idx = i
+      val = x[i]
+  if idx is None:
+    # couldn't find it
+    raise Exception("no argmin satisfiying predicate")
+  return idx
+
+def argmin(x, predicate):
+  return argcmp(x, lambda a, b: a < b, predicate)
+
+def argmax(x, predicate):
+  return argcmp(x, lambda a, b: a > b, predicate)
+
+def allocate(nworkers, weights):
+  approx = map(int, map(math.ceil, scale(weights, nworkers)))
+  diff = sum(approx) - nworkers
+  if diff > 0:
+    while diff > 0:
+      i = argmin(approx, predicate=lambda x: x > 0)
+      approx[i] -= 1
+      diff -= 1
+  elif diff < 0:
+    i = argmax(approx, lambda x: True)
+    approx[i] += -diff
+  acc = 0
+  ret = []
+  for x in approx:
+    ret.append(range(acc, acc + x))
+    acc += x
+  return ret
+
 def mk_ycsb_entries(nthds):
   return [
     {
@@ -78,6 +137,7 @@ def mk_ycsb_entries(nthds):
       'bench_opts' : ['--workload-mix 80,20,0,0'],
       'par_load' : [True],
       'retry' : [False],
+      'persist' : [False],
       'numa_memory' : ['%dG' % int(100 + 1.4*nthds)],
     },
     {
@@ -89,6 +149,7 @@ def mk_ycsb_entries(nthds):
       'bench_opts' : ['--workload-mix 80,0,20,0'],
       'par_load' : [True],
       'retry' : [False],
+      'persist' : [False],
       'numa_memory' : ['%dG' % int(100 + 1.4*nthds)],
     },
   ]
@@ -98,19 +159,20 @@ if KNOB_ENABLE_YCSB_SCALE:
     grids += mk_ycsb_entries(nthds)
 
 # exp 2:
-def mk_grid(name, bench, nthds):
-  return {
-    'name' : name,
-    'dbs' : ['ndb-proto2'],
-    'threads' : [nthds],
-    'scale_factors' : [nthds],
-    'benchmarks' : [bench],
-    'bench_opts' : [''],
-    'par_load' : [False],
-    'retry' : [False],
-    'numa_memory' : ['%dG' % (4 * 28)],
-  }
 if KNOB_ENABLE_TPCC_SCALE:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [True, False],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+    }
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 # exp 3:
@@ -128,6 +190,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
       'par_load' : [False],
       'retry' : [False],
+      'persist' : [False],
       'numa_memory' : ['%dG' % (4 * 28)],
     },
     {
@@ -140,6 +203,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
         ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
       'par_load' : [True],
       'retry' : [False],
+      'persist' : [False],
       'numa_memory' : ['%dG' % (4 * 28)],
     },
   ]
@@ -188,6 +252,7 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
       'bench_opts' : ['--workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
       'par_load' : [False],
       'retry' : [True],
+      'persist' : [False],
       'numa_memory' : ['%dG' % (4 * 16)],
     },
     {
@@ -199,11 +264,14 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
       'bench_opts' : ['--disable-read-only-snapshots --workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
       'par_load' : [False],
       'retry' : [True],
+      'persist' : [False],
       'numa_memory' : ['%dG' % (4 * 16)],
     },
   ]
 
-def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts, par_load, retry_aborted_txn, numa_memory):
+def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts, par_load, retry_aborted_txn, numa_memory, logfiles, assignments):
+  # Note: assignments is a list of list of ints
+  assert len(logfiles) == len(assignments)
   args = [
       './dbtest',
       '--bench', bench,
@@ -216,14 +284,16 @@ def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts
   ] + ([] if not bench_opts else ['--bench-opts', bench_opts]) \
     + ([] if not par_load else ['--parallel-loading']) \
     + ([] if not retry_aborted_txn else ['--retry-aborted-transactions']) \
-    + ([] if not numa_memory else ['--numa-memory', numa_memory])
+    + ([] if not numa_memory else ['--numa-memory', numa_memory]) \
+    + ([] if not logfiles else list(it.chain.from_iterable([['--logfile', f] for f in logfiles]))) \
+    + ([] if not assignments else list(it.chain.from_iterable([['--assignment', ','.join(map(str, x))] for x in assignments])))
   print >>sys.stderr, '[INFO] running command %s' % str(args)
   p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
   r = p.stdout.read()
   p.wait()
   toks = r.strip().split(' ')
-  assert len(toks) == 3
-  return float(toks[0]), float(toks[1]), float(toks[2])
+  assert len(toks) == 5
+  return tuple(map(float, toks))
 
 if __name__ == '__main__':
   (_, basedir, outfile) = sys.argv
@@ -231,10 +301,10 @@ if __name__ == '__main__':
   # iterate over all configs
   results = []
   for grid in grids:
-    for (db, bench, scale_factor, threads, bench_opts, par_load, retry, numa_memory) in itertools.product(
+    for (db, bench, scale_factor, threads, bench_opts, par_load, retry, numa_memory, persist) in it.product(
         grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
         grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
-        grid['numa_memory']):
+        grid['numa_memory'], grid['persist']):
       config = {
         'name'         : grid['name'],
         'db'           : db,
@@ -244,12 +314,24 @@ if __name__ == '__main__':
         'bench_opts'   : bench_opts,
         'par_load'     : par_load,
         'retry'        : retry,
+        'persist'      : persist,
         'numa_memory'  : numa_memory,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
+      if persist:
+        node = platform.node()
+        inf = MACHINE_LOG_CONFIG[node]
+        logfiles = [x[0] for x in inf]
+        weights = normalize([x[1] for x in inf])
+        assignments = allocate(threads, weights)
+      else:
+        logfiles, assignments = [], []
       values = []
       for _ in range(NTRIALS):
-        value = run_configuration(basedir, db, bench, scale_factor, threads, bench_opts, par_load, retry, numa_memory)
+        value = run_configuration(
+            basedir, db, bench, scale_factor, threads,
+            bench_opts, par_load, retry, numa_memory,
+            logfiles, assignments)
         values.append(value)
       results.append((config, values))
 
