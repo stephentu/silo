@@ -267,7 +267,8 @@ public:
 #ifdef CHECK_INVARIANTS
   static const uint64_t ReadOnlyEpochMultiplier = 1; /* 10 ms */
 #else
-  static const uint64_t ReadOnlyEpochMultiplier = 100; /* 1 sec */
+  static const uint64_t ReadOnlyEpochMultiplier = 50; /* 1 sec */
+  static_assert(ticker::tick_us * ReadOnlyEpochMultiplier == 1000000, "");
 #endif
 
   static_assert(ReadOnlyEpochMultiplier >= 1, "XX");
