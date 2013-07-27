@@ -90,7 +90,7 @@ rcu::sync::do_release()
 void
 rcu::free_with_fn(void *p, deleter_t fn)
 {
-  uint64_t rcu_tick;
+  uint64_t rcu_tick = 0;
   const bool in_region = in_rcu_region(rcu_tick);
   if (!in_region)
     INVARIANT(false);

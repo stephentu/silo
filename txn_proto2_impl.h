@@ -739,7 +739,7 @@ struct txn_epoch_sync<transaction_proto2> {
     INVARIANT(px0 == px);
     txn_logger::pbuffer_circbuf &push_buf =
       txn_logger::core_to_logger_buffer(my_core_id);
-    push_buf.enq(px);
+    push_buf.enq(px0);
   }
   static std::pair<uint64_t, double>
   compute_ntxn_persisted()
