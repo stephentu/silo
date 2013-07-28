@@ -90,6 +90,21 @@ LZ4_compressBound() :
     note : this function is limited by "int" range (2^31-1)
 */
 
+static inline int
+LZ4_compressBoundInv(int bound)
+{
+  if (bound < 16)
+    return 0;
+  return 255 * (bound - 16) / 256;
+}
+
+/*
+LZ4_compressBoundInv() :
+    Given a output buffer size b, returns the maximum number of bytes
+    which can be compressed and still guarantee compressed output <= b
+
+    returns 0 if bound is too small to compress anything useful
+*/
 
 int LZ4_compress_limitedOutput (const char* source, char* dest, int inputSize, int maxOutputSize);
 

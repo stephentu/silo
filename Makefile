@@ -11,6 +11,8 @@ endif
 TOP     := $(shell echo $${PWD-`pwd`})
 LDFLAGS := -lpthread -lnuma -lrt
 
+LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
+
 # 0 = libc malloc
 # 1 = jemalloc
 # 2 = tcmalloc
@@ -159,20 +161,20 @@ new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
 %.o: %.cc $(HEADERS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-test: test.o $(OBJFILES)
-	$(CXX) -o test $^ $(LDFLAGS)
+test: test.o $(OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o test $^ $(LDFLAGS) $(LZ4LDFLAGS)
 
 third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
 persist_test: persist_test.o third-party/lz4/liblz4.so
-	$(CXX) -o persist_test persist_test.o $(LDFLAGS) -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
+	$(CXX) -o persist_test persist_test.o $(LDFLAGS) $(LZ4LDFLAGS)
 
 .PHONY: dbtest
 dbtest: benchmarks/dbtest
 
-benchmarks/dbtest: benchmarks/dbtest.o $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) -o benchmarks/dbtest $^ $(BENCH_LDFLAGS)
+benchmarks/dbtest: benchmarks/dbtest.o $(OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS)
 
 .PHONY: kvtest
 kvtest: benchmarks/masstree/kvtest
@@ -183,8 +185,8 @@ benchmarks/masstree/kvtest: benchmarks/masstree/kvtest.o $(OBJFILES) $(BENCH_OBJ
 .PHONY: newdbtest
 newdbtest: new-benchmarks/dbtest
 
-new-benchmarks/dbtest: new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES)
-	$(CXX) -o new-benchmarks/dbtest $^ $(LDFLAGS)
+new-benchmarks/dbtest: new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS)
 
 .PHONY: clean
 clean:

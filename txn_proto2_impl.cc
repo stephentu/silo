@@ -16,17 +16,14 @@ static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
 bool txn_logger::g_persist = false;
+bool txn_logger::g_use_compression = false;
 size_t txn_logger::g_nworkers = 0;
 txn_logger::epoch_array
   txn_logger::per_thread_sync_epochs_[txn_logger::g_nmax_loggers];
 aligned_padded_elem<atomic<uint64_t>>
   txn_logger::system_sync_epoch_(0);
-percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
-  txn_logger::g_all_buffers;
-percore<bool>
-  txn_logger::g_all_buffers_init;
-percore<circbuf<txn_logger::pbuffer, txn_logger::g_perthread_buffers>>
-  txn_logger::g_persist_buffers;
+percore<txn_logger::persist_ctx>
+  txn_logger::g_persist_ctxs;
 percore<txn_logger::persist_stats>
   txn_logger::g_persist_stats;
 event_counter
@@ -41,13 +38,15 @@ txn_logger::Init(
     size_t nworkers,
     const std::vector<std::string> &logfiles,
     const std::vector<std::vector<unsigned>> &assignments_given,
-    std::vector<std::vector<unsigned>> *assignments_used)
+    std::vector<std::vector<unsigned>> *assignments_used,
+    bool use_compression)
 {
   INVARIANT(!g_persist);
   INVARIANT(g_nworkers == 0);
   INVARIANT(nworkers > 0);
   INVARIANT(!logfiles.empty());
   INVARIANT(logfiles.size() <= g_nmax_loggers);
+  INVARIANT(!use_compression || g_perthread_buffers > 1); // need 1 as scratch buf
   std::vector<int> fds;
   for (auto &fname : logfiles) {
     int fd = open(fname.c_str(), O_CREAT|O_WRONLY|O_TRUNC, 0664);
@@ -58,19 +57,15 @@ txn_logger::Init(
     fds.push_back(fd);
   }
   g_persist = true;
+  g_use_compression = use_compression;
   g_nworkers = nworkers;
 
   for (size_t i = 0; i < g_nmax_loggers; i++)
     for (size_t j = 0; j < g_nworkers; j++)
       per_thread_sync_epochs_[i].epochs_[j].store(0, std::memory_order_release);
 
-  for (size_t i = 0; i < g_nworkers; i++) {
-    for (size_t j = 0; j < g_perthread_buffers; j++) {
-      struct pbuffer *p = new pbuffer(i);
-      g_all_buffers[i].enq(p);
-    }
-    g_all_buffers_init[i] = true;
-  }
+  for (size_t i = 0; i < g_nworkers; i++)
+    persist_ctx_for(i); // invoke for the initialization
 
   std::vector<std::thread> writers;
   std::vector<std::vector<unsigned>> assignments(assignments_given);
@@ -138,13 +133,14 @@ txn_logger::advance_system_sync_epoch(
   for (size_t i = 0; i < assignments.size(); i++)
     for (auto j : assignments[i])
       for (size_t k = j; k < NMAXCORES; k += g_nworkers) {
+        persist_ctx &ctx = persist_ctx_for(k, false);
         // we need to arbitrarily advance threads which are not "doing
         // anything", so they don't drag down the persistence of the system. if
         // we can see that a thread is NOT in a guarded section AND its
         // core->logger queue is empty, then that means we can advance its sync
         // epoch up to best_tick_inc, b/c it is guaranteed that the next time
         // it does any actions will be in epoch > best_tick_inc
-        if (!g_persist_buffers[k].peek()) {
+        if (!ctx.persist_buffers_.peek()) {
           spinlock &l = ticker::s_instance.lock_for(k);
           if (!l.is_locked()) {
             bool did_lock = false;
@@ -155,7 +151,7 @@ txn_logger::advance_system_sync_epoch(
               }
             }
             if (did_lock) {
-              if (!g_persist_buffers[k].peek()) {
+              if (!ctx.persist_buffers_.peek()) {
                 min_so_far = std::min(min_so_far, best_tick_inc);
                 per_thread_sync_epochs_[i].epochs_[k].store(
                     best_tick_inc, std::memory_order_release);
@@ -251,7 +247,8 @@ txn_logger::writer(
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
-        g_persist_buffers[k].peekall(pxs);
+        persist_ctx &ctx = persist_ctx_for(k, false);
+        ctx.persist_buffers_.peekall(pxs);
         for (auto px : pxs) {
           INVARIANT(px);
           INVARIANT(!px->io_scheduled_);
@@ -331,14 +328,16 @@ txn_logger::writer(
         if (x1 > x0)
           ea.epochs_[k].store(x1, memory_order_release);
 
+        persist_ctx &ctx = persist_ctx_for(k, false);
         pbuffer *px, *px0;
-        while ((px = g_persist_buffers[k].peek()) && px->io_scheduled_) {
-          px0 = g_persist_buffers[k].deq();
+        while ((px = ctx.persist_buffers_.peek()) && px->io_scheduled_) {
+          px0 = ctx.persist_buffers_.deq();
           INVARIANT(px == px0);
+          INVARIANT(px->header()->nentries_);
           px0->reset();
-          INVARIANT(g_all_buffers_init[k]);
+          INVARIANT(ctx.init_);
           INVARIANT(px0->core_id_ == k);
-          g_all_buffers[k].enq(px0);
+          ctx.all_buffers_.enq(px0);
         }
       }
     }
@@ -381,13 +380,13 @@ void
 txn_logger::wait_for_idle_state()
 {
   for (size_t i = 0; i < NMAXCORES; i++) {
-    if (!g_all_buffers_init[i])
+    persist_ctx &ctx = persist_ctx_for(i, false);
+    if (!ctx.init_)
       continue;
     pbuffer *px;
-    while (!(px = g_all_buffers[i].peek()) ||
-             px->header()->nentries_)
+    while (!(px = ctx.all_buffers_.peek()) || px->header()->nentries_)
       nop_pause();
-    while (g_persist_buffers[i].peek())
+    while (ctx.persist_buffers_.peek())
       nop_pause();
   }
 }

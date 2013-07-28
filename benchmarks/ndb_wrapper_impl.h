@@ -124,15 +124,19 @@ struct hint_tpcc_stock_level_read_only_traits : public hint_read_only_traits {};
 template <template <typename> class Transaction>
 ndb_wrapper<Transaction>::ndb_wrapper(
     const std::vector<std::string> &logfiles,
-    const std::vector<std::vector<unsigned>> &assignments_given)
+    const std::vector<std::vector<unsigned>> &assignments_given,
+    bool use_compression)
 {
   if (logfiles.empty())
     return;
   std::vector<std::vector<unsigned>> assignments_used;
-  txn_logger::Init(nthreads, logfiles, assignments_given, &assignments_used);
+  txn_logger::Init(
+      nthreads, logfiles, assignments_given, &assignments_used,
+      use_compression);
   if (verbose) {
     std::cerr << "[logging subsystem]" << std::endl;
     std::cerr << "  assignments: " << assignments_used << std::endl;
+    std::cerr << "  compression: " << use_compression << std::endl;
   }
 }
 
