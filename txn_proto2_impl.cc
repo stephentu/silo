@@ -222,22 +222,24 @@ txn_logger::writer(
 
   // NOTE: a core id in the persistence system really represets
   // all cores in the regular system modulo g_nworkers
+  size_t nwritten = 0;
   for (;;) {
-
-    // don't allow this loop to proceed less than an epoch's worth of time,
-    // so we can batch IO
-    struct timespec now, diff;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    timespec_utils::subtract(&now, &last_io_completed, &diff);
-    const uint64_t epoch_ns = ticker::tick_us * 1000;
-    if (diff.tv_sec == 0 && diff.tv_nsec < long(epoch_ns)) {
-      // need to sleep it out
-      struct timespec ts;
-      ts.tv_sec  = 0;
-      ts.tv_nsec = epoch_ns - diff.tv_nsec;
-      nanosleep(&ts, nullptr);
+    if (nwritten < iovs.size()) {
+      // don't allow this loop to proceed less than an epoch's worth of time,
+      // so we can batch IO
+      struct timespec now, diff;
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      timespec_utils::subtract(&now, &last_io_completed, &diff);
+      const uint64_t epoch_ns = ticker::tick_us * 1000;
+      if (diff.tv_sec == 0 && diff.tv_nsec < long(epoch_ns)) {
+        // need to sleep it out
+        struct timespec ts;
+        ts.tv_sec  = 0;
+        ts.tv_nsec = epoch_ns - diff.tv_nsec;
+        nanosleep(&ts, nullptr);
+      }
+      clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
     }
-    clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
 
     // we need g_persist_stats[cur_sync_epoch_ex % g_nmax_loggers]
     // to remain untouched (until the syncer can catch up), so we
@@ -245,8 +247,7 @@ txn_logger::writer(
     // (cur_sync_epoch_ex + g_max_lag_epochs)
     const uint64_t cur_sync_epoch_ex =
       system_sync_epoch_->load(memory_order_acquire) + 1;
-
-    size_t nwritten = 0;
+    nwritten = 0;
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
