@@ -15,15 +15,16 @@ if __name__ == '__main__':
 
     #names = ['scale', 'multipart:pct', 'multipart:cpu']
 
-    def deal_with_pos0_res(x):
+    def deal_with_posK_res(k, x):
       if type(x) == list:
-        return [e[0] for e in x]
-      return x[0]
+        return [e[k] for e in x]
+      return x[k]
+
+    def deal_with_pos0_res(x):
+      return deal_with_posK_res(0, x)
 
     def deal_with_pos1_res(x):
-      if type(x) == list:
-        return [e[1] for e in x]
-      return x[1]
+      return deal_with_posK_res(1, x)
 
     import re
     RGX = re.compile(r'--new-order-remote-item-pct (\d+)')
