@@ -49,12 +49,20 @@ def XX(x):
 
 def median(x): return x[len(x)/2]
 
-def YY(x, agger=median):
+def YY(x):
   def checked(e):
     if type(e) == list:
-      return agger(e)
+      return median(e)
     return e
   return [checked(e[1]) for e in x]
+
+def YERR(x):
+  ypts = [e[1] for e in x]
+  ymins = np.array([min(x) for x in ypts])
+  ymaxs = np.array([max(x) for x in ypts])
+  ymid = np.array([median(x) for x in ypts])
+  yerr=np.array([ymid - ymins, ymaxs - ymid])
+  return yerr
 
 def handle_scale_tpcc(f, results):
   # two graphs
@@ -75,8 +83,8 @@ def handle_scale_tpcc(f, results):
 
   fig = plt.figure()
   ax = plt.subplot(111)
-  ax.plot(XX(no_persist_throughput), YY(no_persist_throughput))
-  ax.plot(XX(with_persist_throughput), YY(with_persist_throughput))
+  ax.errorbar(XX(no_persist_throughput), YY(no_persist_throughput), yerr=YERR(no_persist_throughput))
+  ax.errorbar(XX(with_persist_throughput), YY(with_persist_throughput), yerr=YERR(with_persist_throughput))
   ax.legend(('No-Persist', 'Persist'), loc='upper left')
   ax.set_xlabel('threads')
   ax.set_ylabel('throughput (txns/sec)')
@@ -85,8 +93,8 @@ def handle_scale_tpcc(f, results):
 
   fig = plt.figure()
   ax = plt.subplot(111)
-  ax.plot(XX(no_persist_latency), YY(no_persist_latency))
-  ax.plot(XX(with_persist_latency), YY(with_persist_latency))
+  ax.errorbar(XX(no_persist_latency), YY(no_persist_latency), yerr=YERR(no_persist_latency))
+  ax.errorbar(XX(with_persist_latency), YY(with_persist_latency), yerr=YERR(with_persist_latency))
   ax.legend(('No-Persist', 'Persist'), loc='upper left')
   ax.set_xlabel('threads')
   ax.set_ylabel('latency (ms/txn)')
