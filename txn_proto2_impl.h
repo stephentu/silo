@@ -52,7 +52,6 @@ public:
   static const size_t g_nmax_loggers = 16;
   static const size_t g_perthread_buffers = 64; // 64 outstanding buffers
   static const size_t g_buffer_size = (1<<20); // in bytes
-  static const size_t g_horizon_size = (1<<16); // in bytes, for compression only
   static const size_t g_max_lag_epochs = 64; // cannot lag more than 64 epochs
 
   static inline bool
