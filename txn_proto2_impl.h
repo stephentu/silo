@@ -303,6 +303,10 @@ private:
   // counters
 
   static event_counter g_evt_log_buffer_epoch_boundary;
+  static event_counter g_evt_log_buffer_out_of_space;
+  static event_counter g_evt_log_buffer_bytes_before_compress;
+  static event_counter g_evt_log_buffer_bytes_after_compress;
+
   static event_counter g_evt_logger_max_lag_wait;
   static event_avg_counter g_evt_avg_log_entry_ntxns;
 };
@@ -602,13 +606,17 @@ public:
 
         // do compression of px0 into px1
 
-        const int ret = LZ4_compress_heap(
+        const int ret = LZ4_compress_heap_limitedOutput(
             ctx.lz4ctx_,
             (const char *) px0->datastart(),
             (char *) px1->datastart() + sizeof(uint32_t),
-            px0->datasize());
+            px0->datasize(),
+            px1->space_remaining(false));
 
-        INVARIANT(ret >= 0);
+        INVARIANT(ret > 0);
+
+        txn_logger::g_evt_log_buffer_bytes_before_compress.inc(px0->datasize());
+        txn_logger::g_evt_log_buffer_bytes_after_compress.inc(ret);
 
         serializer<uint32_t, false> s_uint32_t;
         s_uint32_t.write(px1->datastart(), ret);
@@ -629,6 +637,8 @@ public:
       push_buf.enq(px0);
       if (cond)
         ++txn_logger::g_evt_log_buffer_epoch_boundary;
+      else
+        ++txn_logger::g_evt_log_buffer_out_of_space;
       goto retry;
     }
 

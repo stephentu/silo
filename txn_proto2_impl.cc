@@ -29,9 +29,18 @@ percore<txn_logger::persist_stats>
 event_counter
   txn_logger::g_evt_log_buffer_epoch_boundary("log_buffer_epoch_boundary");
 event_counter
+  txn_logger::g_evt_log_buffer_out_of_space("log_buffer_out_of_space");
+event_counter
+  txn_logger::g_evt_log_buffer_bytes_before_compress("log_buffer_bytes_before_compress");
+event_counter
+  txn_logger::g_evt_log_buffer_bytes_after_compress("log_buffer_bytes_after_compress");
+event_counter
   txn_logger::g_evt_logger_max_lag_wait("logger_max_lag_wait");
 event_avg_counter
-  txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns");
+  txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns_per_entry");
+
+static event_avg_counter
+  evt_avg_log_buffer_iov_len("avg_log_buffer_iov_len");
 
 void
 txn_logger::Init(
@@ -264,6 +273,7 @@ txn_logger::writer(
           }
           iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
+          evt_avg_log_buffer_iov_len.offer(px->curoff_);
           px->io_scheduled_ = true;
           nwritten++;
 

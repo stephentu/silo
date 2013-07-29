@@ -173,6 +173,13 @@ int LZ4_compress_heap(
                  char* dest,
                  int inputSize);
 
+int LZ4_compress_heap_limitedOutput(
+                 void* ctx,
+                 const char* source,
+                 char* dest,
+                 int inputSize,
+                 int maxOutputSize);
+
 //****************************
 // Obsolete Functions
 //****************************
