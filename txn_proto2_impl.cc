@@ -37,6 +37,8 @@ event_counter
 event_counter
   txn_logger::g_evt_logger_max_lag_wait("logger_max_lag_wait");
 event_avg_counter
+  txn_logger::g_evt_avg_log_buffer_compress_time_us("avg_log_buffer_compress_time_us");
+event_avg_counter
   txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns_per_entry");
 
 static event_avg_counter

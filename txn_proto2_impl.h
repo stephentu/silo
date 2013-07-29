@@ -308,6 +308,7 @@ private:
 
   static event_counter g_evt_logger_max_lag_wait;
   static event_avg_counter g_evt_avg_log_entry_ntxns;
+  static event_avg_counter g_evt_avg_log_buffer_compress_time_us;
 };
 
 static inline std::ostream &
@@ -605,19 +606,25 @@ public:
 
         // do compression of px0 into px1
 
+#ifdef ENABLE_EVENT_COUNTERS
+        util::timer tt;
+#endif
         const int ret = LZ4_compress_heap_limitedOutput(
             ctx.lz4ctx_,
             (const char *) px0->datastart(),
             (char *) px1->datastart() + sizeof(uint32_t),
             px0->datasize(),
             px1->space_remaining(false));
+#ifdef ENABLE_EVENT_COUNTERS
+        txn_logger::g_evt_avg_log_buffer_compress_time_us.offer(tt.lap());
+#endif
 
-        if (ret <= 0) {
-          std::cerr << "ret=" << ret
-            << ", px0->datasize()=" << px0->datasize()
-            << ", px1->space_remaining(false)=" << px1->space_remaining(false)
-            << std::endl;
-        }
+        //if (ret <= 0) {
+        //  std::cerr << "ret=" << ret
+        //    << ", px0->datasize()=" << px0->datasize()
+        //    << ", px1->space_remaining(false)=" << px1->space_remaining(false)
+        //    << std::endl;
+        //}
 
         INVARIANT(ret > 0);
 
