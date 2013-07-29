@@ -16,8 +16,6 @@
 using namespace std;
 using namespace util;
 
-event_counter rcu::evt_px_group_creates("px_group_creates");
-event_counter rcu::evt_px_group_deletes("px_group_deletes");
 rcu rcu::s_instance;
 
 static event_counter evt_rcu_deletes("rcu_deletes");
@@ -97,7 +95,7 @@ rcu::free_with_fn(void *p, deleter_t fn)
   // already locked by the scoped region
   sync &s = mysync();
   INVARIANT(s.local_queue_mutexes_[rcu_tick % 3].is_locked());
-  s.local_queues_[rcu_tick % 3].enqueue(p, fn, rcu_tick);
+  s.local_queues_[rcu_tick % 3].enqueue(delete_entry(p, fn), rcu_tick);
   ++evt_rcu_frees;
 }
 

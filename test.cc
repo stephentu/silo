@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "circbuf.h"
+#include "pxqueue.h"
 #include "core.h"
 #include "thread.h"
 #include "txn.h"
@@ -88,12 +89,12 @@ namespace pxqueuetest {
   void
   Test()
   {
-    typedef rcu::basic_px_queue<8> px_queue;
+    typedef basic_px_queue<rcu::delete_entry, 8> px_queue;
 
     {
       px_queue q0;
       for (size_t i = 0; i < 14; i++)
-        q0.enqueue(N2P(i), N2D(i), 1);
+        q0.enqueue(rcu::delete_entry(N2P(i), N2D(i)), 1);
       ALWAYS_ASSERT(!q0.empty());
       q0.sanity_check();
 
@@ -106,8 +107,8 @@ namespace pxqueuetest {
       ALWAYS_ASSERT(i == 14);
 
       px_queue q1;
-      q1.enqueue(N2P(123), N2D(543), 1);
-      q1.enqueue(N2P(12345), N2D(54321), 1);
+      q1.enqueue(rcu::delete_entry(N2P(123), N2D(543)), 1);
+      q1.enqueue(rcu::delete_entry(N2P(12345), N2D(54321)), 1);
       q1.sanity_check();
       auto q1_it = q1.begin();
       ALWAYS_ASSERT(q1_it != q1.end());
@@ -123,8 +124,8 @@ namespace pxqueuetest {
 
     {
       px_queue q0, q1;
-      q1.enqueue(N2P(1), N2D(1), 1);
-      q1.enqueue(N2P(2), N2D(2), 2);
+      q1.enqueue(rcu::delete_entry(N2P(1), N2D(1)), 1);
+      q1.enqueue(rcu::delete_entry(N2P(2), N2D(2)), 2);
 
       q0.sanity_check();
       q1.sanity_check();
@@ -158,12 +159,12 @@ namespace pxqueuetest {
 
     {
       px_queue q0, q1;
-      q0.enqueue(N2P(1), N2D(1), 1);
-      q0.enqueue(N2P(3), N2D(3), 1);
+      q0.enqueue(rcu::delete_entry(N2P(1), N2D(1)), 1);
+      q0.enqueue(rcu::delete_entry(N2P(3), N2D(3)), 1);
 
-      q1.enqueue(N2P(2), N2D(2), 1);
-      q1.enqueue(N2P(4), N2D(4), 1);
-      q1.enqueue(N2P(6), N2D(6), 2);
+      q1.enqueue(rcu::delete_entry(N2P(2), N2D(2)), 1);
+      q1.enqueue(rcu::delete_entry(N2P(4), N2D(4)), 1);
+      q1.enqueue(rcu::delete_entry(N2P(6), N2D(6)), 2);
 
       q0.sanity_check();
       q1.sanity_check();
