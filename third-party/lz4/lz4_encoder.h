@@ -152,12 +152,12 @@ int FUNCTION_NAME(
 #ifdef LIMITED_OUTPUT
         if unlikely(op + length + (2 + 1 + LASTLITERALS) + (length>>8) > oend) return 0;   // Check output limit
 #endif
-        if (length>=(int)RUN_MASK) 
-        { 
-            int len = length-RUN_MASK; 
-            *token=(RUN_MASK<<ML_BITS); 
-            for(; len >= 255 ; len-=255) *op++ = 255; 
-            *op++ = (BYTE)len; 
+        if (length>=(int)RUN_MASK)
+        {
+            int len = length-RUN_MASK;
+            *token=(RUN_MASK<<ML_BITS);
+            for(; len >= 255 ; len-=255) *op++ = 255;
+            *op++ = (BYTE)len;
         }
         else *token = (BYTE)(length<<ML_BITS);
 
@@ -188,13 +188,13 @@ _endCount:
 #ifdef LIMITED_OUTPUT
         if unlikely(op + (1 + LASTLITERALS) + (length>>8) > oend) return 0;    // Check output limit
 #endif
-        if (length>=(int)ML_MASK) 
-        { 
-            *token += ML_MASK; 
-            length -= ML_MASK; 
-            for (; length > 509 ; length-=510) { *op++ = 255; *op++ = 255; } 
-            if (length >= 255) { length-=255; *op++ = 255; } 
-            *op++ = (BYTE)length; 
+        if (length>=(int)ML_MASK)
+        {
+            *token += ML_MASK;
+            length -= ML_MASK;
+            for (; length > 509 ; length-=510) { *op++ = 255; *op++ = 255; }
+            if (length >= 255) { length-=255; *op++ = 255; }
+            *op++ = (BYTE)length;
         }
         else *token += (BYTE)(length);
 
@@ -255,4 +255,8 @@ _last_literals:
 
 #ifdef USE_HEAPMEMORY
 #undef USE_HEAPMEMORY
+#endif
+
+#ifdef COMPRESS_64K
+#undef COMPRESS_64K
 #endif
