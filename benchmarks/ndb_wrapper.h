@@ -44,7 +44,7 @@ public:
       const std::vector<std::vector<unsigned>> &assignments_given,
       bool use_compression);
 
-  virtual ssize_t txn_max_batch_size() const OVERRIDE { return 1000; }
+  virtual ssize_t txn_max_batch_size() const OVERRIDE { return 100; }
 
   virtual void
   do_txn_epoch_sync() const
