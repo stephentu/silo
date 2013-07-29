@@ -613,7 +613,33 @@ public:
             px0->datasize(),
             px1->space_remaining(false));
 
+        if (ret <= 0) {
+          std::cerr << "ret=" << ret
+            << ", px0->datasize()=" << px0->datasize()
+            << ", px1->space_remaining(false)=" << px1->space_remaining(false)
+            << std::endl;
+        }
+
         INVARIANT(ret > 0);
+
+#if defined(CHECK_INVARIANTS) && defined(PARANOID_CHECKING)
+        {
+          uint8_t decode_buf[txn_logger::g_buffer_size];
+          const int decode_ret =
+            LZ4_decompress_safe_partial(
+                (const char *) px1->datastart() + sizeof(uint32_t),
+                (char *) &decode_buf[0],
+                ret,
+                txn_logger::g_buffer_size,
+                txn_logger::g_buffer_size);
+          INVARIANT(decode_ret >= 0);
+          if (size_t(decode_ret) != px0->datasize())
+            std::cerr << "decode_ret: " << decode_ret << ", px0->datasize(): "
+                      << px0->datasize() << std::endl;
+          INVARIANT(size_t(decode_ret) == px0->datasize());
+          INVARIANT(memcmp(px0->datastart(), &decode_buf[0], decode_ret) == 0);
+        }
+#endif
 
         txn_logger::g_evt_log_buffer_bytes_before_compress.inc(px0->datasize());
         txn_logger::g_evt_log_buffer_bytes_after_compress.inc(ret);
