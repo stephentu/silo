@@ -165,12 +165,25 @@ bench_runner::run()
   }
 
   db->do_txn_epoch_sync(); // also waits for worker threads to be persisted
-  if (verbose)
-    cerr << db->get_ntxn_persisted() << " txns persisted in loading phase" << endl;
+  {
+    const auto persisted_info = db->get_ntxn_persisted();
+    ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
+    if (verbose)
+      cerr << persisted_info << " txns persisted in loading phase" << endl;
+  }
   db->reset_ntxn_persisted();
 
   event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
   PERF_EXPR(scopedperf::perfsum_base::resetall());
+  {
+    const auto persisted_info = db->get_ntxn_persisted();
+    if (get<0>(persisted_info) != 0 ||
+        get<1>(persisted_info) != 0 ||
+        get<2>(persisted_info) != 0.0) {
+      cerr << persisted_info << endl;
+      ALWAYS_ASSERT(false);
+    }
+  }
 
   map<string, size_t> table_sizes_before;
   if (verbose) {
@@ -216,6 +229,11 @@ bench_runner::run()
                                          // because do_txn_finish() potentially
                                          // waits a bit
 
+  // various sanity checks
+  ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
+  // not == b/c persisted_info does not count read-only txns
+  ALWAYS_ASSERT(n_commits >= get<1>(persisted_info));
+
   const double elapsed_sec = double(elapsed) / 1000000.0;
   const double agg_throughput = double(n_commits) / elapsed_sec;
   const double avg_per_core_throughput = agg_throughput / double(workers.size());
@@ -223,15 +241,18 @@ bench_runner::run()
   const double agg_abort_rate = double(n_aborts) / elapsed_sec;
   const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
 
-  const double agg_persist_throughput = double(persisted_info.first) / elapsed_sec;
+  // we can use n_commits here, because we explicitly wait for all txns
+  // run to be durable
+  const double agg_persist_throughput = double(n_commits) / elapsed_sec;
   const double avg_per_core_persist_throughput =
     agg_persist_throughput / double(workers.size());
 
+  // XXX(stephentu): latency currently doesn't account for read-only txns
   const double avg_latency_us =
     double(latency_numer_us) / double(n_commits);
   const double avg_latency_ms = avg_latency_us / 1000.0;
   const double avg_persist_latency_ms =
-    persisted_info.second / 1000.0;
+    get<2>(persisted_info) / 1000.0;
 
   if (verbose) {
     const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();

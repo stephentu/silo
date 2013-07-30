@@ -66,9 +66,9 @@ public:
    */
   virtual void thread_end() {}
 
-  // [ntxns, avg latency]
-  virtual std::pair<uint64_t, double>
-    get_ntxn_persisted() const { return {0, 0.0}; }
+  // [ntxns_persisted, ntxns_committed, avg latency]
+  virtual std::tuple<uint64_t, uint64_t, double>
+    get_ntxn_persisted() const { return std::make_tuple(0, 0, 0.0); }
 
   virtual void reset_ntxn_persisted() { }
 

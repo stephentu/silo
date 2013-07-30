@@ -35,11 +35,17 @@ event_counter
 event_counter
   txn_logger::g_evt_log_buffer_bytes_after_compress("log_buffer_bytes_after_compress");
 event_counter
+  txn_logger::g_evt_logger_writev_limit_met("logger_writev_limit_met");
+event_counter
   txn_logger::g_evt_logger_max_lag_wait("logger_max_lag_wait");
 event_avg_counter
   txn_logger::g_evt_avg_log_buffer_compress_time_us("avg_log_buffer_compress_time_us");
 event_avg_counter
   txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns_per_entry");
+event_avg_counter
+  txn_logger::g_evt_avg_logger_bytes_per_writev("avg_logger_bytes_per_writev");
+event_avg_counter
+  txn_logger::g_evt_avg_logger_bytes_per_sec("avg_logger_bytes_per_sec");
 
 static event_avg_counter
   evt_avg_log_buffer_iov_len("avg_log_buffer_iov_len");
@@ -120,12 +126,17 @@ void
 txn_logger::persister(
     std::vector<std::vector<unsigned>> assignments)
 {
+  timer loop_timer;
   for (;;) {
-    const uint64_t sleep_ns = ticker::tick_us * 1000;
-    struct timespec t;
-    t.tv_sec  = sleep_ns / ONE_SECOND_NS;
-    t.tv_nsec = sleep_ns % ONE_SECOND_NS;
-    nanosleep(&t, nullptr);
+    const uint64_t last_loop_usec = loop_timer.lap();
+    const uint64_t delay_time_usec = ticker::tick_us;
+    if (last_loop_usec < delay_time_usec) {
+      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
+      struct timespec t;
+      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
+      nanosleep(&t, nullptr);
+    }
     advance_system_sync_epoch(assignments);
   }
 }
@@ -211,11 +222,10 @@ txn_logger::writer(
     unsigned id, int fd,
     std::vector<unsigned> assignment)
 {
-
   std::vector<iovec> iovs(
       std::min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
   std::vector<pbuffer *> pxs;
-  struct timespec last_io_completed;
+  timer loop_timer;
 
   // XXX: sense is not useful for now, unless we want to
   // fsync in the background...
@@ -225,27 +235,21 @@ txn_logger::writer(
   NDB_MEMSET(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
   NDB_MEMSET(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
 
-  clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
-
   // NOTE: a core id in the persistence system really represets
   // all cores in the regular system modulo g_nworkers
-  size_t nwritten = 0;
+  size_t nbufswritten = 0, nbyteswritten = 0;
   for (;;) {
-    if (nwritten < iovs.size()) {
-      // don't allow this loop to proceed less than an epoch's worth of time,
-      // so we can batch IO
-      struct timespec now, diff;
-      clock_gettime(CLOCK_MONOTONIC, &now);
-      timespec_utils::subtract(&now, &last_io_completed, &diff);
-      const uint64_t epoch_ns = ticker::tick_us * 1000;
-      if (diff.tv_sec == 0 && diff.tv_nsec < long(epoch_ns)) {
-        // need to sleep it out
-        struct timespec ts;
-        ts.tv_sec  = 0;
-        ts.tv_nsec = epoch_ns - diff.tv_nsec;
-        nanosleep(&ts, nullptr);
-      }
-      clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
+
+    const uint64_t last_loop_usec = loop_timer.lap();
+    const uint64_t delay_time_usec = ticker::tick_us;
+    // don't allow this loop to proceed less than an epoch's worth of time,
+    // so we can batch IO
+    if (last_loop_usec < delay_time_usec && nbufswritten < iovs.size()) {
+      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
+      struct timespec t;
+      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
+      nanosleep(&t, nullptr);
     }
 
     // we need g_persist_stats[cur_sync_epoch_ex % g_nmax_loggers]
@@ -254,7 +258,7 @@ txn_logger::writer(
     // (cur_sync_epoch_ex + g_max_lag_epochs)
     const uint64_t cur_sync_epoch_ex =
       system_sync_epoch_->load(memory_order_acquire) + 1;
-    nwritten = 0;
+    nbufswritten = nbyteswritten = 0;
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
@@ -263,21 +267,24 @@ txn_logger::writer(
         for (auto px : pxs) {
           INVARIANT(px);
           INVARIANT(!px->io_scheduled_);
-          INVARIANT(nwritten <= iovs.size());
+          INVARIANT(nbufswritten <= iovs.size());
           INVARIANT(px->header()->nentries_);
           INVARIANT(px->core_id_ == k);
-          if (nwritten == iovs.size())
+          if (nbufswritten == iovs.size()) {
+            ++g_evt_logger_writev_limit_met;
             goto process;
+          }
           if (transaction_proto2_static::EpochId(px->header()->last_tid_) >=
               cur_sync_epoch_ex + g_max_lag_epochs) {
             ++g_evt_logger_max_lag_wait;
             break;
           }
-          iovs[nwritten].iov_base = (void *) px->buf_.data();
-          iovs[nwritten].iov_len = px->curoff_;
+          iovs[nbufswritten].iov_base = (void *) px->buf_.data();
+          iovs[nbufswritten].iov_len = px->curoff_;
           evt_avg_log_buffer_iov_len.offer(px->curoff_);
           px->io_scheduled_ = true;
-          nwritten++;
+          nbufswritten++;
+          nbyteswritten += px->curoff_;
 
 #ifdef CHECK_INVARIANTS
           auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
@@ -308,25 +315,37 @@ txn_logger::writer(
     }
 
   process:
-    if (!nwritten) {
+    if (!nbufswritten) {
       // XXX: should probably sleep here
       nop_pause();
       continue;
     }
 
-    const ssize_t ret =
-      nwritten ? writev(fd, &iovs[0], nwritten) : 0;
-    if (ret == -1) {
+#ifdef ENABLE_EVENT_COUNTERS
+    timer write_timer;
+#endif
+
+    const ssize_t ret = writev(fd, &iovs[0], nbufswritten);
+    if (unlikely(ret == -1)) {
       perror("writev");
       ALWAYS_ASSERT(false);
     }
 
     const bool dosense = sense;
     const int fret = fdatasync(fd);
-    if (fret == -1) {
+    if (unlikely(fret == -1)) {
       perror("fdatasync");
       ALWAYS_ASSERT(false);
     }
+
+#ifdef ENABLE_EVENT_COUNTERS
+    {
+      g_evt_avg_logger_bytes_per_writev.offer(nbyteswritten);
+      const double bytes_per_sec =
+        double(nbyteswritten)/(write_timer.lap_ms() / 1000.0);
+      g_evt_avg_logger_bytes_per_sec.offer(bytes_per_sec);
+    }
+#endif
 
     // update metadata from previous write
     //
@@ -359,18 +378,22 @@ txn_logger::writer(
   }
 }
 
-pair<uint64_t, double>
+std::tuple<uint64_t, uint64_t, double>
 txn_logger::compute_ntxns_persisted_statistics()
 {
-  uint64_t acc = 0;
+  uint64_t acc = 0, acc1 = 0, acc2 = 0;
   uint64_t num = 0;
-
   for (size_t i = 0; i < g_persist_stats.size(); i++) {
-    acc += g_persist_stats[i].ntxns_persisted_.load(memory_order_acquire);
-    num += g_persist_stats[i].latency_numer_.load(memory_order_acquire);
+    acc  += g_persist_stats[i].ntxns_persisted_.load(memory_order_acquire);
+    acc1 += g_persist_stats[i].ntxns_pushed_.load(memory_order_acquire);
+    acc2 += g_persist_stats[i].ntxns_committed_.load(memory_order_acquire);
+    num  += g_persist_stats[i].latency_numer_.load(memory_order_acquire);
   }
-
-  return {acc, double(num)/double(acc)};
+  INVARIANT(acc <= acc1);
+  INVARIANT(acc1 <= acc2);
+  if (acc == 0)
+    return make_tuple(0, acc1, 0.0);
+  return make_tuple(acc, acc1, double(num)/double(acc));
 }
 
 void
@@ -379,6 +402,8 @@ txn_logger::clear_ntxns_persisted_statistics()
   for (size_t i = 0; i < g_persist_stats.size(); i++) {
     auto &ps = g_persist_stats[i];
     ps.ntxns_persisted_.store(0, memory_order_release);
+    ps.ntxns_pushed_.store(0, memory_order_release);
+    ps.ntxns_committed_.store(0, memory_order_release);
     ps.latency_numer_.store(0, memory_order_release);
     for (size_t e = 0; e < g_max_lag_epochs; e++) {
       auto &pes = ps.d_[e];
@@ -407,6 +432,9 @@ void
 txn_logger::wait_until_current_point_persisted()
 {
   const uint64_t e = ticker::s_instance.global_current_tick();
+  cerr << "waiting for system_sync_epoch_="
+       << system_sync_epoch_->load(memory_order_acquire)
+       << " to be < e=" << e << endl;
   while (system_sync_epoch_->load(memory_order_acquire) < e)
     nop_pause();
 }
