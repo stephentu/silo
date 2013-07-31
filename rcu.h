@@ -90,7 +90,7 @@ public:
     }
 
     inline void
-    set_pin_cpu_(size_t cpu)
+    set_pin_cpu(size_t cpu)
     {
       pin_cpu_ = cpu;
     }
