@@ -205,7 +205,7 @@ bench_runner::run()
     (*it)->start();
 
   barrier_a.wait_for(); // wait for all threads to start up
-  timer t;
+  timer t, t_nosync;
   barrier_b.count_down(); // bombs away!
   if (run_mode == RUNMODE_TIME) {
     sleep(runtime);
@@ -214,6 +214,7 @@ bench_runner::run()
   __sync_synchronize();
   for (size_t i = 0; i < nthreads; i++)
     workers[i]->join();
+  const unsigned long elapsed_nosync = t_nosync.lap();
   db->do_txn_finish(); // waits for all worker txns to persist
   size_t n_commits = 0;
   size_t n_aborts = 0;
@@ -233,6 +234,10 @@ bench_runner::run()
   ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
   // not == b/c persisted_info does not count read-only txns
   ALWAYS_ASSERT(n_commits >= get<1>(persisted_info));
+
+  const double elapsed_nosync_sec = double(elapsed_nosync) / 1000000.0;
+  const double agg_nosync_throughput = double(n_commits) / elapsed_nosync_sec;
+  const double avg_nosync_per_core_throughput = agg_nosync_throughput / double(workers.size());
 
   const double elapsed_sec = double(elapsed) / 1000000.0;
   const double agg_throughput = double(n_commits) / elapsed_sec;
@@ -296,6 +301,8 @@ bench_runner::run()
     cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
     cerr << "logical memory delta: " << size_delta_mb << " MB" << endl;
     cerr << "logical memory delta rate: " << (size_delta_mb / elapsed_sec) << " MB/sec" << endl;
+    cerr << "agg_nosync_throughput: " << agg_nosync_throughput << " ops/sec" << endl;
+    cerr << "avg_nosync_per_core_throughput: " << avg_nosync_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
