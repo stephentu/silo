@@ -292,13 +292,15 @@ private:
     if (unlikely(!ctx.init_ && imode != INITMODE_NONE)) {
       size_t needed = g_perthread_buffers * (sizeof(pbuffer) + g_buffer_size);
       if (IsCompressionEnabled())
-        needed += sizeof(pbuffer) + g_horizon_buffer_size;
+        needed += size_t(LZ4_create_size()) +
+          sizeof(pbuffer) + g_horizon_buffer_size;
       char *mem =
         (imode == INITMODE_REG) ?
           (char *) malloc(needed) :
           (char *) rcu::s_instance.alloc_static(needed);
       if (IsCompressionEnabled()) {
-        ctx.lz4ctx_ = LZ4_create(); // XXX: this is also a malloc()
+        ctx.lz4ctx_ = mem;
+        mem += LZ4_create_size();
         ctx.horizon_ = new (mem) pbuffer(core_id, g_horizon_buffer_size);
         mem += sizeof(pbuffer) + g_horizon_buffer_size;
       }
