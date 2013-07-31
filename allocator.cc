@@ -141,7 +141,7 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
 
   percore &pc = g_regions[cpu].elem;
   pc.lock.lock();
-  if (pc.arenas[arena]) {
+  if (likely(pc.arenas[arena])) {
     // claim
     void *ret = pc.arenas[arena];
     pc.arenas[arena] = nullptr;
@@ -186,6 +186,7 @@ void
 allocator::ReleaseArenas(void **arenas)
 {
   // cpu -> [(head, tail)]
+  // XXX: use a small_map here?
   std::map<size_t, static_vector<std::pair<void *, void *>, MAX_ARENAS>> m;
   for (size_t arena = 0; arena < MAX_ARENAS; arena++) {
     void *p = arenas[arena];
