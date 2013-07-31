@@ -21,6 +21,7 @@ DBS = ('ndb-proto1',)
 
 # config for istc*
 THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
+#THREADS = (24, 28, 32)
 
 #TXN_FLAGS = (0x0, 0x1)
 #TXN_FLAGS = (0x1,)
@@ -75,18 +76,31 @@ MACHINE_LOG_CONFIG = {
         ('/data/scidb/001/3/stephentu/data.log', 1.),
       ),
   'istc3' : (
-        ('data.log', 1./3.),
-        ('/f0/stephentu/data.log', 2./3.),
+        ('data.log', 3./24.),
+        ('/f0/stephentu/data.log', 7./24.),
+        ('/f1/stephentu/data.log', 7./24.),
+        ('/f2/stephentu/data.log', 7./24.),
       ),
 }
 
 ### helpers for log allocation
 def normalize(x):
-  denom = sum(x)
-  return [e/denom for e in x]
+  denom = math.fsum(x)
+  return [e / denom for e in x]
 
 def scale(x, a):
   return [e * a for e in x]
+
+# a - b
+def sub(a, b):
+  assert len(a) == len(b)
+  return [x - y for x, y in zip(a, b)]
+
+def twonorm(x):
+  return math.sqrt(math.fsum([e * e for e in x]))
+
+def onenorm(x):
+  return math.fsum([abs(e) for e in x])
 
 def argcmp(x, comp, predicate):
   idx = None
@@ -102,23 +116,59 @@ def argcmp(x, comp, predicate):
     raise Exception("no argmin satisfiying predicate")
   return idx
 
-def argmin(x, predicate):
+def argmin(x, predicate=lambda x: True):
   return argcmp(x, lambda a, b: a < b, predicate)
 
-def argmax(x, predicate):
+def argmax(x, predicate=lambda x: True):
   return argcmp(x, lambda a, b: a > b, predicate)
 
 def allocate(nworkers, weights):
+  def score(allocation):
+    #print "score(): allocation=", allocation, "weighted=", normalize(allocation), \
+    #    "score=",onenorm(sub(normalize(allocation), weights))
+    return onenorm(sub(normalize(allocation), weights))
+
+  # assumes weights are normalized
   approx = map(int, map(math.ceil, scale(weights, nworkers)))
   diff = sum(approx) - nworkers
   if diff > 0:
+    #print "OVER"
+    #print approx
+    #print normalize(approx)
     while diff > 0:
-      i = argmin(approx, predicate=lambda x: x > 0)
-      approx[i] -= 1
+      best, bestValue = None, None
+      for idx in xrange(len(approx)):
+        if not approx[idx]:
+          continue
+        cpy = approx[:]
+        cpy[idx] -= 1
+        s = score(cpy)
+        if bestValue is None or s < bestValue:
+          best, bestValue = cpy, s
+      assert best is not None
+      approx = best
       diff -= 1
+
   elif diff < 0:
-    i = argmax(approx, lambda x: True)
-    approx[i] += -diff
+    #print "UNDER"
+    #print approx
+    #print normalize(approx)
+    while diff < 0:
+      best, bestValue = None, None
+      for idx in xrange(len(approx)):
+        cpy = approx[:]
+        cpy[idx] += 1
+        s = score(cpy)
+        if bestValue is None or s < bestValue:
+          best, bestValue = cpy, s
+      assert best is not None
+      approx = best
+      diff += 1
+
+  #print "choice      =", approx
+  #print "weights     =", weights
+  #print "allocweights=", normalize(approx)
+
   acc = 0
   ret = []
   for x in approx:
@@ -292,6 +342,7 @@ def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts
   r = p.stdout.read()
   p.wait()
   toks = r.strip().split(' ')
+  #toks = [0,0,0,0,0]
   assert len(toks) == 5
   return tuple(map(float, toks))
 
