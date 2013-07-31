@@ -96,7 +96,7 @@ public:
     }
 
     inline ssize_t
-    get_pin_cpu_() const
+    get_pin_cpu() const
     {
       return pin_cpu_;
     }

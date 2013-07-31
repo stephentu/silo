@@ -147,9 +147,9 @@ void
 rcu::fault_region()
 {
   sync &s = mysync();
-  if (s.get_pin_cpu_() == -1)
+  if (s.get_pin_cpu() == -1)
     return;
-  ::allocator::FaultRegion(s.get_pin_cpu_());
+  ::allocator::FaultRegion(s.get_pin_cpu());
 }
 
 void
