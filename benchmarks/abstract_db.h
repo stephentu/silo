@@ -56,14 +56,9 @@ public:
    */
   virtual void do_txn_finish() const {}
 
-  /**
-   * for cruftier APIs
-   */
-  virtual void thread_init() {}
+  /** loader should be used as a performance hint, not for correctness */
+  virtual void thread_init(bool loader) {}
 
-  /**
-   * for cruftier APIs
-   */
   virtual void thread_end() {}
 
   // [ntxns_persisted, ntxns_committed, avg latency]

@@ -60,6 +60,12 @@ public:
   }
 
   virtual void
+  thread_init(bool loader)
+  {
+    txn_epoch_sync<Transaction>::thread_init(loader);
+  }
+
+  virtual void
   thread_end()
   {
     txn_epoch_sync<Transaction>::thread_end();

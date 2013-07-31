@@ -168,6 +168,15 @@ iceil(T x, U y)
   return x + (mod ? y - mod : 0);
 }
 
+static inline size_t
+slow_round_up(size_t x, size_t q)
+{
+  const size_t r = x % q;
+  if (!r)
+    return x;
+  return x + (q - r);
+}
+
 //// xor-shift:
 //// http://dmurphy747.wordpress.com/2011/03/23/xorshift-vs-random-performance-in-java/
 //class fast_random {

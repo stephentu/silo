@@ -92,7 +92,7 @@ mysql_wrapper::~mysql_wrapper()
 }
 
 void
-mysql_wrapper::thread_init()
+mysql_wrapper::thread_init(bool loader)
 {
   ALWAYS_ASSERT(tl_conn == NULL);
   tl_conn = new_connection(db);

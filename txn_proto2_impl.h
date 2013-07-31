@@ -196,23 +196,6 @@ public:
 
   typedef circbuf<pbuffer, g_perthread_buffers> pbuffer_circbuf;
 
-  // the buffer which a logger thread pushes clean buffers back to the worker
-  // thread.
-  //
-  // NOTE: has side effect of initializing buffer if not already initialized
-  static inline circbuf<pbuffer, g_perthread_buffers> &
-  logger_to_core_buffer(size_t core_id)
-  {
-    return persist_ctx_for(core_id, true).all_buffers_;
-  }
-
-  // the buffer which a worker thread uses to push buffers to the logger
-  static inline circbuf<pbuffer, g_perthread_buffers> &
-  core_to_logger_buffer(size_t core_id)
-  {
-    return persist_ctx_for(core_id, false).persist_buffers_;
-  }
-
   static std::tuple<uint64_t, uint64_t, double>
   compute_ntxns_persisted_statistics();
 
@@ -295,22 +278,35 @@ private:
   static void persister(
       std::vector<std::vector<unsigned>> assignments);
 
+  enum InitMode {
+    INITMODE_NONE, // no initialization
+    INITMODE_REG,  // just use malloc() to init buffers
+    INITMODE_RCU,  // try to use the RCU numa aware allocator
+  };
+
   static inline persist_ctx &
-  persist_ctx_for(uint64_t core_id, bool do_init = true)
+  persist_ctx_for(uint64_t core_id, InitMode imode)
   {
     INVARIANT(core_id < g_persist_ctxs.size());
     persist_ctx &ctx = g_persist_ctxs[core_id];
-    if (unlikely(!ctx.init_ && do_init)) {
-      ctx.init_ = true;
+    if (unlikely(!ctx.init_ && imode != INITMODE_NONE)) {
+      size_t needed = g_perthread_buffers * (sizeof(pbuffer) + g_buffer_size);
+      if (IsCompressionEnabled())
+        needed += sizeof(pbuffer) + g_horizon_buffer_size;
+      char *mem =
+        (imode == INITMODE_REG) ?
+          (char *) malloc(needed) :
+          (char *) rcu::s_instance.alloc_static(needed);
       if (IsCompressionEnabled()) {
-        ctx.lz4ctx_ = LZ4_create();
-        char *p = (char *) malloc(sizeof(pbuffer) + g_horizon_buffer_size);
-        ctx.horizon_ = new (p) pbuffer(core_id, g_horizon_buffer_size);
+        ctx.lz4ctx_ = LZ4_create(); // XXX: this is also a malloc()
+        ctx.horizon_ = new (mem) pbuffer(core_id, g_horizon_buffer_size);
+        mem += sizeof(pbuffer) + g_horizon_buffer_size;
       }
       for (size_t i = 0; i < g_perthread_buffers; i++) {
-        char *p = (char *) malloc(sizeof(pbuffer) + g_buffer_size);
-        ctx.all_buffers_.enq(new (p) pbuffer(core_id, g_buffer_size));
+        ctx.all_buffers_.enq(new (mem) pbuffer(core_id, g_buffer_size));
+        mem += sizeof(pbuffer) + g_buffer_size;
       }
+      ctx.init_ = true;
     }
     return ctx;
   }
@@ -732,7 +728,7 @@ public:
     const unsigned long my_core_id = coreid::core_id();
 
     txn_logger::persist_ctx &ctx =
-      txn_logger::persist_ctx_for(my_core_id, true);
+      txn_logger::persist_ctx_for(my_core_id, txn_logger::INITMODE_REG);
     txn_logger::persist_stats &stats =
       txn_logger::g_persist_stats[my_core_id];
     txn_logger::pbuffer_circbuf &pull_buf = ctx.all_buffers_;
@@ -1005,13 +1001,26 @@ struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
       txn_logger::wait_until_current_point_persisted();
   }
   static void
+  thread_init(bool loader)
+  {
+    if (!txn_logger::IsPersistenceEnabled())
+      return;
+    const unsigned long my_core_id = coreid::core_id();
+    // try to initialize using numa allocator
+    txn_logger::persist_ctx_for(
+        my_core_id,
+        loader ? txn_logger::INITMODE_REG : txn_logger::INITMODE_RCU);
+  }
+  static void
   thread_end()
   {
     if (!txn_logger::IsPersistenceEnabled())
       return;
     const unsigned long my_core_id = coreid::core_id();
     txn_logger::persist_ctx &ctx =
-      txn_logger::persist_ctx_for(my_core_id, false);
+      txn_logger::persist_ctx_for(my_core_id, txn_logger::INITMODE_NONE);
+    if (unlikely(!ctx.init_))
+      return;
     txn_logger::persist_stats &stats =
       txn_logger::g_persist_stats[my_core_id];
     txn_logger::pbuffer_circbuf &pull_buf = ctx.all_buffers_;

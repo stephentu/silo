@@ -46,10 +46,10 @@ MaxCpuForPinning()
 
 class scoped_db_thread_ctx : private util::noncopyable {
 public:
-  scoped_db_thread_ctx(abstract_db *db)
+  scoped_db_thread_ctx(abstract_db *db, bool loader)
     : db(db)
   {
-    db->thread_init();
+    db->thread_init(loader);
   }
   ~scoped_db_thread_ctx()
   {
@@ -82,7 +82,7 @@ public:
     ALWAYS_ASSERT(b);
     b->count_down();
     b->wait_for();
-    scoped_db_thread_ctx ctx(db);
+    scoped_db_thread_ctx ctx(db, true);
     load();
   }
 protected:

@@ -105,6 +105,10 @@ public:
     // the size of the allocation when calling free
     void *alloc(size_t sz);
 
+    // allocates a block of memory of size sz, with the intention of never
+    // free-ing it. is meant for reasonably large allocations (order of pages)
+    void *alloc_static(size_t sz);
+
     void dealloc(void *p, size_t sz);
 
     // try to release local arenas back to the allocator based on
@@ -142,6 +146,12 @@ public:
   alloc(size_t sz)
   {
     return mysync().alloc(sz);
+  }
+
+  inline void *
+  alloc_static(size_t sz)
+  {
+    return mysync().alloc_static(sz);
   }
 
   // this releases memory back to the allocator subsystem

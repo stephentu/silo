@@ -13,7 +13,7 @@ public:
   mysql_wrapper(const std::string &dir, const std::string &db);
   ~mysql_wrapper();
 
-  virtual void thread_init();
+  virtual void thread_init(bool loader);
   virtual void thread_end();
 
   virtual void *new_txn(

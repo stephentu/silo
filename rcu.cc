@@ -23,6 +23,8 @@ static event_counter evt_rcu_frees("rcu_frees");
 static event_counter evt_rcu_local_reaps("rcu_local_reaps");
 static event_counter evt_rcu_incomplete_local_reaps("rcu_incomplete_local_reaps");
 static event_counter evt_rcu_loop_reaps("rcu_loop_reaps");
+static event_counter evt_allocator_arena_allocation("allocator_arena_allocation");
+static event_counter evt_allocator_large_allocation("allocator_large_allocation");
 
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
@@ -37,14 +39,29 @@ rcu::sync::alloc(size_t sz)
     return malloc(sz);
   auto sizes = ::allocator::ArenaSize(sz);
   auto arena = sizes.second;
-  if (arena >= ::allocator::MAX_ARENAS)
+  if (arena >= ::allocator::MAX_ARENAS) {
     // fallback to regular allocator
+    ++evt_allocator_large_allocation;
     return malloc(sz);
+  }
   ensure_arena(arena);
   void *p = arenas_[arena];
   ALWAYS_ASSERT(p);
   arenas_[arena] = *reinterpret_cast<void **>(p);
+  ++evt_allocator_arena_allocation;
   return p;
+}
+
+void *
+rcu::sync::alloc_static(size_t sz)
+{
+  if (pin_cpu_ == -1)
+    return malloc(sz);
+  // round up to hugepagesize
+  static const size_t hugepgsize = ::allocator::GetHugepageSize();
+  sz = slow_round_up(sz, hugepgsize);
+  INVARIANT((sz % hugepgsize) == 0);
+  return ::allocator::AllocateUnmanaged(pin_cpu_, sz / hugepgsize);
 }
 
 void

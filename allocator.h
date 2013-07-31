@@ -25,6 +25,15 @@ public:
   static void *
   AllocateArenas(size_t cpu, size_t sz);
 
+  // allocates nhugepgs * hugepagesize contiguous bytes from CPU's region and
+  // returns the raw, unmanaged pointer.
+  //
+  // Note that memory returned from here cannot be released back to the
+  // allocator, so this should only be used for data structures which live
+  // throughput the duration of the system (ie log buffers)
+  static void *
+  AllocateUnmanaged(size_t cpu, size_t nhugepgs);
+
   static void
   ReleaseArenas(void **arenas);
 
@@ -64,16 +73,23 @@ public:
     return ret;
   }
 
-  static size_t GetPageSize();
-  static size_t GetHugepageSize();
+  static size_t
+  GetPageSize()
+  {
+    static const size_t sz = GetPageSizeImpl();
+    return sz;
+  }
+
+  static size_t
+  GetHugepageSize()
+  {
+    static const size_t sz = GetHugepageSizeImpl();
+    return sz;
+  }
 
 private:
-
-  // [g_memstart, g_memstart + ncpus * maxpercore) is the region of memory mmap()-ed
-  static void *g_memstart;
-  static void *g_memend; // g_memstart + ncpus * maxpercore
-  static size_t g_ncpus;
-  static size_t g_maxpercore;
+  static size_t GetPageSizeImpl();
+  static size_t GetHugepageSizeImpl();
 
   struct percore {
     percore()
@@ -97,6 +113,18 @@ private:
     std::mutex fault_lock; // XXX: hacky
     void *arenas[MAX_ARENAS];
   };
+
+  // assumes caller has the percore lock held, and
+  // will release the lock.
+  static void *
+  AllocateUnmanagedWithLock(percore &pc, size_t nhugepgs);
+
+  // [g_memstart, g_memstart + ncpus * maxpercore) is the region of memory mmap()-ed
+  static void *g_memstart;
+  static void *g_memend; // g_memstart + ncpus * maxpercore
+  static size_t g_ncpus;
+  static size_t g_maxpercore;
+
   static util::aligned_padded_elem<percore> g_regions[NMAXCORES];
 };
 

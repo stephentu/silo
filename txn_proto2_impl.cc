@@ -84,16 +84,6 @@ txn_logger::Init(
     for (size_t j = 0; j < g_nworkers; j++)
       per_thread_sync_epochs_[i].epochs_[j].store(0, memory_order_release);
 
-  // XXX: hack! because g_nworkers is set by the benchmark to be exactly the
-  // number of worker threads, we also want to pre-initialize the loader
-  // threads (since they come first and will take the lower buffer spots). so
-  // we just do 2x for now.
-  const size_t initialize = min(
-      size_t(2 * g_nworkers),
-      size_t(NMAXCORES));
-  for (size_t i = 0; i < initialize; i++)
-    persist_ctx_for(i); // invoke for the initialization
-
   vector<thread> writers;
   vector<vector<unsigned>> assignments(assignments_given);
 
@@ -165,7 +155,7 @@ txn_logger::advance_system_sync_epoch(
   for (size_t i = 0; i < assignments.size(); i++)
     for (auto j : assignments[i])
       for (size_t k = j; k < NMAXCORES; k += g_nworkers) {
-        persist_ctx &ctx = persist_ctx_for(k, false);
+        persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
         // we need to arbitrarily advance threads which are not "doing
         // anything", so they don't drag down the persistence of the system. if
         // we can see that a thread is NOT in a guarded section AND its
@@ -272,7 +262,7 @@ txn_logger::writer(
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
-        persist_ctx &ctx = persist_ctx_for(k, false);
+        persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
         ctx.persist_buffers_.peekall(pxs);
         for (auto px : pxs) {
           INVARIANT(px);
@@ -371,7 +361,7 @@ txn_logger::writer(
         if (x1 > x0)
           ea.epochs_[k].store(x1, memory_order_release);
 
-        persist_ctx &ctx = persist_ctx_for(k, false);
+        persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
         pbuffer *px, *px0;
         while ((px = ctx.persist_buffers_.peek()) && px->io_scheduled_) {
           px0 = ctx.persist_buffers_.deq();
@@ -429,7 +419,7 @@ void
 txn_logger::wait_for_idle_state()
 {
   for (size_t i = 0; i < NMAXCORES; i++) {
-    persist_ctx &ctx = persist_ctx_for(i, false);
+    persist_ctx &ctx = persist_ctx_for(i, INITMODE_NONE);
     if (!ctx.init_)
       continue;
     pbuffer *px;

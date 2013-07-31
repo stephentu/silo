@@ -107,7 +107,7 @@ bench_worker::run()
     scoped_rcu_region r; // register this thread in rcu region
   }
   on_run_setup();
-  scoped_db_thread_ctx ctx(db);
+  scoped_db_thread_ctx ctx(db, false);
   const workload_desc_vec workload = get_workload();
   txn_counts.resize(workload.size());
   barrier_a->count_down();
