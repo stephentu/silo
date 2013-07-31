@@ -90,17 +90,32 @@ public:
     bool io_scheduled_; // has the logger scheduled IO yet?
 
     unsigned curoff_; // current offset into buf_ for writing
-    std::string buf_; // the actual buffer, of size g_buffer_size
 
     const unsigned core_id_; // which core does this pbuffer belong to?
+
     const unsigned buf_sz_;
 
+    // must be last field
+    uint8_t buf_start_[0];
+
+    // to allocate a pbuffer, use placement new:
+    //    const size_t bufsz = ...;
+    //    char *p = malloc(sizeof(pbuffer) + bufsz);
+    //    pbuffer *pb = new (p) pbuffer(core_id, bufsz);
+    //
+    // NOTE: it is not necessary to call the destructor for pbuffer, since
+    // it only contains PODs
     pbuffer(unsigned core_id, unsigned buf_sz)
       : core_id_(core_id), buf_sz_(buf_sz)
     {
+      INVARIANT(((char *)this) + sizeof(*this) == (char *) &buf_start_[0]);
       INVARIANT(buf_sz > sizeof(logbuf_header));
       reset();
     }
+
+    pbuffer(const pbuffer &) = delete;
+    pbuffer &operator=(const pbuffer &) = delete;
+    pbuffer(pbuffer &&) = delete;
 
     inline void
     reset()
@@ -108,7 +123,7 @@ public:
       earliest_start_us_ = 0;
       io_scheduled_ = false;
       curoff_ = sizeof(logbuf_header);
-      buf_.assign(buf_sz_, 0);
+      NDB_MEMSET(&buf_start_[0], 0, buf_sz_);
     }
 
     inline uint8_t *
@@ -116,13 +131,13 @@ public:
     {
       INVARIANT(curoff_ >= sizeof(logbuf_header));
       INVARIANT(curoff_ <= buf_sz_);
-      return (uint8_t *) buf_.data() + curoff_;
+      return &buf_start_[0] + curoff_;
     }
 
     inline uint8_t *
     datastart()
     {
-      return (uint8_t *) buf_.data() + sizeof(logbuf_header);
+      return &buf_start_[0] + sizeof(logbuf_header);
     }
 
     inline size_t
@@ -136,13 +151,13 @@ public:
     inline logbuf_header *
     header()
     {
-      return (logbuf_header *) buf_.data();
+      return reinterpret_cast<logbuf_header *>(&buf_start_[0]);
     }
 
     inline const logbuf_header *
     header() const
     {
-      return (const logbuf_header *) buf_.data();
+      return reinterpret_cast<const logbuf_header *>(&buf_start_[0]);
     }
 
     inline size_t
@@ -155,7 +170,7 @@ public:
 
     inline bool
     can_hold_tid(uint64_t tid) const;
-  };
+  } PACKED;
 
   static bool
   AssignmentsValid(const std::vector<std::vector<unsigned>> &assignments,
@@ -289,10 +304,13 @@ private:
       ctx.init_ = true;
       if (IsCompressionEnabled()) {
         ctx.lz4ctx_ = LZ4_create();
-        ctx.horizon_ = new pbuffer(core_id, g_horizon_buffer_size);
+        char *p = (char *) malloc(sizeof(pbuffer) + g_horizon_buffer_size);
+        ctx.horizon_ = new (p) pbuffer(core_id, g_horizon_buffer_size);
       }
-      for (size_t i = 0; i < g_perthread_buffers; i++)
-        ctx.all_buffers_.enq(new pbuffer(core_id, g_buffer_size));
+      for (size_t i = 0; i < g_perthread_buffers; i++) {
+        char *p = (char *) malloc(sizeof(pbuffer) + g_buffer_size);
+        ctx.all_buffers_.enq(new (p) pbuffer(core_id, g_buffer_size));
+      }
     }
     return ctx;
   }

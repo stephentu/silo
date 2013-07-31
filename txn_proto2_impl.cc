@@ -289,7 +289,7 @@ txn_logger::writer(
             ++g_evt_logger_max_lag_wait;
             break;
           }
-          iovs[nbufswritten].iov_base = (void *) px->buf_.data();
+          iovs[nbufswritten].iov_base = (void *) &px->buf_start_[0];
           iovs[nbufswritten].iov_len = px->curoff_;
           evt_avg_log_buffer_iov_len.offer(px->curoff_);
           px->io_scheduled_ = true;
