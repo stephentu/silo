@@ -65,6 +65,7 @@ main(int argc, char **argv)
   free(curdir);
   int saw_run_spec = 0;
   int do_compress = 0;
+  int fake_writes = 0;
   vector<string> logfiles;
   vector<vector<unsigned>> assignments;
   while (1) {
@@ -88,6 +89,7 @@ main(int argc, char **argv)
       {"logfile"                    , required_argument , 0                          , 'l'} ,
       {"assignment"                 , required_argument , 0                          , 'a'} ,
       {"log-compress"               , no_argument       , &do_compress               , 1}   ,
+      {"log-fake-writes"            , no_argument       , &fake_writes               , 1}   ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
@@ -185,6 +187,16 @@ main(int argc, char **argv)
   else
     ALWAYS_ASSERT(false);
 
+  if (do_compress && logfiles.empty()) {
+    cerr << "--log-compression specified without logging enabled" << endl;
+    return 1;
+  }
+
+  if (fake_writes && logfiles.empty()) {
+    cerr << "--log-fake-writes specified without logging enabled" << endl;
+    return 1;
+  }
+
   // initialize the numa allocator
   if (numa_memory > 0) {
     const size_t maxpercpu = iceil(
@@ -207,11 +219,13 @@ main(int argc, char **argv)
     db = new bdb_wrapper("db", bench_type + ".db");
   } else if (db_type == "ndb-proto1") {
     // XXX: hacky simulation of proto1
-    db = new ndb_wrapper<transaction_proto2>(logfiles, assignments, do_compress);
+    db = new ndb_wrapper<transaction_proto2>(
+        logfiles, assignments, do_compress, fake_writes);
     transaction_proto2_static::set_hack_status(true);
     ALWAYS_ASSERT(transaction_proto2_static::get_hack_status());
   } else if (db_type == "ndb-proto2") {
-    db = new ndb_wrapper<transaction_proto2>(logfiles, assignments, do_compress);
+    db = new ndb_wrapper<transaction_proto2>(
+        logfiles, assignments, do_compress, fake_writes);
     ALWAYS_ASSERT(!transaction_proto2_static::get_hack_status());
   } else if (db_type == "kvdb") {
     db = new kvdb_wrapper<true>;

@@ -17,6 +17,7 @@ static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
 bool txn_logger::g_persist = false;
 bool txn_logger::g_use_compression = false;
+bool txn_logger::g_fake_writes = false;
 size_t txn_logger::g_nworkers = 0;
 txn_logger::epoch_array
   txn_logger::per_thread_sync_epochs_[txn_logger::g_nmax_loggers];
@@ -53,10 +54,11 @@ static event_avg_counter
 void
 txn_logger::Init(
     size_t nworkers,
-    const std::vector<std::string> &logfiles,
-    const std::vector<std::vector<unsigned>> &assignments_given,
-    std::vector<std::vector<unsigned>> *assignments_used,
-    bool use_compression)
+    const vector<string> &logfiles,
+    const vector<vector<unsigned>> &assignments_given,
+    vector<vector<unsigned>> *assignments_used,
+    bool use_compression,
+    bool fake_writes)
 {
   INVARIANT(!g_persist);
   INVARIANT(g_nworkers == 0);
@@ -64,7 +66,7 @@ txn_logger::Init(
   INVARIANT(!logfiles.empty());
   INVARIANT(logfiles.size() <= g_nmax_loggers);
   INVARIANT(!use_compression || g_perthread_buffers > 1); // need 1 as scratch buf
-  std::vector<int> fds;
+  vector<int> fds;
   for (auto &fname : logfiles) {
     int fd = open(fname.c_str(), O_CREAT|O_WRONLY|O_TRUNC, 0664);
     if (fd == -1) {
@@ -75,17 +77,25 @@ txn_logger::Init(
   }
   g_persist = true;
   g_use_compression = use_compression;
+  g_fake_writes = fake_writes;
   g_nworkers = nworkers;
 
   for (size_t i = 0; i < g_nmax_loggers; i++)
     for (size_t j = 0; j < g_nworkers; j++)
-      per_thread_sync_epochs_[i].epochs_[j].store(0, std::memory_order_release);
+      per_thread_sync_epochs_[i].epochs_[j].store(0, memory_order_release);
 
-  for (size_t i = 0; i < g_nworkers; i++)
+  // XXX: hack! because g_nworkers is set by the benchmark to be exactly the
+  // number of worker threads, we also want to pre-initialize the loader
+  // threads (since they come first and will take the lower buffer spots). so
+  // we just do 2x for now.
+  const size_t initialize = min(
+      size_t(2 * g_nworkers),
+      size_t(NMAXCORES));
+  for (size_t i = 0; i < initialize; i++)
     persist_ctx_for(i); // invoke for the initialization
 
-  std::vector<std::thread> writers;
-  std::vector<std::vector<unsigned>> assignments(assignments_given);
+  vector<thread> writers;
+  vector<vector<unsigned>> assignments(assignments_given);
 
   if (assignments.empty()) {
     // compute assuming homogenous disks
@@ -115,7 +125,7 @@ txn_logger::Init(
     writers.back().detach();
   }
 
-  std::thread persist_thread(&txn_logger::persister, assignments);
+  thread persist_thread(&txn_logger::persister, assignments);
   persist_thread.detach();
 
   if (assignments_used)
@@ -124,7 +134,7 @@ txn_logger::Init(
 
 void
 txn_logger::persister(
-    std::vector<std::vector<unsigned>> assignments)
+    vector<vector<unsigned>> assignments)
 {
   timer loop_timer;
   for (;;) {
@@ -143,9 +153,9 @@ txn_logger::persister(
 
 void
 txn_logger::advance_system_sync_epoch(
-    const std::vector<std::vector<unsigned>> &assignments)
+    const vector<vector<unsigned>> &assignments)
 {
-  uint64_t min_so_far = std::numeric_limits<uint64_t>::max();
+  uint64_t min_so_far = numeric_limits<uint64_t>::max();
   const uint64_t best_tick_ex =
     ticker::s_instance.global_current_tick();
   // special case 0
@@ -174,9 +184,9 @@ txn_logger::advance_system_sync_epoch(
             }
             if (did_lock) {
               if (!ctx.persist_buffers_.peek()) {
-                min_so_far = std::min(min_so_far, best_tick_inc);
+                min_so_far = min(min_so_far, best_tick_inc);
                 per_thread_sync_epochs_[i].epochs_[k].store(
-                    best_tick_inc, std::memory_order_release);
+                    best_tick_inc, memory_order_release);
                 l.unlock();
                 continue;
               }
@@ -184,16 +194,16 @@ txn_logger::advance_system_sync_epoch(
             }
           }
         }
-        min_so_far = std::min(
+        min_so_far = min(
             per_thread_sync_epochs_[i].epochs_[k].load(
-              std::memory_order_acquire),
+              memory_order_acquire),
             min_so_far);
       }
 
   const uint64_t syssync =
-    system_sync_epoch_->load(std::memory_order_acquire);
+    system_sync_epoch_->load(memory_order_acquire);
 
-  INVARIANT(min_so_far < std::numeric_limits<uint64_t>::max());
+  INVARIANT(min_so_far < numeric_limits<uint64_t>::max());
   INVARIANT(syssync <= min_so_far);
 
   // need to aggregate from [syssync + 1, min_so_far]
@@ -209,22 +219,22 @@ txn_logger::advance_system_sync_epoch(
         non_atomic_fetch_add(
             ps.latency_numer_,
             (now_us - start_us) * ntxns_in_epoch);
-        pes.ntxns_.store(0, std::memory_order_release);
-        pes.earliest_start_us_.store(0, std::memory_order_release);
+        pes.ntxns_.store(0, memory_order_release);
+        pes.earliest_start_us_.store(0, memory_order_release);
     }
   }
 
-  system_sync_epoch_->store(min_so_far, std::memory_order_release);
+  system_sync_epoch_->store(min_so_far, memory_order_release);
 }
 
 void
 txn_logger::writer(
     unsigned id, int fd,
-    std::vector<unsigned> assignment)
+    vector<unsigned> assignment)
 {
-  std::vector<iovec> iovs(
-      std::min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
-  std::vector<pbuffer *> pxs;
+  vector<iovec> iovs(
+      min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
+  vector<pbuffer *> pxs;
   timer loop_timer;
 
   // XXX: sense is not useful for now, unless we want to
@@ -321,31 +331,33 @@ txn_logger::writer(
       continue;
     }
 
-#ifdef ENABLE_EVENT_COUNTERS
-    timer write_timer;
-#endif
-
-    const ssize_t ret = writev(fd, &iovs[0], nbufswritten);
-    if (unlikely(ret == -1)) {
-      perror("writev");
-      ALWAYS_ASSERT(false);
-    }
-
     const bool dosense = sense;
-    const int fret = fdatasync(fd);
-    if (unlikely(fret == -1)) {
-      perror("fdatasync");
-      ALWAYS_ASSERT(false);
-    }
+
+    if (!g_fake_writes) {
+#ifdef ENABLE_EVENT_COUNTERS
+      timer write_timer;
+#endif
+      const ssize_t ret = writev(fd, &iovs[0], nbufswritten);
+      if (unlikely(ret == -1)) {
+        perror("writev");
+        ALWAYS_ASSERT(false);
+      }
+
+      const int fret = fdatasync(fd);
+      if (unlikely(fret == -1)) {
+        perror("fdatasync");
+        ALWAYS_ASSERT(false);
+      }
 
 #ifdef ENABLE_EVENT_COUNTERS
-    {
-      g_evt_avg_logger_bytes_per_writev.offer(nbyteswritten);
-      const double bytes_per_sec =
-        double(nbyteswritten)/(write_timer.lap_ms() / 1000.0);
-      g_evt_avg_logger_bytes_per_sec.offer(bytes_per_sec);
-    }
+      {
+        g_evt_avg_logger_bytes_per_writev.offer(nbyteswritten);
+        const double bytes_per_sec =
+          double(nbyteswritten)/(write_timer.lap_ms() / 1000.0);
+        g_evt_avg_logger_bytes_per_sec.offer(bytes_per_sec);
+      }
 #endif
+    }
 
     // update metadata from previous write
     //
@@ -378,7 +390,7 @@ txn_logger::writer(
   }
 }
 
-std::tuple<uint64_t, uint64_t, double>
+tuple<uint64_t, uint64_t, double>
 txn_logger::compute_ntxns_persisted_statistics()
 {
   uint64_t acc = 0, acc1 = 0, acc2 = 0;
@@ -470,10 +482,10 @@ transaction_proto2_static::do_dbtuple_chain_cleanup(dbtuple *ln, uint64_t ro_epo
     INVARIANT(EpochId(pprev->version) <= e);
     INVARIANT(pprev->version > p->version);
     g_max_gc_version_inc->store(
-      std::max(
-        g_max_gc_version_inc->load(std::memory_order_acquire),
+      max(
+        g_max_gc_version_inc->load(memory_order_acquire),
         EpochId(p->version)),
-      std::memory_order_release);
+      memory_order_release);
     pprev->set_next(NULL);
     p->gc_chain();
   }
@@ -542,9 +554,9 @@ transaction_proto2_static::try_dbtuple_cleanup(
       dbtuple::release(tuple); // release() marks deleted
       ++evt_try_delete_unlinks;
       g_max_unlink_version_inc->store(
-        std::max(
-          g_max_unlink_version_inc->load(std::memory_order_acquire), v),
-        std::memory_order_release);
+        max(
+          g_max_unlink_version_inc->load(memory_order_acquire), v),
+        memory_order_release);
     }
   } else {
     ret = tuple->get_next();

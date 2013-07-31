@@ -51,7 +51,7 @@ class txn_logger {
 public:
 
   static const size_t g_nmax_loggers = 16;
-  static const size_t g_perthread_buffers = 128; // 128 outstanding buffers
+  static const size_t g_perthread_buffers = 256; // 256 outstanding buffers
   static const size_t g_buffer_size = (1<<20); // in bytes
   static const size_t g_horizon_buffer_size = 2 * (1<<16); // in bytes
   static const size_t g_max_lag_epochs = 128; // cannot lag more than 128 epochs
@@ -77,7 +77,8 @@ public:
       const std::vector<std::string> &logfiles,
       const std::vector<std::vector<unsigned>> &assignments_given,
       std::vector<std::vector<unsigned>> *assignments_used = nullptr,
-      bool use_compression = false);
+      bool use_compression = false,
+      bool fake_writes = false);
 
   struct logbuf_header {
     uint64_t nentries_; // > 0 for all valid log buffers
@@ -301,6 +302,9 @@ private:
   static bool g_persist; // whether or not logging is enabled
 
   static bool g_use_compression; // whether or not to compress log buffers
+
+  static bool g_fake_writes; // whether or not to fake doing writes (to measure
+                             // pure overhead of disk)
 
   static size_t g_nworkers; // assignments are computed based on g_nworkers
                             // but a logger responsible for core i is really

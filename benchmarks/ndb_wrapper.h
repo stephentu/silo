@@ -42,7 +42,8 @@ public:
   ndb_wrapper(
       const std::vector<std::string> &logfiles,
       const std::vector<std::vector<unsigned>> &assignments_given,
-      bool use_compression);
+      bool use_compression,
+      bool fake_writes);
 
   virtual ssize_t txn_max_batch_size() const OVERRIDE { return 100; }
 
