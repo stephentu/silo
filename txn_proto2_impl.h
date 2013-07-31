@@ -55,6 +55,7 @@ public:
   static const size_t g_buffer_size = (1<<20); // in bytes
   static const size_t g_horizon_buffer_size = 2 * (1<<16); // in bytes
   static const size_t g_max_lag_epochs = 128; // cannot lag more than 128 epochs
+  static const bool   g_pin_loggers_to_numa_nodes = false;
 
   static inline bool
   IsPersistenceEnabled()
