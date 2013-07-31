@@ -543,7 +543,8 @@ protected:
   }
 
   inline ALWAYS_INLINE string &
-  str() {
+  str()
+  {
     return *arena.next();
   }
 
