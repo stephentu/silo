@@ -25,12 +25,6 @@ public:
     return tl_core_id;
   }
 
-  static inline size_t
-  core_count()
-  {
-    return g_core_count.load(std::memory_order_acquire);
-  }
-
   // actual number of CPUs online for the system
   static size_t num_cpus_online();
 
