@@ -225,13 +225,8 @@ txn_logger::writer(
 {
 
   if (g_pin_loggers_to_numa_nodes) {
-    // map assignment -> numa nodes, and pin on those numa nodes
-    struct bitmask *bm = numa_bitmask_alloc(numa_num_configured_nodes());
-    ALWAYS_ASSERT(bm);
-    for (auto i : assignment)
-      numa_bitmask_setbit(bm, numa_node_of_cpu(i));
-    ALWAYS_ASSERT(!numa_run_on_node_mask(bm));
-    numa_bitmask_free(bm);
+    ALWAYS_ASSERT(!numa_run_on_node(id % numa_num_configured_nodes()));
+    ALWAYS_ASSERT(!sched_yield());
   }
 
   vector<iovec> iovs(

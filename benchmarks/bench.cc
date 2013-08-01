@@ -103,7 +103,11 @@ write_cb(void *p, const char *s)
 void
 bench_worker::run()
 {
-  { // XXX(stephentu): this is a hack
+  // XXX(stephentu): so many nasty hacks here. should actually
+  // fix some of this stuff one day
+  if (set_core_id)
+    coreid::set_core_id(worker_id); // cringe
+  {
     scoped_rcu_region r; // register this thread in rcu region
   }
   on_run_setup();

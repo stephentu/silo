@@ -275,6 +275,8 @@ protected: \
   static void
   PinToWarehouseId(unsigned int wid)
   {
+    //cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
+    //     << " pinned to whse=" << wid << endl;
     ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
     const unsigned long pinid = (wid - 1) % MaxCpuForPinning();
     rcu::s_instance.pin_current_thread(pinid);
@@ -448,7 +450,8 @@ public:
               const map<string, vector<abstract_ordered_index *>> &partitions,
               spin_barrier *barrier_a, spin_barrier *barrier_b,
               uint warehouse_id)
-    : bench_worker(worker_id, seed, db, open_tables, barrier_a, barrier_b),
+    : bench_worker(worker_id, true, seed, db,
+                   open_tables, barrier_a, barrier_b),
       tpcc_worker_mixin(partitions),
       warehouse_id(warehouse_id)
   {
@@ -539,6 +542,8 @@ protected:
   {
     if (!pin_cpus)
       return;
+    //cerr << "worker with whse=" << warehouse_id << ", coreid=" << coreid::core_id()
+    //     << " pinned to thread " << (worker_id % MaxCpuForPinning()) << endl;
     rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
   }
 
@@ -1974,12 +1979,18 @@ protected:
   virtual vector<bench_worker *>
   make_workers()
   {
+    const unsigned alignment = coreid::num_cpus_online();
+    const int blockstart =
+      coreid::allocate_contiguous_aligned_block(nthreads, alignment);
+    ALWAYS_ASSERT(blockstart >= 0);
+    ALWAYS_ASSERT((blockstart % alignment) == 0);
     fast_random r(23984543);
     vector<bench_worker *> ret;
     for (size_t i = 0; i < nthreads; i++)
       ret.push_back(
         new tpcc_worker(
-          i, r.next(), db, open_tables, partitions,
+          blockstart + i,
+          r.next(), db, open_tables, partitions,
           &barrier_a, &barrier_b,
           (i % NumWarehouses()) + 1));
     return ret;

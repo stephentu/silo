@@ -41,7 +41,8 @@ public:
       unsigned long seed, abstract_db *db,
       const map<string, abstract_ordered_index *> &open_tables,
       spin_barrier *barrier_a, spin_barrier *barrier_b)
-    : bench_worker(worker_id, seed, db, open_tables, barrier_a, barrier_b),
+    : bench_worker(worker_id, false, seed, db,
+                   open_tables, barrier_a, barrier_b),
       tbl(open_tables.at("table"))
   {
   }

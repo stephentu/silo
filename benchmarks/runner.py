@@ -31,7 +31,9 @@ THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
 # tuples of (benchname, amplification-factor)
 #BENCHMARKS = ( ('ycsb', 1000), ('tpcc', 1), )
 
-NTRIALS = 3
+DRYRUN = True
+
+NTRIALS = 1 if DRYRUN else 3
 
 ### NOTE: for TPC-C, in general, allocate 4GB of memory per thread for the experiments.
 ### this is over-conservative
@@ -337,12 +339,15 @@ def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts
     + ([] if not numa_memory else ['--numa-memory', numa_memory]) \
     + ([] if not logfiles else list(it.chain.from_iterable([['--logfile', f] for f in logfiles]))) \
     + ([] if not assignments else list(it.chain.from_iterable([['--assignment', ','.join(map(str, x))] for x in assignments])))
-  print >>sys.stderr, '[INFO] running command %s' % str(args)
-  p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
-  r = p.stdout.read()
-  p.wait()
-  toks = r.strip().split(' ')
-  #toks = [0,0,0,0,0]
+  print >>sys.stderr, '[INFO] running command:'
+  print >>sys.stderr, ' '.join(args)
+  if not DRYRUN:
+    p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
+    r = p.stdout.read()
+    p.wait()
+    toks = r.strip().split(' ')
+  else:
+    toks = [0,0,0,0,0]
   assert len(toks) == 5
   return tuple(map(float, toks))
 
