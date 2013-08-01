@@ -190,13 +190,22 @@ main(int argc, char **argv)
     ALWAYS_ASSERT(false);
 
   if (do_compress && logfiles.empty()) {
-    cerr << "--log-compression specified without logging enabled" << endl;
+    cerr << "[ERROR] --log-compression specified without logging enabled" << endl;
     return 1;
   }
 
   if (fake_writes && logfiles.empty()) {
-    cerr << "--log-fake-writes specified without logging enabled" << endl;
+    cerr << "[ERROR] --log-fake-writes specified without logging enabled" << endl;
     return 1;
+  }
+
+  if (nofsync && logfiles.empty()) {
+    cerr << "[ERROR] --log-nofsync specified without logging enabled" << endl;
+    return 1;
+  }
+
+  if (fake_writes && nofsync) {
+    cerr << "[WARNING] --log-nofsync has no effect with --log-fake-writes enabled" << endl;
   }
 
   // initialize the numa allocator
