@@ -287,11 +287,19 @@ txn_logger::writer(
             break;
           }
           iovs[nbufswritten].iov_base = (void *) &px->buf_start_[0];
-          iovs[nbufswritten].iov_len = px->curoff_;
-          evt_avg_log_buffer_iov_len.offer(px->curoff_);
+
+#ifdef LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
+          const size_t pxlen =
+            (px->curoff_ < 4) ? px->curoff_ : (px->curoff_ / 4);
+#else
+          const size_t pxlen = px->curoff_;
+#endif
+
+          iovs[nbufswritten].iov_len = pxlen;
+          evt_avg_log_buffer_iov_len.offer(pxlen);
           px->io_scheduled_ = true;
           nbufswritten++;
-          nbyteswritten += px->curoff_;
+          nbyteswritten += pxlen;
 
 #ifdef CHECK_INVARIANTS
           auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);

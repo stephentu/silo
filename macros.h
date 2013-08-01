@@ -21,6 +21,12 @@
 //#define DISABLE_FIELD_SELECTION
 //#define PARANOID_CHECKING
 
+/**
+ * some non-sensical options, which only make sense for performance debugging
+ * experiments. these should ALL be DISABLED when doing actual benchmarking
+ **/
+#define LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
+
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 #define LG_CACHELINE_SIZE __builtin_ctz(CACHELINE_SIZE)
 
