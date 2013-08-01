@@ -56,8 +56,23 @@ def YY(x):
     return e
   return [checked(e[1]) for e in x]
 
+def YYPC(x):
+  def checked(e):
+    if type(e) == list:
+      return median(e)
+    return e
+  return [checked(e[1])/float(e[0]) for e in x]
+
 def YERR(x):
   ypts = [e[1] for e in x]
+  ymins = np.array([min(x) for x in ypts])
+  ymaxs = np.array([max(x) for x in ypts])
+  ymid = np.array([median(x) for x in ypts])
+  yerr=np.array([ymid - ymins, ymaxs - ymid])
+  return yerr
+
+def YERRPC(x):
+  ypts = [[ee/float(e[0]) for ee in e[1]] for e in x]
   ymins = np.array([min(x) for x in ypts])
   ymaxs = np.array([max(x) for x in ypts])
   ymid = np.array([median(x) for x in ypts])
@@ -90,6 +105,17 @@ def handle_scale_tpcc(f, results):
   ax.set_ylabel('throughput (txns/sec)')
   bname = '.'.join(os.path.basename(f).split('.')[:-1])
   fig.savefig('.'.join([bname + '-scale_tpcc-throughput', 'pdf']))
+
+  fig = plt.figure()
+  ax = plt.subplot(111)
+  ax.errorbar(XX(no_persist_throughput), YYPC(no_persist_throughput), yerr=YERRPC(no_persist_throughput))
+  ax.errorbar(XX(with_persist_throughput), YYPC(with_persist_throughput), yerr=YERRPC(with_persist_throughput))
+  ax.legend(('No-Persist', 'Persist'), loc='upper left')
+  ax.set_xlabel('threads')
+  ax.set_ylabel('throughput (txns/sec/core)')
+  ax.set_ylim([20000, 32000])
+  bname = '.'.join(os.path.basename(f).split('.')[:-1])
+  fig.savefig('.'.join([bname + '-scale_tpcc-per-core-throughput', 'pdf']))
 
   fig = plt.figure()
   ax = plt.subplot(111)
