@@ -376,9 +376,9 @@ public:
   // subsystem's tick
 
 #ifdef CHECK_INVARIANTS
-  static const uint64_t ReadOnlyEpochMultiplier = 1; /* 10 ms */
+  static const uint64_t ReadOnlyEpochMultiplier = 1; /* 40 ms */
 #else
-  static const uint64_t ReadOnlyEpochMultiplier = 50; /* 1 sec */
+  static const uint64_t ReadOnlyEpochMultiplier = 25; /* 1 sec */
   static_assert(ticker::tick_us * ReadOnlyEpochMultiplier == 1000000, "");
 #endif
 
@@ -703,21 +703,24 @@ public:
     space_needed += sizeof(uint64_t);
 
     // variable bytes to indicate # of records written
-    const uint32_t nwrites = this->write_set.size();
+    unsigned nwrites = this->write_set.size();
+    //if (nwrites > 1)
+    //  nwrites /= 2; // XXX: testing
+
     space_needed += vs_uint32_t.nbytes(&nwrites);
 
     // each record needs to be recorded
-    auto it_end = this->write_set.end();
     write_set_u32_vec value_sizes;
-    for (auto it = this->write_set.begin(); it != it_end; ++it) {
-      const uint32_t k_nbytes = it->get_key().size();
+    for (unsigned idx = 0; idx < nwrites; idx++) {
+      const transaction_base::write_record_t &rec = this->write_set[idx];
+      const uint32_t k_nbytes = rec.get_key().size();
       space_needed += vs_uint32_t.nbytes(&k_nbytes);
       space_needed += k_nbytes;
 
-      const uint32_t v_nbytes = it->get_value() ?
-          it->get_writer()(
+      const uint32_t v_nbytes = rec.get_value() ?
+          rec.get_writer()(
               dbtuple::TUPLE_WRITER_COMPUTE_DELTA_NEEDED,
-              it->get_value(), nullptr, 0) : 0;
+              rec.get_value(), nullptr, 0) : 0;
       space_needed += vs_uint32_t.nbytes(&v_nbytes);
       space_needed += v_nbytes;
 
@@ -811,13 +814,15 @@ private:
 
     serializer<uint32_t, true> vs_uint32_t;
     serializer<uint64_t, false> s_uint64_t;
-    const size_t nwrites = this->write_set.size();
+    unsigned nwrites = this->write_set.size();
+    //if (nwrites > 1)
+    //  nwrites /= 2; // XXX: testing
     INVARIANT(nwrites == value_sizes.size());
 
     p = s_uint64_t.write(p, commit_tid);
     p = vs_uint32_t.write(p, nwrites);
 
-    for (size_t idx = 0; idx < nwrites; idx++) {
+    for (unsigned idx = 0; idx < nwrites; idx++) {
       const transaction_base::write_record_t &rec = this->write_set[idx];
       const uint32_t k_nbytes = rec.get_key().size();
       p = vs_uint32_t.write(p, k_nbytes);

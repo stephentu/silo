@@ -12,7 +12,7 @@
 class ticker {
 public:
   //static const uint64_t tick_us = 1 * 1000; /* 1 ms */
-  static const uint64_t tick_us = 20 * 1000; /* 20 ms */
+  static const uint64_t tick_us = 40 * 1000; /* 40 ms */
 
   ticker()
     : current_tick_(1), last_tick_inclusive_(0)
