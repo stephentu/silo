@@ -78,6 +78,7 @@ public:
       const std::vector<std::string> &logfiles,
       const std::vector<std::vector<unsigned>> &assignments_given,
       std::vector<std::vector<unsigned>> *assignments_used = nullptr,
+      bool call_fsync = true,
       bool use_compression = false,
       bool fake_writes = false);
 
@@ -317,6 +318,9 @@ private:
   // static state
 
   static bool g_persist; // whether or not logging is enabled
+
+  static bool g_call_fsync; // whether or not fsync() needs to be called
+                            // in order to be considered durable
 
   static bool g_use_compression; // whether or not to compress log buffers
 

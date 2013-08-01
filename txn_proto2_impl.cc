@@ -17,6 +17,7 @@ static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
 bool txn_logger::g_persist = false;
+bool txn_logger::g_call_fsync = true;
 bool txn_logger::g_use_compression = false;
 bool txn_logger::g_fake_writes = false;
 size_t txn_logger::g_nworkers = 0;
@@ -58,6 +59,7 @@ txn_logger::Init(
     const vector<string> &logfiles,
     const vector<vector<unsigned>> &assignments_given,
     vector<vector<unsigned>> *assignments_used,
+    bool call_fsync,
     bool use_compression,
     bool fake_writes)
 {
@@ -77,6 +79,7 @@ txn_logger::Init(
     fds.push_back(fd);
   }
   g_persist = true;
+  g_call_fsync = call_fsync;
   g_use_compression = use_compression;
   g_fake_writes = fake_writes;
   g_nworkers = nworkers;
@@ -348,10 +351,12 @@ txn_logger::writer(
         ALWAYS_ASSERT(false);
       }
 
-      const int fret = fdatasync(fd);
-      if (unlikely(fret == -1)) {
-        perror("fdatasync");
-        ALWAYS_ASSERT(false);
+      if (g_call_fsync) {
+        const int fret = fdatasync(fd);
+        if (unlikely(fret == -1)) {
+          perror("fdatasync");
+          ALWAYS_ASSERT(false);
+        }
       }
 
 #ifdef ENABLE_EVENT_COUNTERS
