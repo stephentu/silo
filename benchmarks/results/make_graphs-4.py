@@ -47,7 +47,7 @@ def extract_latency(results, persist):
 def XX(x):
   return [e[0] for e in x]
 
-def median(x): return x[len(x)/2]
+def median(x): return sorted(x)[len(x)/2]
 
 def YY(x):
   def checked(e):
@@ -85,7 +85,6 @@ def handle_scale_tpcc(f, results):
   # y-axis[0] is throughput
   # y-axis[1] is latency
 
-  data_by_threads = order_results_by_threads(results)
   no_persist, with_persist = \
       split_results_by_predicate(results, lambda x: not x[0]['persist'])
   no_persist, with_persist = \
