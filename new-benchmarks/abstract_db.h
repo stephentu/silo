@@ -33,15 +33,16 @@ public:
    */
   virtual void do_txn_finish() const {}
 
-  /**
-   * for cruftier APIs
-   */
-  virtual void thread_init() {}
+  /** loader should be used as a performance hint, not for correctness */
+  virtual void thread_init(bool loader) {}
 
-  /**
-   * for cruftier APIs
-   */
   virtual void thread_end() {}
+
+  // [ntxns_persisted, ntxns_committed, avg latency]
+  virtual std::tuple<uint64_t, uint64_t, double>
+    get_ntxn_persisted() const { return std::make_tuple(0, 0, 0.0); }
+
+  virtual void reset_ntxn_persisted() { }
 
   enum TxnProfileHint {
     HINT_DEFAULT,

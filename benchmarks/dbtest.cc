@@ -4,6 +4,7 @@
 #include <vector>
 #include <utility>
 #include <string>
+#include <set>
 
 #include <getopt.h>
 #include <stdlib.h>

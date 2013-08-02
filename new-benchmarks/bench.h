@@ -17,8 +17,20 @@
 #include "../spinbarrier.h"
 #include "../rcu.h"
 
-//extern void ycsb_do_test(const std::string &dbtype, int argc, char **argv);
-extern void tpcc_do_test(const std::string &dbtype, int argc, char **argv);
+struct persistconfig {
+  persistconfig()
+    : nofsync_(0), do_compress_(0), fake_writes_(0) {}
+  int nofsync_;
+  int do_compress_;
+  int fake_writes_;
+  std::vector<std::string> logfiles_;
+  std::vector<std::vector<unsigned>> assignments_;
+};
+
+extern void tpcc_do_test(
+    const std::string &dbtype,
+    const persistconfig &cfg,
+    int argc, char **argv);
 
 enum { RUNMODE_TIME = 0,
        RUNMODE_OPS  = 1};
@@ -37,16 +49,22 @@ extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
 
+static inline size_t
+MaxCpuForPinning()
+{
+  return coreid::num_cpus_online();
+}
+
 // NOTE: the typed_* versions of classes exist so we don't have to convert all
 // classes to templatetized [for sanity in compliation times]; we trade off
 // a bit of type-safety for more rapid development cycles
 
 class scoped_db_thread_ctx : private util::noncopyable {
 public:
-  scoped_db_thread_ctx(abstract_db *db)
+  scoped_db_thread_ctx(abstract_db *db, bool loader)
     : db(db)
   {
-    db->thread_init();
+    db->thread_init(loader);
   }
   ~scoped_db_thread_ctx()
   {
@@ -77,7 +95,7 @@ public:
     ALWAYS_ASSERT(b);
     b->count_down();
     b->wait_for();
-    scoped_db_thread_ctx ctx(db);
+    scoped_db_thread_ctx ctx(db, true);
     load();
   }
 protected:
@@ -111,12 +129,15 @@ class bench_worker : public ndb_thread {
 public:
 
   bench_worker(unsigned int worker_id,
+               bool set_core_id,
                unsigned long seed, abstract_db *db,
                spin_barrier *barrier_a, spin_barrier *barrier_b)
-    : worker_id(worker_id), r(seed), db(db),
+    : worker_id(worker_id), set_core_id(set_core_id),
+      r(seed), db(db),
       barrier_a(barrier_a), barrier_b(barrier_b),
       // the ntxn_* numbers are per worker
-      ntxn_commits(0), ntxn_aborts(0), size_delta(0)
+      ntxn_commits(0), ntxn_aborts(0),
+      latency_numer_us(0),  size_delta(0)
   {
   }
 
@@ -146,6 +167,14 @@ public:
   inline size_t get_ntxn_commits() const { return ntxn_commits; }
   inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
 
+  inline uint64_t get_latency_numer_us() const { return latency_numer_us; }
+
+  inline double
+  get_avg_latency_us() const
+  {
+    return double(latency_numer_us) / double(ntxn_commits);
+  }
+
   std::map<std::string, size_t> get_txn_counts() const;
 
   typedef abstract_db::counter_map counter_map;
@@ -168,6 +197,7 @@ protected:
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
   unsigned int worker_id;
+  bool set_core_id;
   util::fast_random r;
   abstract_db *const db;
   spin_barrier *const barrier_a;
@@ -176,6 +206,7 @@ protected:
 private:
   size_t ntxn_commits;
   size_t ntxn_aborts;
+  uint64_t latency_numer_us;
 
 protected:
 
