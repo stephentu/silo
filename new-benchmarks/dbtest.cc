@@ -4,6 +4,7 @@
 #include <vector>
 #include <utility>
 #include <string>
+#include <set>
 
 #include <getopt.h>
 #include <stdlib.h>
@@ -49,7 +50,7 @@ parse_memory_spec(const string &s)
 int
 main(int argc, char **argv)
 {
-  void (*test_fn)(const string &, int, char **) = NULL;
+  void (*test_fn)(const string &, const persistconfig &, int, char **) = NULL;
   string bench_type = "ycsb";
   string db_type = "ndb-proto2";
   char *curdir = get_current_dir_name();
@@ -58,6 +59,7 @@ main(int argc, char **argv)
   size_t numa_memory = 0;
   free(curdir);
   int saw_run_spec = 0;
+  persistconfig cfg;
   while (1) {
     static struct option long_options[] =
     {
@@ -76,10 +78,15 @@ main(int argc, char **argv)
       {"ops-per-worker"             , required_argument , 0                          , 'n'} ,
       {"bench-opts"                 , required_argument , 0                          , 'o'} ,
       {"numa-memory"                , required_argument , 0                          , 'm'} , // implies --pin-cpus
+      {"logfile"                    , required_argument , 0                          , 'l'} ,
+      {"assignment"                 , required_argument , 0                          , 'a'} ,
+      {"log-nofsync"                , no_argument       , &cfg.nofsync_              , 1}   ,
+      {"log-compress"               , no_argument       , &cfg.do_compress_          , 1}   ,
+      {"log-fake-writes"            , no_argument       , &cfg.fake_writes_          , 1}   ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:l:a:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -144,6 +151,15 @@ main(int argc, char **argv)
       }
       break;
 
+    case 'l':
+      cfg.logfiles_.emplace_back(optarg);
+      break;
+
+    case 'a':
+      cfg.assignments_.emplace_back(
+          ParseCSVString<unsigned, RangeAwareParser<unsigned>>(optarg));
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -158,11 +174,38 @@ main(int argc, char **argv)
   else
     ALWAYS_ASSERT(false);
 
+  if (cfg.do_compress_ && cfg.logfiles_.empty()) {
+    cerr << "[ERROR] --log-compress specified without logging enabled" << endl;
+    return 1;
+  }
+
+  if (cfg.fake_writes_ && cfg.logfiles_.empty()) {
+    cerr << "[ERROR] --log-fake-writes specified without logging enabled" << endl;
+    return 1;
+  }
+
+  if (cfg.nofsync_ && cfg.logfiles_.empty()) {
+    cerr << "[ERROR] --log-nofsync specified without logging enabled" << endl;
+    return 1;
+  }
+
+  if (cfg.fake_writes_ && cfg.nofsync_) {
+    cerr << "[WARNING] --log-nofsync has no effect with --log-fake-writes enabled" << endl;
+  }
+
   // initialize the numa allocator
   if (numa_memory > 0) {
-    const size_t maxpercpu = iceil(numa_memory / nthreads, ::allocator::GetHugepageSize());
+    const size_t maxpercpu = iceil(
+        numa_memory / nthreads, ::allocator::GetHugepageSize());
     numa_memory = maxpercpu * nthreads;
     ::allocator::Initialize(nthreads, maxpercpu);
+  }
+
+  const set<string> can_persist({"ndb-proto2"});
+  if (!cfg.logfiles_.empty() && !can_persist.count(db_type)) {
+    cerr << "[ERROR] benchmark " << db_type
+         << " does not have persistence implemented" << endl;
+    return 1;
   }
 
   //if (db_type == "bdb") {
@@ -186,6 +229,9 @@ main(int argc, char **argv)
 
 #ifdef CHECK_INVARIANTS
   cerr << "WARNING: invariant checking is enabled - should disable for benchmark" << endl;
+#ifdef PARANOID_CHECKING
+  cerr << "  *** Paranoid checking is enabled ***" << endl;
+#endif
 #endif
 
   if (verbose) {
@@ -228,6 +274,8 @@ main(int argc, char **argv)
     } else {
       cerr << "  numa-memory : disabled"                    << endl;
     }
+    cerr << "  logfiles : " << cfg.logfiles_                << endl;
+    cerr << "  assignments : " << cfg.assignments_          << endl;
 
     cerr << "system properties:" << endl;
     cerr << "  btree_internal_node_size: " << btree::InternalNodeSize() << endl;
@@ -253,6 +301,6 @@ main(int argc, char **argv)
   argv[0] = (char *) bench_type.c_str();
   for (size_t i = 1; i <= bench_toks.size(); i++)
     argv[i] = (char *) bench_toks[i - 1].c_str();
-  test_fn(db_type, argc, argv);
+  test_fn(db_type, cfg, argc, argv);
   return 0;
 }

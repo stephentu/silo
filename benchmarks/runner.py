@@ -21,7 +21,7 @@ DBS = ('ndb-proto1',)
 
 # config for istc*
 THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
-#THREADS = (24, 28, 32)
+#THREADS = (28, 32)
 
 #TXN_FLAGS = (0x0, 0x1)
 #TXN_FLAGS = (0x1,)
@@ -31,7 +31,7 @@ THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
 # tuples of (benchname, amplification-factor)
 #BENCHMARKS = ( ('ycsb', 1000), ('tpcc', 1), )
 
-DRYRUN = True
+DRYRUN = False
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -44,7 +44,9 @@ KNOB_ENABLE_TPCC_MULTIPART=False
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
 ## debugging runs
-KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=True
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=True
+KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
 
 grids = []
 
@@ -324,6 +326,39 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
     },
   ]
 
+if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [True],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+    }
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+
+if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [True],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+      'log_nofsync' : [True],
+    }
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+
 if KNOB_ENABLE_TPCC_SCALE_FAKEWRITES:
   def mk_grid(name, bench, nthds):
     return {
@@ -344,10 +379,11 @@ if KNOB_ENABLE_TPCC_SCALE_FAKEWRITES:
 def run_configuration(
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
     par_load, retry_aborted_txn, numa_memory, logfiles,
-    assignments, log_fake_writes):
+    assignments, log_fake_writes, log_nofsync):
   # Note: assignments is a list of list of ints
   assert len(logfiles) == len(assignments)
   assert not log_fake_writes or len(logfiles)
+  assert not log_nofsync or len(logfiles)
   args = [
       './dbtest',
       '--bench', bench,
@@ -363,7 +399,8 @@ def run_configuration(
     + ([] if not numa_memory else ['--numa-memory', numa_memory]) \
     + ([] if not logfiles else list(it.chain.from_iterable([['--logfile', f] for f in logfiles]))) \
     + ([] if not assignments else list(it.chain.from_iterable([['--assignment', ','.join(map(str, x))] for x in assignments]))) \
-    + ([] if not log_fake_writes else ['--log-fake-writes'])
+    + ([] if not log_fake_writes else ['--log-fake-writes']) \
+    + ([] if not log_nofsync else ['--log-nofsync'])
   print >>sys.stderr, '[INFO] running command:'
   print >>sys.stderr, ' '.join(args)
   if not DRYRUN:
@@ -383,11 +420,12 @@ if __name__ == '__main__':
   results = []
   for grid in grids:
     for (db, bench, scale_factor, threads, bench_opts,
-         par_load, retry, numa_memory, persist, log_fake_writes) in it.product(
+         par_load, retry, numa_memory, persist, log_fake_writes, log_nofsync) in it.product(
         grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
         grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
         grid['numa_memory'], grid['persist'],
-        grid.get('log_fake_writes', [False])):
+        grid.get('log_fake_writes', [False]),
+        grid.get('log_nofsync', [False])):
       config = {
         'name'            : grid['name'],
         'db'              : db,
@@ -400,6 +438,7 @@ if __name__ == '__main__':
         'persist'         : persist,
         'numa_memory'     : numa_memory,
         'log_fake_writes' : log_fake_writes,
+        'log_nofsync' : log_nofsync,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
       if persist:
@@ -415,7 +454,8 @@ if __name__ == '__main__':
         value = run_configuration(
             basedir, db, bench, scale_factor, threads,
             bench_opts, par_load, retry, numa_memory,
-            logfiles, assignments, log_fake_writes)
+            logfiles, assignments, log_fake_writes,
+            log_nofsync)
         values.append(value)
       results.append((config, values))
 

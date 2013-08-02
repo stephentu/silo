@@ -14,6 +14,7 @@
 
 #include "../counter.h"
 #include "../scopedperf.hh"
+#include "../allocator.h"
 
 #ifdef USE_JEMALLOC
 //cannot include this header b/c conflicts with malloc.h
@@ -94,11 +95,15 @@ write_cb(void *p, const char *s)
 void
 bench_worker::run()
 {
-  { // XXX(stephentu): this is a hack
+  // XXX(stephentu): so many nasty hacks here. should actually
+  // fix some of this stuff one day
+  if (set_core_id)
+    coreid::set_core_id(worker_id); // cringe
+  {
     scoped_rcu_region r; // register this thread in rcu region
   }
   on_run_setup();
-  scoped_db_thread_ctx ctx(db);
+  scoped_db_thread_ctx ctx(db, false);
   const workload_desc_vec workload = get_workload();
   txn_counts.resize(workload.size());
   barrier_a->count_down();
@@ -108,9 +113,11 @@ bench_worker::run()
     for (size_t i = 0; i < workload.size(); i++) {
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
       retry:
-        auto ret = workload[i].fn(this);
+        timer t;
+        const auto ret = workload[i].fn(this);
         if (likely(ret.first)) {
           ++ntxn_commits;
+          latency_numer_us += t.lap();
         } else {
           ++ntxn_aborts;
           if (retry_aborted_transaction && running)
@@ -151,10 +158,28 @@ bench_runner::run()
       cerr << "DB size: " << delta_mb << " MB" << endl;
   }
 
-  db->do_txn_epoch_sync();
+  db->do_txn_epoch_sync(); // also waits for worker threads to be persisted
+  {
+    const auto persisted_info = db->get_ntxn_persisted();
+    if (get<0>(persisted_info) != get<1>(persisted_info))
+      cerr << "error: " << persisted_info << endl;
+    ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
+    if (verbose)
+      cerr << persisted_info << " txns persisted in loading phase" << endl;
+  }
+  db->reset_ntxn_persisted();
 
   event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
   PERF_EXPR(scopedperf::perfsum_base::resetall());
+  {
+    const auto persisted_info = db->get_ntxn_persisted();
+    if (get<0>(persisted_info) != 0 ||
+        get<1>(persisted_info) != 0 ||
+        get<2>(persisted_info) != 0.0) {
+      cerr << persisted_info << endl;
+      ALWAYS_ASSERT(false);
+    }
+  }
 
   map<string, size_t> table_sizes_before;
   if (verbose) {
@@ -174,8 +199,8 @@ bench_runner::run()
     p->start();
 
   barrier_a.wait_for(); // wait for all threads to start up
+  timer t, t_nosync;
   barrier_b.count_down(); // bombs away!
-  timer t;
   if (run_mode == RUNMODE_TIME) {
     sleep(runtime);
     running = false;
@@ -183,15 +208,30 @@ bench_runner::run()
   __sync_synchronize();
   for (size_t i = 0; i < nthreads; i++)
     workers[i]->join();
-  const unsigned long elapsed = t.lap();
+  const unsigned long elapsed_nosync = t_nosync.lap();
+  db->do_txn_finish(); // waits for all worker txns to persist
   size_t n_commits = 0;
   size_t n_aborts = 0;
+  uint64_t latency_numer_us = 0;
   for (size_t i = 0; i < nthreads; i++) {
     n_commits += workers[i]->get_ntxn_commits();
     n_aborts += workers[i]->get_ntxn_aborts();
+    latency_numer_us += workers[i]->get_latency_numer_us();
   }
+  const auto persisted_info = db->get_ntxn_persisted();
 
-  db->do_txn_finish();
+  const unsigned long elapsed = t.lap(); // lap() must come after do_txn_finish(),
+                                         // because do_txn_finish() potentially
+                                         // waits a bit
+
+  // various sanity checks
+  ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
+  // not == b/c persisted_info does not count read-only txns
+  ALWAYS_ASSERT(n_commits >= get<1>(persisted_info));
+
+  const double elapsed_nosync_sec = double(elapsed_nosync) / 1000000.0;
+  const double agg_nosync_throughput = double(n_commits) / elapsed_nosync_sec;
+  const double avg_nosync_per_core_throughput = agg_nosync_throughput / double(workers.size());
 
   const double elapsed_sec = double(elapsed) / 1000000.0;
   const double agg_throughput = double(n_commits) / elapsed_sec;
@@ -199,6 +239,19 @@ bench_runner::run()
 
   const double agg_abort_rate = double(n_aborts) / elapsed_sec;
   const double avg_per_core_abort_rate = agg_abort_rate / double(workers.size());
+
+  // we can use n_commits here, because we explicitly wait for all txns
+  // run to be durable
+  const double agg_persist_throughput = double(n_commits) / elapsed_sec;
+  const double avg_per_core_persist_throughput =
+    agg_persist_throughput / double(workers.size());
+
+  // XXX(stephentu): latency currently doesn't account for read-only txns
+  const double avg_latency_us =
+    double(latency_numer_us) / double(n_commits);
+  const double avg_latency_ms = avg_latency_us / 1000.0;
+  const double avg_persist_latency_ms =
+    get<2>(persisted_info) / 1000.0;
 
   if (verbose) {
     const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
@@ -241,8 +294,14 @@ bench_runner::run()
     cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
     cerr << "logical memory delta: " << size_delta_mb << " MB" << endl;
     cerr << "logical memory delta rate: " << (size_delta_mb / elapsed_sec) << " MB/sec" << endl;
+    cerr << "agg_nosync_throughput: " << agg_nosync_throughput << " ops/sec" << endl;
+    cerr << "avg_nosync_per_core_throughput: " << avg_nosync_per_core_throughput << " ops/sec/core" << endl;
     cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
     cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+    cerr << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
+    cerr << "avg_per_core_persist_throughput: " << avg_per_core_persist_throughput << " ops/sec/core" << endl;
+    cerr << "avg_latency: " << avg_latency_ms << " ms" << endl;
+    cerr << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
@@ -252,6 +311,8 @@ bench_runner::run()
       cerr << it->first << ": " << it->second << endl;
     cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
     PERF_EXPR(scopedperf::perfsum_base::printall());
+    cerr << "--- allocator stats ---" << endl;
+    ::allocator::DumpStats();
     cerr << "---------------------------------------" << endl;
 
 #ifdef USE_JEMALLOC
@@ -266,7 +327,11 @@ bench_runner::run()
   }
 
   // output for plotting script
-  cout << agg_throughput << " " << agg_abort_rate << endl;
+  cout << agg_throughput << " "
+       << agg_persist_throughput << " "
+       << avg_latency_ms << " "
+       << avg_persist_latency_ms << " "
+       << agg_abort_rate << endl;
 
   if (!slow_exit)
     return;

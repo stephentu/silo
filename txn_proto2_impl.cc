@@ -17,6 +17,7 @@ static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 
 bool txn_logger::g_persist = false;
+bool txn_logger::g_call_fsync = true;
 bool txn_logger::g_use_compression = false;
 bool txn_logger::g_fake_writes = false;
 size_t txn_logger::g_nworkers = 0;
@@ -58,6 +59,7 @@ txn_logger::Init(
     const vector<string> &logfiles,
     const vector<vector<unsigned>> &assignments_given,
     vector<vector<unsigned>> *assignments_used,
+    bool call_fsync,
     bool use_compression,
     bool fake_writes)
 {
@@ -77,6 +79,7 @@ txn_logger::Init(
     fds.push_back(fd);
   }
   g_persist = true;
+  g_call_fsync = call_fsync;
   g_use_compression = use_compression;
   g_fake_writes = fake_writes;
   g_nworkers = nworkers;
@@ -287,11 +290,20 @@ txn_logger::writer(
             break;
           }
           iovs[nbufswritten].iov_base = (void *) &px->buf_start_[0];
-          iovs[nbufswritten].iov_len = px->curoff_;
-          evt_avg_log_buffer_iov_len.offer(px->curoff_);
+
+#ifdef LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
+  #define PXLEN(px) (((px)->curoff_ < 4) ? (px)->curoff_ : ((px)->curoff_ / 4))
+#else
+  #define PXLEN(px) ((px)->curoff_)
+#endif
+
+          const size_t pxlen = PXLEN(px);
+
+          iovs[nbufswritten].iov_len = pxlen;
+          evt_avg_log_buffer_iov_len.offer(pxlen);
           px->io_scheduled_ = true;
           nbufswritten++;
-          nbyteswritten += px->curoff_;
+          nbyteswritten += pxlen;
 
 #ifdef CHECK_INVARIANTS
           auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
@@ -340,10 +352,12 @@ txn_logger::writer(
         ALWAYS_ASSERT(false);
       }
 
-      const int fret = fdatasync(fd);
-      if (unlikely(fret == -1)) {
-        perror("fdatasync");
-        ALWAYS_ASSERT(false);
+      if (g_call_fsync) {
+        const int fret = fdatasync(fd);
+        if (unlikely(fret == -1)) {
+          perror("fdatasync");
+          ALWAYS_ASSERT(false);
+        }
       }
 
 #ifdef ENABLE_EVENT_COUNTERS
@@ -371,6 +385,15 @@ txn_logger::writer(
         persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
         pbuffer *px, *px0;
         while ((px = ctx.persist_buffers_.peek()) && px->io_scheduled_) {
+#ifdef LOGGER_STRIDE_OVER_BUFFER
+          {
+            const size_t pxlen = PXLEN(px);
+            const size_t stridelen = 1;
+            for (size_t p = 0; p < pxlen; p += stridelen)
+              if ((&px->buf_start_[0])[p] & 0xF)
+                non_atomic_fetch_add(ea.dummy_work_, 1UL);
+          }
+#endif
           px0 = ctx.persist_buffers_.deq();
           INVARIANT(px == px0);
           INVARIANT(px->header()->nentries_);

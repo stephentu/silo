@@ -42,6 +42,7 @@ public:
   ndb_wrapper(
       const std::vector<std::string> &logfiles,
       const std::vector<std::vector<unsigned>> &assignments_given,
+      bool call_fsync,
       bool use_compression,
       bool fake_writes);
 
