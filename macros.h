@@ -25,7 +25,7 @@
  * some non-sensical options, which only make sense for performance debugging
  * experiments. these should ALL be DISABLED when doing actual benchmarking
  **/
-#define LOGGER_UNSAFE_FAKE_COMPRESSION
+//#define LOGGER_UNSAFE_FAKE_COMPRESSION
 //#define LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
 //#define LOGGER_STRIDE_OVER_BUFFER
 

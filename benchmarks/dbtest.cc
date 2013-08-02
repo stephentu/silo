@@ -190,7 +190,7 @@ main(int argc, char **argv)
     ALWAYS_ASSERT(false);
 
   if (do_compress && logfiles.empty()) {
-    cerr << "[ERROR] --log-compression specified without logging enabled" << endl;
+    cerr << "[ERROR] --log-compress specified without logging enabled" << endl;
     return 1;
   }
 
