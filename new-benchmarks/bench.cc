@@ -334,7 +334,7 @@ bench_runner::run()
        << agg_abort_rate << endl;
 
   if (!slow_exit)
-    return;
+    exit(0); // exit() instead of returning, so we don't call a bunch of dtors
 
   map<string, uint64_t> agg_stats;
   for (auto &p : open_tables)
