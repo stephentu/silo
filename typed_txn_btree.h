@@ -267,6 +267,10 @@ struct typed_txn_btree_ {
   {
     serializer<uint64_t, false> s_uint64_t;
 
+#ifdef CHECK_INVARIANTS
+    const uint8_t * const orig_buf = buf;
+#endif
+
     buf = s_uint64_t.write(buf, fields);
     if (fields == 0) {
       // no-op for delete
@@ -280,12 +284,15 @@ struct typed_txn_btree_ {
       value_encoder.write(buf, v);
       return;
     }
-    write_record_cursor<base_type> wc(buf);
     for (uint64_t i = 0; i < value_descriptor_type::nfields(); i++) {
       if ((1UL << i) & fields) {
-        wc.write_current_and_advance(v, nullptr);
+        const uint8_t * px = reinterpret_cast<const uint8_t *>(v) +
+          value_descriptor_type::cstruct_offsetof(i);
+        buf = value_descriptor_type::write_fn(i)(buf, px);
       }
     }
+
+    INVARIANT(buf - orig_buf == ptrdiff_t(sz));
   }
 
   template <uint64_t Fields>
