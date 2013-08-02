@@ -23,13 +23,15 @@ def split_results_by_predicate(results, pred):
 
 FILES = (
     (N(''), False),
-    (N('_fake_writes'), True),
-    (N('_fake_writes_stride'), True),
-    (N('_fake_writes_stride1'), True),
-    (N('_log_reduce_size'), True),
     (N('_fake_compress'), True),
-    (N('_compress'), True),
     (N(''), True),
+    (N('_newbench'), True),
+    (N('_compress'), True),
+
+    #(N('_fake_writes'), True),
+    #(N('_fake_writes_stride'), True),
+    #(N('_fake_writes_stride1'), True),
+    #(N('_log_reduce_size'), True),
 )
 
 def datafromfile(f, persist):
