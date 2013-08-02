@@ -223,6 +223,7 @@ private:
   struct epoch_array {
     // don't use percore<std::atomic<uint64_t>> because we don't want padding
     std::atomic<uint64_t> epochs_[NMAXCORES];
+    std::atomic<uint64_t> dummy_work_; // so we can do some fake work
     CACHE_PADOUT;
   };
 
