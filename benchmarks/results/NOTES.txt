@@ -1,0 +1,19 @@
+Exp notes:
+
+istc3-8-1-13.py: 40 ms ticker, full persistence
+
+istc3-8-1-13_fake_writes.py: same as itsc3-8-1-13.py, except --log-fake-writes is used
+
+istc3-8-1-13_log_reduce_size.py: same as istc3-8-1-13.py, except LOGGER_UNSAFE_REDUCE_BUFFER_SIZE is defined
+
+istc3-8-1-13_log_reduce_size_nofsync.py: same as istc3-8-1-13_log_reduce_size.py, except --log-nofsync is used
+
+istc3-8-1-13_fake_writes_stride.py: same as istc3-8-1-13_fake_writes.py, except LOGGER_STRIDE_OVER_BUFFER is defined and stridelen=(CACHELINE_SIZE/2)
+
+istc3-8-1-13_fake_writes_stride1.py: same as istc3-8-1-13_fake_writes_stride.py, except stridelen=1
+
+istc3-8-1-13_fake_compress.py: same as istc3-8-1-13.py, except LOGGER_UNSAFE_FAKE_COMPRESSION is enabled
+
+istc3-8-1-13_compress.py: same as istc3-8-1-13.py, except --log-compress is used
+
+istc3-8-1-13_newbench.py: same as istc3-8-1-13.py, except we use 'new-benchmarks/dbtest' (delta encoding)
