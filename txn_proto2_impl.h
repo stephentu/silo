@@ -708,9 +708,11 @@ public:
     space_needed += sizeof(uint64_t);
 
     // variable bytes to indicate # of records written
-    unsigned nwrites = this->write_set.size();
-    //if (nwrites > 1)
-    //  nwrites /= 2; // XXX: testing
+#ifdef LOGGER_UNSAFE_FAKE_COMPRESSION
+    const unsigned nwrites = 0;
+#else
+    const unsigned nwrites = this->write_set.size();
+#endif
 
     space_needed += vs_uint32_t.nbytes(&nwrites);
 
@@ -819,9 +821,14 @@ private:
 
     serializer<uint32_t, true> vs_uint32_t;
     serializer<uint64_t, false> s_uint64_t;
-    unsigned nwrites = this->write_set.size();
-    //if (nwrites > 1)
-    //  nwrites /= 2; // XXX: testing
+
+#ifdef LOGGER_UNSAFE_FAKE_COMPRESSION
+    const unsigned nwrites = 0;
+#else
+    const unsigned nwrites = this->write_set.size();
+#endif
+
+
     INVARIANT(nwrites == value_sizes.size());
 
     p = s_uint64_t.write(p, commit_tid);
