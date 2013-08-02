@@ -248,8 +248,6 @@ static string NameTokens[] =
 class tpcc_worker_mixin {
 public:
 
-  static spin_barrier *load_fault_barrier;
-
   // only TPCC loaders need to call this- workers are automatically
   // pinned by their worker id (which corresponds to warehouse id
   // in TPCC)
@@ -406,8 +404,6 @@ public:
 
 };
 
-spin_barrier *tpcc_worker_mixin::load_fault_barrier = nullptr;
-
 STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 
 template <typename Database, bool AllowReadOnlyScans>
@@ -521,34 +517,6 @@ private:
   int32_t last_no_o_ids[10]; // XXX(stephentu): hack
 };
 
-
-template <typename Database>
-class tpcc_faulting_loader : public typed_bench_loader<Database>,
-                             public tpcc_worker_mixin {
-public:
-  tpcc_faulting_loader(unsigned long seed,
-                       Database *db,
-                       unsigned int id)
-    : typed_bench_loader<Database>(seed, db),
-      tpcc_worker_mixin(),
-      id(id)
-  {}
-
-protected:
-  virtual void
-  load()
-  {
-    if (!pin_cpus)
-      return;
-    // triggers fault
-    PinToWarehouseId(id);
-    tpcc_worker_mixin::load_fault_barrier->count_down();
-  }
-
-private:
-  unsigned int id;
-};
-
 template <typename Database>
 class tpcc_warehouse_loader : public typed_bench_loader<Database>,
                               public tpcc_worker_mixin {
@@ -565,9 +533,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
       vector<warehouse::value> warehouses;
@@ -647,9 +612,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
     auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
     uint64_t total_sz = 0;
@@ -722,9 +684,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
@@ -831,9 +790,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
     auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
     uint64_t district_total_sz = 0, n_districts = 0;
@@ -906,9 +862,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
     const uint w_end   = (warehouse_id == -1) ?
@@ -1050,9 +1003,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
     uint64_t oorder_total_sz = 0, n_oorders = 0;
     uint64_t new_order_total_sz = 0, n_new_orders = 0;
@@ -2015,11 +1965,6 @@ protected:
   make_loaders()
   {
     vector<unique_ptr<bench_loader>> ret;
-    if (pin_cpus) {
-      tpcc_worker_mixin::load_fault_barrier = new spin_barrier(NumWarehouses());
-      for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.emplace_back(new tpcc_faulting_loader<Database>(1, this->typed_db(), i));
-    }
     ret.emplace_back(new tpcc_warehouse_loader<Database>(9324, this->typed_db(), tables));
     ret.emplace_back(new tpcc_item_loader<Database>(235443, this->typed_db(), tables));
     if (enable_parallel_loading) {
