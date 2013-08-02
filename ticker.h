@@ -112,13 +112,12 @@ public:
       INVARIANT(ti.lock_.is_locked());
       INVARIANT(tick_ > impl_->global_last_tick_inclusive());
       const uint64_t prev_depth = util::non_atomic_fetch_sub(ti.depth_, 1UL);
-      ti.start_us_.store(0, std::memory_order_release);
-      INVARIANT(prev_depth == depth_);
-      if (!prev_depth)
-        INVARIANT(false);
+      INVARIANT(prev_depth);
       // unlock
-      if (prev_depth == 1)
+      if (prev_depth == 1) {
+        ti.start_us_.store(0, std::memory_order_release);
         ti.lock_.unlock();
+      }
     }
 
     inline uint64_t
