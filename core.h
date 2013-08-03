@@ -11,35 +11,60 @@
  */
 class coreid {
 public:
-  static const size_t NMaxCores = NMAXCORES;
+  static const unsigned NMaxCores = NMAXCORES;
 
-  static inline size_t
+  static inline unsigned
   core_id()
   {
     if (unlikely(tl_core_id == -1)) {
       // initialize per-core data structures
       tl_core_id = g_core_count.fetch_add(1, std::memory_order_acq_rel);
       // did we exceed max cores?
-      ALWAYS_ASSERT(size_t(tl_core_id) < NMaxCores);
+      ALWAYS_ASSERT(unsigned(tl_core_id) < NMaxCores);
     }
     return tl_core_id;
   }
 
-  static inline size_t
-  core_count()
+  /**
+   * Since our current allocation scheme does not allow for holes in the
+   * allocation, this function is quite wasteful. Don't abuse.
+   *
+   * Returns -1 if it is impossible to do this w/o exceeding max allocations
+   */
+  static int
+  allocate_contiguous_aligned_block(unsigned n, unsigned alignment);
+
+  /**
+   * WARNING: this function is scary, and exists solely as a hack
+   *
+   * You are allowed to set your own core id under several conditions
+   * (the idea is that somebody else has allocated a block of core ids
+   *  and is assigning one to you, under the promise of uniqueness):
+   *
+   * 1) You haven't already called core_id() yet (so you have no assignment)
+   * 2) The number you are setting is < the current assignment counter (meaning
+   *    it was previously assigned by someone)
+   *
+   * These are necessary but not sufficient conditions for uniqueness
+   */
+  static void
+  set_core_id(unsigned cid)
   {
-    return g_core_count.load(std::memory_order_acquire);
+    ALWAYS_ASSERT(cid < NMaxCores);
+    ALWAYS_ASSERT(cid < g_core_count.load(std::memory_order_acquire));
+    ALWAYS_ASSERT(tl_core_id == -1);
+    tl_core_id = cid; // sigh
   }
 
   // actual number of CPUs online for the system
-  static size_t num_cpus_online();
+  static unsigned num_cpus_online();
 
 private:
   // the core ID of this core: -1 if not set
-  static __thread ssize_t tl_core_id;
+  static __thread int tl_core_id;
 
   // contains a running count of all the cores
-  static std::atomic<size_t> g_core_count CACHE_ALIGNED;
+  static std::atomic<unsigned> g_core_count CACHE_ALIGNED;
 };
 
 // requires T to have no-arg ctor

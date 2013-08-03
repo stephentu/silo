@@ -13,7 +13,7 @@ using namespace util;
 // page+alloc routines taken from masstree
 
 size_t
-allocator::GetHugepageSize()
+allocator::GetHugepageSizeImpl()
 {
   FILE *f = fopen("/proc/meminfo", "r");
   assert(f);
@@ -34,18 +34,9 @@ allocator::GetHugepageSize()
 }
 
 size_t
-allocator::GetPageSize()
+allocator::GetPageSizeImpl()
 {
   return sysconf(_SC_PAGESIZE);
-}
-
-static inline size_t
-slow_round_up(size_t x, size_t q)
-{
-  const size_t r = x % q;
-  if (!r)
-    return x;
-  return x + (q - r);
 }
 
 void
@@ -141,7 +132,7 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
 
   percore &pc = g_regions[cpu].elem;
   pc.lock.lock();
-  if (pc.arenas[arena]) {
+  if (likely(pc.arenas[arena])) {
     // claim
     void *ret = pc.arenas[arena];
     pc.arenas[arena] = nullptr;
@@ -149,20 +140,37 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
     return ret;
   }
 
-  // out of memory?
-  ALWAYS_ASSERT(pc.region_begin < pc.region_end);
+  void * const mypx = AllocateUnmanagedWithLock(pc, 1); // releases lock
+  return initialize_page(mypx, hugepgsize, (arena + 1) * AllocAlignment);
+}
 
-  // do allocation in region
+void *
+allocator::AllocateUnmanaged(size_t cpu, size_t nhugepgs)
+{
+  percore &pc = g_regions[cpu].elem;
+  pc.lock.lock();
+  return AllocateUnmanagedWithLock(pc, nhugepgs); // releases lock
+}
+
+void *
+allocator::AllocateUnmanagedWithLock(percore &pc, size_t nhugepgs)
+{
+  static const size_t hugepgsize = GetHugepageSize();
+
   void * const mypx = pc.region_begin;
-  const bool needs_mmap = !pc.region_faulted;
-  pc.region_begin = reinterpret_cast<char *>(pc.region_begin) + hugepgsize;
-  pc.lock.unlock();
 
-  // out of memory?
-  ALWAYS_ASSERT(mypx < pc.region_end);
-
+  // check alignment
   if (reinterpret_cast<uintptr_t>(mypx) % hugepgsize)
     ALWAYS_ASSERT(false);
+
+  void * const mynewpx =
+    reinterpret_cast<char *>(mypx) + nhugepgs * hugepgsize;
+
+  ALWAYS_ASSERT(mynewpx <= pc.region_end); // out of memory otherwise
+
+  const bool needs_mmap = !pc.region_faulted;
+  pc.region_begin = mynewpx;
+  pc.lock.unlock();
 
   if (needs_mmap) {
     void * const x = mmap(mypx, hugepgsize, PROT_READ | PROT_WRITE,
@@ -179,13 +187,14 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
     }
   }
 
-  return initialize_page(mypx, hugepgsize, (arena + 1) * AllocAlignment);
+  return mypx;
 }
 
 void
 allocator::ReleaseArenas(void **arenas)
 {
   // cpu -> [(head, tail)]
+  // XXX: use a small_map here?
   std::map<size_t, static_vector<std::pair<void *, void *>, MAX_ARENAS>> m;
   for (size_t arena = 0; arena < MAX_ARENAS; arena++) {
     void *p = arenas[arena];

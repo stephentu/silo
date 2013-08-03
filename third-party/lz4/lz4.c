@@ -126,7 +126,7 @@ Note : this source file requires "lz4_encoder.h"
 #    pragma intrinsic(_BitScanReverse)   // For Visual 2005
 #  endif
 #  pragma warning(disable : 4127)        // disable: C4127: conditional expression is constant
-#else 
+#else
 #  ifdef __GNUC__
 #    define forceinline static inline __attribute__((always_inline))
 #  else
@@ -410,12 +410,13 @@ return : the number of bytes written in buffer 'dest', or 0 if the compression f
 void* LZ4_createHeapMemory();
 int LZ4_freeHeapMemory(void* ctx);
 
-Used to allocate and free hashTable memory 
+Used to allocate and free hashTable memory
 to be used by the LZ4_compress_heap* family of functions.
 LZ4_createHeapMemory() returns NULL is memory allocation fails.
 */
-void* LZ4_create() { return malloc(HASHTABLESIZE); }
-int   LZ4_free(void* ctx) { free(ctx); return 0; }
+void*    LZ4_create() { return malloc(HASHTABLESIZE); }
+unsigned LZ4_create_size() { return HASHTABLESIZE; }
+int      LZ4_free(void* ctx) { free(ctx); return 0; }
 
 
 /*
@@ -541,7 +542,7 @@ typedef enum { full = 0, partial = 1 } exit_directive;
 
 // This generic decompression function cover all use cases.
 // It shall be instanciated several times, using different sets of directives
-// Note that it is essential this generic function is really inlined, 
+// Note that it is essential this generic function is really inlined,
 // in order to remove useless branches during compilation optimisation.
 forceinline int LZ4_decompress_generic(
                  const char* source,
@@ -586,13 +587,13 @@ forceinline int LZ4_decompress_generic(
         // get runlength
         token = *ip++;
         if ((length=(token>>ML_BITS)) == RUN_MASK)
-        { 
-            unsigned s=255; 
+        {
+            unsigned s=255;
             while (((endOnInput)?ip<iend:1) && (s==255))
-            { 
-                s = *ip++; 
-                length += s; 
-            } 
+            {
+                s = *ip++;
+                length += s;
+            }
         }
 
         // copy literals
@@ -622,14 +623,14 @@ forceinline int LZ4_decompress_generic(
         if ((prefix64k==noPrefix) && unlikely(ref < (BYTE* const)dest)) goto _output_error;   // Error : offset outside destination buffer
 
         // get matchlength
-        if ((length=(token&ML_MASK)) == ML_MASK) 
-        { 
+        if ((length=(token&ML_MASK)) == ML_MASK)
+        {
             for ( ; (!endOnInput) || (ip<iend-(LASTLITERALS+1)) ; )   // Ensure enough bytes remain for LASTLITERALS + token
             {
-                unsigned s = *ip++; 
-                length += s; 
-                if (s==255) continue; 
-                break; 
+                unsigned s = *ip++;
+                length += s;
+                if (s==255) continue;
+                break;
             }
         }
 
@@ -646,7 +647,7 @@ forceinline int LZ4_decompress_generic(
             op[2] = ref[2];
             op[3] = ref[3];
             op += 4, ref += 4; ref -= dec32table[op-ref];
-            A32(op) = A32(ref); 
+            A32(op) = A32(ref);
             op += STEPSIZE-4; ref -= dec64;
         } else { LZ4_COPYSTEP(ref,op); }
         cpy = op + length - (STEPSIZE-4);

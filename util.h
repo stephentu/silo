@@ -9,6 +9,7 @@
 #include <utility>
 #include <memory>
 #include <atomic>
+#include <tuple>
 
 #include <stdint.h>
 #include <pthread.h>
@@ -165,6 +166,15 @@ iceil(T x, U y)
 {
   U mod = x % y;
   return x + (mod ? y - mod : 0);
+}
+
+static inline size_t
+slow_round_up(size_t x, size_t q)
+{
+  const size_t r = x % q;
+  if (!r)
+    return x;
+  return x + (q - r);
 }
 
 //// xor-shift:
@@ -626,6 +636,41 @@ operator<<(std::ostream &o, const std::vector<T, Alloc> &v)
     first = false;
     o << p;
   }
+  o << "]";
+  return o;
+}
+
+// pretty printer for std::tuple<...>
+namespace private_ {
+  template <size_t Idx, bool Enable, class... Types>
+  struct helper {
+    static inline void
+    apply(std::ostream &o, const std::tuple<Types...> &t)
+    {
+      if (Idx)
+        o << ", ";
+      o << std::get<Idx, Types...>(t);
+      helper<Idx + 1,
+             (Idx + 1) < std::tuple_size<std::tuple<Types...>>::value,
+             Types...>::apply(o, t);
+    }
+  };
+
+  template <size_t Idx, class... Types>
+  struct helper<Idx, false, Types...> {
+    static inline void
+    apply(std::ostream &o, const std::tuple<Types...> &t)
+    {
+    }
+  };
+}
+
+template <class... Types>
+static inline std::ostream &
+operator<<(std::ostream &o, const std::tuple<Types...> &t)
+{
+  o << "[";
+  private_::helper<0, 0 < std::tuple_size<std::tuple<Types...>>::value, Types...>::apply(o, t);
   o << "]";
   return o;
 }

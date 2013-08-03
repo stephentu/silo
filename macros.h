@@ -15,11 +15,19 @@
 #define USE_SMALL_CONTAINER_OPT
 #define BTREE_NODE_ALLOC_CACHE_ALIGNED
 #define TXN_BTREE_DUMP_PURGE_STATS
-#define ENABLE_EVENT_COUNTERS
+//#define ENABLE_EVENT_COUNTERS
 //#define ENABLE_BENCH_TXN_COUNTERS
 #define USE_VARINT_ENCODING
 //#define DISABLE_FIELD_SELECTION
 //#define PARANOID_CHECKING
+
+/**
+ * some non-sensical options, which only make sense for performance debugging
+ * experiments. these should ALL be DISABLED when doing actual benchmarking
+ **/
+//#define LOGGER_UNSAFE_FAKE_COMPRESSION
+//#define LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
+//#define LOGGER_STRIDE_OVER_BUFFER
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 #define LG_CACHELINE_SIZE __builtin_ctz(CACHELINE_SIZE)

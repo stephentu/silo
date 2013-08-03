@@ -41,15 +41,15 @@ extern int retry_aborted_transaction;
 static inline size_t
 MaxCpuForPinning()
 {
-  return std::min(coreid::num_cpus_online(), nthreads);
+  return coreid::num_cpus_online();
 }
 
 class scoped_db_thread_ctx : private util::noncopyable {
 public:
-  scoped_db_thread_ctx(abstract_db *db)
+  scoped_db_thread_ctx(abstract_db *db, bool loader)
     : db(db)
   {
-    db->thread_init();
+    db->thread_init(loader);
   }
   ~scoped_db_thread_ctx()
   {
@@ -82,7 +82,7 @@ public:
     ALWAYS_ASSERT(b);
     b->count_down();
     b->wait_for();
-    scoped_db_thread_ctx ctx(db);
+    scoped_db_thread_ctx ctx(db, true);
     load();
   }
 protected:
@@ -102,10 +102,12 @@ class bench_worker : public ndb_thread {
 public:
 
   bench_worker(unsigned int worker_id,
+               bool set_core_id,
                unsigned long seed, abstract_db *db,
                const std::map<std::string, abstract_ordered_index *> &open_tables,
                spin_barrier *barrier_a, spin_barrier *barrier_b)
-    : worker_id(worker_id), r(seed), db(db), open_tables(open_tables),
+    : worker_id(worker_id), set_core_id(set_core_id),
+      r(seed), db(db), open_tables(open_tables),
       barrier_a(barrier_a), barrier_b(barrier_b),
       // the ntxn_* numbers are per worker
       ntxn_commits(0), ntxn_aborts(0),
@@ -170,6 +172,7 @@ protected:
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
   unsigned int worker_id;
+  bool set_core_id;
   util::fast_random r;
   abstract_db *const db;
   std::map<std::string, abstract_ordered_index *> open_tables;

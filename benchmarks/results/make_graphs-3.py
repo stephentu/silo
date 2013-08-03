@@ -172,7 +172,7 @@ if __name__ == '__main__':
         lines[key] = pts
 
       def mean(x): return sum(x)/len(x)
-      def median(x): return x[len(x)/2]
+      def median(x): return sorted(x)[len(x)/2]
 
       # find min/max of xpts
       xmin = min([e for l in lines.values() for e in l])

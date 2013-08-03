@@ -187,16 +187,42 @@ public:
 
   typedef transaction_abort_exception abort_exception_type;
 
-  virtual void
+  ssize_t txn_max_batch_size() const OVERRIDE { return 100; }
+
+  void
   do_txn_epoch_sync() const OVERRIDE
   {
     txn_epoch_sync<Transaction>::sync();
   }
 
-  virtual void
+  void
   do_txn_finish() const OVERRIDE
   {
     txn_epoch_sync<Transaction>::finish();
+  }
+
+  void
+  thread_init(bool loader) OVERRIDE
+  {
+    txn_epoch_sync<Transaction>::thread_init(loader);
+  }
+
+  void
+  thread_end() OVERRIDE
+  {
+    txn_epoch_sync<Transaction>::thread_end();
+  }
+
+  std::tuple<uint64_t, uint64_t, double>
+  get_ntxn_persisted() const OVERRIDE
+  {
+    return txn_epoch_sync<Transaction>::compute_ntxn_persisted();
+  }
+
+  void
+  reset_ntxn_persisted() OVERRIDE
+  {
+    txn_epoch_sync<Transaction>::reset_ntxn_persisted();
   }
 
   template <typename Schema>

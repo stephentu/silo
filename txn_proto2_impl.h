@@ -51,10 +51,11 @@ class txn_logger {
 public:
 
   static const size_t g_nmax_loggers = 16;
-  static const size_t g_perthread_buffers = 64; // 64 outstanding buffers
+  static const size_t g_perthread_buffers = 256; // 256 outstanding buffers
   static const size_t g_buffer_size = (1<<20); // in bytes
   static const size_t g_horizon_buffer_size = 2 * (1<<16); // in bytes
-  static const size_t g_max_lag_epochs = 64; // cannot lag more than 64 epochs
+  static const size_t g_max_lag_epochs = 128; // cannot lag more than 128 epochs
+  static const bool   g_pin_loggers_to_numa_nodes = false;
 
   static inline bool
   IsPersistenceEnabled()
@@ -77,7 +78,9 @@ public:
       const std::vector<std::string> &logfiles,
       const std::vector<std::vector<unsigned>> &assignments_given,
       std::vector<std::vector<unsigned>> *assignments_used = nullptr,
-      bool use_compression = false);
+      bool call_fsync = true,
+      bool use_compression = false,
+      bool fake_writes = false);
 
   struct logbuf_header {
     uint64_t nentries_; // > 0 for all valid log buffers
@@ -89,17 +92,32 @@ public:
     bool io_scheduled_; // has the logger scheduled IO yet?
 
     unsigned curoff_; // current offset into buf_ for writing
-    std::string buf_; // the actual buffer, of size g_buffer_size
 
     const unsigned core_id_; // which core does this pbuffer belong to?
+
     const unsigned buf_sz_;
 
+    // must be last field
+    uint8_t buf_start_[0];
+
+    // to allocate a pbuffer, use placement new:
+    //    const size_t bufsz = ...;
+    //    char *p = malloc(sizeof(pbuffer) + bufsz);
+    //    pbuffer *pb = new (p) pbuffer(core_id, bufsz);
+    //
+    // NOTE: it is not necessary to call the destructor for pbuffer, since
+    // it only contains PODs
     pbuffer(unsigned core_id, unsigned buf_sz)
       : core_id_(core_id), buf_sz_(buf_sz)
     {
+      INVARIANT(((char *)this) + sizeof(*this) == (char *) &buf_start_[0]);
       INVARIANT(buf_sz > sizeof(logbuf_header));
       reset();
     }
+
+    pbuffer(const pbuffer &) = delete;
+    pbuffer &operator=(const pbuffer &) = delete;
+    pbuffer(pbuffer &&) = delete;
 
     inline void
     reset()
@@ -107,7 +125,7 @@ public:
       earliest_start_us_ = 0;
       io_scheduled_ = false;
       curoff_ = sizeof(logbuf_header);
-      buf_.assign(buf_sz_, 0);
+      NDB_MEMSET(&buf_start_[0], 0, buf_sz_);
     }
 
     inline uint8_t *
@@ -115,13 +133,13 @@ public:
     {
       INVARIANT(curoff_ >= sizeof(logbuf_header));
       INVARIANT(curoff_ <= buf_sz_);
-      return (uint8_t *) buf_.data() + curoff_;
+      return &buf_start_[0] + curoff_;
     }
 
     inline uint8_t *
     datastart()
     {
-      return (uint8_t *) buf_.data() + sizeof(logbuf_header);
+      return &buf_start_[0] + sizeof(logbuf_header);
     }
 
     inline size_t
@@ -135,13 +153,13 @@ public:
     inline logbuf_header *
     header()
     {
-      return (logbuf_header *) buf_.data();
+      return reinterpret_cast<logbuf_header *>(&buf_start_[0]);
     }
 
     inline const logbuf_header *
     header() const
     {
-      return (const logbuf_header *) buf_.data();
+      return reinterpret_cast<const logbuf_header *>(&buf_start_[0]);
     }
 
     inline size_t
@@ -154,7 +172,7 @@ public:
 
     inline bool
     can_hold_tid(uint64_t tid) const;
-  };
+  } PACKED;
 
   static bool
   AssignmentsValid(const std::vector<std::vector<unsigned>> &assignments,
@@ -180,24 +198,7 @@ public:
 
   typedef circbuf<pbuffer, g_perthread_buffers> pbuffer_circbuf;
 
-  // the buffer which a logger thread pushes clean buffers back to the worker
-  // thread.
-  //
-  // NOTE: has side effect of initializing buffer if not already initialized
-  static inline circbuf<pbuffer, g_perthread_buffers> &
-  logger_to_core_buffer(size_t core_id)
-  {
-    return persist_ctx_for(core_id, true).all_buffers_;
-  }
-
-  // the buffer which a worker thread uses to push buffers to the logger
-  static inline circbuf<pbuffer, g_perthread_buffers> &
-  core_to_logger_buffer(size_t core_id)
-  {
-    return persist_ctx_for(core_id, false).persist_buffers_;
-  }
-
-  static std::pair<uint64_t, double>
+  static std::tuple<uint64_t, uint64_t, double>
   compute_ntxns_persisted_statistics();
 
   // purge counters from each thread about the number of
@@ -222,6 +223,7 @@ private:
   struct epoch_array {
     // don't use percore<std::atomic<uint64_t>> because we don't want padding
     std::atomic<uint64_t> epochs_[NMAXCORES];
+    std::atomic<uint64_t> dummy_work_; // so we can do some fake work
     CACHE_PADOUT;
   };
 
@@ -242,8 +244,14 @@ private:
     // how many txns this thread has persisted in total
     std::atomic<uint64_t> ntxns_persisted_;
 
+    // how many txns have been pushed to the logger (but not necessarily persisted)
+    std::atomic<uint64_t> ntxns_pushed_;
+
+    // committed (but not necessarily pushed, nor persisted)
+    std::atomic<uint64_t> ntxns_committed_;
+
     // sum of all latencies (divid by ntxns_persisted_ to get avg latency in
-    // us)
+    // us) for *persisted* txns (is conservative)
     std::atomic<uint64_t> latency_numer_;
 
     // per last g_max_lag_epochs information
@@ -254,7 +262,9 @@ private:
       per_epoch_stats() : ntxns_(0), earliest_start_us_(0) {}
     } d_[g_max_lag_epochs];
 
-    persist_stats() : ntxns_persisted_(0), latency_numer_(0) {}
+    persist_stats() :
+      ntxns_persisted_(0), ntxns_pushed_(0),
+      ntxns_committed_(0), latency_numer_(0) {}
   };
 
   // helpers
@@ -271,19 +281,37 @@ private:
   static void persister(
       std::vector<std::vector<unsigned>> assignments);
 
+  enum InitMode {
+    INITMODE_NONE, // no initialization
+    INITMODE_REG,  // just use malloc() to init buffers
+    INITMODE_RCU,  // try to use the RCU numa aware allocator
+  };
+
   static inline persist_ctx &
-  persist_ctx_for(uint64_t core_id, bool do_init = true)
+  persist_ctx_for(uint64_t core_id, InitMode imode)
   {
     INVARIANT(core_id < g_persist_ctxs.size());
     persist_ctx &ctx = g_persist_ctxs[core_id];
-    if (unlikely(!ctx.init_ && do_init)) {
-      ctx.init_ = true;
+    if (unlikely(!ctx.init_ && imode != INITMODE_NONE)) {
+      size_t needed = g_perthread_buffers * (sizeof(pbuffer) + g_buffer_size);
+      if (IsCompressionEnabled())
+        needed += size_t(LZ4_create_size()) +
+          sizeof(pbuffer) + g_horizon_buffer_size;
+      char *mem =
+        (imode == INITMODE_REG) ?
+          (char *) malloc(needed) :
+          (char *) rcu::s_instance.alloc_static(needed);
       if (IsCompressionEnabled()) {
-        ctx.lz4ctx_ = LZ4_create();
-        ctx.horizon_ = new pbuffer(core_id, g_horizon_buffer_size);
+        ctx.lz4ctx_ = mem;
+        mem += LZ4_create_size();
+        ctx.horizon_ = new (mem) pbuffer(core_id, g_horizon_buffer_size);
+        mem += sizeof(pbuffer) + g_horizon_buffer_size;
       }
-      for (size_t i = 0; i < g_perthread_buffers; i++)
-        ctx.all_buffers_.enq(new pbuffer(core_id, g_buffer_size));
+      for (size_t i = 0; i < g_perthread_buffers; i++) {
+        ctx.all_buffers_.enq(new (mem) pbuffer(core_id, g_buffer_size));
+        mem += sizeof(pbuffer) + g_buffer_size;
+      }
+      ctx.init_ = true;
     }
     return ctx;
   }
@@ -292,7 +320,13 @@ private:
 
   static bool g_persist; // whether or not logging is enabled
 
+  static bool g_call_fsync; // whether or not fsync() needs to be called
+                            // in order to be considered durable
+
   static bool g_use_compression; // whether or not to compress log buffers
+
+  static bool g_fake_writes; // whether or not to fake doing writes (to measure
+                             // pure overhead of disk)
 
   static size_t g_nworkers; // assignments are computed based on g_nworkers
                             // but a logger responsible for core i is really
@@ -320,10 +354,12 @@ private:
   static event_counter g_evt_log_buffer_out_of_space;
   static event_counter g_evt_log_buffer_bytes_before_compress;
   static event_counter g_evt_log_buffer_bytes_after_compress;
-
+  static event_counter g_evt_logger_writev_limit_met;
   static event_counter g_evt_logger_max_lag_wait;
   static event_avg_counter g_evt_avg_log_entry_ntxns;
   static event_avg_counter g_evt_avg_log_buffer_compress_time_us;
+  static event_avg_counter g_evt_avg_logger_bytes_per_writev;
+  static event_avg_counter g_evt_avg_logger_bytes_per_sec;
 };
 
 static inline std::ostream &
@@ -345,9 +381,9 @@ public:
   // subsystem's tick
 
 #ifdef CHECK_INVARIANTS
-  static const uint64_t ReadOnlyEpochMultiplier = 1; /* 10 ms */
+  static const uint64_t ReadOnlyEpochMultiplier = 1; /* 40 ms */
 #else
-  static const uint64_t ReadOnlyEpochMultiplier = 50; /* 1 sec */
+  static const uint64_t ReadOnlyEpochMultiplier = 25; /* 1 sec */
   static_assert(ticker::tick_us * ReadOnlyEpochMultiplier == 1000000, "");
 #endif
 
@@ -478,7 +514,10 @@ protected:
   // to push_buf if necessary
   //
   // horizon is reset after push_horizon_to_buffer() returns
-  static inline void
+  //
+  // returns the number of txns pushed from buffer to *logger*
+  // (if doing so was necessary)
+  static inline size_t
   push_horizon_to_buffer(txn_logger::pbuffer *horizon,
                          void *lz4ctx,
                          txn_logger::pbuffer_circbuf &pull_buf,
@@ -486,8 +525,10 @@ protected:
   {
     INVARIANT(txn_logger::IsCompressionEnabled());
     if (unlikely(!horizon->header()->nentries_))
-      return;
+      return 0;
     INVARIANT(horizon->datasize());
+
+    size_t ntxns_pushed_to_logger = 0;
 
     // horizon out of space- try to push horizon to buffer
     txn_logger::pbuffer *px = wait_for_head(pull_buf);
@@ -499,6 +540,7 @@ protected:
         (buffer_cond = !px->can_hold_tid(horizon->header()->last_tid_))) {
       // buffer out of space- push buffer to logger
       INVARIANT(px->header()->nentries_);
+      ntxns_pushed_to_logger = px->header()->nentries_;
       txn_logger::pbuffer *px1 = pull_buf.deq();
       INVARIANT(px == px1);
       push_buf.enq(px1);
@@ -551,6 +593,8 @@ protected:
     s_uint32_t.write(px->pointer(), ret);
     px->curoff_ += sizeof(uint32_t) + uint32_t(ret);
     horizon->reset();
+
+    return ntxns_pushed_to_logger;
   }
 
   struct hackstruct {
@@ -699,21 +743,26 @@ public:
     space_needed += sizeof(uint64_t);
 
     // variable bytes to indicate # of records written
-    const uint32_t nwrites = this->write_set.size();
+#ifdef LOGGER_UNSAFE_FAKE_COMPRESSION
+    const unsigned nwrites = 0;
+#else
+    const unsigned nwrites = this->write_set.size();
+#endif
+
     space_needed += vs_uint32_t.nbytes(&nwrites);
 
     // each record needs to be recorded
-    auto it_end = this->write_set.end();
     write_set_u32_vec value_sizes;
-    for (auto it = this->write_set.begin(); it != it_end; ++it) {
-      const uint32_t k_nbytes = it->get_key().size();
+    for (unsigned idx = 0; idx < nwrites; idx++) {
+      const transaction_base::write_record_t &rec = this->write_set[idx];
+      const uint32_t k_nbytes = rec.get_key().size();
       space_needed += vs_uint32_t.nbytes(&k_nbytes);
       space_needed += k_nbytes;
 
-      const uint32_t v_nbytes = it->get_value() ?
-          it->get_writer()(
+      const uint32_t v_nbytes = rec.get_value() ?
+          rec.get_writer()(
               dbtuple::TUPLE_WRITER_COMPUTE_DELTA_NEEDED,
-              it->get_value(), nullptr, 0) : 0;
+              rec.get_value(), nullptr, 0) : 0;
       space_needed += vs_uint32_t.nbytes(&v_nbytes);
       space_needed += v_nbytes;
 
@@ -721,19 +770,19 @@ public:
     }
 
     g_evt_avg_log_entry_size.offer(space_needed);
-    if (space_needed > txn_logger::g_horizon_buffer_size) {
-
-      std::cerr << "space_needed: " << space_needed << std::endl;
-    }
     INVARIANT(space_needed <= txn_logger::g_horizon_buffer_size);
     INVARIANT(space_needed <= txn_logger::g_buffer_size);
 
     const unsigned long my_core_id = coreid::core_id();
 
     txn_logger::persist_ctx &ctx =
-      txn_logger::persist_ctx_for(my_core_id, true);
+      txn_logger::persist_ctx_for(my_core_id, txn_logger::INITMODE_REG);
+    txn_logger::persist_stats &stats =
+      txn_logger::g_persist_stats[my_core_id];
     txn_logger::pbuffer_circbuf &pull_buf = ctx.all_buffers_;
     txn_logger::pbuffer_circbuf &push_buf = ctx.persist_buffers_;
+
+    util::non_atomic_fetch_add(stats.ntxns_committed_, 1UL);
 
     const bool do_compress = txn_logger::IsCompressionEnabled();
     if (do_compress) {
@@ -748,7 +797,10 @@ public:
         }
         INVARIANT(ctx.horizon_->datasize());
         // horizon out of space, so we push it
-        push_horizon_to_buffer(ctx.horizon_, ctx.lz4ctx_, pull_buf, push_buf);
+        const uint64_t npushed =
+          push_horizon_to_buffer(ctx.horizon_, ctx.lz4ctx_, pull_buf, push_buf);
+        if (npushed)
+          util::non_atomic_fetch_add(stats.ntxns_pushed_, npushed);
       }
 
       INVARIANT(ctx.horizon_->space_remaining() >= space_needed);
@@ -769,6 +821,7 @@ public:
         txn_logger::pbuffer *px0 = pull_buf.deq();
         INVARIANT(px == px0);
         INVARIANT(px0->header()->nentries_);
+        util::non_atomic_fetch_add(stats.ntxns_pushed_, px0->header()->nentries_);
         push_buf.enq(px0);
         if (cond)
           ++txn_logger::g_evt_log_buffer_epoch_boundary;
@@ -782,106 +835,6 @@ public:
       if (written != space_needed)
         INVARIANT(false);
     }
-
-    /**
-
-    // check if enough size, or if spans epoch boundary
-    // (which we currently disallow for very shoddy reasons)
-
-    const uint64_t space_remaining = px->space_remaining(do_compress);
-    bool cond = false;
-    if (space_remaining < space_needed ||
-        (cond = (px->header()->nentries_ &&
-                 EpochId(px->header()->last_tid_) != EpochId(commit_tid)))) {
-      INVARIANT(px->header()->nentries_);
-      txn_logger::pbuffer *px0 = pull_buf.deq();
-      INVARIANT(px == px0);
-
-      if (do_compress) {
-        // px0 contains pointer to uncompressed log records
-
-        // px1 contains pointer to compressed log records
-        txn_logger::pbuffer *px1 = wait_for_head(pull_buf);
-        INVARIANT(px0 != px1);
-        *px1->header() = *px0->header();
-        px1->earliest_start_us_ = px0->earliest_start_us_;
-
-        // do compression of px0 into px1
-
-#ifdef ENABLE_EVENT_COUNTERS
-        util::timer tt;
-#endif
-        const int ret = LZ4_compress_heap_limitedOutput(
-            ctx.lz4ctx_,
-            (const char *) px0->datastart(),
-            (char *) px1->datastart() + sizeof(uint32_t),
-            px0->datasize(),
-            px1->space_remaining(false));
-#ifdef ENABLE_EVENT_COUNTERS
-        txn_logger::g_evt_avg_log_buffer_compress_time_us.offer(tt.lap());
-#endif
-
-        //if (ret <= 0) {
-        //  std::cerr << "ret=" << ret
-        //    << ", px0->datasize()=" << px0->datasize()
-        //    << ", px1->space_remaining(false)=" << px1->space_remaining(false)
-        //    << std::endl;
-        //}
-
-        INVARIANT(ret > 0);
-
-#if defined(CHECK_INVARIANTS) && defined(PARANOID_CHECKING)
-        {
-          uint8_t decode_buf[txn_logger::g_buffer_size];
-          const int decode_ret =
-            LZ4_decompress_safe_partial(
-                (const char *) px1->datastart() + sizeof(uint32_t),
-                (char *) &decode_buf[0],
-                ret,
-                txn_logger::g_buffer_size,
-                txn_logger::g_buffer_size);
-          INVARIANT(decode_ret >= 0);
-          if (size_t(decode_ret) != px0->datasize())
-            std::cerr << "decode_ret: " << decode_ret << ", px0->datasize(): "
-                      << px0->datasize() << std::endl;
-          INVARIANT(size_t(decode_ret) == px0->datasize());
-          INVARIANT(memcmp(px0->datastart(), &decode_buf[0], decode_ret) == 0);
-        }
-#endif
-
-        txn_logger::g_evt_log_buffer_bytes_before_compress.inc(px0->datasize());
-        txn_logger::g_evt_log_buffer_bytes_after_compress.inc(ret);
-
-        serializer<uint32_t, false> s_uint32_t;
-        s_uint32_t.write(px1->datastart(), ret);
-
-        px1->curoff_ += sizeof(uint32_t) + uint32_t(ret);
-
-        px0->reset();
-        pull_buf.enq(px0);
-
-        txn_logger::pbuffer *px2 = pull_buf.deq();
-        INVARIANT(px1 == px2);
-
-        px0 = px2;
-      }
-
-      txn_logger::pbuffer_circbuf &push_buf = ctx.persist_buffers_;
-      INVARIANT(px0->header()->nentries_);
-      push_buf.enq(px0);
-      if (cond)
-        ++txn_logger::g_evt_log_buffer_epoch_boundary;
-      else
-        ++txn_logger::g_evt_log_buffer_out_of_space;
-      goto retry;
-    }
-
-    const uint64_t written =
-      write_current_txn_into_buffer(px, commit_tid);
-    if (written != space_needed)
-      INVARIANT(false);
-
-    */
   }
 
 private:
@@ -903,13 +856,20 @@ private:
 
     serializer<uint32_t, true> vs_uint32_t;
     serializer<uint64_t, false> s_uint64_t;
-    const size_t nwrites = this->write_set.size();
+
+#ifdef LOGGER_UNSAFE_FAKE_COMPRESSION
+    const unsigned nwrites = 0;
+#else
+    const unsigned nwrites = this->write_set.size();
+#endif
+
+
     INVARIANT(nwrites == value_sizes.size());
 
     p = s_uint64_t.write(p, commit_tid);
     p = vs_uint32_t.write(p, nwrites);
 
-    for (size_t idx = 0; idx < nwrites; idx++) {
+    for (unsigned idx = 0; idx < nwrites; idx++) {
       const transaction_base::write_record_t &rec = this->write_set[idx];
       const uint32_t k_nbytes = rec.get_key().size();
       p = vs_uint32_t.write(p, k_nbytes);
@@ -1121,32 +1081,56 @@ struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
       txn_logger::wait_until_current_point_persisted();
   }
   static void
+  thread_init(bool loader)
+  {
+    if (!txn_logger::IsPersistenceEnabled())
+      return;
+    const unsigned long my_core_id = coreid::core_id();
+    // try to initialize using numa allocator
+    txn_logger::persist_ctx_for(
+        my_core_id,
+        loader ? txn_logger::INITMODE_REG : txn_logger::INITMODE_RCU);
+  }
+  static void
   thread_end()
   {
     if (!txn_logger::IsPersistenceEnabled())
       return;
     const unsigned long my_core_id = coreid::core_id();
     txn_logger::persist_ctx &ctx =
-      txn_logger::persist_ctx_for(my_core_id, false);
+      txn_logger::persist_ctx_for(my_core_id, txn_logger::INITMODE_NONE);
+    if (unlikely(!ctx.init_))
+      return;
+    txn_logger::persist_stats &stats =
+      txn_logger::g_persist_stats[my_core_id];
     txn_logger::pbuffer_circbuf &pull_buf = ctx.all_buffers_;
     txn_logger::pbuffer_circbuf &push_buf = ctx.persist_buffers_;
     if (txn_logger::IsCompressionEnabled() &&
         ctx.horizon_->header()->nentries_) {
       INVARIANT(ctx.horizon_->datasize());
-      push_horizon_to_buffer(ctx.horizon_, ctx.lz4ctx_, pull_buf, push_buf);
+      const uint64_t npushed =
+        push_horizon_to_buffer(ctx.horizon_, ctx.lz4ctx_, pull_buf, push_buf);
+      if (npushed)
+        util::non_atomic_fetch_add(stats.ntxns_pushed_, npushed);
     }
     txn_logger::pbuffer *px = pull_buf.peek();
-    if (!px || !px->header()->nentries_)
+    if (!px || !px->header()->nentries_) {
+      //std::cerr << "core " << my_core_id
+      //          << " nothing to push to logger" << std::endl;
       return;
+    }
+    //std::cerr << "core " << my_core_id
+    //          << " pushing buffer to logger" << std::endl;
     txn_logger::pbuffer *px0 = pull_buf.deq();
+    util::non_atomic_fetch_add(stats.ntxns_pushed_, px0->header()->nentries_);
     INVARIANT(px0 == px);
     push_buf.enq(px0);
   }
-  static std::pair<uint64_t, double>
+  static std::tuple<uint64_t, uint64_t, double>
   compute_ntxn_persisted()
   {
     if (!txn_logger::IsPersistenceEnabled())
-      return {0, 0.0};
+      return std::make_tuple(0, 0, 0.0);
     return txn_logger::compute_ntxns_persisted_statistics();
   }
   static void

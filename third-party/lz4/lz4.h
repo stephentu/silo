@@ -164,8 +164,9 @@ int LZ4_decompress_fast_withPrefix64k (const char* source, char* dest, int outpu
 // Exposed Functions
 //****************************
 
-void* LZ4_create();
-int   LZ4_free(void* ctx);
+void*    LZ4_create();
+unsigned LZ4_create_size();
+int      LZ4_free(void* ctx);
 
 int LZ4_compress_heap(
                  void* ctx,

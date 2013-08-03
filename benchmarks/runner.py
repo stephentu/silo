@@ -21,6 +21,7 @@ DBS = ('ndb-proto1',)
 
 # config for istc*
 THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
+#THREADS = (28, 32)
 
 #TXN_FLAGS = (0x0, 0x1)
 #TXN_FLAGS = (0x1,)
@@ -30,15 +31,23 @@ THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
 # tuples of (benchname, amplification-factor)
 #BENCHMARKS = ( ('ycsb', 1000), ('tpcc', 1), )
 
-NTRIALS = 3
+DRYRUN = False
+
+NTRIALS = 1 if DRYRUN else 3
 
 ### NOTE: for TPC-C, in general, allocate 4GB of memory per thread for the experiments.
 ### this is over-conservative
 
 KNOB_ENABLE_YCSB_SCALE=False
-KNOB_ENABLE_TPCC_SCALE=True
+KNOB_ENABLE_TPCC_SCALE=False
 KNOB_ENABLE_TPCC_MULTIPART=False
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
+
+## debugging runs
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=True
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
+KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
 
 grids = []
 
@@ -75,18 +84,31 @@ MACHINE_LOG_CONFIG = {
         ('/data/scidb/001/3/stephentu/data.log', 1.),
       ),
   'istc3' : (
-        ('data.log', 1./3.),
-        ('/f0/stephentu/data.log', 2./3.),
+        ('data.log', 3./24.),
+        ('/f0/stephentu/data.log', 7./24.),
+        ('/f1/stephentu/data.log', 7./24.),
+        ('/f2/stephentu/data.log', 7./24.),
       ),
 }
 
 ### helpers for log allocation
 def normalize(x):
-  denom = sum(x)
-  return [e/denom for e in x]
+  denom = math.fsum(x)
+  return [e / denom for e in x]
 
 def scale(x, a):
   return [e * a for e in x]
+
+# a - b
+def sub(a, b):
+  assert len(a) == len(b)
+  return [x - y for x, y in zip(a, b)]
+
+def twonorm(x):
+  return math.sqrt(math.fsum([e * e for e in x]))
+
+def onenorm(x):
+  return math.fsum([abs(e) for e in x])
 
 def argcmp(x, comp, predicate):
   idx = None
@@ -102,23 +124,59 @@ def argcmp(x, comp, predicate):
     raise Exception("no argmin satisfiying predicate")
   return idx
 
-def argmin(x, predicate):
+def argmin(x, predicate=lambda x: True):
   return argcmp(x, lambda a, b: a < b, predicate)
 
-def argmax(x, predicate):
+def argmax(x, predicate=lambda x: True):
   return argcmp(x, lambda a, b: a > b, predicate)
 
 def allocate(nworkers, weights):
+  def score(allocation):
+    #print "score(): allocation=", allocation, "weighted=", normalize(allocation), \
+    #    "score=",onenorm(sub(normalize(allocation), weights))
+    return onenorm(sub(normalize(allocation), weights))
+
+  # assumes weights are normalized
   approx = map(int, map(math.ceil, scale(weights, nworkers)))
   diff = sum(approx) - nworkers
   if diff > 0:
+    #print "OVER"
+    #print approx
+    #print normalize(approx)
     while diff > 0:
-      i = argmin(approx, predicate=lambda x: x > 0)
-      approx[i] -= 1
+      best, bestValue = None, None
+      for idx in xrange(len(approx)):
+        if not approx[idx]:
+          continue
+        cpy = approx[:]
+        cpy[idx] -= 1
+        s = score(cpy)
+        if bestValue is None or s < bestValue:
+          best, bestValue = cpy, s
+      assert best is not None
+      approx = best
       diff -= 1
+
   elif diff < 0:
-    i = argmax(approx, lambda x: True)
-    approx[i] += -diff
+    #print "UNDER"
+    #print approx
+    #print normalize(approx)
+    while diff < 0:
+      best, bestValue = None, None
+      for idx in xrange(len(approx)):
+        cpy = approx[:]
+        cpy[idx] += 1
+        s = score(cpy)
+        if bestValue is None or s < bestValue:
+          best, bestValue = cpy, s
+      assert best is not None
+      approx = best
+      diff += 1
+
+  #print "choice      =", approx
+  #print "weights     =", weights
+  #print "allocweights=", normalize(approx)
+
   acc = 0
   ret = []
   for x in approx:
@@ -269,9 +327,82 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
     },
   ]
 
-def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts, par_load, retry_aborted_txn, numa_memory, logfiles, assignments):
+if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [True],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+    }
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+
+if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [True],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+      'log_compress' : [True],
+    }
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+
+if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [True],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+      'log_nofsync' : [True],
+    }
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+
+if KNOB_ENABLE_TPCC_SCALE_FAKEWRITES:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [True],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+      'log_fake_writes' : [True],
+    }
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+
+def run_configuration(
+    basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
+    par_load, retry_aborted_txn, numa_memory, logfiles,
+    assignments, log_fake_writes, log_nofsync, log_compress):
   # Note: assignments is a list of list of ints
   assert len(logfiles) == len(assignments)
+  assert not log_fake_writes or len(logfiles)
+  assert not log_nofsync or len(logfiles)
+  assert not log_compress or len(logfiles)
   args = [
       './dbtest',
       '--bench', bench,
@@ -286,12 +417,19 @@ def run_configuration(basedir, dbtype, bench, scale_factor, nthreads, bench_opts
     + ([] if not retry_aborted_txn else ['--retry-aborted-transactions']) \
     + ([] if not numa_memory else ['--numa-memory', numa_memory]) \
     + ([] if not logfiles else list(it.chain.from_iterable([['--logfile', f] for f in logfiles]))) \
-    + ([] if not assignments else list(it.chain.from_iterable([['--assignment', ','.join(map(str, x))] for x in assignments])))
-  print >>sys.stderr, '[INFO] running command %s' % str(args)
-  p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
-  r = p.stdout.read()
-  p.wait()
-  toks = r.strip().split(' ')
+    + ([] if not assignments else list(it.chain.from_iterable([['--assignment', ','.join(map(str, x))] for x in assignments]))) \
+    + ([] if not log_fake_writes else ['--log-fake-writes']) \
+    + ([] if not log_nofsync else ['--log-nofsync']) \
+    + ([] if not log_compress else ['--log-compress'])
+  print >>sys.stderr, '[INFO] running command:'
+  print >>sys.stderr, ' '.join(args)
+  if not DRYRUN:
+    p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
+    r = p.stdout.read()
+    p.wait()
+    toks = r.strip().split(' ')
+  else:
+    toks = [0,0,0,0,0]
   assert len(toks) == 5
   return tuple(map(float, toks))
 
@@ -301,21 +439,29 @@ if __name__ == '__main__':
   # iterate over all configs
   results = []
   for grid in grids:
-    for (db, bench, scale_factor, threads, bench_opts, par_load, retry, numa_memory, persist) in it.product(
+    for (db, bench, scale_factor, threads, bench_opts,
+         par_load, retry, numa_memory, persist,
+         log_fake_writes, log_nofsync, log_compress) in it.product(
         grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
         grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
-        grid['numa_memory'], grid['persist']):
+        grid['numa_memory'], grid['persist'],
+        grid.get('log_fake_writes', [False]),
+        grid.get('log_nofsync', [False]),
+        grid.get('log_compress', [False])):
       config = {
-        'name'         : grid['name'],
-        'db'           : db,
-        'bench'        : bench,
-        'scale_factor' : scale_factor,
-        'threads'      : threads,
-        'bench_opts'   : bench_opts,
-        'par_load'     : par_load,
-        'retry'        : retry,
-        'persist'      : persist,
-        'numa_memory'  : numa_memory,
+        'name'            : grid['name'],
+        'db'              : db,
+        'bench'           : bench,
+        'scale_factor'    : scale_factor,
+        'threads'         : threads,
+        'bench_opts'      : bench_opts,
+        'par_load'        : par_load,
+        'retry'           : retry,
+        'persist'         : persist,
+        'numa_memory'     : numa_memory,
+        'log_fake_writes' : log_fake_writes,
+        'log_nofsync'     : log_nofsync,
+        'log_compress'    : log_compress,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
       if persist:
@@ -331,7 +477,8 @@ if __name__ == '__main__':
         value = run_configuration(
             basedir, db, bench, scale_factor, threads,
             bench_opts, par_load, retry, numa_memory,
-            logfiles, assignments)
+            logfiles, assignments, log_fake_writes,
+            log_nofsync, log_compress)
         values.append(value)
       results.append((config, values))
 

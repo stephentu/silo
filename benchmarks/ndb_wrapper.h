@@ -42,7 +42,9 @@ public:
   ndb_wrapper(
       const std::vector<std::string> &logfiles,
       const std::vector<std::vector<unsigned>> &assignments_given,
-      bool use_compression);
+      bool call_fsync,
+      bool use_compression,
+      bool fake_writes);
 
   virtual ssize_t txn_max_batch_size() const OVERRIDE { return 100; }
 
@@ -59,12 +61,18 @@ public:
   }
 
   virtual void
+  thread_init(bool loader)
+  {
+    txn_epoch_sync<Transaction>::thread_init(loader);
+  }
+
+  virtual void
   thread_end()
   {
     txn_epoch_sync<Transaction>::thread_end();
   }
 
-  virtual std::pair<uint64_t, double>
+  virtual std::tuple<uint64_t, uint64_t, double>
   get_ntxn_persisted() const
   {
     return txn_epoch_sync<Transaction>::compute_ntxn_persisted();

@@ -90,13 +90,13 @@ public:
     }
 
     inline void
-    set_pin_cpu_(size_t cpu)
+    set_pin_cpu(size_t cpu)
     {
       pin_cpu_ = cpu;
     }
 
     inline ssize_t
-    get_pin_cpu_() const
+    get_pin_cpu() const
     {
       return pin_cpu_;
     }
@@ -104,6 +104,10 @@ public:
     // allocate a block of memory of size sz. caller needs to remember
     // the size of the allocation when calling free
     void *alloc(size_t sz);
+
+    // allocates a block of memory of size sz, with the intention of never
+    // free-ing it. is meant for reasonably large allocations (order of pages)
+    void *alloc_static(size_t sz);
 
     void dealloc(void *p, size_t sz);
 
@@ -142,6 +146,12 @@ public:
   alloc(size_t sz)
   {
     return mysync().alloc(sz);
+  }
+
+  inline void *
+  alloc_static(size_t sz)
+  {
+    return mysync().alloc_static(sz);
   }
 
   // this releases memory back to the allocator subsystem

@@ -56,14 +56,6 @@ NumCustomersPerDistrict()
   return 3000;
 }
 
-// helpers
-
-static size_t
-MaxCpuForPinning()
-{
-  return min(coreid::num_cpus_online(), nthreads);
-}
-
 // T must implement lock()/unlock(). Both must *not* throw exceptions
 template <typename T>
 class scoped_multilock {
@@ -256,8 +248,6 @@ static string NameTokens[] =
 class tpcc_worker_mixin {
 public:
 
-  static spin_barrier *load_fault_barrier;
-
   // only TPCC loaders need to call this- workers are automatically
   // pinned by their worker id (which corresponds to warehouse id
   // in TPCC)
@@ -266,10 +256,12 @@ public:
   static void
   PinToWarehouseId(unsigned int wid)
   {
+    //cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
+    //     << " pinned to whse=" << wid << endl;
     ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
     const unsigned long pinid = (wid - 1) % MaxCpuForPinning();
-    rcu::pin_current_thread(pinid);
-    rcu::fault_region();
+    rcu::s_instance.pin_current_thread(pinid);
+    rcu::s_instance.fault_region();
   }
 
   static inline uint32_t
@@ -412,8 +404,6 @@ public:
 
 };
 
-spin_barrier *tpcc_worker_mixin::load_fault_barrier = nullptr;
-
 STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 
 template <typename Database, bool AllowReadOnlyScans>
@@ -424,7 +414,8 @@ public:
               const tpcc_tables<Database> &tables,
               spin_barrier *barrier_a, spin_barrier *barrier_b,
               uint warehouse_id)
-    : bench_worker(worker_id, seed, db, barrier_a, barrier_b),
+    : bench_worker(worker_id, true, seed, db,
+                   barrier_a, barrier_b),
       tpcc_worker_mixin(),
       tables(tables),
       warehouse_id(warehouse_id)
@@ -517,41 +508,13 @@ protected:
   {
     if (!pin_cpus)
       return;
-    rcu::pin_current_thread(worker_id % MaxCpuForPinning());
+    rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
   }
 
 private:
   tpcc_tables<Database> tables;
   const uint warehouse_id;
   int32_t last_no_o_ids[10]; // XXX(stephentu): hack
-};
-
-
-template <typename Database>
-class tpcc_faulting_loader : public typed_bench_loader<Database>,
-                             public tpcc_worker_mixin {
-public:
-  tpcc_faulting_loader(unsigned long seed,
-                       Database *db,
-                       unsigned int id)
-    : typed_bench_loader<Database>(seed, db),
-      tpcc_worker_mixin(),
-      id(id)
-  {}
-
-protected:
-  virtual void
-  load()
-  {
-    if (!pin_cpus)
-      return;
-    // triggers fault
-    PinToWarehouseId(id);
-    tpcc_worker_mixin::load_fault_barrier->count_down();
-  }
-
-private:
-  unsigned int id;
 };
 
 template <typename Database>
@@ -570,9 +533,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
     try {
       vector<warehouse::value> warehouses;
@@ -652,9 +612,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
     auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
     uint64_t total_sz = 0;
@@ -727,9 +684,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
@@ -836,9 +790,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     const ssize_t bsize = this->typed_db()->txn_max_batch_size();
     auto txn = this->typed_db()->template new_txn<abstract_db::HINT_DEFAULT>(txn_flags, this->arena);
     uint64_t district_total_sz = 0, n_districts = 0;
@@ -911,98 +862,104 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     const uint w_start = (warehouse_id == -1) ?
       1 : static_cast<uint>(warehouse_id);
     const uint w_end   = (warehouse_id == -1) ?
       NumWarehouses() : static_cast<uint>(warehouse_id);
+    const size_t batchsize =
+      (this->typed_db()->txn_max_batch_size() == -1) ?
+        NumCustomersPerDistrict() : this->typed_db()->txn_max_batch_size();
+    const size_t nbatches =
+      (batchsize > NumCustomersPerDistrict()) ?
+        1 : (NumCustomersPerDistrict() / batchsize);
+    cerr << "num batches: " << nbatches << endl;
 
     uint64_t total_sz = 0;
 
     for (uint w = w_start; w <= w_end; w++) {
       if (pin_cpus)
         PinToWarehouseId(w);
-      for (uint d = 1; d <= NumDistrictsPerWarehouse();) {
-        scoped_str_arena s_arena(this->arena);
-        typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags, this->arena);
-        try {
-          for (uint c = 1; c <= NumCustomersPerDistrict(); c++) {
-            const customer::key k(w, d, c);
+      for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
+        for (uint batch = 0; batch < nbatches;) {
+          scoped_str_arena s_arena(this->arena);
+          typename Database::template TransactionType<abstract_db::HINT_DEFAULT>::type txn(txn_flags, this->arena);
+          const size_t cstart = batch * batchsize;
+          const size_t cend = std::min((batch + 1) * batchsize, NumCustomersPerDistrict());
+          try {
+            for (uint cidx0 = cstart; cidx0 < cend; cidx0++) {
+              const uint c = cidx0 + 1;
+              const customer::key k(w, d, c);
 
-            customer::value v;
-            v.c_discount = (float) (RandomNumber(this->r, 1, 5000) / 10000.0);
-            if (RandomNumber(this->r, 1, 100) <= 10)
-              v.c_credit.assign("BC");
-            else
-              v.c_credit.assign("GC");
+              customer::value v;
+              v.c_discount = (float) (RandomNumber(this->r, 1, 5000) / 10000.0);
+              if (RandomNumber(this->r, 1, 100) <= 10)
+                v.c_credit.assign("BC");
+              else
+                v.c_credit.assign("GC");
 
-            if (c <= 1000)
-              v.c_last.assign(GetCustomerLastName(this->r, c - 1));
-            else
-              v.c_last.assign(GetNonUniformCustomerLastNameLoad(this->r));
+              if (c <= 1000)
+                v.c_last.assign(GetCustomerLastName(this->r, c - 1));
+              else
+                v.c_last.assign(GetNonUniformCustomerLastNameLoad(this->r));
 
-            v.c_first.assign(RandomStr(this->r, RandomNumber(this->r, 8, 16)));
-            v.c_credit_lim = 50000;
+              v.c_first.assign(RandomStr(this->r, RandomNumber(this->r, 8, 16)));
+              v.c_credit_lim = 50000;
 
-            v.c_balance = -10;
-            v.c_ytd_payment = 10;
-            v.c_payment_cnt = 1;
-            v.c_delivery_cnt = 0;
+              v.c_balance = -10;
+              v.c_ytd_payment = 10;
+              v.c_payment_cnt = 1;
+              v.c_delivery_cnt = 0;
 
-            v.c_street_1.assign(RandomStr(this->r, RandomNumber(this->r, 10, 20)));
-            v.c_street_2.assign(RandomStr(this->r, RandomNumber(this->r, 10, 20)));
-            v.c_city.assign(RandomStr(this->r, RandomNumber(this->r, 10, 20)));
-            v.c_state.assign(RandomStr(this->r, 3));
-            v.c_zip.assign(RandomNStr(this->r, 4) + "11111");
-            v.c_phone.assign(RandomNStr(this->r, 16));
-            v.c_since = GetCurrentTimeMillis();
-            v.c_middle.assign("OE");
-            v.c_data.assign(RandomStr(this->r, RandomNumber(this->r, 300, 500)));
+              v.c_street_1.assign(RandomStr(this->r, RandomNumber(this->r, 10, 20)));
+              v.c_street_2.assign(RandomStr(this->r, RandomNumber(this->r, 10, 20)));
+              v.c_city.assign(RandomStr(this->r, RandomNumber(this->r, 10, 20)));
+              v.c_state.assign(RandomStr(this->r, 3));
+              v.c_zip.assign(RandomNStr(this->r, 4) + "11111");
+              v.c_phone.assign(RandomNStr(this->r, 16));
+              v.c_since = GetCurrentTimeMillis();
+              v.c_middle.assign("OE");
+              v.c_data.assign(RandomStr(this->r, RandomNumber(this->r, 300, 500)));
 
-            checker::SanityCheckCustomer(&k, &v);
-            const size_t sz = Size(v);
-            total_sz += sz;
-            tables.tbl_customer(w)->insert(txn, k, v);
+              checker::SanityCheckCustomer(&k, &v);
+              const size_t sz = Size(v);
+              total_sz += sz;
+              tables.tbl_customer(w)->insert(txn, k, v);
 
-            // customer name index
-            const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
-            const customer_name_idx::value v_idx(k.c_id);
+              // customer name index
+              const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
+              const customer_name_idx::value v_idx(k.c_id);
 
-            // index structure is:
-            // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
+              // index structure is:
+              // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-            tables.tbl_customer_name_idx(w)->insert(txn, k_idx, v_idx);
+              tables.tbl_customer_name_idx(w)->insert(txn, k_idx, v_idx);
 
-            history::key k_hist;
-            k_hist.h_c_id = c;
-            k_hist.h_c_d_id = d;
-            k_hist.h_c_w_id = w;
-            k_hist.h_d_id = d;
-            k_hist.h_w_id = w;
-            k_hist.h_date = GetCurrentTimeMillis();
+              history::key k_hist;
+              k_hist.h_c_id = c;
+              k_hist.h_c_d_id = d;
+              k_hist.h_c_w_id = w;
+              k_hist.h_d_id = d;
+              k_hist.h_w_id = w;
+              k_hist.h_date = GetCurrentTimeMillis();
 
-            history::value v_hist;
-            v_hist.h_amount = 10;
-            v_hist.h_data.assign(RandomStr(this->r, RandomNumber(this->r, 10, 24)));
+              history::value v_hist;
+              v_hist.h_amount = 10;
+              v_hist.h_data.assign(RandomStr(this->r, RandomNumber(this->r, 10, 24)));
 
-            tables.tbl_history(w)->insert(txn, k_hist, v_hist);
-          }
-
-          if (txn.commit()) {
-            d++;
-          } else {
+              tables.tbl_history(w)->insert(txn, k_hist, v_hist);
+            }
+            if (txn.commit()) {
+              batch++;
+            } else {
+              txn.abort();
+              if (verbose)
+                cerr << "[WARNING] customer loader loading abort" << endl;
+            }
+          } catch (typename Database::abort_exception_type &e) {
             txn.abort();
-            ALWAYS_ASSERT(warehouse_id == -1);
             if (verbose)
               cerr << "[WARNING] customer loader loading abort" << endl;
           }
-        } catch (typename Database::abort_exception_type &e) {
-          txn.abort();
-          ALWAYS_ASSERT(warehouse_id == -1);
-          if (verbose)
-            cerr << "[WARNING] customer loader loading abort" << endl;
         }
       }
     }
@@ -1046,9 +1003,6 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus)
-      tpcc_worker_mixin::load_fault_barrier->wait_for();
-
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
     uint64_t oorder_total_sz = 0, n_oorders = 0;
     uint64_t new_order_total_sz = 0, n_new_orders = 0;
@@ -2011,11 +1965,6 @@ protected:
   make_loaders()
   {
     vector<unique_ptr<bench_loader>> ret;
-    if (pin_cpus) {
-      tpcc_worker_mixin::load_fault_barrier = new spin_barrier(NumWarehouses());
-      for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.emplace_back(new tpcc_faulting_loader<Database>(1, this->typed_db(), i));
-    }
     ret.emplace_back(new tpcc_warehouse_loader<Database>(9324, this->typed_db(), tables));
     ret.emplace_back(new tpcc_item_loader<Database>(235443, this->typed_db(), tables));
     if (enable_parallel_loading) {
@@ -2046,19 +1995,26 @@ protected:
   virtual vector<unique_ptr<bench_worker>>
   make_workers()
   {
+    const unsigned alignment = coreid::num_cpus_online();
+    const int blockstart =
+      coreid::allocate_contiguous_aligned_block(nthreads, alignment);
+    ALWAYS_ASSERT(blockstart >= 0);
+    ALWAYS_ASSERT((blockstart % alignment) == 0);
     fast_random r(23984543);
     vector<unique_ptr<bench_worker>> ret;
     for (size_t i = 0; i < nthreads; i++)
       if (g_disable_read_only_scans)
         ret.emplace_back(
           new tpcc_worker<Database, false>(
-            i, r.next(), this->typed_db(), tables,
+            blockstart + i,
+            r.next(), this->typed_db(), tables,
             &this->barrier_a, &this->barrier_b,
             (i % NumWarehouses()) + 1));
       else
         ret.emplace_back(
           new tpcc_worker<Database, true>(
-            i, r.next(), this->typed_db(), tables,
+            blockstart + i,
+            r.next(), this->typed_db(), tables,
             &this->barrier_a, &this->barrier_b,
             (i % NumWarehouses()) + 1));
     return ret;
@@ -2079,7 +2035,9 @@ MakeBenchRunner(Database *db)
 }
 
 void
-tpcc_do_test(const string &dbtype, int argc, char **argv)
+tpcc_do_test(const string &dbtype,
+             const persistconfig &cfg,
+             int argc, char **argv)
 {
   // parse options
   optind = 1;
@@ -2156,6 +2114,21 @@ tpcc_do_test(const string &dbtype, int argc, char **argv)
   unique_ptr<bench_runner> r;
 
   if (dbtype == "ndb-proto2") {
+    if (!cfg.logfiles_.empty()) {
+      vector<vector<unsigned>> assignments_used;
+      txn_logger::Init(
+          nthreads, cfg.logfiles_, cfg.assignments_, &assignments_used,
+          !cfg.nofsync_,
+          cfg.do_compress_,
+          cfg.fake_writes_);
+      if (verbose) {
+        cerr << "[logging subsystem]" << endl;
+        cerr << "  assignments: " << assignments_used  << endl;
+        cerr << "  call fsync : " << !cfg.nofsync_     << endl;
+        cerr << "  compression: " << cfg.do_compress_  << endl;
+        cerr << "  fake_writes: " << cfg.fake_writes_  << endl;
+      }
+    }
     typedef ndb_database<transaction_proto2> Database;
     Database *raw = new Database;
     db.reset(raw);
