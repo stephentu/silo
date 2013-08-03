@@ -89,15 +89,11 @@ private:
     virtual void on_node_failure();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
     purge_tree_walker()
-      : purge_stats_tuple_logically_removed_no_mark(0),
-        purge_stats_tuple_logically_removed_with_mark(0),
-        purge_stats_nodes(0),
+      : purge_stats_nodes(0),
         purge_stats_nosuffix_nodes(0) {}
     std::map<size_t, size_t> purge_stats_ln_record_size_counts; // just the record
     std::map<size_t, size_t> purge_stats_ln_alloc_size_counts; // includes overhead
-    std::map<size_t, size_t> purge_stats_tuple_chain_counts;
-    size_t purge_stats_tuple_logically_removed_no_mark;
-    size_t purge_stats_tuple_logically_removed_with_mark;
+    //std::map<size_t, size_t> purge_stats_tuple_chain_counts;
     std::vector<uint16_t> purge_stats_nkeys_node;
     size_t purge_stats_nodes;
     size_t purge_stats_nosuffix_nodes;
@@ -125,16 +121,16 @@ private:
       for (std::map<size_t, size_t>::iterator it = purge_stats_ln_alloc_size_counts.begin();
           it != purge_stats_ln_alloc_size_counts.end(); ++it)
         std::cerr << "    " << (it->first + sizeof(dbtuple)) << " => " << it->second << std::endl;
-      std::cerr << "chain stats  (length => count)" << std::endl;
-      for (std::map<size_t, size_t>::iterator it = purge_stats_tuple_chain_counts.begin();
-          it != purge_stats_tuple_chain_counts.end(); ++it) {
-        std::cerr << "    " << it->first << " => " << it->second << std::endl;
-        ret["chain_" + std::to_string(it->first)] += it->second;
-      }
-      std::cerr << "deleted recored stats" << std::endl;
-      std::cerr << "    logically_removed (total): " << (purge_stats_tuple_logically_removed_no_mark + purge_stats_tuple_logically_removed_with_mark) << std::endl;
-      std::cerr << "    logically_removed_no_mark: " << purge_stats_tuple_logically_removed_no_mark << std::endl;
-      std::cerr << "    logically_removed_with_mark: " << purge_stats_tuple_logically_removed_with_mark << std::endl;
+      //std::cerr << "chain stats  (length => count)" << std::endl;
+      //for (std::map<size_t, size_t>::iterator it = purge_stats_tuple_chain_counts.begin();
+      //    it != purge_stats_tuple_chain_counts.end(); ++it) {
+      //  std::cerr << "    " << it->first << " => " << it->second << std::endl;
+      //  ret["chain_" + std::to_string(it->first)] += it->second;
+      //}
+      //std::cerr << "deleted recored stats" << std::endl;
+      //std::cerr << "    logically_removed (total): " << (purge_stats_tuple_logically_removed_no_mark + purge_stats_tuple_logically_removed_with_mark) << std::endl;
+      //std::cerr << "    logically_removed_no_mark: " << purge_stats_tuple_logically_removed_no_mark << std::endl;
+      //std::cerr << "    logically_removed_with_mark: " << purge_stats_tuple_logically_removed_with_mark << std::endl;
       return ret;
     }
 #endif
@@ -275,13 +271,9 @@ base_txn_btree<Transaction, P>::purge_tree_walker::on_node_success()
     INVARIANT(ln);
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
     // XXX(stephentu): should we also walk the chain?
-    purge_stats_ln_record_size_counts[ln->size]++;
+    purge_stats_ln_record_size_counts[ln->is_deleting() ? 0 : ln->size]++;
     purge_stats_ln_alloc_size_counts[ln->alloc_size]++;
-    purge_stats_tuple_chain_counts[ln->chain_length()]++;
-    if (!ln->size && !ln->is_deleting())
-      purge_stats_tuple_logically_removed_no_mark++;
-    if (!ln->size && ln->is_deleting())
-      purge_stats_tuple_logically_removed_with_mark++;
+    //purge_stats_tuple_chain_counts[ln->chain_length()]++;
 #endif
     if (base_txn_btree_handler<Transaction>::has_background_task) {
 #ifdef CHECK_INVARIANTS

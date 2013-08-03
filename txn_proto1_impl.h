@@ -45,7 +45,7 @@ public:
   }
 
   inline ALWAYS_INLINE bool
-  can_overwrite_record_tid(tid_t prev, tid_t cur) const
+  can_overwrite_record_tid(tid_t prev, tid_t cur, bool prev_deleted) const
   {
     return false;
   }

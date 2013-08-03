@@ -31,44 +31,26 @@ __thread vector<const dbtuple *> *dbtuple::tl_locked_nodes(nullptr);
 dbtuple::~dbtuple()
 {
   INVARIANT(!is_locked());
-  INVARIANT(is_deleting());
+  INVARIANT(!is_latest());
   INVARIANT(!is_write_intent());
   INVARIANT(!is_modifying());
 
   VERBOSE(cerr << "dbtuple: " << hexify(intptr_t(this)) << " is being deleted" << endl);
 
-  // free reachable nodes:
-  // don't do this recursively, to avoid overflowing
-  // stack w/ really long chains
-#ifdef ENABLE_EVENT_COUNTERS
-  size_t len = 0;
-#endif
-  struct dbtuple *cur = get_next();
-  while (cur) {
-    struct dbtuple *tmp = cur->get_next();
-    cur->clear_next(); // so cur's dtor doesn't attempt to double free
-    release_no_rcu(cur); // just a wrapper for ~dbtuple() + free()
-    cur = tmp;
-#ifdef ENABLE_EVENT_COUNTERS
-    len++;
-#endif
-  }
+  // only free this instance
 
   // stats-keeping
   ++g_evt_dbtuple_physical_deletes;
   g_evt_dbtuple_bytes_freed += (alloc_size + sizeof(dbtuple));
-#ifdef ENABLE_EVENT_COUNTERS
-  if (len)
-    evt_avg_dbtuple_chain_length.offer(len);
-#endif
+
 }
 
 void
-dbtuple::gc_chain()
+dbtuple::gc_this()
 {
   INVARIANT(rcu::s_instance.in_rcu_region());
   INVARIANT(!is_latest());
-  release(this); // ~dbtuple() takes care of all reachable ptrs
+  release(this);
 }
 
 string

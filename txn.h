@@ -258,14 +258,12 @@ protected:
       FLAGS_LOCKED = 0x1,
       FLAGS_INSERT = 0x1 << 1,
     };
-    inline dbtuple_write_info() {}
-    inline dbtuple_write_info(dbtuple *tuple)
-      : tuple(tuple)
-    {}
-    inline dbtuple_write_info(dbtuple *tuple, bool insert)
-      : tuple(tuple)
+    dbtuple_write_info() : tuple(), entry(nullptr) {}
+    dbtuple_write_info(dbtuple *tuple, write_record_t *entry)
+      : tuple(tuple), entry(entry)
     {
-      this->tuple.set_flags(insert ? (FLAGS_LOCKED | FLAGS_INSERT) : 0);
+      if (entry) // entry <=> insert
+        this->tuple.set_flags(FLAGS_LOCKED | FLAGS_INSERT);
     }
     inline dbtuple *
     get_tuple()
@@ -303,6 +301,7 @@ protected:
       return tuple < o.tuple || (tuple == o.tuple && !is_insert() < !o.is_insert());
     }
     marked_ptr<dbtuple> tuple;
+    write_record_t *entry;
   };
 
   static event_counter g_evt_read_logical_deleted_node_search;
@@ -583,7 +582,7 @@ protected:
   {
     // XXX: skip binary search for small-sized dbtuples?
     return std::binary_search(dbtuples.begin(), dbtuples.end(),
-        dbtuple_write_info(const_cast<dbtuple *>(tuple)));
+        dbtuple_write_info(const_cast<dbtuple *>(tuple), nullptr));
   }
 
 public:
@@ -689,7 +688,12 @@ protected:
 
 public:
   // expected public overrides
-  bool can_overwrite_record_tid(tid_t prev, tid_t cur) const;
+
+  /**
+   * Can we overwrite prev with cur, given that prev was a deleted (empty)
+   * node iff prev_deleted
+   */
+  bool can_overwrite_record_tid(tid_t prev, tid_t cur, bool prev_deleted) const;
 
   /**
    * XXX: document
@@ -723,7 +727,7 @@ protected:
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
   // the logical node for actual deletion
-  void on_logical_delete(dbtuple *tuple);
+  void on_logical_delete(dbtuple *tuple, const std::string &key, btree *btr);
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called
   // with the commit tid. before on_tid_finish() is called, state is updated

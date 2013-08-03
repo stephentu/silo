@@ -188,7 +188,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     typename write_set_map::iterator it_end = write_set.end();
     for (; it != it_end; ++it) {
       INVARIANT(!it->is_insert() || it->get_tuple()->is_locked());
-      write_dbtuples.emplace_back(it->get_tuple(), it->is_insert());
+      write_dbtuples.emplace_back(
+          it->get_tuple(),
+          it->is_insert() ? &(*it) : nullptr);
     }
   }
 
@@ -251,8 +253,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         const dbtuple::version_t v = tuple->lock(true); // lock for write
         INVARIANT(dbtuple::IsLatest(v) == tuple->is_latest());
         it->mark_locked();
-        if (unlikely(dbtuple::IsDeleting(v) ||
-                     !dbtuple::IsLatest(v) ||
+        if (unlikely(!dbtuple::IsLatest(v) ||
                      !cast()->can_read_tid(tuple->version))) {
           // XXX(stephentu): overly conservative (with the can_read_tid() check)
           abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
@@ -340,15 +341,22 @@ transaction<Protocol, Traits>::commit(bool doThrow)
                                               // w/o creating a new chain
         } else {
           tuple->prefetch();
-          const dbtuple::write_record_ret ret = tuple->write_record_at(
-              cast(), commit_tid.second, it->get_value(), it->get_writer());
-          lock_guard<dbtuple> guard(ret.second, true);
-          if (unlikely(ret.second)) {
+          const dbtuple::write_record_ret ret =
+            tuple->write_record_at(
+                cast(), commit_tid.second,
+                it->get_value(), it->get_writer());
+          INVARIANT(!ret.second || ret.first); // can't have second w/o first
+          INVARIANT(ret.first != ret.second); // they can't be equal
+          if (unlikely(ret.first != tuple)) {
+            // tuple was replaced by ret.first
+            INVARIANT(ret.second == tuple);
+            // XXX: write_record_at() should acquire this lock
+            lock_guard<dbtuple> guard(ret.first, true);
             // need to unlink tuple from underlying btree, replacing
             // with ret.second (atomically)
             btree::value_type old_v = 0;
             if (it->get_btree()->insert(
-                  varkey(it->get_key()), (btree::value_type) ret.second, &old_v, NULL))
+                  varkey(it->get_key()), (btree::value_type) ret.first, &old_v, NULL))
               // should already exist in tree
               INVARIANT(false);
             INVARIANT(old_v == (btree::value_type) tuple);
@@ -356,13 +364,12 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             // (the cleaners will take care of this)
             ++evt_dbtuple_latest_replacement;
           }
-          dbtuple * const latest = ret.second ? ret.second : tuple;
-          if (unlikely(ret.first))
-            // spill happened: signal for GC
-            cast()->on_dbtuple_spill(latest);
+          if (unlikely(ret.second))
+            // spill happened: schedule GC task
+            cast()->on_dbtuple_spill(ret.second);
           if (!it->get_value())
-            // logical delete happened: schedule physical deletion
-            cast()->on_logical_delete(latest);
+            // logical delete happened: schedule GC task
+            cast()->on_logical_delete(ret.first, it->get_key(), it->get_btree());
         }
         VERBOSE(std::cerr << "dbtuple " << util::hexify(tuple) << " is_locked? " << tuple->is_locked() << std::endl);
       }
@@ -394,10 +401,21 @@ do_abort:
        it != write_dbtuples.end(); ++it) {
     if (it->is_locked()) {
       if (it->is_insert()) {
+        // XXX: this code should really live in txn_proto2_impl.h
         INVARIANT(it->tuple->version == dbtuple::MAX_TID);
-        // clear tuple, and let background reaper clean up
-        it->tuple->version = dbtuple::MIN_TID;
-        it->tuple->size = 0;
+        INVARIANT(it->entry);
+        btree::value_type removed = 0;
+        const bool did_remove = it->entry->get_btree()->remove(
+            varkey(it->entry->get_key()), &removed);
+        if (unlikely(!did_remove)) {
+          std::cerr << " *** could not remove key: " << util::hexify(it->entry->get_key())  << std::endl;
+  #ifdef TUPLE_CHECK_KEY
+          std::cerr << " *** original key        : " << util::hexify(it->tuple->key) << std::endl;
+  #endif
+          INVARIANT(false);
+        }
+        INVARIANT(removed == (btree::value_type) it->tuple.get());
+        dbtuple::release(it->tuple.get()); // rcu free
       }
       // XXX: potential optimization: on unlock() for abort, we don't
       // technically need to change the version number

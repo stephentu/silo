@@ -20,24 +20,24 @@ template <typename Traits> class transaction_proto2;
 template <template <typename> class Transaction>
   class txn_epoch_sync;
 
-// each txn_btree has a walker_loop associated with it
-class txn_walker_loop : public ndb_thread {
-  friend class transaction_proto2_static;
-  friend class base_txn_btree_handler<transaction_proto2>;
-  friend class txn_epoch_sync<transaction_proto2>;
-public:
-  // not a daemon thread, so we can join when the txn_btree exists
-  txn_walker_loop()
-    : ndb_thread(false, std::string("walkerloop")),
-      running(false),
-      btr(0) {}
-  virtual void run();
-private:
-  volatile bool running;
-  static volatile bool global_running; // a hacky way to disable all cleaners temporarily
-  std::string name;
-  btree *btr;
-};
+//// each txn_btree has a walker_loop associated with it
+//class txn_walker_loop : public ndb_thread {
+//  friend class transaction_proto2_static;
+//  friend class base_txn_btree_handler<transaction_proto2>;
+//  friend class txn_epoch_sync<transaction_proto2>;
+//public:
+//  // not a daemon thread, so we can join when the txn_btree exists
+//  txn_walker_loop()
+//    : ndb_thread(false, std::string("walkerloop")),
+//      running(false),
+//      btr(0) {}
+//  virtual void run();
+//private:
+//  volatile bool running;
+//  static volatile bool global_running; // a hacky way to disable all cleaners temporarily
+//  std::string name;
+//  btree *btr;
+//};
 
 // the system has a single logging subsystem (composed of multiple lgogers)
 // NOTE: currently, the persistence epoch is tied 1:1 with the ticker's epoch
@@ -431,8 +431,6 @@ public:
     return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
   }
 
-  static percore<uint64_t> g_last_commit_tids;
-
   // can clean <= ro_epoch_clean (note this is in RO epochs, not ticker epochs)
   static void
   do_dbtuple_chain_cleanup(dbtuple *ln, uint64_t ro_epoch_clean);
@@ -453,11 +451,14 @@ public:
     return g_hack->status_;
   }
 
-  // hack
-  static util::aligned_padded_elem<std::atomic<uint64_t>> g_max_gc_version_inc;
-  static util::aligned_padded_elem<std::atomic<uint64_t>> g_max_unlink_version_inc;
+  // thread-safe, can be called many times
+  static void Init();
 
 protected:
+
+  static const size_t g_num_gc_workers = 4;
+
+  static void gcloop(unsigned i);
 
   // helper methods
   static inline txn_logger::pbuffer *
@@ -562,6 +563,39 @@ protected:
   static util::aligned_padded_elem<hackstruct>
     g_hack CACHE_ALIGNED;
 
+  struct delete_entry {
+    dbtuple *tuple_;
+    marked_ptr<std::string> key_;
+    btree *btr_;
+
+    delete_entry()
+      : tuple_(nullptr), key_(), btr_(nullptr) {}
+
+    delete_entry(dbtuple *tuple,
+                 const marked_ptr<std::string> &key,
+                 btree *btr)
+      : tuple_(tuple), key_(key), btr_(btr) {}
+  };
+
+  typedef basic_px_queue<delete_entry, 4096> px_queue;
+
+  // stores last commit TID for each core
+  struct threadctx {
+    spinlock lock_; // guards the gc queue + string pool
+    std::atomic<uint64_t> last_commit_tid_;
+
+    // semantics of queue are, an element q enqueued at (RO) epoch
+    // r is ready for deletion when all threads will read snapshots
+    // at epochs >= r.
+    //
+    // NOTE: epoch units are RO epochs
+    px_queue queue_;
+
+    std::deque<std::string *> pool_;
+  };
+
+  static percore<threadctx> g_threadctxs;
+
   static event_counter g_evt_worker_thread_wait_log_buffer;
   static event_avg_counter g_evt_avg_log_entry_size;
 };
@@ -627,7 +661,7 @@ public:
   }
 
   inline bool
-  can_overwrite_record_tid(tid_t prev, tid_t cur) const
+  can_overwrite_record_tid(tid_t prev, tid_t cur, bool prev_deleted) const
   {
     INVARIANT(prev <= cur);
 
@@ -636,8 +670,9 @@ public:
     // absent (removed) record, so it is safe to overwrite it,
     //
     // This is an OK assumption with *no TID wrap around*.
-    return to_read_only_tick(EpochId(prev)) ==
-           to_read_only_tick(EpochId(cur)) || !prev;
+    return (to_read_only_tick(EpochId(prev)) ==
+            to_read_only_tick(EpochId(cur)) && !prev_deleted) ||
+           !prev;
   }
 
   // can only read elements in this epoch or previous epochs
@@ -914,19 +949,15 @@ public:
       << current_epoch << std::endl;
     std::cerr << "  last_consistent_tid: "
       << g_proto_version_str(last_consistent_tid) << std::endl;
-    std::cerr << "  max_epoch_removed_inc: "
-      << transaction_proto2_static::g_max_gc_version_inc->load(std::memory_order_acquire)
-      << std::endl;
-    std::cerr << "  max_epoch_unlinked_inc: "
-      << transaction_proto2_static::g_max_unlink_version_inc->load(std::memory_order_acquire)
-      << std::endl;
   }
 
   transaction_base::tid_t
   gen_commit_tid(const dbtuple_write_info_vec &write_tuples)
   {
     const size_t my_core_id = this->rcu_guard_.guard().core();
-    const tid_t l_last_commit_tid = g_last_commit_tids[my_core_id];
+    threadctx &ctx = g_threadctxs[my_core_id];
+    const tid_t l_last_commit_tid =
+      ctx.last_commit_tid_.load(std::memory_order_acquire);
     INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
               CoreId(l_last_commit_tid) == my_core_id);
     INVARIANT(!this->is_read_only());
@@ -982,30 +1013,75 @@ public:
     // XXX(stephentu): this txn hasn't actually been commited yet,
     // and could potentially be aborted - but it's ok to increase this #, since
     // subsequent txns on this core will read this # anyways
-    return (g_last_commit_tids[my_core_id] = ret);
+    ctx.last_commit_tid_.store(ret, std::memory_order_release);
+    return ret;
   }
 
   inline ALWAYS_INLINE void
   on_dbtuple_spill(dbtuple *tuple)
   {
+    INVARIANT(rcu::s_instance.in_rcu_region());
+    INVARIANT(!tuple->is_latest());
+    INVARIANT(to_read_only_tick(EpochId(tuple->version)) <
+              to_read_only_tick(this->current_epoch));
+
+    // when all snapshots are happening >= the current epoch,
+    // then we can safely remove tuple
+    const size_t k = coreid::core_id();
+    threadctx &ctx = g_threadctxs[k];
+    lock_guard<spinlock> lg(ctx.lock_);
+    ctx.queue_.enqueue(
+        delete_entry(tuple, marked_ptr<std::string>(), nullptr),
+        to_read_only_tick(this->current_epoch));
+  }
+
+  inline ALWAYS_INLINE void
+  on_logical_delete(dbtuple *tuple, const std::string &key, btree *btr)
+  {
     INVARIANT(tuple->is_locked());
     INVARIANT(tuple->is_lock_owner());
     INVARIANT(tuple->is_write_intent());
     INVARIANT(tuple->is_latest());
+    INVARIANT(tuple->is_deleting());
+    INVARIANT(!tuple->size);
     INVARIANT(rcu::s_instance.in_rcu_region());
-    // this is too aggressive- better to let the background
-    // reaper clean the chains
-    //do_dbtuple_chain_cleanup(tuple);
-  }
 
-  inline ALWAYS_INLINE void
-  on_logical_delete(dbtuple *tuple)
-  {
-    // we let the background tree walker clean up the node
+    const size_t k = coreid::core_id();
+    threadctx &ctx = g_threadctxs[k];
+
+    if (likely(key.size() <= tuple->alloc_size)) {
+      NDB_MEMCPY(tuple->get_value_start(), key.data(), key.size());
+      tuple->size = key.size();
+      lock_guard<spinlock> lg(ctx.lock_);
+      // eligible for deletion when all snapshots >= current epoch
+      marked_ptr<std::string> mpx;
+      mpx.set_flags(0x1);
+      ctx.queue_.enqueue(
+          delete_entry(tuple, mpx, btr),
+          to_read_only_tick(this->current_epoch));
+    } else {
+      // this is a rare event
+      lock_guard<spinlock> lg(ctx.lock_);
+
+      std::string *spx = nullptr;
+      if (ctx.pool_.empty()) {
+        spx = new std::string(key.data(), key.size()); // XXX: use numa memory?
+      } else {
+        spx = ctx.pool_.front();
+        ctx.pool_.pop_front();
+        spx->assign(key.data(), key.size());
+      }
+      INVARIANT(spx);
+
+      marked_ptr<std::string> mpx(spx);
+      mpx.set_flags(0x1);
+      ctx.queue_.enqueue(
+          delete_entry(tuple, mpx, btr),
+          to_read_only_tick(this->current_epoch));
+    }
   }
 
 private:
-
 
   // the global epoch this txn is running in (this # is read when it starts)
   uint64_t current_epoch;
@@ -1018,29 +1094,15 @@ struct base_txn_btree_handler<transaction_proto2> {
   void
   on_construct(const std::string &name, btree *btr)
   {
-    INVARIANT(!walker_loop.running);
-    INVARIANT(!walker_loop.btr);
-    walker_loop.name = name;
-    walker_loop.btr = btr;
-    walker_loop.running = true;
-    __sync_synchronize();
-    walker_loop.start();
+    transaction_proto2_static::Init();
   }
 
   void
   on_destruct()
   {
-    INVARIANT(walker_loop.running);
-    INVARIANT(walker_loop.btr);
-    walker_loop.running = false;
-    __sync_synchronize();
-    walker_loop.join();
   }
 
   static const bool has_background_task = true;
-
-private:
-  txn_walker_loop walker_loop;
 };
 
 template <>
@@ -1055,8 +1117,6 @@ struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
   static void
   finish()
   {
-    txn_walker_loop::global_running = false;
-    __sync_synchronize();
     if (txn_logger::IsPersistenceEnabled())
       txn_logger::wait_until_current_point_persisted();
   }
