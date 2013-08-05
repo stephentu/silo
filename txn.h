@@ -727,7 +727,7 @@ protected:
   // with the lock on ln held, to simplify GC code
   //
   // Is also called within an RCU read region
-  void on_dbtuple_spill(dbtuple *tuple);
+  void on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple);
 
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule

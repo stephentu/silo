@@ -511,20 +511,34 @@ transaction_proto2_static::gcloop(unsigned i)
 
     // figure out what the current cleanable epoch is
     const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
-    const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex);
-    if (ro_tick_ex <= 1)
+    if (!last_tick_ex)
+      continue;
+    // all reads happening at >= ro_tick_geq
+    const uint64_t ro_tick_geq = to_read_only_tick(last_tick_ex - 1);
+    if (!ro_tick_geq)
       // won't have anything to clean
       continue;
 
-    // NOTE: consistent reads happening >= (ro_tick_ex - 1),
-    // so we can clean < (ro_tick_ex - 1) or <= (ro_tick_ex - 2)
+#ifdef CHECK_INVARIANTS
+    uint64_t last_consistent_tid = 0;
+    {
+      const uint64_t a = (last_tick_ex / ReadOnlyEpochMultiplier);
+      const uint64_t b = a * ReadOnlyEpochMultiplier;
+      if (!b)
+        last_consistent_tid = MakeTid(0, 0, 0);
+      else
+        last_consistent_tid = MakeTid(CoreMask, NumIdMask >> NumIdShift, b - 1);
+    }
+#endif
+
+    // NOTE: consistent reads happening >= ro_tick_geq
     for (size_t k = i; k < g_threadctxs.size(); k += g_num_gc_workers) {
       threadctx &ctx = g_threadctxs[k];
       // get work
       {
-        ::lock_guard<spinlock> lg(ctx.queue_locks_[(ro_tick_ex - 2) % g_ngcqueues]);
-        px_queue &cq = ctx.queues_[(ro_tick_ex - 2) % g_ngcqueues];
-        scratch_queue.empty_accept_from(cq, ro_tick_ex - 2);
+        ::lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick_geq % g_ngcqueues]);
+        px_queue &cq = ctx.queues_[ro_tick_geq % g_ngcqueues];
+        scratch_queue.empty_accept_from(cq, ro_tick_geq);
         scratch_queue.transfer_freelist(cq);
       }
 
@@ -536,20 +550,39 @@ transaction_proto2_static::gcloop(unsigned i)
         auto &delent = *it;
         if (!delent.key_.get_flags()) {
           // guaranteed to be gc-able now (even w/o RCU)
+          if (delent.trigger_tid_ > last_consistent_tid) {
+            cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
+            cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
+            cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
+            cerr << "tuple           : " << g_proto_version_str(delent.tuple_->version) << endl;
+            cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+            cerr << "last_tick_ex    : " << last_tick_ex << endl;
+            cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
+          }
+          INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
+          // XXX: should walk tuple_ahead_'s chain and make sure some element
+          // blocks reads
           dbtuple::release_no_rcu(delent.tuple_);
         } else {
+          INVARIANT(!delent.tuple_ahead_);
           INVARIANT(delent.btr_);
           // check if an element preceeds the (deleted) tuple before doing the delete
           ::lock_guard<dbtuple> lg_tuple(delent.tuple_, false);
+          if (!delent.tuple_->is_not_behind(last_consistent_tid)) {
+            cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_->version) << endl;
+            cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+          }
+          INVARIANT(delent.tuple_->is_not_behind(last_consistent_tid));
           INVARIANT(delent.tuple_->is_deleting());
           if (unlikely(!delent.tuple_->is_latest())) {
             // requeue it up, in this threads context, except this
             // time as a regular delete
-            const uint64_t my_ro_tick = to_read_only_tick(ticker::s_instance.global_current_tick());
+            const uint64_t my_ro_tick = to_read_only_tick(
+                ticker::s_instance.global_current_tick());
             threadctx &myctx = g_threadctxs.my();
             ::lock_guard<spinlock> lg_queue(myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
             myctx.queues_[my_ro_tick % g_ngcqueues].enqueue(
-                delete_entry(delent.tuple_, marked_ptr<string>(), nullptr),
+                delete_entry(nullptr, 0, delent.tuple_, marked_ptr<string>(), nullptr),
                 my_ro_tick);
             // reclaim string ptrs
             string *spx = delent.key_.get();

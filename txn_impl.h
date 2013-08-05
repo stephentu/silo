@@ -387,7 +387,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           }
           if (unlikely(ret.rest_))
             // spill happened: schedule GC task
-            cast()->on_dbtuple_spill(ret.rest_);
+            cast()->on_dbtuple_spill(ret.head_, ret.rest_);
           if (!it->get_value()) {
             if (!ret.head_->is_deleting()) {
               std::cerr << "fail: ret.head_= " << ret.head_ << ", ret.rest_= " << ret.rest_ << ", tuple= " << tuple << std::endl;

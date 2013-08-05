@@ -608,17 +608,37 @@ protected:
     g_hack CACHE_ALIGNED;
 
   struct delete_entry {
+#ifdef CHECK_INVARIANTS
+    dbtuple *tuple_ahead_;
+    uint64_t trigger_tid_;
+#endif
     dbtuple *tuple_;
     marked_ptr<std::string> key_;
     btree *btr_;
 
     delete_entry()
-      : tuple_(nullptr), key_(), btr_(nullptr) {}
+      :
+#ifdef CHECK_INVARIANTS
+        tuple_ahead_(nullptr),
+        trigger_tid_(0),
+#endif
+        tuple_(nullptr),
+        key_(),
+        btr_(nullptr) {}
 
-    delete_entry(dbtuple *tuple,
+    delete_entry(dbtuple *tuple_ahead,
+                 uint64_t trigger_tid,
+                 dbtuple *tuple,
                  const marked_ptr<std::string> &key,
                  btree *btr)
-      : tuple_(tuple), key_(key), btr_(btr) {}
+      :
+#ifdef CHECK_INVARIANTS
+        tuple_ahead_(tuple_ahead),
+        trigger_tid_(trigger_tid),
+#endif
+        tuple_(tuple),
+        key_(key),
+        btr_(btr) {}
   };
 
   typedef basic_px_queue<delete_entry, 4096> px_queue;
@@ -976,10 +996,11 @@ public:
   }
 
   inline ALWAYS_INLINE void
-  on_dbtuple_spill(dbtuple *tuple)
+  on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple)
   {
     INVARIANT(rcu::s_instance.in_rcu_region());
     INVARIANT(!tuple->is_latest());
+    INVARIANT(tuple_ahead->version > tuple->version);
 
     if (tuple->is_deleting()) {
       INVARIANT(tuple->is_locked());
@@ -998,7 +1019,8 @@ public:
 
     lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
     ctx.queues_[ro_tick % g_ngcqueues].enqueue(
-        delete_entry(tuple, marked_ptr<std::string>(), nullptr),
+        delete_entry(tuple_ahead, tuple_ahead->version,
+          tuple, marked_ptr<std::string>(), nullptr),
         ro_tick);
   }
 
@@ -1029,7 +1051,7 @@ public:
 
       lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
       ctx.queues_[ro_tick % g_ngcqueues].enqueue(
-          delete_entry(tuple, mpx, btr),
+          delete_entry(nullptr, 0, tuple, mpx, btr),
           ro_tick);
     } else {
       // this is a rare event
@@ -1050,7 +1072,7 @@ public:
 
       lock_guard<spinlock> lg_queue(ctx.queue_locks_[ro_tick % g_ngcqueues]);
       ctx.queues_[ro_tick % g_ngcqueues].enqueue(
-          delete_entry(tuple, mpx, btr),
+          delete_entry(nullptr, 0, tuple, mpx, btr),
           ro_tick);
     }
   }

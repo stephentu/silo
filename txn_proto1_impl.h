@@ -77,7 +77,7 @@ protected:
     return incr_and_get_global_tid();
   }
 
-  void on_dbtuple_spill(dbtuple *tuple)
+  void on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple)
   {
     NDB_UNIMPLEMENTED(__PRETTY_FUNCTION__);
   }

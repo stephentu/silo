@@ -557,13 +557,14 @@ public:
     return &value_start[0];
   }
 
-private:
-
+  // worst name ever...
   inline bool
   is_not_behind(tid_t t) const
   {
     return version <= t;
   }
+
+private:
 
 #ifdef ENABLE_EVENT_COUNTERS
   struct scoped_recorder {
