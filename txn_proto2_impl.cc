@@ -522,9 +522,10 @@ transaction_proto2_static::gcloop(unsigned i)
       threadctx &ctx = g_threadctxs[k];
       // get work
       {
-        ::lock_guard<spinlock> lg(ctx.lock_);
-        scratch_queue.empty_accept_from(ctx.queue_, ro_tick_ex - 2);
-        scratch_queue.transfer_freelist(ctx.queue_);
+        ::lock_guard<spinlock> lg(ctx.queue_locks_[(ro_tick_ex - 2) % g_ngcqueues]);
+        px_queue &cq = ctx.queues_[(ro_tick_ex - 2) % g_ngcqueues];
+        scratch_queue.empty_accept_from(cq, ro_tick_ex - 2);
+        scratch_queue.transfer_freelist(cq);
       }
 
       px_queue &q = scratch_queue;
@@ -534,16 +535,26 @@ transaction_proto2_static::gcloop(unsigned i)
       for (auto it = q.begin(); it != q.end(); ++it, ++n) {
         auto &delent = *it;
         if (!delent.key_.get_flags()) {
-          // guaranteed to be gc-able now
-          // I think we could get away with just free-ing right here
-          // (no RCU)
-          delent.tuple_->gc_this();
+          // guaranteed to be gc-able now (even w/o RCU)
+          dbtuple::release_no_rcu(delent.tuple_);
         } else {
           INVARIANT(delent.btr_);
-          // check if revived before doing the delete
-          ::lock_guard<dbtuple> lg(delent.tuple_, false);
-          if (unlikely(!delent.tuple_->is_deleting())) {
-            // revived, so leave it alone
+          // check if an element preceeds the (deleted) tuple before doing the delete
+          ::lock_guard<dbtuple> lg_tuple(delent.tuple_, false);
+          INVARIANT(delent.tuple_->is_deleting());
+          if (unlikely(!delent.tuple_->is_latest())) {
+            // requeue it up, in this threads context, except this
+            // time as a regular delete
+            const uint64_t my_ro_tick = to_read_only_tick(ticker::s_instance.global_current_tick());
+            threadctx &myctx = g_threadctxs.my();
+            ::lock_guard<spinlock> lg_queue(myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
+            myctx.queues_[my_ro_tick % g_ngcqueues].enqueue(
+                delete_entry(delent.tuple_, marked_ptr<string>(), nullptr),
+                my_ro_tick);
+            // reclaim string ptrs
+            string *spx = delent.key_.get();
+            if (unlikely(spx))
+              scratch_vec.emplace_back(spx);
             continue;
           }
           // if delent.key_ is nullptr, then the key is stored in the tuple
@@ -560,17 +571,21 @@ transaction_proto2_static::gcloop(unsigned i)
             k = varkey(*spx);
             scratch_vec.emplace_back(spx);
           }
+
+          scoped_rcu_region rcu_guard;
           btree::value_type removed = 0;
           const bool did_remove = delent.btr_->remove(k, &removed);
           INVARIANT(did_remove);
           INVARIANT(removed == (btree::value_type) delent.tuple_);
+          delent.tuple_->clear_latest();
           dbtuple::release(delent.tuple_); // rcu free it
         }
       }
+      q.clear();
 
       // return strings
       if (!scratch_vec.empty()) {
-        ::lock_guard<spinlock> lg(ctx.lock_);
+        ::lock_guard<spinlock> lg(ctx.pool_lock_);
         ctx.pool_.insert(ctx.pool_.end(), scratch_vec.begin(), scratch_vec.end());
       }
       scratch_vec.clear();

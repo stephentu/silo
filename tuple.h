@@ -227,7 +227,7 @@ private:
           size_type old_size, size_type new_size,
           size_type alloc_size,
           struct dbtuple *next, bool set_latest)
-    : hdr(set_latest ? HDR_LATEST_MASK : 0),
+    : hdr((set_latest ? HDR_LATEST_MASK : 0) | (!new_size ? HDR_DELETING_MASK : 0)),
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
       lock_owner(0), // not portable
 #endif
@@ -236,10 +236,10 @@ private:
       alloc_size(CheckBounds(alloc_size)),
       next(next)
   {
-    INVARIANT(new_size);
     INVARIANT(old_size <= new_size);
     INVARIANT(new_size <= alloc_size);
     INVARIANT(set_latest == is_latest());
+    INVARIANT(new_size || is_deleting());
     NDB_MEMCPY(&value_start[0], r, old_size);
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
@@ -762,7 +762,19 @@ public:
       return false;
   }
 
-  typedef std::pair<dbtuple *, dbtuple *> write_record_ret;
+  struct write_record_ret {
+    write_record_ret() : head_(), rest_(), forced_spill_() {}
+    write_record_ret(dbtuple *head, dbtuple* rest, bool forced_spill)
+      : head_(head), rest_(rest), forced_spill_(forced_spill)
+    {
+      INVARIANT(head);
+      INVARIANT(head != rest);
+      INVARIANT(!forced_spill || rest);
+    }
+    dbtuple *head_;
+    dbtuple *rest_;
+    bool forced_spill_;
+  };
 
   // XXX: kind of hacky, but we do this to avoid virtual
   // functions / passing multiple function pointers around
@@ -796,7 +808,7 @@ public:
 
     const size_t new_sz =
       v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
-
+    INVARIANT(!v || new_sz);
     INVARIANT(is_deleting() || size);
     const size_t old_sz = is_deleting() ? 0 : size;
 
@@ -804,7 +816,8 @@ public:
       ++g_evt_dbtuple_logical_deletes;
 
     // try to overwrite this record
-    if (likely(txn->can_overwrite_record_tid(version, t, !old_sz))) {
+    if (likely(txn->can_overwrite_record_tid(version, t) && old_sz)) {
+      INVARIANT(!is_deleting());
       // see if we have enough space
       if (likely(new_sz <= alloc_size)) {
         // directly update in place
@@ -813,11 +826,9 @@ public:
           writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), old_sz);
         version = t;
         size = new_sz;
-        if (!new_sz && !is_deleting())
+        if (!new_sz)
           mark_deleting();
-        else if (new_sz && is_deleting())
-          clear_deleting(); // revival
-        return write_record_ret(this, nullptr);
+        return write_record_ret(this, nullptr, false);
       }
 
       //std::cerr
@@ -842,7 +853,7 @@ public:
       ++g_evt_dbtuple_inplace_buf_insufficient;
 
       // [did not spill because of epochs, need to replace this with rep]
-      return write_record_ret(rep, this);
+      return write_record_ret(rep, this, false);
     }
 
     //std::cerr
@@ -855,7 +866,8 @@ public:
     ++g_evt_dbtuple_spills;
     g_evt_avg_record_spill_len.offer(size);
 
-    if (new_sz <= alloc_size) {
+    if (new_sz <= alloc_size && old_sz) {
+      INVARIANT(!is_deleting());
       dbtuple * const spill = alloc(version, this, false);
       INVARIANT(!spill->is_latest());
       mark_modifying();
@@ -864,17 +876,20 @@ public:
         writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), size);
       version = t;
       size = new_sz;
-      return write_record_ret(this, spill);
+      if (!new_sz)
+        mark_deleting();
+      return write_record_ret(this, spill, true);
     }
 
-    dbtuple * const rep = alloc_spill(t, get_value_start(), size, new_sz, this, true);
-    INVARIANT(v);
-    writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
+    dbtuple * const rep = alloc_spill(t, get_value_start(), old_sz, new_sz, this, true);
+    if (v)
+      writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
     INVARIANT(rep->size == new_sz);
+    INVARIANT(new_sz || rep->is_deleting()); // set by alloc_spill()
     clear_latest();
     ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
-    return write_record_ret(rep, this);
+    return write_record_ret(rep, this, true);
   }
 
   // NB: we round up allocation sizes because jemalloc will do this
@@ -913,12 +928,10 @@ public:
         version, base, alloc_sz - sizeof(dbtuple), set_latest);
   }
 
-  // newsz needs to be > 0 (otherwise, why would we allocate a spill node?)
   static inline dbtuple *
   alloc_spill(tid_t version, const_record_type value, size_type oldsz,
               size_type newsz, struct dbtuple *next, bool set_latest)
   {
-    INVARIANT(newsz);
     INVARIANT(newsz <= std::numeric_limits<node_size_type>::max());
     INVARIANT(newsz >= oldsz);
     const size_t max_alloc_sz =
@@ -949,7 +962,7 @@ public:
   deleter(void *p)
   {
     dbtuple * const n = (dbtuple *) p;
-    INVARIANT(n->is_deleting());
+    INVARIANT(!n->is_latest());
     INVARIANT(!n->is_locked());
     INVARIANT(!n->is_modifying());
     destruct_and_free(n);
@@ -961,10 +974,7 @@ public:
     if (unlikely(!n))
       return;
     INVARIANT(n->is_locked());
-    if (n->is_latest()) {
-      INVARIANT(n->is_deleting());
-      n->clear_latest();
-    }
+    INVARIANT(!n->is_latest());
     rcu::s_instance.free_with_fn(n, deleter);
   }
 
@@ -973,11 +983,7 @@ public:
   {
     if (unlikely(!n))
       return;
-#ifdef CHECK_INVARIANTS
-    n->lock(false);
-    n->mark_deleting();
-    n->unlock();
-#endif
+    INVARIANT(!n->is_latest());
     destruct_and_free(n);
   }
 

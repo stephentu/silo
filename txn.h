@@ -690,10 +690,9 @@ public:
   // expected public overrides
 
   /**
-   * Can we overwrite prev with cur, given that prev was a deleted (empty)
-   * node iff prev_deleted
+   * Can we overwrite prev with cur?
    */
-  bool can_overwrite_record_tid(tid_t prev, tid_t cur, bool prev_deleted) const;
+  bool can_overwrite_record_tid(tid_t prev, tid_t cur) const;
 
   /**
    * XXX: document

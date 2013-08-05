@@ -345,18 +345,18 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             tuple->write_record_at(
                 cast(), commit_tid.second,
                 it->get_value(), it->get_writer());
-          INVARIANT(!ret.second || ret.first); // can't have second w/o first
-          INVARIANT(ret.first != ret.second); // they can't be equal
-          if (unlikely(ret.first != tuple)) {
-            // tuple was replaced by ret.first
-            INVARIANT(ret.second == tuple);
+          bool unlock_head = false;
+          if (unlikely(ret.head_ != tuple)) {
+            // tuple was replaced by ret.head_
+            INVARIANT(ret.rest_ == tuple);
             // XXX: write_record_at() should acquire this lock
-            lock_guard<dbtuple> guard(ret.first, true);
+            ret.head_->lock(true);
+            unlock_head = true;
             // need to unlink tuple from underlying btree, replacing
-            // with ret.second (atomically)
+            // with ret.rest_ (atomically)
             btree::value_type old_v = 0;
             if (it->get_btree()->insert(
-                  varkey(it->get_key()), (btree::value_type) ret.first, &old_v, NULL))
+                  varkey(it->get_key()), (btree::value_type) ret.head_, &old_v, NULL))
               // should already exist in tree
               INVARIANT(false);
             INVARIANT(old_v == (btree::value_type) tuple);
@@ -364,12 +364,21 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             // (the cleaners will take care of this)
             ++evt_dbtuple_latest_replacement;
           }
-          if (unlikely(ret.second))
+          if (unlikely(ret.rest_))
             // spill happened: schedule GC task
-            cast()->on_dbtuple_spill(ret.second);
-          if (!it->get_value())
+            cast()->on_dbtuple_spill(ret.rest_);
+          if (!it->get_value()) {
+            if (!ret.head_->is_deleting()) {
+              std::cerr << "fail: ret.head_= " << ret.head_ << ", ret.rest_= " << ret.rest_ << ", tuple= " << tuple << std::endl;
+              std::cerr << "ret.head_ = " << *ret.head_ << std::endl;
+              std::cerr << "tuple = " << *tuple << std::endl;
+
+            }
             // logical delete happened: schedule GC task
-            cast()->on_logical_delete(ret.first, it->get_key(), it->get_btree());
+            cast()->on_logical_delete(ret.head_, it->get_key(), it->get_btree());
+          }
+          if (unlikely(unlock_head))
+            ret.head_->unlock();
         }
         VERBOSE(std::cerr << "dbtuple " << util::hexify(tuple) << " is_locked? " << tuple->is_locked() << std::endl);
       }
@@ -415,6 +424,8 @@ do_abort:
           INVARIANT(false);
         }
         INVARIANT(removed == (btree::value_type) it->tuple.get());
+        INVARIANT(it->tuple->is_latest());
+        it->tuple->clear_latest();
         dbtuple::release(it->tuple.get()); // rcu free
       }
       // XXX: potential optimization: on unlock() for abort, we don't
@@ -467,6 +478,7 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
   if (unlikely(!btr.insert_if_absent(
           varkey(*key), (btree::value_type) tuple, &insert_info))) {
     VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(key) << std::endl);
+    tuple->clear_latest();
     tuple->unlock();
     dbtuple::release_no_rcu(tuple);
     ++transaction_base::g_evt_dbtuple_write_insert_failed;

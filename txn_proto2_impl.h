@@ -623,18 +623,17 @@ protected:
 
   typedef basic_px_queue<delete_entry, 4096> px_queue;
 
+  static const unsigned g_ngcqueues = 4;
+  static_assert(g_ngcqueues >= 3, "XX");
+
   // stores last commit TID for each core
   struct threadctx {
-    spinlock lock_; // guards the gc queue + string pool
     std::atomic<uint64_t> last_commit_tid_;
 
-    // semantics of queue are, an element q enqueued at (RO) epoch
-    // r is ready for deletion when all threads will read snapshots
-    // at epochs >= r.
-    //
-    // NOTE: epoch units are RO epochs
-    px_queue queue_;
+    spinlock queue_locks_[g_ngcqueues];
+    px_queue queues_[g_ngcqueues];
 
+    spinlock pool_lock_;
     std::deque<std::string *> pool_;
   };
 
@@ -705,7 +704,7 @@ public:
   }
 
   inline bool
-  can_overwrite_record_tid(tid_t prev, tid_t cur, bool prev_deleted) const
+  can_overwrite_record_tid(tid_t prev, tid_t cur) const
   {
     INVARIANT(prev <= cur);
 
@@ -715,7 +714,7 @@ public:
     //
     // This is an OK assumption with *no TID wrap around*.
     return (to_read_only_tick(EpochId(prev)) ==
-            to_read_only_tick(EpochId(cur)) && !prev_deleted) ||
+            to_read_only_tick(EpochId(cur))) ||
            !prev;
   }
 
@@ -950,7 +949,6 @@ public:
       for (; it != it_end; ++it) {
         INVARIANT(it->tuple->is_locked());
         INVARIANT(it->tuple->is_lock_owner());
-        INVARIANT(!it->tuple->is_deleting());
         INVARIANT(it->tuple->is_write_intent());
         INVARIANT(!it->tuple->is_modifying());
         INVARIANT(it->tuple->is_latest());
@@ -982,17 +980,26 @@ public:
   {
     INVARIANT(rcu::s_instance.in_rcu_region());
     INVARIANT(!tuple->is_latest());
-    INVARIANT(to_read_only_tick(EpochId(tuple->version)) <
-              to_read_only_tick(this->current_epoch));
+
+    if (tuple->is_deleting()) {
+      INVARIANT(tuple->is_locked());
+      INVARIANT(tuple->is_lock_owner());
+      // already on queue
+      return;
+    }
+
+    const uint64_t ro_tick = to_read_only_tick(this->current_epoch);
+    INVARIANT(to_read_only_tick(EpochId(tuple->version)) <= ro_tick);
 
     // when all snapshots are happening >= the current epoch,
     // then we can safely remove tuple
     const size_t k = coreid::core_id();
     threadctx &ctx = g_threadctxs[k];
-    lock_guard<spinlock> lg(ctx.lock_);
-    ctx.queue_.enqueue(
+
+    lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
+    ctx.queues_[ro_tick % g_ngcqueues].enqueue(
         delete_entry(tuple, marked_ptr<std::string>(), nullptr),
-        to_read_only_tick(this->current_epoch));
+        ro_tick);
   }
 
   inline ALWAYS_INLINE void
@@ -1003,8 +1010,11 @@ public:
     INVARIANT(tuple->is_write_intent());
     INVARIANT(tuple->is_latest());
     INVARIANT(tuple->is_deleting());
+    INVARIANT(EpochId(tuple->version) == this->current_epoch);
     INVARIANT(!tuple->size);
     INVARIANT(rcu::s_instance.in_rcu_region());
+
+    const uint64_t ro_tick = to_read_only_tick(this->current_epoch);
 
     const size_t k = coreid::core_id();
     threadctx &ctx = g_threadctxs[k];
@@ -1012,16 +1022,18 @@ public:
     if (likely(key.size() <= tuple->alloc_size)) {
       NDB_MEMCPY(tuple->get_value_start(), key.data(), key.size());
       tuple->size = key.size();
-      lock_guard<spinlock> lg(ctx.lock_);
-      // eligible for deletion when all snapshots >= current epoch
+
+      // eligible for deletion when all snapshots >= the current epoch
       marked_ptr<std::string> mpx;
       mpx.set_flags(0x1);
-      ctx.queue_.enqueue(
+
+      lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
+      ctx.queues_[ro_tick % g_ngcqueues].enqueue(
           delete_entry(tuple, mpx, btr),
-          to_read_only_tick(this->current_epoch));
+          ro_tick);
     } else {
       // this is a rare event
-      lock_guard<spinlock> lg(ctx.lock_);
+      lock_guard<spinlock> lg_pool(ctx.pool_lock_);
 
       std::string *spx = nullptr;
       if (ctx.pool_.empty()) {
@@ -1035,9 +1047,11 @@ public:
 
       marked_ptr<std::string> mpx(spx);
       mpx.set_flags(0x1);
-      ctx.queue_.enqueue(
+
+      lock_guard<spinlock> lg_queue(ctx.queue_locks_[ro_tick % g_ngcqueues]);
+      ctx.queues_[ro_tick % g_ngcqueues].enqueue(
           delete_entry(tuple, mpx, btr),
-          to_read_only_tick(this->current_epoch));
+          ro_tick);
     }
   }
 
