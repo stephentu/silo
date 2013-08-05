@@ -68,22 +68,40 @@ private:
 };
 
 // requires T to have no-arg ctor
-template <typename T>
+template <typename T, bool CallDtor = false>
 class percore {
 public:
+
+  percore()
+  {
+    for (size_t i = 0; i < size(); i++) {
+      using namespace util;
+      new (&(elems()[i])) aligned_padded_elem<T>();
+    }
+  }
+
+  ~percore()
+  {
+    if (!CallDtor)
+      return;
+    for (size_t i = 0; i < size(); i++) {
+      using namespace util;
+      elems()[i].~aligned_padded_elem<T>();
+    }
+  }
 
   inline T &
   operator[](unsigned i)
   {
     INVARIANT(i < NMAXCORES);
-    return elems_[i].elem;
+    return elems()[i].elem;
   }
 
   inline const T &
   operator[](unsigned i) const
   {
     INVARIANT(i < NMAXCORES);
-    return elems_[i].elem;
+    return elems()[i].elem;
   }
 
   inline T &
@@ -107,11 +125,24 @@ public:
   }
 
 protected:
-  util::aligned_padded_elem<T> elems_[NMAXCORES];
+
+  inline util::aligned_padded_elem<T> *
+  elems()
+  {
+    return (util::aligned_padded_elem<T> *) &bytes_[0];
+  }
+
+  inline const util::aligned_padded_elem<T> *
+  elems() const
+  {
+    return (const util::aligned_padded_elem<T> *) &bytes_[0];
+  }
+
+  char bytes_[sizeof(util::aligned_padded_elem<T>) * NMAXCORES];
 };
 
 template <typename T>
-class percore_lazy : public percore<T *> {
+class percore_lazy : public percore<T *, false> {
 public:
 
   percore_lazy(std::function<void(T &)> init = [](T &) {})
@@ -120,9 +151,9 @@ public:
   inline T &
   operator[](unsigned i)
   {
-    T * px = this->elems_[i].elem;
+    T * px = this->elems()[i].elem;
     if (unlikely(!px)) {
-      T &ret = *(this->elems_[i].elem = new T);
+      T &ret = *(this->elems()[i].elem = new T);
       init_(ret);
       return ret;
     }
