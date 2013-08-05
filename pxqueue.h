@@ -96,6 +96,12 @@ struct basic_px_queue {
       return &px_->pxs_[i_];
     }
 
+    inline uint64_t
+    tick() const
+    {
+      return px_->rcu_tick_;
+    }
+
     inline bool
     operator==(const iterator_ &o) const
     {

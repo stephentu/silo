@@ -173,7 +173,8 @@ private:
   // creates a (new) record with a tentative value at MAX_TID
   dbtuple(size_type size, size_type alloc_size, bool acquire_lock)
     : hdr(HDR_LATEST_MASK |
-          (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0)),
+          (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0) |
+          (!size ? HDR_DELETING_MASK : 0)),
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
       lock_owner(0), // not portable
 #endif
@@ -183,8 +184,8 @@ private:
       next(nullptr)
   {
     INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
-    INVARIANT(size);
     INVARIANT(is_latest());
+    INVARIANT(size || is_deleting());
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING

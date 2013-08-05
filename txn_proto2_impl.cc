@@ -492,6 +492,22 @@ transaction_proto2_static::Init()
 }
 
 void
+transaction_proto2_static::WaitForGCThroughNow()
+{
+  INVARIANT(!rcu::s_instance.in_rcu_region());
+  const uint64_t ro_tick =
+    to_read_only_tick(ticker::s_instance.global_current_tick());
+  cerr << "WaitForGCThroughNow(): wait to catch up to ro_tick=" << ro_tick << endl;
+  spin_barrier b(g_threadctxs.size());
+  for (size_t i = 0; i < g_threadctxs.size(); i++) {
+    threadctx &ctx = g_threadctxs[i];
+    ::lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
+    ctx.queues_[ro_tick % g_ngcqueues].enqueue(delete_entry(&b), ro_tick);
+  }
+  b.wait_for();
+}
+
+void
 transaction_proto2_static::gcloop(unsigned i)
 {
   // runs as daemon
@@ -534,88 +550,94 @@ transaction_proto2_static::gcloop(unsigned i)
     // NOTE: consistent reads happening >= ro_tick_geq
     for (size_t k = i; k < g_threadctxs.size(); k += g_num_gc_workers) {
       threadctx &ctx = g_threadctxs[k];
-      // get work
-      {
-        ::lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick_geq % g_ngcqueues]);
-        px_queue &cq = ctx.queues_[ro_tick_geq % g_ngcqueues];
-        scratch_queue.empty_accept_from(cq, ro_tick_geq);
-        scratch_queue.transfer_freelist(cq);
-      }
+      for (size_t qnum = 0; qnum < g_ngcqueues; qnum++) {
+        // get work
+        {
+          ::lock_guard<spinlock> lg(ctx.queue_locks_[qnum]);
+          px_queue &cq = ctx.queues_[qnum];
+          scratch_queue.empty_accept_from(cq, ro_tick_geq);
+          scratch_queue.transfer_freelist(cq);
+        }
 
-      px_queue &q = scratch_queue;
-      if (q.empty())
-        continue;
-      size_t n = 0;
-      for (auto it = q.begin(); it != q.end(); ++it, ++n) {
-        auto &delent = *it;
-        if (!delent.key_.get_flags()) {
-          // guaranteed to be gc-able now (even w/o RCU)
-          if (delent.trigger_tid_ > last_consistent_tid) {
-            cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
-            cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
-            cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
-            cerr << "tuple           : " << g_proto_version_str(delent.tuple_->version) << endl;
-            cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
-            cerr << "last_tick_ex    : " << last_tick_ex << endl;
-            cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
-          }
-          INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
-          // XXX: should walk tuple_ahead_'s chain and make sure some element
-          // blocks reads
-          dbtuple::release_no_rcu(delent.tuple_);
-        } else {
-          INVARIANT(!delent.tuple_ahead_);
-          INVARIANT(delent.btr_);
-          // check if an element preceeds the (deleted) tuple before doing the delete
-          ::lock_guard<dbtuple> lg_tuple(delent.tuple_, false);
-          if (!delent.tuple_->is_not_behind(last_consistent_tid)) {
-            cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_->version) << endl;
-            cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
-          }
-          INVARIANT(delent.tuple_->is_not_behind(last_consistent_tid));
-          INVARIANT(delent.tuple_->is_deleting());
-          if (unlikely(!delent.tuple_->is_latest())) {
-            // requeue it up, in this threads context, except this
-            // time as a regular delete
-            const uint64_t my_ro_tick = to_read_only_tick(
-                ticker::s_instance.global_current_tick());
-            threadctx &myctx = g_threadctxs.my();
-            ::lock_guard<spinlock> lg_queue(myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
-            myctx.queues_[my_ro_tick % g_ngcqueues].enqueue(
-                delete_entry(nullptr, 0, delent.tuple_, marked_ptr<string>(), nullptr),
-                my_ro_tick);
-            // reclaim string ptrs
-            string *spx = delent.key_.get();
-            if (unlikely(spx))
-              scratch_vec.emplace_back(spx);
+        px_queue &q = scratch_queue;
+        if (q.empty())
+          continue;
+        for (auto it = q.begin(); it != q.end(); ++it) {
+          auto &delent = *it;
+          if (unlikely(delent.is_barrier())) {
+            //cerr << "barrier found in gcloop=" << i << " (worker " << k << ")" << endl;
+            delent.barrier()->count_down();
             continue;
           }
-          // if delent.key_ is nullptr, then the key is stored in the tuple
-          // record storage location, and the size field contains the length of
-          // the key
-          //
-          // otherwise, delent.key_ is a pointer to a string containing the
-          // key
-          varkey k;
-          string *spx = delent.key_.get();
-          if (likely(!spx)) {
-            k = varkey(delent.tuple_->get_value_start(), delent.tuple_->size);
+          if (!delent.key_.get_flags()) {
+            // guaranteed to be gc-able now (even w/o RCU)
+            if (delent.trigger_tid_ > last_consistent_tid) {
+              cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
+              cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
+              cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
+              cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
+              cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+              cerr << "last_tick_ex    : " << last_tick_ex << endl;
+              cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
+            }
+            INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
+            // XXX: should walk tuple_ahead_'s chain and make sure some element
+            // blocks reads
+            dbtuple::release_no_rcu(delent.tuple());
           } else {
-            k = varkey(*spx);
-            scratch_vec.emplace_back(spx);
+            INVARIANT(!delent.tuple_ahead_);
+            INVARIANT(delent.btr_);
+            // check if an element preceeds the (deleted) tuple before doing the delete
+            ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
+            if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
+              cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple()->version) << endl;
+              cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+            }
+            INVARIANT(delent.tuple()->is_not_behind(last_consistent_tid));
+            INVARIANT(delent.tuple()->is_deleting());
+            if (unlikely(!delent.tuple()->is_latest())) {
+              // requeue it up, in this threads context, except this
+              // time as a regular delete
+              const uint64_t my_ro_tick = to_read_only_tick(
+                  ticker::s_instance.global_current_tick());
+              threadctx &myctx = g_threadctxs.my();
+              ::lock_guard<spinlock> lg_queue(myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
+              myctx.queues_[my_ro_tick % g_ngcqueues].enqueue(
+                  delete_entry(nullptr, 0, delent.tuple(),
+                  marked_ptr<string>(), nullptr),
+                  my_ro_tick);
+              // reclaim string ptrs
+              string *spx = delent.key_.get();
+              if (unlikely(spx))
+                scratch_vec.emplace_back(spx);
+              continue;
+            }
+            // if delent.key_ is nullptr, then the key is stored in the tuple
+            // record storage location, and the size field contains the length of
+            // the key
+            //
+            // otherwise, delent.key_ is a pointer to a string containing the
+            // key
+            varkey k;
+            string *spx = delent.key_.get();
+            if (likely(!spx)) {
+              k = varkey(delent.tuple()->get_value_start(), delent.tuple()->size);
+            } else {
+              k = varkey(*spx);
+              scratch_vec.emplace_back(spx);
+            }
+
+            scoped_rcu_region rcu_guard;
+            btree::value_type removed = 0;
+            const bool did_remove = delent.btr_->remove(k, &removed);
+            INVARIANT(did_remove);
+            INVARIANT(removed == (btree::value_type) delent.tuple());
+            delent.tuple()->clear_latest();
+            dbtuple::release(delent.tuple()); // rcu free it
           }
-
-          scoped_rcu_region rcu_guard;
-          btree::value_type removed = 0;
-          const bool did_remove = delent.btr_->remove(k, &removed);
-          INVARIANT(did_remove);
-          INVARIANT(removed == (btree::value_type) delent.tuple_);
-          delent.tuple_->clear_latest();
-          dbtuple::release(delent.tuple_); // rcu free it
         }
+        q.clear();
       }
-      q.clear();
-
       // return strings
       if (!scratch_vec.empty()) {
         ::lock_guard<spinlock> lg(ctx.pool_lock_);

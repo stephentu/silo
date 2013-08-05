@@ -13,12 +13,15 @@
 #include "txn_btree.h"
 #include "macros.h"
 #include "circbuf.h"
+#include "spinbarrier.h"
 #include "record/serializer.h"
 
 // forward decl
 template <typename Traits> class transaction_proto2;
 template <template <typename> class Transaction>
   class txn_epoch_sync;
+
+namespace private_ { struct opaque_t {}; }
 
 //// each txn_btree has a walker_loop associated with it
 //class txn_walker_loop : public ndb_thread {
@@ -490,6 +493,8 @@ public:
   // thread-safe, can be called many times
   static void Init();
 
+  static void WaitForGCThroughNow();
+
 protected:
 
   static const size_t g_num_gc_workers = 4;
@@ -612,7 +617,9 @@ protected:
     dbtuple *tuple_ahead_;
     uint64_t trigger_tid_;
 #endif
-    dbtuple *tuple_;
+
+    marked_ptr<private_::opaque_t> item_; // if marked, then item is spin_barrier pointer,
+                                          // otherwise, item is dbtuple pointer
     marked_ptr<std::string> key_;
     btree *btr_;
 
@@ -622,7 +629,7 @@ protected:
         tuple_ahead_(nullptr),
         trigger_tid_(0),
 #endif
-        tuple_(nullptr),
+        item_(),
         key_(),
         btr_(nullptr) {}
 
@@ -636,9 +643,49 @@ protected:
         tuple_ahead_(tuple_ahead),
         trigger_tid_(trigger_tid),
 #endif
-        tuple_(tuple),
+        item_((private_::opaque_t *) tuple),
         key_(key),
         btr_(btr) {}
+
+    delete_entry(spin_barrier *b)
+      :
+#ifdef CHECK_INVARIANTS
+        tuple_ahead_(nullptr),
+        trigger_tid_(0),
+#endif
+        item_((private_::opaque_t *) b),
+        key_(),
+        btr_(nullptr)
+    {
+      item_.set_flags(0x1);
+    }
+
+    inline bool
+    is_tuple() const
+    {
+      return !item_.get_flags();
+    }
+
+    inline bool
+    is_barrier() const
+    {
+      return !is_tuple();
+    }
+
+    inline dbtuple *
+    tuple()
+    {
+      INVARIANT(!item_.get_flags());
+      return reinterpret_cast<dbtuple *>(item_.get());
+    }
+
+    inline spin_barrier *
+    barrier()
+    {
+      INVARIANT(item_.get_flags());
+      return reinterpret_cast<spin_barrier *>(item_.get());
+    }
+
   };
 
   typedef basic_px_queue<delete_entry, 4096> px_queue;
@@ -658,6 +705,11 @@ protected:
   };
 
   static percore<threadctx> g_threadctxs;
+
+  // g_gc_cleaned_through_epochs[i]:
+  //   gcloop(i) has cleaned all garbage < g_gc_cleaned_through_epochs[i]
+  static util::aligned_padded_elem<std::atomic<uint64_t>>
+    g_gc_cleaned_through_epochs[g_num_gc_workers];
 
   static event_counter g_evt_worker_thread_wait_log_buffer;
   static event_avg_counter g_evt_avg_log_entry_size;
@@ -1096,6 +1148,8 @@ struct base_txn_btree_handler<transaction_proto2> {
   void
   on_destruct()
   {
+    // XXX: not very efficient shutdown protocol
+    transaction_proto2_static::WaitForGCThroughNow();
   }
 
   static const bool has_background_task = true;
