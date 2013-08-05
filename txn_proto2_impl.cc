@@ -571,6 +571,7 @@ transaction_proto2_static::gcloop(unsigned i)
           }
           if (!delent.key_.get_flags()) {
             // guaranteed to be gc-able now (even w/o RCU)
+#ifdef CHECK_INVARIANTS
             if (delent.trigger_tid_ > last_consistent_tid) {
               cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
               cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
@@ -581,6 +582,7 @@ transaction_proto2_static::gcloop(unsigned i)
               cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
             }
             INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
+#endif
             // XXX: should walk tuple_ahead_'s chain and make sure some element
             // blocks reads
             dbtuple::release_no_rcu(delent.tuple());
@@ -589,19 +591,22 @@ transaction_proto2_static::gcloop(unsigned i)
             INVARIANT(delent.btr_);
             // check if an element preceeds the (deleted) tuple before doing the delete
             ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
+#ifdef CHECK_INVARIANTS
             if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
               cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple()->version) << endl;
               cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
             }
             INVARIANT(delent.tuple()->is_not_behind(last_consistent_tid));
             INVARIANT(delent.tuple()->is_deleting());
+#endif
             if (unlikely(!delent.tuple()->is_latest())) {
               // requeue it up, in this threads context, except this
               // time as a regular delete
               const uint64_t my_ro_tick = to_read_only_tick(
                   ticker::s_instance.global_current_tick());
               threadctx &myctx = g_threadctxs.my();
-              ::lock_guard<spinlock> lg_queue(myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
+              ::lock_guard<spinlock> lg_queue(
+                  myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
               myctx.queues_[my_ro_tick % g_ngcqueues].enqueue(
                   delete_entry(nullptr, 0, delent.tuple(),
                   marked_ptr<string>(), nullptr),
@@ -630,7 +635,8 @@ transaction_proto2_static::gcloop(unsigned i)
             scoped_rcu_region rcu_guard;
             btree::value_type removed = 0;
             const bool did_remove = delent.btr_->remove(k, &removed);
-            INVARIANT(did_remove);
+            if (!did_remove)
+              INVARIANT(false);
             INVARIANT(removed == (btree::value_type) delent.tuple());
             delent.tuple()->clear_latest();
             dbtuple::release(delent.tuple()); // rcu free it
