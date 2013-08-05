@@ -527,13 +527,12 @@ transaction_proto2_static::gcloop(unsigned i)
 
     // figure out what the current cleanable epoch is
     const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
-    if (!last_tick_ex)
-      continue;
-    // all reads happening at >= ro_tick_geq
-    const uint64_t ro_tick_geq = to_read_only_tick(last_tick_ex - 1);
-    if (!ro_tick_geq)
+    const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex);
+    if (!ro_tick_ex)
       // won't have anything to clean
       continue;
+    // all reads happening at >= ro_tick_geq
+    const uint64_t ro_tick_geq = ro_tick_ex - 1;
 
 #ifdef CHECK_INVARIANTS
     uint64_t last_consistent_tid = 0;
@@ -580,6 +579,7 @@ transaction_proto2_static::gcloop(unsigned i)
               cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
               cerr << "last_tick_ex    : " << last_tick_ex << endl;
               cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
+              cerr << "rcu_block_tick  : " << it.tick() << endl;
             }
             INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
 #endif
@@ -593,9 +593,14 @@ transaction_proto2_static::gcloop(unsigned i)
             ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
 #ifdef CHECK_INVARIANTS
             if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
-              cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple()->version) << endl;
+              cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
+              cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
               cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+              cerr << "last_tick_ex    : " << last_tick_ex << endl;
+              cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
+              cerr << "rcu_block_tick  : " << it.tick() << endl;
             }
+            INVARIANT(delent.tuple()->version == delent.trigger_tid_);
             INVARIANT(delent.tuple()->is_not_behind(last_consistent_tid));
             INVARIANT(delent.tuple()->is_deleting());
 #endif

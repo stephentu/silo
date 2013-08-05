@@ -384,9 +384,9 @@ public:
   // subsystem's tick
 
 #ifdef CHECK_INVARIANTS
-  static const uint64_t ReadOnlyEpochMultiplier = 1; /* 40 ms */
+  static const uint64_t ReadOnlyEpochMultiplier = 10; /* 10 * 1 ms */
 #else
-  static const uint64_t ReadOnlyEpochMultiplier = 25; /* 1 sec */
+  static const uint64_t ReadOnlyEpochMultiplier = 25; /* 25 * 40 ms */
   static_assert(ticker::tick_us * ReadOnlyEpochMultiplier == 1000000, "");
 #endif
 
@@ -1103,7 +1103,7 @@ public:
 
       lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
       ctx.queues_[ro_tick % g_ngcqueues].enqueue(
-          delete_entry(nullptr, 0, tuple, mpx, btr),
+          delete_entry(nullptr, tuple->version, tuple, mpx, btr),
           ro_tick);
     } else {
       // this is a rare event
@@ -1124,7 +1124,7 @@ public:
 
       lock_guard<spinlock> lg_queue(ctx.queue_locks_[ro_tick % g_ngcqueues]);
       ctx.queues_[ro_tick % g_ngcqueues].enqueue(
-          delete_entry(nullptr, 0, tuple, mpx, btr),
+          delete_entry(nullptr, tuple->version, tuple, mpx, btr),
           ro_tick);
     }
   }
