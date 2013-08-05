@@ -651,6 +651,12 @@ public:
 protected:
   inline void abort_impl(abort_reason r);
 
+  // assumes lock on marker is held on marker by caller, and marker is the
+  // latest: removes marker from tree, and clears latest
+  void cleanup_inserted_tuple_marker(
+      dbtuple *marker, const std::string &key,
+      btree *btr);
+
   // low-level API for txn_btree
 
   // try to insert a new "tentative" tuple into the underlying

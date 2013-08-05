@@ -54,16 +54,37 @@ transaction<Protocol, Traits>::abort_impl(abort_reason reason)
   for (; it != it_end; ++it) {
     dbtuple * const tuple = it->get_tuple();
     if (it->is_insert()) {
-      INVARIANT(tuple->version == dbtuple::MAX_TID);
       INVARIANT(tuple->is_locked());
-      // clear tuple, and let background reaper clean up
-      tuple->version = dbtuple::MIN_TID;
-      tuple->size = 0;
+      this->cleanup_inserted_tuple_marker(tuple, it->get_key(), it->get_btree());
       tuple->unlock();
     }
   }
 
   clear();
+}
+
+template <template <typename> class Protocol, typename Traits>
+void
+transaction<Protocol, Traits>::cleanup_inserted_tuple_marker(
+    dbtuple *marker, const std::string &key, btree *btr)
+{
+  // XXX: this code should really live in txn_proto2_impl.h
+  INVARIANT(marker->version == dbtuple::MAX_TID);
+  INVARIANT(marker->is_locked());
+  INVARIANT(marker->is_lock_owner());
+  btree::value_type removed = 0;
+  const bool did_remove = btr->remove(varkey(key), &removed);
+  if (unlikely(!did_remove)) {
+    std::cerr << " *** could not remove key: " << util::hexify(key)  << std::endl;
+#ifdef TUPLE_CHECK_KEY
+    std::cerr << " *** original key        : " << util::hexify(marker->key) << std::endl;
+#endif
+    INVARIANT(false);
+  }
+  INVARIANT(removed == (btree::value_type) marker);
+  INVARIANT(marker->is_latest());
+  marker->clear_latest();
+  dbtuple::release(marker); // rcu free
 }
 
 namespace {
@@ -410,23 +431,9 @@ do_abort:
        it != write_dbtuples.end(); ++it) {
     if (it->is_locked()) {
       if (it->is_insert()) {
-        // XXX: this code should really live in txn_proto2_impl.h
-        INVARIANT(it->tuple->version == dbtuple::MAX_TID);
         INVARIANT(it->entry);
-        btree::value_type removed = 0;
-        const bool did_remove = it->entry->get_btree()->remove(
-            varkey(it->entry->get_key()), &removed);
-        if (unlikely(!did_remove)) {
-          std::cerr << " *** could not remove key: " << util::hexify(it->entry->get_key())  << std::endl;
-  #ifdef TUPLE_CHECK_KEY
-          std::cerr << " *** original key        : " << util::hexify(it->tuple->key) << std::endl;
-  #endif
-          INVARIANT(false);
-        }
-        INVARIANT(removed == (btree::value_type) it->tuple.get());
-        INVARIANT(it->tuple->is_latest());
-        it->tuple->clear_latest();
-        dbtuple::release(it->tuple.get()); // rcu free
+        this->cleanup_inserted_tuple_marker(
+            it->tuple.get(), it->entry->get_key(), it->entry->get_btree());
       }
       // XXX: potential optimization: on unlock() for abort, we don't
       // technically need to change the version number

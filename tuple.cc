@@ -71,10 +71,11 @@ dbtuple::VersionInfoStr(version_t v)
 static ostream &
 format_tuple(ostream &o, const dbtuple &t)
 {
-  string truncated_contents((const char *) &t.value_start[0], t.size);
+  string truncated_contents(
+      (const char *) &t.value_start[0], min(static_cast<size_t>(t.size), 16UL));
   o << "[tid=" << g_proto_version_str(t.version)
     << ", size=" << t.size
-    << ", contents=0x" << hexify(truncated_contents)
+    << ", contents=0x" << hexify(truncated_contents) << (t.size > 16 ? "..." : "")
     << "]";
   return o;
 }
@@ -83,7 +84,11 @@ ostream &
 operator<<(ostream &o, const dbtuple &t)
 {
   o << "dbtuple: hdr=" << dbtuple::VersionInfoStr(t.unstable_version()) << endl;
-  for (const dbtuple *p = &t; p; p = p->get_next()) {
+  const size_t nmax = 5;
+  size_t n = 0;
+  for (const dbtuple *p = &t;
+       p && n < nmax;
+       p = p->get_next(), ++n) {
     o << "  ";
     format_tuple(o, *p);
     o << endl;
