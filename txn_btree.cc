@@ -980,9 +980,9 @@ namespace mp_test2_ns {
     virtual void run()
     {
       while (running) {
+        typename Traits::StringAllocator arena;
+        TxnType<Traits> t(this->txn_flags, arena);
         try {
-          typename Traits::StringAllocator arena;
-          TxnType<Traits> t(this->txn_flags, arena);
           string v_ctr;
           ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
           ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(control_rec));
@@ -1003,6 +1003,9 @@ namespace mp_test2_ns {
           VERBOSE(cerr << "successful validation" << endl);
         } catch (transaction_abort_exception &e) {
           naborts++;
+          if (this->txn_flags & transaction_base::TXN_FLAG_READ_ONLY)
+            // RO txns shouldn't abort
+            ALWAYS_ASSERT_COND_IN_TXN(t, false);
         }
       }
     }
@@ -1738,15 +1741,15 @@ void txn_btree_test()
   //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  //test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
-  //test1<transaction_proto2, default_transaction_traits>();
-  //test2<transaction_proto2, default_transaction_traits>();
-  //test_absent_key_race<transaction_proto2, default_transaction_traits>();
-  //test_inc_value_size<transaction_proto2, default_transaction_traits>();
-  //test_multi_btree<transaction_proto2, default_transaction_traits>();
-  //test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
-  //test_long_keys<transaction_proto2, default_transaction_traits>();
-  //test_long_keys2<transaction_proto2, default_transaction_traits>();
+  test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
+  test1<transaction_proto2, default_transaction_traits>();
+  test2<transaction_proto2, default_transaction_traits>();
+  test_absent_key_race<transaction_proto2, default_transaction_traits>();
+  test_inc_value_size<transaction_proto2, default_transaction_traits>();
+  test_multi_btree<transaction_proto2, default_transaction_traits>();
+  test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
+  test_long_keys<transaction_proto2, default_transaction_traits>();
+  test_long_keys2<transaction_proto2, default_transaction_traits>();
 
   mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
   mp_test1<transaction_proto2, default_transaction_traits>();

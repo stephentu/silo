@@ -649,8 +649,8 @@ private:
     const struct dbtuple *p;
     const bool found = is_not_behind(t);
     if (found) {
-      if (unlikely(!IsLatest(v)))
-        return READ_FAILED;
+      //if (unlikely(!IsLatest(v)))
+      //  return READ_FAILED;
       start_t = version;
       const size_t read_sz = IsDeleting(v) ? 0 : size;
       if (unlikely(read_sz && !reader(get_value_start(), read_sz, sa)))
