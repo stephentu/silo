@@ -75,11 +75,13 @@ transaction<Protocol, Traits>::cleanup_inserted_tuple_marker(
   btree::value_type removed = 0;
   const bool did_remove = btr->remove(varkey(key), &removed);
   if (unlikely(!did_remove)) {
+#ifdef CHECK_INVARIANTS
     std::cerr << " *** could not remove key: " << util::hexify(key)  << std::endl;
 #ifdef TUPLE_CHECK_KEY
     std::cerr << " *** original key        : " << util::hexify(marker->key) << std::endl;
 #endif
     INVARIANT(false);
+#endif
   }
   INVARIANT(removed == (btree::value_type) marker);
   INVARIANT(marker->is_latest());
@@ -388,16 +390,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           if (unlikely(ret.rest_))
             // spill happened: schedule GC task
             cast()->on_dbtuple_spill(ret.head_, ret.rest_);
-          if (!it->get_value()) {
-            if (!ret.head_->is_deleting()) {
-              std::cerr << "fail: ret.head_= " << ret.head_ << ", ret.rest_= " << ret.rest_ << ", tuple= " << tuple << std::endl;
-              std::cerr << "ret.head_ = " << *ret.head_ << std::endl;
-              std::cerr << "tuple = " << *tuple << std::endl;
-
-            }
+          if (!it->get_value())
             // logical delete happened: schedule GC task
             cast()->on_logical_delete(ret.head_, it->get_key(), it->get_btree());
-          }
           if (unlikely(unlock_head))
             ret.head_->unlock();
         }
