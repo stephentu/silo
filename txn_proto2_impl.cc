@@ -477,6 +477,7 @@ static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
 static event_counter evt_proto_gc_delete_requeue("proto_gc_delete_requeue");
 static event_avg_counter evt_avg_proto_gc_queue_len("avg_proto_gc_queue_len");
+static event_avg_counter evt_avg_proto_gc_loop_iter_usec("avg_proto_gc_loop_iter_usec");
 
 void
 transaction_proto2_static::Init()
@@ -526,6 +527,7 @@ transaction_proto2_static::gcloop(unsigned i)
       t.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&t, nullptr);
     }
+    evt_avg_proto_gc_loop_iter_usec.offer(last_loop_usec);
 
     // figure out what the current cleanable epoch is
     const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
@@ -617,7 +619,7 @@ transaction_proto2_static::gcloop(unsigned i)
                   myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
               myctx.queues_[my_ro_tick % g_ngcqueues].enqueue(
                   delete_entry(nullptr, 0, delent.tuple(),
-                  marked_ptr<string>(), nullptr),
+                    marked_ptr<string>(), nullptr),
                   my_ro_tick);
               ++evt_proto_gc_delete_requeue;
               // reclaim string ptrs
