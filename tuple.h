@@ -811,9 +811,6 @@ public:
     const size_t new_sz =
       v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
     INVARIANT(!v || new_sz);
-    if (!is_deleting() && !size) {
-      std::cerr << "bad: " << *this << std::endl;
-    }
     INVARIANT(is_deleting() || size);
     const size_t old_sz = is_deleting() ? 0 : size;
 
