@@ -476,11 +476,26 @@ public:
 
   static void WaitForGCThroughNow();
 
+#ifdef PROTO2_CAN_DISABLE_GC
   static inline bool
   IsGCEnabled()
   {
-    return g_gc_init;
+    return g_flags->g_gc_init.load(std::memory_order_acquire);
   }
+#endif
+
+#ifdef PROTO2_CAN_DISABLE_SNAPSHOTS
+  static void
+  DisableSnapshots()
+  {
+    g_flags->g_disable_snapshots.store(true, std::memory_order_release);
+  }
+  static inline bool
+  IsSnapshotsEnabled()
+  {
+    return !g_flags->g_disable_snapshots.load(std::memory_order_acquire);
+  }
+#endif
 
 protected:
 
@@ -691,7 +706,12 @@ protected:
     std::deque<std::string *> pool_;
   };
 
-  static bool g_gc_init;
+  struct flags {
+    std::atomic<bool> g_gc_init;
+    std::atomic<bool> g_disable_snapshots;
+    constexpr flags() : g_gc_init(false), g_disable_snapshots(false) {}
+  };
+  static util::aligned_padded_elem<flags> g_flags;
 
   static percore<threadctx> g_threadctxs;
 
@@ -769,6 +789,11 @@ public:
   can_overwrite_record_tid(tid_t prev, tid_t cur) const
   {
     INVARIANT(prev <= cur);
+
+#ifdef PROTO2_CAN_DISABLE_SNAPSHOTS
+    if (!IsSnapshotsEnabled())
+      return true;
+#endif
 
     // XXX(stephentu): the !prev check is a *bit* of a hack-
     // we're assuming that !prev (MIN_TID) corresponds to an
@@ -1040,8 +1065,10 @@ public:
   inline ALWAYS_INLINE void
   on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple)
   {
+#ifdef PROTO2_CAN_DISABLE_GC
     if (!IsGCEnabled())
       return;
+#endif
 
     INVARIANT(rcu::s_instance.in_rcu_region());
     INVARIANT(!tuple->is_latest());
@@ -1072,8 +1099,10 @@ public:
   inline ALWAYS_INLINE void
   on_logical_delete(dbtuple *tuple, const std::string &key, btree *btr)
   {
+#ifdef PROTO2_CAN_DISABLE_GC
     if (!IsGCEnabled())
       return;
+#endif
 
     INVARIANT(tuple->is_locked());
     INVARIANT(tuple->is_lock_owner());
@@ -1139,8 +1168,9 @@ struct base_txn_btree_handler<transaction_proto2> {
   void
   on_construct(const std::string &name, btree *btr)
   {
-    // XXX: InitGC() must be called explicitly
-    //transaction_proto2_static::InitGC();
+#ifndef PROTO2_CAN_DISABLE_GC
+    transaction_proto2_static::InitGC();
+#endif
   }
 
   void

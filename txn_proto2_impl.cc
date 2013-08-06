@@ -483,21 +483,23 @@ void
 transaction_proto2_static::InitGC()
 {
   static spinlock s_lock;
-  if (likely(g_gc_init))
+  if (likely(g_flags->g_gc_init.load(memory_order_acquire)))
     return;
   ::lock_guard<spinlock> l(s_lock);
-  if (g_gc_init)
+  if (g_flags->g_gc_init.load(memory_order_acquire))
     return;
   for (size_t i = 0; i < g_num_gc_workers; i++)
     thread(&transaction_proto2_static::gcloop, i).detach();
-  g_gc_init = true;
+  g_flags->g_gc_init.store(true, memory_order_release);
 }
 
 void
 transaction_proto2_static::WaitForGCThroughNow()
 {
+#ifdef PROTO2_CAN_DISABLE_GC
   if (!IsGCEnabled())
     return;
+#endif
   INVARIANT(!rcu::s_instance.in_rcu_region());
   const uint64_t ro_tick =
     to_read_only_tick(ticker::s_instance.global_current_tick());
@@ -514,7 +516,6 @@ transaction_proto2_static::WaitForGCThroughNow()
 void
 transaction_proto2_static::gcloop(unsigned i)
 {
-  INVARIANT(IsGCEnabled());
   // runs as daemon
   timer loop_timer;
   struct timespec t;
@@ -670,8 +671,8 @@ transaction_proto2_static::gcloop(unsigned i)
 
 aligned_padded_elem<transaction_proto2_static::hackstruct>
   transaction_proto2_static::g_hack;
-bool
-  transaction_proto2_static::g_gc_init = false;
+aligned_padded_elem<transaction_proto2_static::flags>
+  transaction_proto2_static::g_flags;
 percore<transaction_proto2_static::threadctx>
   transaction_proto2_static::g_threadctxs;
 event_counter
