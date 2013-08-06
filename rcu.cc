@@ -111,39 +111,8 @@ rcu::free_with_fn(void *p, deleter_t fn)
     INVARIANT(false);
   // already locked by the scoped region
   sync &s = mysync();
-  INVARIANT(s.local_queue_mutexes_[rcu_tick % 3].is_locked());
-  s.local_queues_[rcu_tick % 3].enqueue(delete_entry(p, fn), rcu_tick);
+  s.queue_.enqueue(delete_entry(p, fn), rcu_tick);
   ++evt_rcu_frees;
-}
-
-void
-rcu::sync::threadpurge()
-{
-  INVARIANT(!impl_->in_rcu_region());
-  const uint64_t clean_tick_exclusive = impl_->cleaning_rcu_tick_exclusive();
-  if (!clean_tick_exclusive)
-    return;
-  const uint64_t clean_tick = clean_tick_exclusive - 1;
-  INVARIANT(scratch_queue_.empty());
-  {
-    ::lock_guard<spinlock> l(local_queue_mutexes_[clean_tick % 3]);
-    scratch_queue_.empty_accept_from(local_queues_[clean_tick % 3], clean_tick);
-    scratch_queue_.transfer_freelist(local_queues_[clean_tick % 3]);
-  }
-  px_queue &q = scratch_queue_;
-  if (q.empty())
-    return;
-  size_t n = 0;
-  for (auto it = q.begin(); it != q.end(); ++it, ++n) {
-    try {
-      it->second(it->first);
-    } catch (...) {
-      cerr << "rcu::region_end: uncaught exception in free routine" << endl;
-    }
-  }
-  q.clear();
-  evt_rcu_deletes += n;
-  evt_avg_rcu_local_delete_queue_len.offer(n);
 }
 
 void
@@ -169,64 +138,49 @@ rcu::fault_region()
   ::allocator::FaultRegion(s.get_pin_cpu());
 }
 
-void
-rcu::gcloop(unsigned id)
-{
-  // runs as daemon
-  px_queue scratch_queue;
-  timer loop_timer;
-  struct timespec t;
-  for (;;) {
-    const uint64_t last_loop_usec = loop_timer.lap();
-    const uint64_t delay_time_usec = EpochTimeUsec;
-    if (last_loop_usec < delay_time_usec) {
-      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
-      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
-      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
-      nanosleep(&t, nullptr);
-    }
-
-    // compute cleaner epoch
-    const uint64_t clean_tick_exclusive = cleaning_rcu_tick_exclusive();
-    if (!clean_tick_exclusive)
-      continue;
-    const uint64_t clean_tick = clean_tick_exclusive - 1;
-
-    // RR assignment of gcloops to cores
-    for (size_t i = id; i < NMAXCORES; i += NGCReapers) {
-      sync *s = syncs_.view(i);
-      if (!s)
-        continue;
-      {
-        ::lock_guard<spinlock> l(s->local_queue_mutexes_[clean_tick % 3]);
-        scratch_queue.empty_accept_from(s->local_queues_[clean_tick % 3], clean_tick);
-        scratch_queue.transfer_freelist(s->local_queues_[clean_tick % 3]);
-      }
-      px_queue &q = scratch_queue;
-      if (q.empty())
-        continue;
-      size_t n = 0;
-      for (auto it = q.begin(); it != q.end(); ++it, ++n) {
-        try {
-          it->second(it->first);
-        } catch (...) {
-          cerr << "rcu-reaper: uncaught exception in free routine" << endl;
-        }
-      }
-      q.clear();
-      evt_rcu_deletes += n;
-      evt_avg_gc_reaper_queue_len.offer(n);
-    }
-
-    // try to release memory from allocator slabs back
-    try_release();
-  }
-}
-
 rcu::rcu()
   : syncs_([this](sync &s) { s.impl_ = this; })
 {
-  // background the collector threads
-  for (size_t i = 0; i < NGCReapers; i++)
-    thread(&rcu::gcloop, this, i).detach();
+}
+
+scoped_rcu_region::~scoped_rcu_region()
+{
+  INVARIANT(sync_->depth_);
+  const unsigned new_depth = --sync_->depth_;
+  guard()->ticker::guard::~guard();
+  if (new_depth)
+    return;
+  // out of RCU region now, check if we need to run cleaner
+
+  // compute cleaner epoch
+  const uint64_t clean_tick_exclusive = sync_->impl_->cleaning_rcu_tick_exclusive();
+  if (!clean_tick_exclusive)
+    return;
+  const uint64_t clean_tick = clean_tick_exclusive - 1;
+
+  INVARIANT(sync_->last_reaped_epoch_ <= clean_tick);
+  INVARIANT(sync_->scratch_.empty());
+  if (sync_->last_reaped_epoch_ == clean_tick)
+    return;
+  sync_->last_reaped_epoch_ = clean_tick;
+
+  sync_->scratch_.empty_accept_from(sync_->queue_, clean_tick);
+  sync_->scratch_.transfer_freelist(sync_->queue_);
+  rcu::px_queue &q = sync_->scratch_;
+  if (q.empty())
+    return;
+  size_t n = 0;
+  for (auto it = q.begin(); it != q.end(); ++it, ++n) {
+    try {
+      it->second(it->first);
+    } catch (...) {
+      cerr << "rcu::region_end: uncaught exception in free routine" << endl;
+    }
+  }
+  q.clear();
+  evt_rcu_deletes += n;
+  evt_avg_rcu_local_delete_queue_len.offer(n);
+
+  // try to release memory from allocator slabs back
+  sync_->impl_->try_release();
 }

@@ -62,12 +62,12 @@ public:
   // this is also serving as a memory allocator for the time being
   struct sync {
     friend class rcu;
+    friend class scoped_rcu_region;
   public:
-    spinlock local_queue_mutexes_[3]; // must hold mutex[i] to manipulate
-                                      // queue[i]
-    px_queue local_queues_[3];
-    px_queue scratch_queue_; // no need to lock b/c completely local
+    px_queue queue_;
+    px_queue scratch_;
     unsigned depth_; // 0 indicates no rcu region
+    unsigned last_reaped_epoch_;
 
   private:
     rcu *impl_;
@@ -80,11 +80,10 @@ public:
 
   public:
     sync()
-      : depth_(0), impl_(nullptr), pin_cpu_(-1)
+      : depth_(0), last_reaped_epoch_(0), impl_(nullptr), pin_cpu_(-1)
     {
-      local_queues_[0].alloc_freelist(NQueueGroups);
-      local_queues_[1].alloc_freelist(NQueueGroups);
-      local_queues_[2].alloc_freelist(NQueueGroups);
+      queue_.alloc_freelist(NQueueGroups);
+      scratch_.alloc_freelist(NQueueGroups);
       NDB_MEMSET(arenas_, 0, sizeof(arenas_));
       NDB_MEMSET(deallocs_, 0, sizeof(deallocs_));
     }
@@ -115,15 +114,6 @@ public:
     // some simple thresholding heuristics- should only be called
     // by background cleaners
     void try_release();
-
-    // fill q with free-able pointers
-    // q must be empty
-    //
-    // must be called OUTSIDE of RCU region
-    //
-    // note these pointers will be removed from delete queues, transfering
-    // responsibility for calling free to the caller
-    void threadpurge();
 
     inline unsigned depth() const { return depth_; }
 
@@ -166,12 +156,6 @@ public:
   try_release()
   {
     return mysync().try_release();
-  }
-
-  inline void
-  threadpurge()
-  {
-    mysync().threadpurge();
   }
 
   void free_with_fn(void *p, deleter_t fn);
@@ -244,8 +228,6 @@ private:
 
   inline sync &mysync() { return syncs_.my(); }
 
-  void gcloop(unsigned i); // main reaper loop
-
   percore_lazy<sync> syncs_;
 };
 
@@ -258,28 +240,22 @@ public:
   scoped_rcu_region &operator=(const scoped_rcu_region &) = delete;
 
   scoped_rcu_region()
-    : guard_(ticker::s_instance),
-      sync_(&rcu::s_instance.mysync())
+    : sync_(&rcu::s_instance.mysync())
   {
-    if (!sync_->depth_++)
-      sync_->local_queue_mutexes_[rcu::to_rcu_ticks(guard_.tick()) % 3].lock();
+    new (&guard_[0]) ticker::guard(ticker::s_instance);
+    sync_->depth_++;
   }
 
-  ~scoped_rcu_region()
-  {
-    INVARIANT(sync_->depth_);
-    if (!--sync_->depth_)
-      sync_->local_queue_mutexes_[rcu::to_rcu_ticks(guard_.tick()) % 3].unlock();
-  }
+  ~scoped_rcu_region();
 
-  inline ticker::guard &
+  inline ticker::guard *
   guard()
   {
-    return guard_;
+    return (ticker::guard *) &guard_[0];
   }
 
 private:
-  ticker::guard guard_;
+  char guard_[sizeof(ticker::guard)];
   rcu::sync *sync_;
 };
 

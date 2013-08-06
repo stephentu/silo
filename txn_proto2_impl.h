@@ -759,10 +759,10 @@ public:
       current_epoch(0),
       last_consistent_tid(0)
   {
-    current_epoch = this->rcu_guard_.guard().tick();
+    current_epoch = this->rcu_guard_.guard()->tick();
     if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY) {
       const uint64_t global_tick_ex =
-        this->rcu_guard_.guard().impl().global_last_tick_exclusive();
+        this->rcu_guard_.guard()->impl().global_last_tick_exclusive();
 
       const uint64_t a = (global_tick_ex / ReadOnlyEpochMultiplier);
       const uint64_t b = a * ReadOnlyEpochMultiplier;
@@ -935,7 +935,7 @@ private:
     INVARIANT(px->can_hold_tid(commit_tid));
 
     if (unlikely(!px->header()->nentries_))
-      px->earliest_start_us_ = this->rcu_guard_.guard().start_us();
+      px->earliest_start_us_ = this->rcu_guard_.guard()->start_us();
 
     uint8_t *p = px->pointer();
     uint8_t *porig = p;
@@ -1000,7 +1000,7 @@ public:
   transaction_base::tid_t
   gen_commit_tid(const dbtuple_write_info_vec &write_tuples)
   {
-    const size_t my_core_id = this->rcu_guard_.guard().core();
+    const size_t my_core_id = this->rcu_guard_.guard()->core();
     threadctx &ctx = g_threadctxs[my_core_id];
     const tid_t l_last_commit_tid =
       ctx.last_commit_tid_.load(std::memory_order_acquire);
