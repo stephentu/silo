@@ -23,25 +23,6 @@ template <template <typename> class Transaction>
 
 namespace private_ { struct opaque_t {}; }
 
-//// each txn_btree has a walker_loop associated with it
-//class txn_walker_loop : public ndb_thread {
-//  friend class transaction_proto2_static;
-//  friend class base_txn_btree_handler<transaction_proto2>;
-//  friend class txn_epoch_sync<transaction_proto2>;
-//public:
-//  // not a daemon thread, so we can join when the txn_btree exists
-//  txn_walker_loop()
-//    : ndb_thread(false, std::string("walkerloop")),
-//      running(false),
-//      btr(0) {}
-//  virtual void run();
-//private:
-//  volatile bool running;
-//  static volatile bool global_running; // a hacky way to disable all cleaners temporarily
-//  std::string name;
-//  btree *btr;
-//};
-
 // the system has a single logging subsystem (composed of multiple lgogers)
 // NOTE: currently, the persistence epoch is tied 1:1 with the ticker's epoch
 class txn_logger {
