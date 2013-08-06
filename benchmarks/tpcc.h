@@ -82,7 +82,7 @@ DO_STRUCT(item, ITEM_KEY_FIELDS, ITEM_VALUE_FIELDS)
 // need dummy b/c our btree cannot have empty values.
 // we also size value so that it can fit a key
 #define NEW_ORDER_VALUE_FIELDS(x, y) \
-  x(inline_str_fixed<24>,no_dummy)
+  x(inline_str_fixed<12>,no_dummy)
 DO_STRUCT(new_order, NEW_ORDER_KEY_FIELDS, NEW_ORDER_VALUE_FIELDS)
 
 #define OORDER_KEY_FIELDS(x, y) \
