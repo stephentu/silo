@@ -1085,7 +1085,7 @@ protected:
 
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
-              const new_order::value v_no(0);
+              const new_order::value v_no;
 
               checker::SanityCheckNewOrder(&k_no, &v_no);
               const size_t sz = Size(v_no);
@@ -1248,7 +1248,7 @@ tpcc_worker::txn_new_order()
     checker::SanityCheckDistrict(&k_d, v_d);
 
     const new_order::key k_no(warehouse_id, districtID, v_d->d_next_o_id);
-    const new_order::value v_no(0);
+    const new_order::value v_no;
     const size_t new_order_sz = Size(v_no);
     tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k_no), Encode(str(), v_no));
     ret += new_order_sz;

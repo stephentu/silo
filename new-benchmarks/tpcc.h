@@ -83,7 +83,7 @@ DO_STRUCT(item, ITEM_KEY_FIELDS, ITEM_VALUE_FIELDS)
   y(int32_t,no_o_id)
 // need dummy b/c our btree cannot have empty values
 #define NEW_ORDER_VALUE_FIELDS(x, y) \
-  x(uint8_t,no_dummy)
+  x(inline_str_fixed<24>,no_dummy)
 DO_STRUCT(new_order, NEW_ORDER_KEY_FIELDS, NEW_ORDER_VALUE_FIELDS)
 
 #define OORDER_KEY_FIELDS(x, y) \
