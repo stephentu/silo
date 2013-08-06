@@ -45,9 +45,10 @@ KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
-KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=True
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=False
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
 KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
+KNOB_ENABLE_TPCC_SCALE_GC=True
 
 grids = []
 
@@ -394,10 +395,27 @@ if KNOB_ENABLE_TPCC_SCALE_FAKEWRITES:
     }
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
+if KNOB_ENABLE_TPCC_SCALE_GC:
+  def mk_grid(name, bench, nthds):
+    return {
+      'name' : name,
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors' : [nthds],
+      'benchmarks' : [bench],
+      'bench_opts' : [''],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [False],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+      'disable_gc' : [False, True],
+    }
+  grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
+
 def run_configuration(
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
     par_load, retry_aborted_txn, numa_memory, logfiles,
-    assignments, log_fake_writes, log_nofsync, log_compress):
+    assignments, log_fake_writes, log_nofsync, log_compress, disable_gc):
   # Note: assignments is a list of list of ints
   assert len(logfiles) == len(assignments)
   assert not log_fake_writes or len(logfiles)
@@ -420,7 +438,8 @@ def run_configuration(
     + ([] if not assignments else list(it.chain.from_iterable([['--assignment', ','.join(map(str, x))] for x in assignments]))) \
     + ([] if not log_fake_writes else ['--log-fake-writes']) \
     + ([] if not log_nofsync else ['--log-nofsync']) \
-    + ([] if not log_compress else ['--log-compress'])
+    + ([] if not log_compress else ['--log-compress']) \
+    + ([] if not disable_gc else ['--disable-gc'])
   print >>sys.stderr, '[INFO] running command:'
   print >>sys.stderr, ' '.join(args)
   if not DRYRUN:
@@ -441,13 +460,14 @@ if __name__ == '__main__':
   for grid in grids:
     for (db, bench, scale_factor, threads, bench_opts,
          par_load, retry, numa_memory, persist,
-         log_fake_writes, log_nofsync, log_compress) in it.product(
+         log_fake_writes, log_nofsync, log_compress, disable_gc) in it.product(
         grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
         grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
         grid['numa_memory'], grid['persist'],
         grid.get('log_fake_writes', [False]),
         grid.get('log_nofsync', [False]),
-        grid.get('log_compress', [False])):
+        grid.get('log_compress', [False]),
+        grid.get('disable_gc', [False])):
       config = {
         'name'            : grid['name'],
         'db'              : db,
@@ -462,6 +482,7 @@ if __name__ == '__main__':
         'log_fake_writes' : log_fake_writes,
         'log_nofsync'     : log_nofsync,
         'log_compress'    : log_compress,
+        'disable_gc'      : disable_gc,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
       if persist:
@@ -478,7 +499,7 @@ if __name__ == '__main__':
             basedir, db, bench, scale_factor, threads,
             bench_opts, par_load, retry, numa_memory,
             logfiles, assignments, log_fake_writes,
-            log_nofsync, log_compress)
+            log_nofsync, log_compress, disable_gc)
         values.append(value)
       results.append((config, values))
 
