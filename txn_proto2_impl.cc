@@ -475,6 +475,7 @@ txn_logger::wait_until_current_point_persisted()
 
 static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
+static event_counter evt_proto_gc_delete_requeue("proto_gc_delete_requeue");
 static event_avg_counter evt_avg_proto_gc_queue_len("avg_proto_gc_queue_len");
 
 void
@@ -618,6 +619,7 @@ transaction_proto2_static::gcloop(unsigned i)
                   delete_entry(nullptr, 0, delent.tuple(),
                   marked_ptr<string>(), nullptr),
                   my_ro_tick);
+              ++evt_proto_gc_delete_requeue;
               // reclaim string ptrs
               string *spx = delent.key_.get();
               if (unlikely(spx))
