@@ -1032,6 +1032,7 @@ public:
   inline ALWAYS_INLINE void
   on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple)
   {
+#ifndef PROTO2_DISABLE_GC
     INVARIANT(rcu::s_instance.in_rcu_region());
     INVARIANT(!tuple->is_latest());
     INVARIANT(tuple_ahead->version > tuple->version);
@@ -1056,11 +1057,13 @@ public:
         delete_entry(tuple_ahead, tuple_ahead->version,
           tuple, marked_ptr<std::string>(), nullptr),
         ro_tick);
+#endif
   }
 
   inline ALWAYS_INLINE void
   on_logical_delete(dbtuple *tuple, const std::string &key, btree *btr)
   {
+#ifndef PROTO2_DISABLE_GC
     INVARIANT(tuple->is_locked());
     INVARIANT(tuple->is_lock_owner());
     INVARIANT(tuple->is_write_intent());
@@ -1110,6 +1113,7 @@ public:
           delete_entry(nullptr, tuple->version, tuple, mpx, btr),
           ro_tick);
     }
+#endif
   }
 
 private:

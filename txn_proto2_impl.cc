@@ -482,6 +482,7 @@ static event_avg_counter evt_avg_proto_gc_loop_iter_usec("avg_proto_gc_loop_iter
 void
 transaction_proto2_static::Init()
 {
+#ifndef PROTO2_DISABLE_GC
   static spinlock s_lock;
   static bool s_init = false;
   if (likely(s_init))
@@ -492,11 +493,13 @@ transaction_proto2_static::Init()
   for (size_t i = 0; i < g_num_gc_workers; i++)
     thread(&transaction_proto2_static::gcloop, i).detach();
   s_init = true;
+#endif
 }
 
 void
 transaction_proto2_static::WaitForGCThroughNow()
 {
+#ifndef PROTO2_DISABLE_GC
   INVARIANT(!rcu::s_instance.in_rcu_region());
   const uint64_t ro_tick =
     to_read_only_tick(ticker::s_instance.global_current_tick());
@@ -508,6 +511,7 @@ transaction_proto2_static::WaitForGCThroughNow()
     ctx.queues_[ro_tick % g_ngcqueues].enqueue(delete_entry(&b), ro_tick);
   }
   b.wait_for();
+#endif
 }
 
 void
