@@ -39,9 +39,6 @@ public:
     delete [] (T *) p;
   }
 
-  // XXX(stephentu): tune?
-  static const size_t NGCReapers = 4;
-
 #ifdef CHECK_INVARIANTS
   static const uint64_t EpochTimeMultiplier = 10; /* 10 * 1 ms */
 #else
