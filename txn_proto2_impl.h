@@ -693,6 +693,7 @@ protected:
     g_gc_cleaned_through_epochs[g_num_gc_workers];
 
   static event_counter g_evt_worker_thread_wait_log_buffer;
+  static event_counter g_evt_dbtuple_no_space_for_delkey;
   static event_avg_counter g_evt_avg_log_entry_size;
 };
 
@@ -1088,6 +1089,7 @@ public:
           ro_tick);
     } else {
       // this is a rare event
+      ++g_evt_dbtuple_no_space_for_delkey;
       lock_guard<spinlock> lg_pool(ctx.pool_lock_);
 
       std::string *spx = nullptr;
