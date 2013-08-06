@@ -480,26 +480,24 @@ static event_avg_counter evt_avg_proto_gc_queue_len("avg_proto_gc_queue_len");
 static event_avg_counter evt_avg_proto_gc_loop_iter_usec("avg_proto_gc_loop_iter_usec");
 
 void
-transaction_proto2_static::Init()
+transaction_proto2_static::InitGC()
 {
-#ifndef PROTO2_DISABLE_GC
   static spinlock s_lock;
-  static bool s_init = false;
-  if (likely(s_init))
+  if (likely(g_gc_init))
     return;
   ::lock_guard<spinlock> l(s_lock);
-  if (s_init)
+  if (g_gc_init)
     return;
   for (size_t i = 0; i < g_num_gc_workers; i++)
     thread(&transaction_proto2_static::gcloop, i).detach();
-  s_init = true;
-#endif
+  g_gc_init = true;
 }
 
 void
 transaction_proto2_static::WaitForGCThroughNow()
 {
-#ifndef PROTO2_DISABLE_GC
+  if (!IsGCEnabled())
+    return;
   INVARIANT(!rcu::s_instance.in_rcu_region());
   const uint64_t ro_tick =
     to_read_only_tick(ticker::s_instance.global_current_tick());
@@ -511,12 +509,12 @@ transaction_proto2_static::WaitForGCThroughNow()
     ctx.queues_[ro_tick % g_ngcqueues].enqueue(delete_entry(&b), ro_tick);
   }
   b.wait_for();
-#endif
 }
 
 void
 transaction_proto2_static::gcloop(unsigned i)
 {
+  INVARIANT(IsGCEnabled());
   // runs as daemon
   timer loop_timer;
   struct timespec t;
@@ -672,6 +670,8 @@ transaction_proto2_static::gcloop(unsigned i)
 
 aligned_padded_elem<transaction_proto2_static::hackstruct>
   transaction_proto2_static::g_hack;
+bool
+  transaction_proto2_static::g_gc_init = false;
 percore<transaction_proto2_static::threadctx>
   transaction_proto2_static::g_threadctxs;
 event_counter

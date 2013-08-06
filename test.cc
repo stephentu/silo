@@ -1008,6 +1008,7 @@ public:
     // initialize the numa allocator subsystem with the number of CPUs running
     // + reasonable size per core
     ::allocator::Initialize(coreid::num_cpus_online(), size_t(128 * (1<<20)));
+    transaction_proto2_static::InitGC();
     varkeytest::Test();
     pxqueuetest::Test();
     CounterTest();

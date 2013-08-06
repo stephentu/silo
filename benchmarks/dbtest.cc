@@ -68,6 +68,7 @@ main(int argc, char **argv)
   int nofsync = 0;
   int do_compress = 0;
   int fake_writes = 0;
+  int disable_gc = 0;
   vector<string> logfiles;
   vector<vector<unsigned>> assignments;
   while (1) {
@@ -93,6 +94,7 @@ main(int argc, char **argv)
       {"log-nofsync"                , no_argument       , &nofsync                   , 1}   ,
       {"log-compress"               , no_argument       , &do_compress               , 1}   ,
       {"log-fake-writes"            , no_argument       , &fake_writes               , 1}   ,
+      {"disable-gc"                 , no_argument       , &disable_gc                , 1}   ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
@@ -224,6 +226,13 @@ main(int argc, char **argv)
     return 1;
   }
 
+  const set<string> has_gc({"ndb-proto1", "ndb-proto2"});
+  if (disable_gc && !has_gc.count(db_type)) {
+    cerr << "[ERROR] benchmark " << db_type
+         << " does not have gc to disable" << endl;
+    return 1;
+  }
+
   if (db_type == "bdb") {
     const string cmd = "rm -rf " + basedir + "/db/*";
     // XXX(stephentu): laziness
@@ -235,10 +244,14 @@ main(int argc, char **argv)
         logfiles, assignments, !nofsync, do_compress, fake_writes);
     transaction_proto2_static::set_hack_status(true);
     ALWAYS_ASSERT(transaction_proto2_static::get_hack_status());
+    if (!disable_gc)
+      transaction_proto2_static::InitGC();
   } else if (db_type == "ndb-proto2") {
     db = new ndb_wrapper<transaction_proto2>(
         logfiles, assignments, !nofsync, do_compress, fake_writes);
     ALWAYS_ASSERT(!transaction_proto2_static::get_hack_status());
+    if (!disable_gc)
+      transaction_proto2_static::InitGC();
   } else if (db_type == "kvdb") {
     db = new kvdb_wrapper<true>;
   } else if (db_type == "kvdb-st") {
@@ -298,6 +311,7 @@ main(int argc, char **argv)
     }
     cerr << "  logfiles : " << logfiles                     << endl;
     cerr << "  assignments : " << assignments               << endl;
+    cerr << "  disable-gc : " << disable_gc                 << endl;
 
     cerr << "system properties:" << endl;
     cerr << "  btree_internal_node_size: " << btree::InternalNodeSize() << endl;

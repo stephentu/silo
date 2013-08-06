@@ -472,9 +472,15 @@ public:
   }
 
   // thread-safe, can be called many times
-  static void Init();
+  static void InitGC();
 
   static void WaitForGCThroughNow();
+
+  static inline bool
+  IsGCEnabled()
+  {
+    return g_gc_init;
+  }
 
 protected:
 
@@ -684,6 +690,8 @@ protected:
     spinlock pool_lock_;
     std::deque<std::string *> pool_;
   };
+
+  static bool g_gc_init;
 
   static percore<threadctx> g_threadctxs;
 
@@ -1032,7 +1040,9 @@ public:
   inline ALWAYS_INLINE void
   on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple)
   {
-#ifndef PROTO2_DISABLE_GC
+    if (!IsGCEnabled())
+      return;
+
     INVARIANT(rcu::s_instance.in_rcu_region());
     INVARIANT(!tuple->is_latest());
     INVARIANT(tuple_ahead->version > tuple->version);
@@ -1057,13 +1067,14 @@ public:
         delete_entry(tuple_ahead, tuple_ahead->version,
           tuple, marked_ptr<std::string>(), nullptr),
         ro_tick);
-#endif
   }
 
   inline ALWAYS_INLINE void
   on_logical_delete(dbtuple *tuple, const std::string &key, btree *btr)
   {
-#ifndef PROTO2_DISABLE_GC
+    if (!IsGCEnabled())
+      return;
+
     INVARIANT(tuple->is_locked());
     INVARIANT(tuple->is_lock_owner());
     INVARIANT(tuple->is_write_intent());
@@ -1113,7 +1124,6 @@ public:
           delete_entry(nullptr, tuple->version, tuple, mpx, btr),
           ro_tick);
     }
-#endif
   }
 
 private:
@@ -1129,7 +1139,8 @@ struct base_txn_btree_handler<transaction_proto2> {
   void
   on_construct(const std::string &name, btree *btr)
   {
-    transaction_proto2_static::Init();
+    // XXX: InitGC() must be called explicitly
+    //transaction_proto2_static::InitGC();
   }
 
   void
