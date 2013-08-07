@@ -1751,9 +1751,9 @@ void txn_btree_test()
   //test_long_keys<transaction_proto2, default_transaction_traits>();
   //test_long_keys2<transaction_proto2, default_transaction_traits>();
 
-  mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
-  mp_test1<transaction_proto2, default_transaction_traits>();
-  mp_test2<transaction_proto2, default_transaction_traits>();
+  //mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
+  //mp_test1<transaction_proto2, default_transaction_traits>();
+  //mp_test2<transaction_proto2, default_transaction_traits>();
   mp_test3<transaction_proto2, default_transaction_traits>();
   mp_test_simple_write_skew<transaction_proto2, default_transaction_traits>();
   mp_test_batch_processing<transaction_proto2, default_transaction_traits>();

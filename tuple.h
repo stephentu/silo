@@ -1,6 +1,7 @@
 #ifndef _NDB_TUPLE_H_
 #define _NDB_TUPLE_H_
 
+#include <atomic>
 #include <vector>
 #include <string>
 #include <utility>
@@ -156,6 +157,11 @@ public:
   std::string key;
 #endif
 
+#ifdef CHECK_INVARIANTS
+  // for debugging
+  std::atomic<uint64_t> opaque;
+#endif
+
   // must be last field
   uint8_t value_start[0];
 
@@ -174,14 +180,17 @@ private:
   dbtuple(size_type size, size_type alloc_size, bool acquire_lock)
     : hdr(HDR_LATEST_MASK |
           (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0) |
-          (!size ? HDR_DELETING_MASK : 0)),
+          (!size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-      lock_owner(0), // not portable
+      , lock_owner(0) // not portable
 #endif
-      version(MAX_TID),
-      size(CheckBounds(size)),
-      alloc_size(CheckBounds(alloc_size)),
-      next(nullptr)
+      , version(MAX_TID)
+      , size(CheckBounds(size))
+      , alloc_size(CheckBounds(alloc_size))
+      , next(nullptr)
+#ifdef CHECK_INVARIANTS
+      , opaque(0)
+#endif
   {
     INVARIANT(((char *)this) + sizeof(*this) == (char *) &value_start[0]);
     INVARIANT(is_latest());
@@ -204,14 +213,17 @@ private:
           struct dbtuple *base,
           size_type alloc_size,
           bool set_latest)
-    : hdr(set_latest ? HDR_LATEST_MASK : 0),
+    : hdr(set_latest ? HDR_LATEST_MASK : 0)
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-      lock_owner(0), // not portable
+      , lock_owner(0) // not portable
 #endif
-      version(version),
-      size(base->size),
-      alloc_size(CheckBounds(alloc_size)),
-      next(base->next)
+      , version(version)
+      , size(base->size)
+      , alloc_size(CheckBounds(alloc_size))
+      , next(base->next)
+#ifdef CHECK_INVARIANTS
+      , opaque(0)
+#endif
   {
     INVARIANT(size <= alloc_size);
     INVARIANT(set_latest == is_latest());
@@ -228,14 +240,17 @@ private:
           size_type old_size, size_type new_size,
           size_type alloc_size,
           struct dbtuple *next, bool set_latest)
-    : hdr((set_latest ? HDR_LATEST_MASK : 0) | (!new_size ? HDR_DELETING_MASK : 0)),
+    : hdr((set_latest ? HDR_LATEST_MASK : 0) | (!new_size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-      lock_owner(0), // not portable
+      , lock_owner(0) // not portable
 #endif
-      version(version),
-      size(CheckBounds(new_size)),
-      alloc_size(CheckBounds(alloc_size)),
-      next(next)
+      , version(version)
+      , size(CheckBounds(new_size))
+      , alloc_size(CheckBounds(alloc_size))
+      , next(next)
+#ifdef CHECK_INVARIANTS
+      , opaque(0)
+#endif
   {
     INVARIANT(old_size <= new_size);
     INVARIANT(new_size <= alloc_size);
@@ -993,7 +1008,7 @@ public:
   VersionInfoStr(version_t v);
 
 }
-#ifndef TUPLE_CHECK_KEY
+#if !defined(TUPLE_CHECK_KEY) && !defined(CHECK_INVARIANTS)
 PACKED
 #endif
 ;

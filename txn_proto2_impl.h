@@ -21,8 +21,6 @@ template <typename Traits> class transaction_proto2;
 template <template <typename> class Transaction>
   class txn_epoch_sync;
 
-namespace private_ { struct opaque_t {}; }
-
 // the system has a single logging subsystem (composed of multiple lgogers)
 // NOTE: currently, the persistence epoch is tied 1:1 with the ticker's epoch
 class txn_logger {
@@ -1059,10 +1057,14 @@ public:
     const uint64_t ro_tick = to_read_only_tick(this->current_epoch);
     INVARIANT(to_read_only_tick(EpochId(tuple->version)) <= ro_tick);
 
+#ifdef CHECK_INVARIANTS
+    uint64_t exp = 0;
+    INVARIANT(tuple->opaque.compare_exchange_strong(exp, 1, std::memory_order_acq_rel));
+#endif
+
     // when all snapshots are happening >= the current epoch,
     // then we can safely remove tuple
     threadctx &ctx = g_threadctxs.my();
-
     ctx.queue_.enqueue(
         delete_entry(tuple_ahead, tuple_ahead->version,
           tuple, marked_ptr<std::string>(), nullptr),
@@ -1088,6 +1090,11 @@ public:
 
     const uint64_t ro_tick = to_read_only_tick(this->current_epoch);
     threadctx &ctx = g_threadctxs.my();
+
+#ifdef CHECK_INVARIANTS
+    uint64_t exp = 0;
+    INVARIANT(tuple->opaque.compare_exchange_strong(exp, 1, std::memory_order_acq_rel));
+#endif
 
     if (likely(key.size() <= tuple->alloc_size)) {
       NDB_MEMCPY(tuple->get_value_start(), key.data(), key.size());

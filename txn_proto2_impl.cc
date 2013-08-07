@@ -553,6 +553,7 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   size_t n = 0;
   for (auto it = q.begin(); it != q.end(); ++it, ++n) {
     auto &delent = *it;
+    INVARIANT(delent.tuple()->opaque.load(std::memory_order_acquire) == 1);
     if (!delent.key_.get_flags()) {
       // guaranteed to be gc-able now (even w/o RCU)
 #ifdef CHECK_INVARIANTS
@@ -567,6 +568,7 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
         cerr << "rcu_block_tick  : " << it.tick() << endl;
       }
       INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
+      delent.tuple()->opaque.store(0, std::memory_order_release);
 #endif
       // XXX: should walk tuple_ahead_'s chain and make sure some element
       // blocks reads
@@ -608,6 +610,9 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
           ctx.pool_.emplace_back(spx);
         continue;
       }
+#ifdef CHECK_INVARIANTS
+      delent.tuple()->opaque.store(0, std::memory_order_release);
+#endif
       // if delent.key_ is nullptr, then the key is stored in the tuple
       // record storage location, and the size field contains the length of
       // the key
