@@ -251,6 +251,12 @@ public:
     return (ticker::guard *) &guard_[0];
   }
 
+  inline rcu::sync *
+  sync()
+  {
+    return sync_;
+  }
+
 private:
   char guard_[sizeof(ticker::guard)];
   rcu::sync *sync_;

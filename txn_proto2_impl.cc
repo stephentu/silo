@@ -475,212 +475,188 @@ txn_logger::wait_until_current_point_persisted()
 
 static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
-static event_counter evt_proto_gc_delete_requeue("proto_gc_delete_requeue");
-static event_avg_counter evt_avg_proto_gc_queue_len("avg_proto_gc_queue_len");
-static event_avg_counter evt_avg_proto_gc_loop_iter_usec("avg_proto_gc_loop_iter_usec");
 
 void
 transaction_proto2_static::InitGC()
 {
-  static spinlock s_lock;
-  if (likely(g_flags->g_gc_init.load(memory_order_acquire)))
-    return;
-  ::lock_guard<spinlock> l(s_lock);
-  if (g_flags->g_gc_init.load(memory_order_acquire))
-    return;
-  for (size_t i = 0; i < g_num_gc_workers; i++)
-    thread(&transaction_proto2_static::gcloop, i).detach();
   g_flags->g_gc_init.store(true, memory_order_release);
 }
 
+static void
+sleep_ro_epoch()
+{
+  const uint64_t sleep_ns = transaction_proto2_static::ReadOnlyEpochUsec * 1000;
+  struct timespec t;
+  t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+  t.tv_nsec = sleep_ns % ONE_SECOND_NS;
+  nanosleep(&t, nullptr);
+}
+
 void
-transaction_proto2_static::WaitForGCThroughNow()
+transaction_proto2_static::PurgeThreadOutstandingGCTasks()
 {
 #ifdef PROTO2_CAN_DISABLE_GC
   if (!IsGCEnabled())
     return;
 #endif
   INVARIANT(!rcu::s_instance.in_rcu_region());
-  const uint64_t ro_tick =
-    to_read_only_tick(ticker::s_instance.global_current_tick());
-  cerr << "WaitForGCThroughNow(): wait to catch up to ro_tick=" << ro_tick << endl;
-  spin_barrier b(g_threadctxs.size());
-  for (size_t i = 0; i < g_threadctxs.size(); i++) {
-    threadctx &ctx = g_threadctxs[i];
-    ::lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
-    ctx.queues_[ro_tick % g_ngcqueues].enqueue(delete_entry(&b), ro_tick);
+  threadctx &ctx = g_threadctxs.my();
+  uint64_t e;
+  if (!ctx.queue_.get_latest_epoch(e))
+    return;
+  // wait until we can clean up e
+  for (;;) {
+    const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
+    const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex);
+    if (unlikely(!ro_tick_ex)) {
+      sleep_ro_epoch();
+      continue;
+    }
+    const uint64_t ro_tick_geq = ro_tick_ex - 1;
+    if (ro_tick_geq < e) {
+      sleep_ro_epoch();
+      continue;
+    }
+    break;
   }
-  b.wait_for();
+  clean_up_to_including(ctx, e);
+  INVARIANT(ctx.queue_.empty());
 }
 
 void
-transaction_proto2_static::gcloop(unsigned i)
+transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
 {
-  // runs as daemon
-  timer loop_timer;
-  struct timespec t;
-  px_queue scratch_queue;
-  vector<string *> scratch_vec;
-  for (;;) {
-    const uint64_t last_loop_usec = loop_timer.lap();
-    const uint64_t delay_time_usec = ReadOnlyEpochUsec;
-    if (last_loop_usec < delay_time_usec) {
-      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
-      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
-      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
-      nanosleep(&t, nullptr);
-    }
-    evt_avg_proto_gc_loop_iter_usec.offer(last_loop_usec);
-
-    // figure out what the current cleanable epoch is
-    const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
-    const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex);
-    if (!ro_tick_ex)
-      // won't have anything to clean
-      continue;
-    // all reads happening at >= ro_tick_geq
-    const uint64_t ro_tick_geq = ro_tick_ex - 1;
+  INVARIANT(ctx.last_reaped_epoch_ <= ro_tick_geq);
+  INVARIANT(ctx.scratch_.empty());
+  if (ctx.last_reaped_epoch_ == ro_tick_geq)
+    return;
+  ctx.last_reaped_epoch_ = ro_tick_geq;
 
 #ifdef CHECK_INVARIANTS
-    uint64_t last_consistent_tid = 0;
-    {
-      const uint64_t a = (last_tick_ex / ReadOnlyEpochMultiplier);
-      const uint64_t b = a * ReadOnlyEpochMultiplier;
-      if (!b)
-        last_consistent_tid = MakeTid(0, 0, 0);
-      else
-        last_consistent_tid = MakeTid(CoreMask, NumIdMask >> NumIdShift, b - 1);
-    }
+  const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
+  uint64_t last_consistent_tid = 0;
+  {
+    const uint64_t a = (last_tick_ex / ReadOnlyEpochMultiplier);
+    const uint64_t b = a * ReadOnlyEpochMultiplier;
+    if (!b)
+      last_consistent_tid = MakeTid(0, 0, 0);
+    else
+      last_consistent_tid = MakeTid(CoreMask, NumIdMask >> NumIdShift, b - 1);
+  }
 #endif
 
-    // NOTE: consistent reads happening >= ro_tick_geq
-    for (size_t k = i; k < g_threadctxs.size(); k += g_num_gc_workers) {
-      threadctx &ctx = g_threadctxs[k];
-      for (size_t qnum = 0; qnum < g_ngcqueues; qnum++) {
-        // get work
-        {
-          ::lock_guard<spinlock> lg(ctx.queue_locks_[qnum]);
-          px_queue &cq = ctx.queues_[qnum];
-          scratch_queue.empty_accept_from(cq, ro_tick_geq);
-          scratch_queue.transfer_freelist(cq);
-        }
-
-        px_queue &q = scratch_queue;
-        if (q.empty())
-          continue;
-        size_t n = 0;
-        for (auto it = q.begin(); it != q.end(); ++it, ++n) {
-          auto &delent = *it;
-          if (unlikely(delent.is_barrier())) {
-            //cerr << "barrier found in gcloop=" << i << " (worker " << k << ")" << endl;
-            delent.barrier()->count_down();
-            continue;
-          }
-          if (!delent.key_.get_flags()) {
-            // guaranteed to be gc-able now (even w/o RCU)
+  ctx.scratch_.empty_accept_from(ctx.queue_, ro_tick_geq);
+  ctx.scratch_.transfer_freelist(ctx.queue_);
+  px_queue &q = ctx.scratch_;
+  if (q.empty())
+    return;
+  size_t n = 0;
+  for (auto it = q.begin(); it != q.end(); ++it, ++n) {
+    auto &delent = *it;
+    if (!delent.key_.get_flags()) {
+      // guaranteed to be gc-able now (even w/o RCU)
 #ifdef CHECK_INVARIANTS
-            if (delent.trigger_tid_ > last_consistent_tid) {
-              cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
-              cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
-              cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
-              cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
-              cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
-              cerr << "last_tick_ex    : " << last_tick_ex << endl;
-              cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
-              cerr << "rcu_block_tick  : " << it.tick() << endl;
-            }
-            INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
-#endif
-            // XXX: should walk tuple_ahead_'s chain and make sure some element
-            // blocks reads
-            dbtuple::release_no_rcu(delent.tuple());
-          } else {
-            INVARIANT(!delent.tuple_ahead_);
-            INVARIANT(delent.btr_);
-            // check if an element preceeds the (deleted) tuple before doing the delete
-            ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
-#ifdef CHECK_INVARIANTS
-            if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
-              cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
-              cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
-              cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
-              cerr << "last_tick_ex    : " << last_tick_ex << endl;
-              cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
-              cerr << "rcu_block_tick  : " << it.tick() << endl;
-            }
-            INVARIANT(delent.tuple()->version == delent.trigger_tid_);
-            INVARIANT(delent.tuple()->is_not_behind(last_consistent_tid));
-            INVARIANT(delent.tuple()->is_deleting());
-#endif
-            if (unlikely(!delent.tuple()->is_latest())) {
-              // requeue it up, in this threads context, except this
-              // time as a regular delete
-              const uint64_t my_ro_tick = to_read_only_tick(
-                  ticker::s_instance.global_current_tick());
-              threadctx &myctx = g_threadctxs.my();
-              ::lock_guard<spinlock> lg_queue(
-                  myctx.queue_locks_[my_ro_tick % g_ngcqueues]);
-              myctx.queues_[my_ro_tick % g_ngcqueues].enqueue(
-                  delete_entry(nullptr, 0, delent.tuple(),
-                    marked_ptr<string>(), nullptr),
-                  my_ro_tick);
-              ++evt_proto_gc_delete_requeue;
-              // reclaim string ptrs
-              string *spx = delent.key_.get();
-              if (unlikely(spx))
-                scratch_vec.emplace_back(spx);
-              continue;
-            }
-            // if delent.key_ is nullptr, then the key is stored in the tuple
-            // record storage location, and the size field contains the length of
-            // the key
-            //
-            // otherwise, delent.key_ is a pointer to a string containing the
-            // key
-            varkey k;
-            string *spx = delent.key_.get();
-            if (likely(!spx)) {
-              k = varkey(delent.tuple()->get_value_start(), delent.tuple()->size);
-            } else {
-              k = varkey(*spx);
-              scratch_vec.emplace_back(spx);
-            }
-
-            scoped_rcu_region rcu_guard;
-            btree::value_type removed = 0;
-            const bool did_remove = delent.btr_->remove(k, &removed);
-            if (!did_remove)
-              INVARIANT(false);
-            INVARIANT(removed == (btree::value_type) delent.tuple());
-            delent.tuple()->clear_latest();
-            dbtuple::release(delent.tuple()); // rcu free it
-          }
-        }
-        q.clear();
-        evt_avg_proto_gc_queue_len.offer(n);
+      if (delent.trigger_tid_ > last_consistent_tid) {
+        cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
+        cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
+        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
+        cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
+        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+        cerr << "last_tick_ex    : " << last_tick_ex << endl;
+        cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
+        cerr << "rcu_block_tick  : " << it.tick() << endl;
       }
-      // return strings
-      if (!scratch_vec.empty()) {
-        ::lock_guard<spinlock> lg(ctx.pool_lock_);
-        ctx.pool_.insert(ctx.pool_.end(), scratch_vec.begin(), scratch_vec.end());
+      INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
+#endif
+      // XXX: should walk tuple_ahead_'s chain and make sure some element
+      // blocks reads
+      dbtuple::release_no_rcu(delent.tuple());
+    } else {
+      INVARIANT(!delent.tuple_ahead_);
+      INVARIANT(delent.btr_);
+      // check if an element preceeds the (deleted) tuple before doing the delete
+      ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
+#ifdef CHECK_INVARIANTS
+      if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
+        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
+        cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
+        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+        cerr << "last_tick_ex    : " << last_tick_ex << endl;
+        cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
+        cerr << "rcu_block_tick  : " << it.tick() << endl;
       }
-      scratch_vec.clear();
+      INVARIANT(delent.tuple()->version == delent.trigger_tid_);
+      INVARIANT(delent.tuple()->is_not_behind(last_consistent_tid));
+      INVARIANT(delent.tuple()->is_deleting());
+#endif
+      if (unlikely(!delent.tuple()->is_latest())) {
+        // requeue it up, except this time as a regular delete
+        const uint64_t my_ro_tick = to_read_only_tick(
+            ticker::s_instance.global_current_tick());
+        ctx.queue_.enqueue(
+            delete_entry(
+              nullptr,
+              MakeTid(CoreMask, NumIdMask >> NumIdShift, (my_ro_tick + 1) * ReadOnlyEpochMultiplier - 1),
+              delent.tuple(),
+              marked_ptr<string>(),
+              nullptr),
+            my_ro_tick);
+        ++g_evt_proto_gc_delete_requeue;
+        // reclaim string ptrs
+        string *spx = delent.key_.get();
+        if (unlikely(spx))
+          ctx.pool_.emplace_back(spx);
+        continue;
+      }
+      // if delent.key_ is nullptr, then the key is stored in the tuple
+      // record storage location, and the size field contains the length of
+      // the key
+      //
+      // otherwise, delent.key_ is a pointer to a string containing the
+      // key
+      varkey k;
+      string *spx = delent.key_.get();
+      if (likely(!spx)) {
+        k = varkey(delent.tuple()->get_value_start(), delent.tuple()->size);
+      } else {
+        k = varkey(*spx);
+        ctx.pool_.emplace_back(spx);
+      }
+
+      // XXX: do a big batch of removes?
+      scoped_rcu_region rcu_guard;
+      btree::value_type removed = 0;
+      const bool did_remove = delent.btr_->remove(k, &removed);
+      if (!did_remove)
+        INVARIANT(false);
+      INVARIANT(removed == (btree::value_type) delent.tuple());
+      delent.tuple()->clear_latest();
+      dbtuple::release(delent.tuple()); // rcu free it
     }
   }
+  q.clear();
+  g_evt_avg_proto_gc_queue_len.offer(n);
 }
 
 aligned_padded_elem<transaction_proto2_static::hackstruct>
   transaction_proto2_static::g_hack;
 aligned_padded_elem<transaction_proto2_static::flags>
   transaction_proto2_static::g_flags;
-percore<transaction_proto2_static::threadctx>
-  transaction_proto2_static::g_threadctxs;
+percore_lazy<transaction_proto2_static::threadctx>
+  transaction_proto2_static::g_threadctxs(
+      [](transaction_proto2_static::threadctx &) {});
 event_counter
   transaction_proto2_static::g_evt_worker_thread_wait_log_buffer(
       "worker_thread_wait_log_buffer");
 event_counter
   transaction_proto2_static::g_evt_dbtuple_no_space_for_delkey(
       "dbtuple_no_space_for_delkey");
+event_counter
+  transaction_proto2_static::g_evt_proto_gc_delete_requeue(
+      "proto_gc_delete_requeue");
 event_avg_counter
   transaction_proto2_static::g_evt_avg_log_entry_size(
       "avg_log_entry_size");
+event_avg_counter
+  transaction_proto2_static::g_evt_avg_proto_gc_queue_len(
+      "avg_proto_gc_queue_len");

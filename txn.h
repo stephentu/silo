@@ -739,6 +739,8 @@ protected:
   // with the resolution (commited, aborted) of this txn
   void on_tid_finish(tid_t commit_tid);
 
+  void on_post_rcu_region_completion();
+
 protected:
   inline void clear();
 
@@ -782,14 +784,19 @@ protected:
     return const_cast<transaction *>(this)->find_write_set(tuple);
   }
 
+  inline scoped_rcu_region *
+  rcu_guard()
+  {
+    return (scoped_rcu_region *) &rcu_guard_[0];
+  }
+
   read_set_map read_set;
   write_set_map write_set;
   absent_set_map absent_set;
 
   string_allocator_type *sa;
 
-  // XXX(stephentu): VERY large RCU region
-  scoped_rcu_region rcu_guard_;
+  char rcu_guard_[sizeof(scoped_rcu_region)];
 };
 
 class transaction_abort_exception : public std::exception {

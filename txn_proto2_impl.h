@@ -474,7 +474,7 @@ public:
   // thread-safe, can be called many times
   static void InitGC();
 
-  static void WaitForGCThroughNow();
+  static void PurgeThreadOutstandingGCTasks();
 
 #ifdef PROTO2_CAN_DISABLE_GC
   static inline bool
@@ -498,10 +498,80 @@ public:
 #endif
 
 protected:
+  struct delete_entry {
+#ifdef CHECK_INVARIANTS
+    dbtuple *tuple_ahead_;
+    uint64_t trigger_tid_;
+#endif
 
-  static const size_t g_num_gc_workers = 4;
+    dbtuple *tuple_;
+    marked_ptr<std::string> key_;
+    btree *btr_;
 
-  static void gcloop(unsigned i);
+    delete_entry()
+      :
+#ifdef CHECK_INVARIANTS
+        tuple_ahead_(nullptr),
+        trigger_tid_(0),
+#endif
+        tuple_(),
+        key_(),
+        btr_(nullptr) {}
+
+    delete_entry(dbtuple *tuple_ahead,
+                 uint64_t trigger_tid,
+                 dbtuple *tuple,
+                 const marked_ptr<std::string> &key,
+                 btree *btr)
+      :
+#ifdef CHECK_INVARIANTS
+        tuple_ahead_(tuple_ahead),
+        trigger_tid_(trigger_tid),
+#endif
+        tuple_(tuple),
+        key_(key),
+        btr_(btr) {}
+
+    inline dbtuple *
+    tuple()
+    {
+      return tuple_;
+    }
+  };
+
+  typedef basic_px_queue<delete_entry, 4096> px_queue;
+
+public:
+
+  // stores last commit TID for each core
+  // XXX: currently has to be public so we can initialize
+  // g_threadctxs as:
+  //   percore_lazy<transaction_proto2_static::threadctx>
+  //     transaction_proto2_static::g_threadctxs(
+  //         [](transaction_proto2_static::threadctx &) {});
+  //
+  // if we don't explicitly provide a no-op init functor, g++-4.7
+  // will crash with an internal error:
+  //  txn_proto2_impl.cc: In constructor percore_lazy<T>::percore_lazy(std::function<void(T&)>) [with T = transaction_proto2_static::threadctx]
+  //  txn_proto2_impl.cc:642:30: internal compiler error: in tsubst_copy, at cp/pt.c:12141
+  struct threadctx {
+    uint64_t last_commit_tid_;
+    unsigned last_reaped_epoch_;
+    px_queue queue_;
+    px_queue scratch_;
+    std::deque<std::string *> pool_;
+    threadctx() :
+      last_commit_tid_(0), last_reaped_epoch_(0)
+    {
+      queue_.alloc_freelist(rcu::NQueueGroups);
+      scratch_.alloc_freelist(rcu::NQueueGroups);
+    }
+  };
+
+protected:
+
+  static void
+  clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq);
 
   // helper methods
   static inline txn_logger::pbuffer *
@@ -614,97 +684,7 @@ protected:
   static util::aligned_padded_elem<hackstruct>
     g_hack CACHE_ALIGNED;
 
-  struct delete_entry {
-#ifdef CHECK_INVARIANTS
-    dbtuple *tuple_ahead_;
-    uint64_t trigger_tid_;
-#endif
 
-    marked_ptr<private_::opaque_t> item_; // if marked, then item is spin_barrier pointer,
-                                          // otherwise, item is dbtuple pointer
-    marked_ptr<std::string> key_;
-    btree *btr_;
-
-    delete_entry()
-      :
-#ifdef CHECK_INVARIANTS
-        tuple_ahead_(nullptr),
-        trigger_tid_(0),
-#endif
-        item_(),
-        key_(),
-        btr_(nullptr) {}
-
-    delete_entry(dbtuple *tuple_ahead,
-                 uint64_t trigger_tid,
-                 dbtuple *tuple,
-                 const marked_ptr<std::string> &key,
-                 btree *btr)
-      :
-#ifdef CHECK_INVARIANTS
-        tuple_ahead_(tuple_ahead),
-        trigger_tid_(trigger_tid),
-#endif
-        item_((private_::opaque_t *) tuple),
-        key_(key),
-        btr_(btr) {}
-
-    delete_entry(spin_barrier *b)
-      :
-#ifdef CHECK_INVARIANTS
-        tuple_ahead_(nullptr),
-        trigger_tid_(0),
-#endif
-        item_((private_::opaque_t *) b),
-        key_(),
-        btr_(nullptr)
-    {
-      item_.set_flags(0x1);
-    }
-
-    inline bool
-    is_tuple() const
-    {
-      return !item_.get_flags();
-    }
-
-    inline bool
-    is_barrier() const
-    {
-      return !is_tuple();
-    }
-
-    inline dbtuple *
-    tuple()
-    {
-      INVARIANT(!item_.get_flags());
-      return reinterpret_cast<dbtuple *>(item_.get());
-    }
-
-    inline spin_barrier *
-    barrier()
-    {
-      INVARIANT(item_.get_flags());
-      return reinterpret_cast<spin_barrier *>(item_.get());
-    }
-
-  };
-
-  typedef basic_px_queue<delete_entry, 4096> px_queue;
-
-  static const unsigned g_ngcqueues = 4;
-  static_assert(g_ngcqueues >= 3, "XX");
-
-  // stores last commit TID for each core
-  struct threadctx {
-    std::atomic<uint64_t> last_commit_tid_;
-
-    spinlock queue_locks_[g_ngcqueues];
-    px_queue queues_[g_ngcqueues];
-
-    spinlock pool_lock_;
-    std::deque<std::string *> pool_;
-  };
 
   struct flags {
     std::atomic<bool> g_gc_init;
@@ -713,16 +693,13 @@ protected:
   };
   static util::aligned_padded_elem<flags> g_flags;
 
-  static percore<threadctx> g_threadctxs;
-
-  // g_gc_cleaned_through_epochs[i]:
-  //   gcloop(i) has cleaned all garbage < g_gc_cleaned_through_epochs[i]
-  static util::aligned_padded_elem<std::atomic<uint64_t>>
-    g_gc_cleaned_through_epochs[g_num_gc_workers];
+  static percore_lazy<threadctx> g_threadctxs;
 
   static event_counter g_evt_worker_thread_wait_log_buffer;
   static event_counter g_evt_dbtuple_no_space_for_delkey;
+  static event_counter g_evt_proto_gc_delete_requeue;
   static event_avg_counter g_evt_avg_log_entry_size;
+  static event_avg_counter g_evt_avg_proto_gc_queue_len;
 };
 
 bool
@@ -759,10 +736,10 @@ public:
       current_epoch(0),
       last_consistent_tid(0)
   {
-    current_epoch = this->rcu_guard_.guard()->tick();
+    current_epoch = this->rcu_guard()->guard()->tick();
     if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY) {
       const uint64_t global_tick_ex =
-        this->rcu_guard_.guard()->impl().global_last_tick_exclusive();
+        this->rcu_guard()->guard()->impl().global_last_tick_exclusive();
 
       const uint64_t a = (global_tick_ex / ReadOnlyEpochMultiplier);
       const uint64_t b = a * ReadOnlyEpochMultiplier;
@@ -935,7 +912,7 @@ private:
     INVARIANT(px->can_hold_tid(commit_tid));
 
     if (unlikely(!px->header()->nentries_))
-      px->earliest_start_us_ = this->rcu_guard_.guard()->start_us();
+      px->earliest_start_us_ = this->rcu_guard()->guard()->start_us();
 
     uint8_t *p = px->pointer();
     uint8_t *porig = p;
@@ -1000,10 +977,9 @@ public:
   transaction_base::tid_t
   gen_commit_tid(const dbtuple_write_info_vec &write_tuples)
   {
-    const size_t my_core_id = this->rcu_guard_.guard()->core();
+    const size_t my_core_id = this->rcu_guard()->guard()->core();
     threadctx &ctx = g_threadctxs[my_core_id];
-    const tid_t l_last_commit_tid =
-      ctx.last_commit_tid_.load(std::memory_order_acquire);
+    const tid_t l_last_commit_tid = ctx.last_commit_tid_;
     INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
               CoreId(l_last_commit_tid) == my_core_id);
     INVARIANT(!this->is_read_only());
@@ -1058,8 +1034,7 @@ public:
     // XXX(stephentu): this txn hasn't actually been commited yet,
     // and could potentially be aborted - but it's ok to increase this #, since
     // subsequent txns on this core will read this # anyways
-    ctx.last_commit_tid_.store(ret, std::memory_order_release);
-    return ret;
+    return (ctx.last_commit_tid_ = ret);
   }
 
   inline ALWAYS_INLINE void
@@ -1086,11 +1061,9 @@ public:
 
     // when all snapshots are happening >= the current epoch,
     // then we can safely remove tuple
-    const size_t k = coreid::core_id();
-    threadctx &ctx = g_threadctxs[k];
+    threadctx &ctx = g_threadctxs.my();
 
-    lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
-    ctx.queues_[ro_tick % g_ngcqueues].enqueue(
+    ctx.queue_.enqueue(
         delete_entry(tuple_ahead, tuple_ahead->version,
           tuple, marked_ptr<std::string>(), nullptr),
         ro_tick);
@@ -1114,9 +1087,7 @@ public:
     INVARIANT(rcu::s_instance.in_rcu_region());
 
     const uint64_t ro_tick = to_read_only_tick(this->current_epoch);
-
-    const size_t k = coreid::core_id();
-    threadctx &ctx = g_threadctxs[k];
+    threadctx &ctx = g_threadctxs.my();
 
     if (likely(key.size() <= tuple->alloc_size)) {
       NDB_MEMCPY(tuple->get_value_start(), key.data(), key.size());
@@ -1126,15 +1097,12 @@ public:
       marked_ptr<std::string> mpx;
       mpx.set_flags(0x1);
 
-      lock_guard<spinlock> lg(ctx.queue_locks_[ro_tick % g_ngcqueues]);
-      ctx.queues_[ro_tick % g_ngcqueues].enqueue(
+      ctx.queue_.enqueue(
           delete_entry(nullptr, tuple->version, tuple, mpx, btr),
           ro_tick);
     } else {
       // this is a rare event
       ++g_evt_dbtuple_no_space_for_delkey;
-      lock_guard<spinlock> lg_pool(ctx.pool_lock_);
-
       std::string *spx = nullptr;
       if (ctx.pool_.empty()) {
         spx = new std::string(key.data(), key.size()); // XXX: use numa memory?
@@ -1148,11 +1116,28 @@ public:
       marked_ptr<std::string> mpx(spx);
       mpx.set_flags(0x1);
 
-      lock_guard<spinlock> lg_queue(ctx.queue_locks_[ro_tick % g_ngcqueues]);
-      ctx.queues_[ro_tick % g_ngcqueues].enqueue(
+      ctx.queue_.enqueue(
           delete_entry(nullptr, tuple->version, tuple, mpx, btr),
           ro_tick);
     }
+  }
+
+  void
+  on_post_rcu_region_completion()
+  {
+#ifdef PROTO2_CAN_DISABLE_GC
+    if (!IsGCEnabled())
+      return;
+#endif
+    const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
+    const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex);
+    if (unlikely(!ro_tick_ex))
+      // won't have anything to clean
+      return;
+    // all reads happening at >= ro_tick_geq
+    const uint64_t ro_tick_geq = ro_tick_ex - 1;
+    threadctx &ctx = g_threadctxs.my();
+    clean_up_to_including(ctx, ro_tick_geq);
   }
 
 private:
@@ -1176,8 +1161,6 @@ struct base_txn_btree_handler<transaction_proto2> {
   void
   on_destruct()
   {
-    // XXX: not very efficient shutdown protocol
-    transaction_proto2_static::WaitForGCThroughNow();
   }
 
   static const bool has_background_task = true;

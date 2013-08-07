@@ -326,6 +326,15 @@ struct basic_px_queue {
 
   inline size_t get_ngroups() const { return ngroups_; }
 
+  inline bool
+  get_latest_epoch(uint64_t &e) const
+  {
+    if (!tail_)
+      return false;
+    e = tail_->rcu_tick_;
+    return true;
+  }
+
 private:
   void
   reap_chain(px_group *px)
