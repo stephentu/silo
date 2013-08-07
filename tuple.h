@@ -165,6 +165,8 @@ public:
   // must be last field
   uint8_t value_start[0];
 
+  void print(unsigned len) const;
+
 private:
   // private ctor/dtor b/c we do some special memory stuff
   // ctors start node off as latest node

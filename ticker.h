@@ -43,6 +43,16 @@ public:
     return global_last_tick_inclusive() + 1;
   }
 
+  // should yield a # >= global_last_tick_exclusive()
+  uint64_t
+  compute_global_last_tick_exclusive() const
+  {
+    uint64_t e = ticks_[0].current_tick_.load(std::memory_order_acquire);
+    for (size_t i = 1; i < ticks_.size(); i++)
+      e = std::min(e, ticks_[i].current_tick_.load(std::memory_order_acquire));
+    return e;
+  }
+
   // returns true if guard is currently active, along with filling
   // cur_epoch out
   inline bool

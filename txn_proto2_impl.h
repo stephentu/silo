@@ -424,6 +424,19 @@ public:
     COMPILER_MEMORY_FENCE;
   }
 
+  static uint64_t
+  ComputeReadOnlyTid(uint64_t global_tick_ex)
+  {
+    const uint64_t a = (global_tick_ex / ReadOnlyEpochMultiplier);
+    const uint64_t b = a * ReadOnlyEpochMultiplier;
+
+    // want to read entries <= b-1, special casing for b=0
+    if (!b)
+      return MakeTid(0, 0, 0);
+    else
+      return MakeTid(CoreMask, NumIdMask >> NumIdShift, b - 1);
+  }
+
   static const uint64_t NBitsNumber = 24;
 
   // XXX(stephentu): need to implement core ID recycling
@@ -682,8 +695,6 @@ protected:
   static util::aligned_padded_elem<hackstruct>
     g_hack CACHE_ALIGNED;
 
-
-
   struct flags {
     std::atomic<bool> g_gc_init;
     std::atomic<bool> g_disable_snapshots;
@@ -738,19 +749,12 @@ public:
     if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY) {
       const uint64_t global_tick_ex =
         this->rcu_guard()->guard()->impl().global_last_tick_exclusive();
-
-      const uint64_t a = (global_tick_ex / ReadOnlyEpochMultiplier);
-      const uint64_t b = a * ReadOnlyEpochMultiplier;
-
-      // want to read entries <= b-1, special casing for b=0
-      if (!b)
-        last_consistent_tid = MakeTid(0, 0, 0);
-      else
-        last_consistent_tid = MakeTid(CoreMask, NumIdMask >> NumIdShift, b - 1);
+      last_consistent_tid = ComputeReadOnlyTid(global_tick_ex);
     }
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
     dbtuple::TupleLockRegionBegin();
 #endif
+    INVARIANT(rcu::s_instance.in_rcu_region());
   }
 
   ~transaction_proto2()
@@ -758,6 +762,7 @@ public:
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
     dbtuple::AssertAllTupleLocksReleased();
 #endif
+    INVARIANT(rcu::s_instance.in_rcu_region());
   }
 
   inline bool
@@ -1137,7 +1142,12 @@ public:
       return;
 #endif
     const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
-    const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex);
+    if (unlikely(!last_tick_ex))
+      return;
+    // we subtract one from the global last tick, because of the way
+    // consistent TIDs are computed, the global_last_tick_exclusive() can
+    // increase by at most one tick during a transaction.
+    const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex - 1);
     if (unlikely(!ro_tick_ex))
       // won't have anything to clean
       return;

@@ -523,6 +523,24 @@ transaction_proto2_static::PurgeThreadOutstandingGCTasks()
   INVARIANT(ctx.queue_.empty());
 }
 
+//#ifdef CHECK_INVARIANTS
+//// make sure hidden is blocked by version e, when traversing from start
+//static bool
+//IsBlocked(dbtuple *start, dbtuple *hidden, uint64_t e)
+//{
+//  dbtuple *c = start;
+//  while (c) {
+//    if (c == hidden)
+//      return false;
+//    if (c->is_not_behind(e))
+//      // blocked
+//      return true;
+//    c = c->next;
+//  }
+//  ALWAYS_ASSERT(false); // hidden should be found on chain
+//}
+//#endif
+
 void
 transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
 {
@@ -534,15 +552,11 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
 
 #ifdef CHECK_INVARIANTS
   const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
-  uint64_t last_consistent_tid = 0;
-  {
-    const uint64_t a = (last_tick_ex / ReadOnlyEpochMultiplier);
-    const uint64_t b = a * ReadOnlyEpochMultiplier;
-    if (!b)
-      last_consistent_tid = MakeTid(0, 0, 0);
-    else
-      last_consistent_tid = MakeTid(CoreMask, NumIdMask >> NumIdShift, b - 1);
-  }
+  INVARIANT(last_tick_ex);
+  const uint64_t last_consistent_tid = ComputeReadOnlyTid(last_tick_ex - 1);
+  const uint64_t computed_last_tick_ex = ticker::s_instance.compute_global_last_tick_exclusive();
+  INVARIANT(last_tick_ex <= computed_last_tick_ex);
+  INVARIANT(to_read_only_tick(last_tick_ex) > ro_tick_geq);
 #endif
 
   ctx.scratch_.empty_accept_from(ctx.queue_, ro_tick_geq);
@@ -557,7 +571,7 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
     if (!delent.key_.get_flags()) {
       // guaranteed to be gc-able now (even w/o RCU)
 #ifdef CHECK_INVARIANTS
-      if (delent.trigger_tid_ > last_consistent_tid) {
+      if (delent.trigger_tid_ > last_consistent_tid /*|| !IsBlocked(delent.tuple_ahead_, delent.tuple(), last_consistent_tid) */) {
         cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
         cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
         cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
@@ -570,8 +584,6 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
       INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
       delent.tuple()->opaque.store(0, std::memory_order_release);
 #endif
-      // XXX: should walk tuple_ahead_'s chain and make sure some element
-      // blocks reads
       dbtuple::release_no_rcu(delent.tuple());
     } else {
       INVARIANT(!delent.tuple_ahead_);

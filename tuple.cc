@@ -73,25 +73,36 @@ format_tuple(ostream &o, const dbtuple &t)
 {
   string truncated_contents(
       (const char *) &t.value_start[0], min(static_cast<size_t>(t.size), 16UL));
-  o << "[tid=" << g_proto_version_str(t.version)
+  o << &t << " [tid=" << g_proto_version_str(t.version)
     << ", size=" << t.size
     << ", contents=0x" << hexify(truncated_contents) << (t.size > 16 ? "..." : "")
-    << "]";
+    << ", next=" << t.next << "]";
   return o;
 }
 
-ostream &
-operator<<(ostream &o, const dbtuple &t)
+static void
+print_ostream(ostream &o, const dbtuple &t, unsigned len)
 {
   o << "dbtuple: hdr=" << dbtuple::VersionInfoStr(t.unstable_version()) << endl;
-  const size_t nmax = 5;
   size_t n = 0;
   for (const dbtuple *p = &t;
-       p && n < nmax;
+       p && n < len;
        p = p->get_next(), ++n) {
     o << "  ";
     format_tuple(o, *p);
     o << endl;
   }
+}
+
+void
+dbtuple::print(unsigned len) const
+{
+  print_ostream(cerr, *this, len);
+}
+
+ostream &
+operator<<(ostream &o, const dbtuple &t)
+{
+  print_ostream(o, t, 1);
   return o;
 }
