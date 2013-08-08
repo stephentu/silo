@@ -544,6 +544,7 @@ transaction_proto2_static::PurgeThreadOutstandingGCTasks()
 void
 transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
 {
+  INVARIANT(!rcu::s_instance.in_rcu_region());
   INVARIANT(ctx.last_reaped_epoch_ <= ro_tick_geq);
   INVARIANT(ctx.scratch_.empty());
   if (ctx.last_reaped_epoch_ == ro_tick_geq)
@@ -559,13 +560,27 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   INVARIANT(to_read_only_tick(last_tick_ex) > ro_tick_geq);
 #endif
 
+  // XXX: hacky
+  char rcu_guard[sizeof(scoped_rcu_base<false>)] = {0};
+  const size_t max_niters_with_rcu = 128;
+#define ENTER_RCU() \
+    do { \
+      new (&rcu_guard[0]) scoped_rcu_base<false>(); \
+    } while (0)
+#define EXIT_RCU() \
+    do { \
+      scoped_rcu_base<false> *px = (scoped_rcu_base<false> *) &rcu_guard[0]; \
+      px->~scoped_rcu_base<false>(); \
+    } while (0)
+
   ctx.scratch_.empty_accept_from(ctx.queue_, ro_tick_geq);
   ctx.scratch_.transfer_freelist(ctx.queue_);
   px_queue &q = ctx.scratch_;
   if (q.empty())
     return;
-  size_t n = 0;
-  for (auto it = q.begin(); it != q.end(); ++it, ++n) {
+  bool in_rcu = false;
+  size_t niters_with_rcu = 0, n = 0;
+  for (auto it = q.begin(); it != q.end(); ++it, ++n, ++niters_with_rcu) {
     auto &delent = *it;
     INVARIANT(delent.tuple()->opaque.load(std::memory_order_acquire) == 1);
     if (!delent.key_.get_flags()) {
@@ -640,8 +655,11 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
         ctx.pool_.emplace_back(spx);
       }
 
-      // XXX: do a big batch of removes?
-      scoped_rcu_region rcu_guard;
+      if (!in_rcu) {
+        ENTER_RCU();
+        niters_with_rcu = 0;
+        in_rcu = true;
+      }
       btree::value_type removed = 0;
       const bool did_remove = delent.btr_->remove(k, &removed);
       if (!did_remove)
@@ -650,9 +668,19 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
       delent.tuple()->clear_latest();
       dbtuple::release(delent.tuple()); // rcu free it
     }
+
+    if (in_rcu && niters_with_rcu >= max_niters_with_rcu) {
+      EXIT_RCU();
+      niters_with_rcu = 0;
+      in_rcu = false;
+    }
   }
   q.clear();
   g_evt_avg_proto_gc_queue_len.offer(n);
+
+  if (in_rcu)
+    EXIT_RCU();
+  INVARIANT(!rcu::s_instance.in_rcu_region());
 }
 
 aligned_padded_elem<transaction_proto2_static::hackstruct>

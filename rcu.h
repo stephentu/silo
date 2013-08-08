@@ -17,7 +17,7 @@
 #include "pxqueue.h"
 
 class rcu {
-  friend class scoped_rcu_region;
+  template <bool> friend class scoped_rcu_base;
 public:
   typedef uint64_t epoch_t;
 
@@ -59,7 +59,7 @@ public:
   // this is also serving as a memory allocator for the time being
   struct sync {
     friend class rcu;
-    friend class scoped_rcu_region;
+    template <bool> friend class scoped_rcu_base;
   public:
     px_queue queue_;
     px_queue scratch_;
@@ -112,6 +112,8 @@ public:
     // by background cleaners
     void try_release();
 
+    void do_cleanup();
+
     inline unsigned depth() const { return depth_; }
 
   private:
@@ -153,6 +155,12 @@ public:
   try_release()
   {
     return mysync().try_release();
+  }
+
+  inline void
+  do_cleanup()
+  {
+    mysync().do_cleanup();
   }
 
   void free_with_fn(void *p, deleter_t fn);
@@ -228,22 +236,32 @@ private:
   percore_lazy<sync> syncs_;
 };
 
-class scoped_rcu_region {
+template <bool DoCleanup>
+class scoped_rcu_base {
 public:
 
   // movable, but not copy-constructable
-  scoped_rcu_region(scoped_rcu_region &&) = default;
-  scoped_rcu_region(const scoped_rcu_region &) = delete;
-  scoped_rcu_region &operator=(const scoped_rcu_region &) = delete;
+  scoped_rcu_base(scoped_rcu_base &&) = default;
+  scoped_rcu_base(const scoped_rcu_base &) = delete;
+  scoped_rcu_base &operator=(const scoped_rcu_base &) = delete;
 
-  scoped_rcu_region()
+  scoped_rcu_base()
     : sync_(&rcu::s_instance.mysync())
   {
     new (&guard_[0]) ticker::guard(ticker::s_instance);
     sync_->depth_++;
   }
 
-  ~scoped_rcu_region();
+  ~scoped_rcu_base()
+  {
+    INVARIANT(sync_->depth_);
+    const unsigned new_depth = --sync_->depth_;
+    guard()->ticker::guard::~guard();
+    if (new_depth)
+      return;
+    // out of RCU region now, check if we need to run cleaner
+    sync_->do_cleanup();
+  }
 
   inline ticker::guard *
   guard()
@@ -261,5 +279,7 @@ private:
   char guard_[sizeof(ticker::guard)];
   rcu::sync *sync_;
 };
+
+typedef scoped_rcu_base<true> scoped_rcu_region;
 
 #endif /* _RCU_H_ */
