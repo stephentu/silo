@@ -1,5 +1,4 @@
-#ifndef _NDB_BTREE_H_
-#define _NDB_BTREE_H_
+#pragma once
 
 #include <assert.h>
 #include <malloc.h>
@@ -12,7 +11,10 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <atomic>
 
+#include "log2.hh"
+#include "ndb_type_traits.h"
 #include "varkey.h"
 #include "counter.h"
 #include "macros.h"
@@ -22,6 +24,389 @@
 #include "static_assert.h"
 #include "util.h"
 #include "small_vector.h"
+
+namespace private_ {
+  template <typename T> struct u64extractor;
+  template <>
+  struct u64extractor<uint64_t> {
+    static inline uint64_t load(uint64_t t) { return t; }
+    static inline void store(uint64_t &t, uint64_t v) { t = v; }
+    static inline void
+    lock(uint64_t &t, uint64_t lmask)
+    {
+      INVARIANT(!(t & lmask));
+      t |= lmask;
+    }
+    static inline uint64_t
+    spinuntilclear(uint64_t t, uint64_t mmask)
+    {
+      INVARIANT(!(t & mmask));
+      return t;
+    }
+    static inline uint64_t
+    equalsignoring(uint64_t t, uint64_t v, uint64_t mask)
+    {
+      INVARIANT((t & ~mask) == (v & ~mask));
+      return true;
+    }
+  };
+  template <>
+  struct u64extractor<std::atomic<uint64_t>> {
+    static inline uint64_t
+    load(const std::atomic<uint64_t> &t)
+    {
+      return t.load(std::memory_order_acquire);
+    }
+    static inline void
+    store(std::atomic<uint64_t> &t, uint64_t v)
+    {
+      t.store(v, std::memory_order_release);
+    }
+    static inline void
+    lock(std::atomic<uint64_t> &t, uint64_t lmask)
+    {
+      uint64_t v = load(t);
+      while ((v & lmask) ||
+             !t.compare_exchange_strong(v, v | lmask)) {
+        nop_pause();
+        v = load(t);
+      }
+      COMPILER_MEMORY_FENCE;
+    }
+    static inline uint64_t
+    spinuntilclear(const std::atomic<uint64_t> &t, uint64_t mmask)
+    {
+      uint64_t v = load(t);
+      while ((v & mmask)) {
+        nop_pause();
+        v = load(t);
+      }
+      return v;
+    }
+    static inline bool
+    equalsignoring(const std::atomic<uint64_t> &t, uint64_t v, uint64_t mask)
+    {
+      return (load(t) & ~mask) == (v & ~mask);
+    }
+  };
+}
+
+/**
+ * manipulates a btree version
+ *
+ * hdr bits: layout is (actual bytes depend on the NKeysPerNode parameter)
+ *
+ * <-- low bits
+ * [type | key_slots_used | locked | is_root | modifying | deleting | version ]
+ * [0:1  | 1:5            | 5:6    | 6:7     | 7:8       | 8:9      | 9:64    ]
+ *
+ * bit invariants:
+ *   1) modifying => locked
+ *   2) deleting  => locked
+ *
+ * WARNING: the correctness of our concurrency scheme relies on being able
+ * to do a memory reads/writes from/to hdr atomically. x86 architectures
+ * guarantee that aligned writes are atomic (see intel spec)
+ */
+template <typename VersionType, unsigned NKeysPerNode>
+class btree_version_manip {
+
+  typedef typename private_::typeutil<VersionType>::func_param_type LoadVersionType;
+  typedef btree_version_manip<uint64_t, NKeysPerNode> M0;
+
+  static inline constexpr uint64_t
+  LowMask(uint64_t nbits)
+  {
+    return (1UL << nbits) - 1UL;
+  }
+
+public:
+
+  static const uint64_t HDR_TYPE_BITS = 1;
+  static const uint64_t HDR_TYPE_MASK = 0x1;
+
+  static const uint64_t HDR_KEY_SLOTS_SHIFT = HDR_TYPE_BITS;
+  static const uint64_t HDR_KEY_SLOTS_BITS = ceil_log2_const(NKeysPerNode);
+  static const uint64_t HDR_KEY_SLOTS_MASK = LowMask(HDR_KEY_SLOTS_BITS) << HDR_KEY_SLOTS_SHIFT;
+
+  static const uint64_t HDR_LOCKED_SHIFT = HDR_KEY_SLOTS_SHIFT + HDR_KEY_SLOTS_BITS;
+  static const uint64_t HDR_LOCKED_BITS = 1;
+  static const uint64_t HDR_LOCKED_MASK = LowMask(HDR_LOCKED_BITS) << HDR_LOCKED_SHIFT;
+
+  static const uint64_t HDR_IS_ROOT_SHIFT = HDR_LOCKED_SHIFT + HDR_LOCKED_BITS;
+  static const uint64_t HDR_IS_ROOT_BITS = 1;
+  static const uint64_t HDR_IS_ROOT_MASK = LowMask(HDR_IS_ROOT_BITS) << HDR_IS_ROOT_SHIFT;
+
+  static const uint64_t HDR_MODIFYING_SHIFT = HDR_IS_ROOT_SHIFT + HDR_IS_ROOT_BITS;
+  static const uint64_t HDR_MODIFYING_BITS = 1;
+  static const uint64_t HDR_MODIFYING_MASK = LowMask(HDR_MODIFYING_BITS) << HDR_MODIFYING_SHIFT;
+
+  static const uint64_t HDR_DELETING_SHIFT = HDR_MODIFYING_SHIFT + HDR_MODIFYING_BITS;
+  static const uint64_t HDR_DELETING_BITS = 1;
+  static const uint64_t HDR_DELETING_MASK = LowMask(HDR_DELETING_BITS) << HDR_DELETING_SHIFT;
+
+  static const uint64_t HDR_VERSION_SHIFT = HDR_DELETING_SHIFT + HDR_DELETING_BITS;
+  static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
+
+  // sanity checks
+  static_assert(NKeysPerNode >= 1, "XX");
+
+  static_assert(std::numeric_limits<uint64_t>::max() == (
+      HDR_TYPE_MASK |
+      HDR_KEY_SLOTS_MASK |
+      HDR_LOCKED_MASK |
+      HDR_IS_ROOT_MASK |
+      HDR_MODIFYING_MASK |
+      HDR_DELETING_MASK |
+      HDR_VERSION_MASK
+        ), "XX");
+
+  static_assert( !(HDR_TYPE_MASK & HDR_KEY_SLOTS_MASK) , "XX");
+  static_assert( !(HDR_KEY_SLOTS_MASK & HDR_LOCKED_MASK) , "XX");
+  static_assert( !(HDR_LOCKED_MASK & HDR_IS_ROOT_MASK) , "XX");
+  static_assert( !(HDR_IS_ROOT_MASK & HDR_MODIFYING_MASK) , "XX");
+  static_assert( !(HDR_MODIFYING_MASK & HDR_DELETING_MASK) , "XX");
+  static_assert( !(HDR_DELETING_MASK & HDR_VERSION_MASK) , "XX");
+
+  // low level ops
+
+  static inline uint64_t
+  Load(LoadVersionType v)
+  {
+    return private_::u64extractor<VersionType>::load(v);
+  }
+
+  static inline void
+  Store(VersionType &t, uint64_t v)
+  {
+    private_::u64extractor<VersionType>::store(t, v);
+  }
+
+  // accessors
+
+  static inline bool
+  IsLeafNode(LoadVersionType v)
+  {
+    return (Load(v) & HDR_TYPE_MASK) == 0;
+  }
+
+  static inline bool
+  IsInternalNode(LoadVersionType v)
+  {
+    return !IsLeafNode(v);
+  }
+
+  static inline size_t
+  KeySlotsUsed(LoadVersionType v)
+  {
+    return (Load(v) & HDR_KEY_SLOTS_MASK) >> HDR_KEY_SLOTS_SHIFT;
+  }
+
+  static inline bool
+  IsLocked(LoadVersionType v)
+  {
+    return (Load(v) & HDR_LOCKED_MASK);
+  }
+
+  static inline bool
+  IsRoot(LoadVersionType v)
+  {
+    return (Load(v) & HDR_IS_ROOT_MASK);
+  }
+
+  static inline bool
+  IsModifying(LoadVersionType v)
+  {
+    return (Load(v) & HDR_MODIFYING_MASK);
+  }
+
+  static inline bool
+  IsDeleting(LoadVersionType v)
+  {
+    return (Load(v) & HDR_DELETING_MASK);
+  }
+
+  static inline uint64_t
+  Version(LoadVersionType v)
+  {
+    return (Load(v) & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
+  }
+
+  static std::string
+  VersionInfoStr(LoadVersionType v)
+  {
+    std::ostringstream buf;
+    buf << "[";
+
+    if (IsLeafNode(v))
+      buf << "LEAF";
+    else
+      buf << "INT";
+    buf << " | ";
+
+    buf << KeySlotsUsed(v) << " | ";
+
+    if (IsLocked(v))
+      buf << "LOCKED";
+    else
+      buf << "-";
+    buf << " | ";
+
+    if (IsRoot(v))
+      buf << "ROOT";
+    else
+      buf << "-";
+    buf << " | ";
+
+    if (IsModifying(v))
+      buf << "MOD";
+    else
+      buf << "-";
+    buf << " | ";
+
+    if (IsDeleting(v))
+      buf << "DEL";
+    else
+      buf << "-";
+    buf << " | ";
+
+    buf << Version(v);
+
+    buf << "]";
+    return buf.str();
+  }
+
+  // mutators
+
+  static inline void
+  SetKeySlotsUsed(VersionType &v, size_t n)
+  {
+    INVARIANT(n <= NKeysPerNode);
+    INVARIANT(IsModifying(v));
+    uint64_t h = Load(v);
+    h &= ~HDR_KEY_SLOTS_MASK;
+    h |= (n << HDR_KEY_SLOTS_SHIFT);
+    Store(v, h);
+  }
+
+  static inline void
+  IncKeySlotsUsed(VersionType &v)
+  {
+    SetKeySlotsUsed(v, KeySlotsUsed(v) + 1);
+  }
+
+  static inline void
+  DecKeySlotsUsed(VersionType &v)
+  {
+    INVARIANT(KeySlotsUsed(v) > 0);
+    SetKeySlotsUsed(v, KeySlotsUsed(v) - 1);
+  }
+
+  static inline void
+  SetRoot(VersionType &v)
+  {
+    INVARIANT(IsLocked(v));
+    INVARIANT(!IsRoot(v));
+    uint64_t h = Load(v);
+    h |= HDR_IS_ROOT_MASK;
+    Store(v, h);
+  }
+
+  static inline void
+  ClearRoot(VersionType &v)
+  {
+    INVARIANT(IsLocked(v));
+    INVARIANT(IsRoot(v));
+    uint64_t h = Load(v);
+    h &= ~HDR_IS_ROOT_MASK;
+    Store(v, h);
+  }
+
+  static inline void
+  MarkModifying(VersionType &v)
+  {
+    INVARIANT(IsLocked(v));
+    INVARIANT(!IsModifying(v));
+    uint64_t h = Load(v);
+    h |= HDR_MODIFYING_MASK;
+    Store(v, h);
+  }
+
+  static inline void
+  MarkDeleting(VersionType &v)
+  {
+    INVARIANT(IsLocked(v));
+    INVARIANT(!IsDeleting(v));
+    uint64_t h = Load(v);
+    h |= HDR_DELETING_MASK;
+    Store(v, h);
+  }
+
+  // concurrency control
+
+  static inline uint64_t
+  StableVersion(LoadVersionType v)
+  {
+    const uint64_t h =
+      private_::u64extractor<VersionType>::spinuntilclear(v, HDR_MODIFYING_MASK);
+    COMPILER_MEMORY_FENCE;
+    return h;
+  }
+
+  static inline uint64_t
+  UnstableVersion(LoadVersionType v)
+  {
+    return Load(v);
+  }
+
+  static inline bool
+  CheckVersion(LoadVersionType v, uint64_t stablev)
+  {
+    COMPILER_MEMORY_FENCE;
+    INVARIANT(!IsModifying(v));
+    return private_::u64extractor<VersionType>::equalsignoring(v, stablev, HDR_LOCKED_MASK);
+  }
+
+  static inline void
+  Lock(VersionType &v)
+  {
+    private_::u64extractor<VersionType>::lock(v, HDR_LOCKED_MASK);
+  }
+
+  static inline void
+  Unlock(VersionType &v)
+  {
+    INVARIANT(IsLocked(v));
+    uint64_t h = Load(v);
+    bool newv = false;
+    if (M0::IsModifying(h) || M0::IsDeleting(h)) {
+      newv = true;
+      const uint64_t n = M0::Version(h);
+      h &= ~HDR_VERSION_MASK;
+      h |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
+    }
+    // clear locked + modifying bits
+    h &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK);
+    if (newv) INVARIANT(!CheckVersion(v, h));
+    INVARIANT(!M0::IsLocked(h));
+    INVARIANT(!M0::IsModifying(h));
+    COMPILER_MEMORY_FENCE;
+    Store(v, h);
+  }
+
+};
+
+struct base_btree_config {
+  static const unsigned int NKeysPerNode = 15;
+};
+
+struct concurrent_btree_traits : public base_btree_config {
+  typedef std::atomic<uint64_t> VersionType;
+};
+
+struct single_threaded_btree_traits : public base_btree_config {
+  typedef uint64_t VersionType;
+};
 
 /**
  * A concurrent, variable key length b+-tree, optimized for read heavy
@@ -40,71 +425,32 @@
  * semantics of total store order (TSO) for correctness. To fix this, we would
  * change compiler fences into actual memory fences, at the very least.
  */
+template <typename P>
 class btree {
-  template <template <typename> class T, typename P>
+  template <template <typename> class, typename>
     friend class base_txn_btree;
 public:
   typedef varkey key_type;
   typedef std::string string_type;
-  //typedef xbuf string_type;
   typedef uint64_t key_slice;
   typedef uint8_t* value_type;
 
   // public to assist in testing
-  // WARNING: if you want to increase NKeysPerNode beyond 15, must also
-  // increase the # of size bits in the header
-  static const unsigned int NKeysPerNode = 15;
-  static const unsigned int NMinKeysPerNode = NKeysPerNode / 2;
+  static const unsigned int NKeysPerNode    = P::NKeysPerNode;
+  static const unsigned int NMinKeysPerNode = P::NKeysPerNode / 2;
 
 private:
 
-  static const uint64_t HDR_TYPE_MASK = 0x1;
-
-  // 0xf = (1 << ceil(log2(NKeysPerNode))) - 1
-  static const uint64_t HDR_KEY_SLOTS_SHIFT = 1;
-  static const uint64_t HDR_KEY_SLOTS_MASK = 0xf << HDR_KEY_SLOTS_SHIFT;
-
-  static const uint64_t HDR_LOCKED_SHIFT = 5;
-  static const uint64_t HDR_LOCKED_MASK = 0x1 << HDR_LOCKED_SHIFT;
-
-  static const uint64_t HDR_IS_ROOT_SHIFT = 6;
-  static const uint64_t HDR_IS_ROOT_MASK = 0x1 << HDR_IS_ROOT_SHIFT;
-
-  static const uint64_t HDR_MODIFYING_SHIFT = 7;
-  static const uint64_t HDR_MODIFYING_MASK = 0x1 << HDR_MODIFYING_SHIFT;
-
-  static const uint64_t HDR_DELETING_SHIFT = 8;
-  static const uint64_t HDR_DELETING_MASK = 0x1 << HDR_DELETING_SHIFT;
-
-  static const uint64_t HDR_VERSION_SHIFT = 9;
-  static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
-
   typedef std::pair<ssize_t, size_t> key_search_ret;
+  typedef btree_version_manip<typename P::VersionType, NKeysPerNode> M;
+  typedef btree_version_manip<uint64_t, NKeysPerNode> M0;
 
   struct node {
 
-    /**
-     * hdr bits: layout is:
-     *
-     * <-- low bits
-     * [type | key_slots_used | locked | is_root | modifying | deleting | version ]
-     * [0:1  | 1:5            | 5:6    | 6:7     | 7:8       | 8:9      | 9:64    ]
-     *
-     * bit invariants:
-     *   1) modifying => locked
-     *   2) deleting  => locked
-     *
-     * WARNING: the correctness of our concurrency scheme relies on being able
-     * to do a memory reads/writes from/to hdr atomically. x86 architectures
-     * guarantee that aligned writes are atomic (see intel spec)
-     *
-     * XXX: there's some GCC syntax to make these bit fields easier to define-
-     * we should use it
-     */
-    volatile uint64_t hdr;
+    typename P::VersionType hdr_;
 
 #ifdef LOCK_OWNERSHIP_CHECKING
-    pthread_t lock_owner;
+    pthread_t lock_owner_;
 #endif /* LOCK_OWNERSHIP_CHECKING */
 
     /**
@@ -113,18 +459,19 @@ private:
      * [0, key_slots_used) are valid, and elems in positions
      * [key_slots_used, NKeysPerNode) are empty
      */
-    key_slice keys[NKeysPerNode];
+    key_slice keys_[NKeysPerNode];
+
+    node() :
+      hdr_()
+#ifdef LOCK_OWNERSHIP_CHECKING
+      , lock_owner_(0)
+#endif
+    {}
 
     inline bool
     is_leaf_node() const
     {
-      return IsLeafNode(hdr);
-    }
-
-    static inline bool
-    IsLeafNode(uint64_t v)
-    {
-      return (v & HDR_TYPE_MASK) == 0;
+      return M::IsLeafNode(hdr_);
     }
 
     inline bool
@@ -136,57 +483,38 @@ private:
     inline size_t
     key_slots_used() const
     {
-      return KeySlotsUsed(hdr);
-    }
-
-    static inline size_t
-    KeySlotsUsed(uint64_t v)
-    {
-      return (v & HDR_KEY_SLOTS_MASK) >> HDR_KEY_SLOTS_SHIFT;
+      return M::KeySlotsUsed(hdr_);
     }
 
     inline void
     set_key_slots_used(size_t n)
     {
-      INVARIANT(n <= NKeysPerNode);
-      INVARIANT(is_modifying());
-      hdr &= ~HDR_KEY_SLOTS_MASK;
-      hdr |= (n << HDR_KEY_SLOTS_SHIFT);
+      M::SetKeySlotsUsed(hdr_, n);
     }
 
     inline void
     inc_key_slots_used()
     {
-      INVARIANT(is_modifying());
-      INVARIANT(key_slots_used() < NKeysPerNode);
-      set_key_slots_used(key_slots_used() + 1);
+      M::IncKeySlotsUsed(hdr_);
     }
 
     inline void
     dec_key_slots_used()
     {
-      INVARIANT(is_modifying());
-      INVARIANT(key_slots_used() > 0);
-      set_key_slots_used(key_slots_used() - 1);
+      M::DecKeySlotsUsed(hdr_);
     }
 
     inline bool
     is_locked() const
     {
-      return IsLocked(hdr);
-    }
-
-    static inline bool
-    IsLocked(uint64_t v)
-    {
-      return v & HDR_LOCKED_MASK;
+      return M::IsLocked(hdr_);
     }
 
 #ifdef LOCK_OWNERSHIP_CHECKING
     inline bool
     is_lock_owner() const
     {
-      return pthread_equal(pthread_self(), lock_owner);
+      return pthread_equal(pthread_self(), lock_owner_);
     }
 #else
     inline bool
@@ -199,126 +527,64 @@ private:
     inline void
     lock()
     {
-      uint64_t v = hdr;
-      while (IsLocked(v) ||
-             !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
-        nop_pause();
-        v = hdr;
-      }
+      M::Lock(hdr_);
 #ifdef LOCK_OWNERSHIP_CHECKING
-      lock_owner = pthread_self();
+      lock_owner_ = pthread_self();
 #endif
-      COMPILER_MEMORY_FENCE;
     }
 
     inline void
     unlock()
     {
-      uint64_t v = hdr;
-      bool newv = false;
-      INVARIANT(IsLocked(v));
-      INVARIANT(is_lock_owner());
-      if (IsModifying(v) || IsDeleting(v)) {
-        newv = true;
-        const uint64_t n = Version(v);
-        v &= ~HDR_VERSION_MASK;
-        v |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
-      }
-      // clear locked + modifying bits
-      v &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK);
-      if (newv) INVARIANT(!check_version(v));
-      INVARIANT(!IsLocked(v));
-      INVARIANT(!IsModifying(v));
-      COMPILER_MEMORY_FENCE;
-      hdr = v;
+      M::Unlock(hdr_);
     }
 
     inline bool
     is_root() const
     {
-      return IsRoot(hdr);
-    }
-
-    static inline bool
-    IsRoot(uint64_t v)
-    {
-      return v & HDR_IS_ROOT_MASK;
+      return M::IsRoot(hdr_);
     }
 
     inline void
     set_root()
     {
-      INVARIANT(is_locked());
-      INVARIANT(is_lock_owner());
-      INVARIANT(!is_root());
-      hdr |= HDR_IS_ROOT_MASK;
+      M::SetRoot(hdr_);
     }
 
     inline void
     clear_root()
     {
-      INVARIANT(is_locked());
-      INVARIANT(is_lock_owner());
-      INVARIANT(is_root());
-      hdr &= ~HDR_IS_ROOT_MASK;
+      M::ClearRoot(hdr_);
     }
 
     inline bool
     is_modifying() const
     {
-      return IsModifying(hdr);
+      return M::IsModifying(hdr_);
     }
 
     inline void
     mark_modifying()
     {
-      uint64_t v = hdr;
-      INVARIANT(IsLocked(v));
-      INVARIANT(is_lock_owner());
-      INVARIANT(!IsModifying(v));
-      v |= HDR_MODIFYING_MASK;
-      COMPILER_MEMORY_FENCE; // XXX: is this fence necessary?
-      hdr = v;
-      COMPILER_MEMORY_FENCE;
-    }
-
-    static inline bool
-    IsModifying(uint64_t v)
-    {
-      return v & HDR_MODIFYING_MASK;
+      M::MarkModifying(hdr_);
     }
 
     inline bool
     is_deleting() const
     {
-      return IsDeleting(hdr);
-    }
-
-    static inline bool
-    IsDeleting(uint64_t v)
-    {
-      return v & HDR_DELETING_MASK;
+      return M::IsDeleting(hdr_);
     }
 
     inline void
     mark_deleting()
     {
-      INVARIANT(is_locked());
-      INVARIANT(is_lock_owner());
-      INVARIANT(!is_deleting());
-      hdr |= HDR_DELETING_MASK;
+      M::MarkDeleting(hdr_);
     }
 
     inline uint64_t
     unstable_version() const
     {
-      return hdr;
-    }
-
-    static inline uint64_t
-    Version(uint64_t v)
-    {
-      return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
+      return M::UnstableVersion(hdr_);
     }
 
     /**
@@ -327,25 +593,20 @@ private:
     inline uint64_t
     stable_version() const
     {
-      uint64_t v = hdr;
-      while (IsModifying(v)) {
-        nop_pause();
-        v = hdr;
-      }
-      COMPILER_MEMORY_FENCE;
-      return v;
+      return M::StableVersion(hdr_);
     }
 
     inline bool
     check_version(uint64_t version) const
     {
-      COMPILER_MEMORY_FENCE;
-      INVARIANT(!IsModifying(version));
-      // are the version the same, modulo the locked bit?
-      return (hdr & ~HDR_LOCKED_MASK) == (version & ~HDR_LOCKED_MASK);
+      return M::CheckVersion(hdr_, version);
     }
 
-    static std::string VersionInfoStr(uint64_t v);
+    inline std::string
+    version_info_str() const
+    {
+      return M::VersionInfoStr(hdr_);
+    }
 
     void base_invariant_unique_keys_check() const;
 
@@ -369,47 +630,47 @@ private:
 
   struct leaf_node : public node {
     union value_or_node_ptr {
-      value_type v;
-      node *n;
+      value_type v_;
+      node *n_;
     };
 
-    key_slice min_key; // really is min_key's key slice
-    value_or_node_ptr values[NKeysPerNode];
+    key_slice min_key_; // really is min_key's key slice
+    value_or_node_ptr values_[NKeysPerNode];
 
     // format is:
     // [ slice_length | type | unused ]
     // [    0:4       |  4:5 |  5:8   ]
-    uint8_t lengths[NKeysPerNode];
+    uint8_t lengths_[NKeysPerNode];
 
-    leaf_node *prev;
-    leaf_node *next;
+    leaf_node *prev_;
+    leaf_node *next_;
 
     // starts out empty- once set, doesn't get freed until dtor (even if all
     // keys w/ suffixes get removed)
-    imstring *suffixes;
+    imstring *suffixes_;
 
     inline ALWAYS_INLINE varkey
     suffix(size_t i) const
     {
-      return suffixes ? varkey(suffixes[i]) : varkey();
+      return suffixes_ ? varkey(suffixes_[i]) : varkey();
     }
 
-    static event_counter g_evt_suffixes_array_created;
+    //static event_counter g_evt_suffixes_array_created;
 
     inline void
     alloc_suffixes()
     {
-      INVARIANT(is_modifying());
-      INVARIANT(!suffixes);
-      suffixes = new imstring[NKeysPerNode];
-      ++g_evt_suffixes_array_created;
+      INVARIANT(this->is_modifying());
+      INVARIANT(!suffixes_);
+      suffixes_ = new imstring[NKeysPerNode];
+      //++g_evt_suffixes_array_created;
     }
 
     inline void
     ensure_suffixes()
     {
-      INVARIANT(is_modifying());
-      if (!suffixes)
+      INVARIANT(this->is_modifying());
+      if (!suffixes_)
         alloc_suffixes();
     }
 
@@ -433,34 +694,34 @@ private:
     keyslice_length(size_t n) const
     {
       INVARIANT(n < NKeysPerNode);
-      return lengths[n] & LEN_LEN_MASK;
+      return lengths_[n] & LEN_LEN_MASK;
     }
 
     inline void
     keyslice_set_length(size_t n, size_t len, bool layer)
     {
       INVARIANT(n < NKeysPerNode);
-      INVARIANT(is_modifying());
+      INVARIANT(this->is_modifying());
       INVARIANT(len <= 9);
       INVARIANT(!layer || len == 9);
-      lengths[n] = (len | (layer ? LEN_TYPE_MASK : 0));
+      lengths_[n] = (len | (layer ? LEN_TYPE_MASK : 0));
     }
 
     inline bool
     value_is_layer(size_t n) const
     {
       INVARIANT(n < NKeysPerNode);
-      return lengths[n] & LEN_TYPE_MASK;
+      return lengths_[n] & LEN_TYPE_MASK;
     }
 
     inline void
     value_set_layer(size_t n)
     {
       INVARIANT(n < NKeysPerNode);
-      INVARIANT(is_modifying());
+      INVARIANT(this->is_modifying());
       INVARIANT(keyslice_length(n) == 9);
       INVARIANT(!value_is_layer(n));
-      lengths[n] |= LEN_TYPE_MASK;
+      lengths_[n] |= LEN_TYPE_MASK;
     }
 
     /**
@@ -470,13 +731,13 @@ private:
     inline key_search_ret
     key_search(key_slice k, size_t len) const
     {
-      size_t n = key_slots_used();
+      size_t n = this->key_slots_used();
       ssize_t lower = 0;
       ssize_t upper = n;
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
-        key_slice k0 = keys[i];
-        size_t len0 = keyslice_length(i);
+        key_slice k0 = this->keys_[i];
+        size_t len0 = this->keyslice_length(i);
         if (k0 < k || (k0 == k && len0 < len))
           lower = i + 1;
         else if (k0 == k && len0 == len)
@@ -495,13 +756,13 @@ private:
     key_lower_bound_search(key_slice k, size_t len) const
     {
       ssize_t ret = -1;
-      size_t n = key_slots_used();
+      size_t n = this->key_slots_used();
       ssize_t lower = 0;
       ssize_t upper = n;
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
-        key_slice k0 = keys[i];
-        size_t len0 = keyslice_length(i);
+        key_slice k0 = this->keys_[i];
+        size_t len0 = this->keyslice_length(i);
         if (k0 < k || (k0 == k && len0 < len)) {
           ret = i;
           lower = i + 1;
@@ -548,18 +809,18 @@ private:
       rcu::s_instance.free_with_fn(n, deleter);
     }
 
-  } PACKED;
+  };
 
   struct internal_node : public node {
     /**
      * child at position child_idx is responsible for keys
      * [keys[child_idx - 1], keys[child_idx])
      *
-     * in the case where child_idx == 0 or child_idx == key_slots_used(), then
+     * in the case where child_idx == 0 or child_idx == this->key_slots_used(), then
      * the responsiblity value of the min/max key, respectively, is determined
      * by the parent
      */
-    node *children[NKeysPerNode + 1];
+    node *children_[NKeysPerNode + 1];
 
     internal_node();
     ~internal_node();
@@ -580,12 +841,12 @@ private:
     inline key_search_ret
     key_search(key_slice k) const
     {
-      size_t n = key_slots_used();
+      size_t n = this->key_slots_used();
       ssize_t lower = 0;
       ssize_t upper = n;
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
-        key_slice k0 = keys[i];
+        key_slice k0 = this->keys_[i];
         if (k0 == k)
           return key_search_ret(i, n);
         else if (k0 > k)
@@ -604,12 +865,12 @@ private:
     key_lower_bound_search(key_slice k) const
     {
       ssize_t ret = -1;
-      size_t n = key_slots_used();
+      size_t n = this->key_slots_used();
       ssize_t lower = 0;
       ssize_t upper = n;
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
-        key_slice k0 = keys[i];
+        key_slice k0 = this->keys_[i];
         if (k0 == k)
           return key_search_ret(i, n);
         else if (k0 > k)
@@ -698,7 +959,7 @@ private:
   static inline leaf_node *
   AsLeafCheck(node *n, uint64_t v)
   {
-    return likely(n) && node::IsLeafNode(v) ? static_cast<leaf_node *>(n) : NULL;
+    return likely(n) && M0::IsLeafNode(v) ? static_cast<leaf_node *>(n) : NULL;
   }
 
   static inline leaf_node*
@@ -755,7 +1016,7 @@ private:
    */
   static void recursive_delete(node *n);
 
-  node *volatile root;
+  node *volatile root_;
 
 public:
 
@@ -763,17 +1024,17 @@ public:
   typedef struct node node_opaque_t;
   typedef std::pair< const node_opaque_t *, uint64_t > versioned_node_t;
 
-  btree() : root(leaf_node::alloc())
+  btree() : root_(leaf_node::alloc())
   {
-    _static_assert(NKeysPerNode > (sizeof(key_slice) + 2)); // so we can always do a split
-    _static_assert(NKeysPerNode <= (HDR_KEY_SLOTS_MASK >> HDR_KEY_SLOTS_SHIFT));
+    static_assert(NKeysPerNode > (sizeof(key_slice) + 2), "XX"); // so we can always do a split
+    static_assert(NKeysPerNode <= (M::HDR_KEY_SLOTS_MASK >> M::HDR_KEY_SLOTS_SHIFT), "XX");
 
 #ifdef CHECK_INVARIANTS
-    root->lock();
-    root->set_root();
-    root->unlock();
+    root_->lock();
+    root_->set_root();
+    root_->unlock();
 #else
-    root->set_root();
+    root_->set_root();
 #endif /* CHECK_INVARIANTS */
   }
 
@@ -782,8 +1043,8 @@ public:
     // NOTE: it is assumed on deletion time there are no
     // outstanding requests to the btree, so deletion proceeds
     // in a non-threadsafe manner
-    recursive_delete(root);
-    root = NULL;
+    recursive_delete(root_);
+    root_ = NULL;
   }
 
   /**
@@ -792,14 +1053,14 @@ public:
   inline void
   clear()
   {
-    recursive_delete(root);
-    root = leaf_node::alloc();
+    recursive_delete(root_);
+    root_ = leaf_node::alloc();
 #ifdef CHECK_INVARIANTS
-    root->lock();
-    root->set_root();
-    root->unlock();
+    root_->lock();
+    root_->set_root();
+    root_->unlock();
 #else
-    root->set_root();
+    root_->set_root();
 #endif /* CHECK_INVARIANTS */
   }
 
@@ -807,7 +1068,7 @@ public:
   inline void
   invariant_checker() const
   {
-    root->invariant_checker(NULL, NULL, NULL, NULL, true);
+    root_->invariant_checker(NULL, NULL, NULL, NULL, true);
   }
 
   inline bool
@@ -815,7 +1076,7 @@ public:
          versioned_node_t *search_info = nullptr) const
   {
     typename util::vec<leaf_node *>::type ns;
-    scoped_rcu_region rcu_region;
+    INVARIANT(rcu::s_instance.in_rcu_region());
     return search_impl(k, v, ns, search_info);
   }
 
@@ -869,17 +1130,39 @@ private:
   template <typename T>
   class type_callback_wrapper : public search_range_callback {
   public:
-    type_callback_wrapper(T *callback) : callback(callback) {}
+    type_callback_wrapper(T *callback) : callback_(callback) {}
     virtual bool
     invoke(const string_type &k, value_type v)
     {
-      return callback->operator()(k, v);
+      return callback_->operator()(k, v);
     }
   private:
-    T *const callback;
+    T *const callback_;
   };
 
-  struct leaf_kvinfo;
+  struct leaf_kvinfo {
+    key_slice key_; // in host endian
+    key_slice key_big_endian_;
+    typename leaf_node::value_or_node_ptr vn_;
+    bool layer_;
+    size_t length_;
+    varkey suffix_;
+    leaf_kvinfo() {} // for STL
+    leaf_kvinfo(key_slice key,
+                typename leaf_node::value_or_node_ptr vn,
+                bool layer,
+                size_t length,
+                const varkey &suffix)
+      : key_(key), key_big_endian_(util::big_endian_trfm<key_slice>()(key)),
+        vn_(vn), layer_(layer), length_(length), suffix_(suffix)
+    {}
+
+    inline const char *
+    keyslice() const
+    {
+      return (const char *) &key_big_endian_;
+    }
+  };
 
   bool search_range_at_layer(leaf_node *leaf,
                              string_type &prefix,
@@ -967,8 +1250,7 @@ public:
          value_type *old_v = NULL,
          versioned_node_t *insert_info = NULL)
   {
-    // XXX: not sure if this cast is safe
-    return insert_impl((node **) &root, k, v, false, old_v, insert_info);
+    return insert_impl((node **) &root_, k, v, false, old_v, insert_info);
   }
 
   /**
@@ -979,7 +1261,7 @@ public:
   insert_if_absent(const key_type &k, value_type v,
                    versioned_node_t *insert_info = NULL)
   {
-    return insert_impl((node **) &root, k, v, true, NULL, insert_info);
+    return insert_impl((node **) &root_, k, v, true, NULL, insert_info);
   }
 
   /**
@@ -991,7 +1273,7 @@ public:
   inline bool
   remove(const key_type &k, value_type *old_v = NULL)
   {
-    return remove_impl((node **) &root, k, old_v);
+    return remove_impl((node **) &root_, k, old_v);
   }
 
   /**
@@ -1020,14 +1302,14 @@ public:
 private:
   class size_walk_callback : public tree_walk_callback {
   public:
-    size_walk_callback() : spec_size(0), size(0) {}
+    size_walk_callback() : spec_size_(0), size_(0) {}
     virtual void on_node_begin(const node_opaque_t *n);
     virtual void on_node_success();
     virtual void on_node_failure();
-    inline size_t get_size() const { return size; }
+    inline size_t get_size() const { return size_; }
   private:
-    size_t spec_size;
-    size_t size;
+    size_t spec_size_;
+    size_t size_;
   };
 
 public:
@@ -1050,7 +1332,7 @@ public:
     // XXX(stephentu): I think we must use stable_version() for
     // correctness, but I am not 100% sure. It's definitely correct to use it,
     // but maybe we can get away with unstable_version()?
-    return node::Version(n->stable_version());
+    return M0::Version(n->stable_version());
   }
 
   // [value, has_suffix]
@@ -1062,9 +1344,6 @@ public:
    */
   static std::string
   NodeStringify(const node_opaque_t *n);
-
-  static void TestFast();
-  static void TestSlow();
 
   static inline size_t
   InternalNodeSize()
@@ -1213,21 +1492,21 @@ private:
     INVARIANT(pos < n);
     if (leaf->value_is_layer(pos)) {
 #ifdef CHECK_INVARIANTS
-      leaf->values[pos].n->lock();
+      leaf->values_[pos].n_->lock();
 #endif
-      leaf->values[pos].n->mark_deleting();
-      INVARIANT(leaf->values[pos].n->is_leaf_node());
-      INVARIANT(leaf->values[pos].n->key_slots_used() == 0);
-      leaf_node::release((leaf_node *) leaf->values[pos].n);
+      leaf->values_[pos].n_->mark_deleting();
+      INVARIANT(leaf->values_[pos].n_->is_leaf_node());
+      INVARIANT(leaf->values_[pos].n_->key_slots_used() == 0);
+      leaf_node::release((leaf_node *) leaf->values_[pos].n_);
 #ifdef CHECK_INVARIANTS
-      leaf->values[pos].n->unlock();
+      leaf->values_[pos].n_->unlock();
 #endif
     }
-    sift_left(leaf->keys, pos, n);
-    sift_left(leaf->values, pos, n);
-    sift_left(leaf->lengths, pos, n);
-    if (leaf->suffixes)
-      sift_swap_left(leaf->suffixes, pos, n);
+    sift_left(leaf->keys_, pos, n);
+    sift_left(leaf->values_, pos, n);
+    sift_left(leaf->lengths_, pos, n);
+    if (leaf->suffixes_)
+      sift_swap_left(leaf->suffixes_, pos, n);
     leaf->dec_key_slots_used();
   }
 
@@ -1238,30 +1517,31 @@ private:
     INVARIANT(internal->key_slots_used() == n);
     INVARIANT(key_pos < n);
     INVARIANT(child_pos < n + 1);
-    sift_left(internal->keys, key_pos, n);
-    sift_left(internal->children, child_pos, n + 1);
+    sift_left(internal->keys_, key_pos, n);
+    sift_left(internal->children_, child_pos, n + 1);
     internal->dec_key_slots_used();
   }
 
   struct remove_parent_entry {
     // non-const members for STL
-    node *parent;
-    node *parent_left_sibling;
-    node *parent_right_sibling;
-    uint64_t parent_version;
+    node *parent_;
+    node *parent_left_sibling_;
+    node *parent_right_sibling_;
+    uint64_t parent_version_;
 
     // default ctor for STL
     remove_parent_entry()
-      : parent(NULL), parent_left_sibling(NULL),
-        parent_right_sibling(NULL), parent_version(0)
+      : parent_(NULL), parent_left_sibling_(NULL),
+        parent_right_sibling_(NULL), parent_version_(0)
     {}
 
     remove_parent_entry(node *parent,
                         node *parent_left_sibling,
                         node *parent_right_sibling,
                         uint64_t parent_version)
-      : parent(parent), parent_left_sibling(parent_left_sibling),
-        parent_right_sibling(parent_right_sibling), parent_version(parent_version)
+      : parent_(parent), parent_left_sibling_(parent_left_sibling),
+        parent_right_sibling_(parent_right_sibling),
+        parent_version_(parent_version)
     {}
   };
 
@@ -1279,8 +1559,9 @@ private:
           typename util::vec<node *>::type &locked_nodes);
 };
 
+template <typename P>
 inline void
-btree::node::prefetch() const
+btree<P>::node::prefetch() const
 {
   if (is_leaf_node())
     AsLeaf(this)->prefetch();
@@ -1288,4 +1569,8 @@ btree::node::prefetch() const
     AsInternal(this)->prefetch();
 }
 
-#endif /* _NDB_BTREE_H_ */
+extern void TestConcurrentBtreeFast();
+extern void TestConcurrentBtreeSlow();
+
+typedef btree<concurrent_btree_traits> concurrent_btree;
+typedef btree<single_threaded_btree_traits> single_threaded_btree;

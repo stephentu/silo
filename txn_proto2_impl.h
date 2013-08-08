@@ -467,7 +467,7 @@ public:
   do_dbtuple_chain_cleanup(dbtuple *ln, uint64_t ro_epoch_clean);
 
   static bool
-  try_dbtuple_cleanup(btree *btr, const std::string &key,
+  try_dbtuple_cleanup(concurrent_btree *btr, const std::string &key,
                       dbtuple *tuple, uint64_t ro_epoch_clean);
 
   static inline void
@@ -517,7 +517,7 @@ protected:
 
     dbtuple *tuple_;
     marked_ptr<std::string> key_;
-    btree *btr_;
+    concurrent_btree *btr_;
 
     delete_entry()
       :
@@ -533,7 +533,7 @@ protected:
                  uint64_t trigger_tid,
                  dbtuple *tuple,
                  const marked_ptr<std::string> &key,
-                 btree *btr)
+                 concurrent_btree *btr)
       :
 #ifdef CHECK_INVARIANTS
         tuple_ahead_(tuple_ahead),
@@ -1077,7 +1077,7 @@ public:
   }
 
   inline ALWAYS_INLINE void
-  on_logical_delete(dbtuple *tuple, const std::string &key, btree *btr)
+  on_logical_delete(dbtuple *tuple, const std::string &key, concurrent_btree *btr)
   {
 #ifdef PROTO2_CAN_DISABLE_GC
     if (!IsGCEnabled())
@@ -1168,7 +1168,7 @@ private:
 template <>
 struct base_txn_btree_handler<transaction_proto2> {
   void
-  on_construct(const std::string &name, btree *btr)
+  on_construct(const std::string &name, concurrent_btree *btr)
   {
 #ifndef PROTO2_CAN_DISABLE_GC
     transaction_proto2_static::InitGC();

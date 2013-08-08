@@ -50,6 +50,7 @@ HEADERS = allocator.h \
 	amd64.h \
 	base_txn_btree.h \
 	btree.h \
+	btree_impl.h \
 	circbuf.h \
 	core.h \
 	counter.h \

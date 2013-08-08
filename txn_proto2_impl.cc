@@ -660,11 +660,11 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
         niters_with_rcu = 0;
         in_rcu = true;
       }
-      btree::value_type removed = 0;
+      typename concurrent_btree::value_type removed = 0;
       const bool did_remove = delent.btr_->remove(k, &removed);
       if (!did_remove)
         INVARIANT(false);
-      INVARIANT(removed == (btree::value_type) delent.tuple());
+      INVARIANT(removed == (typename concurrent_btree::value_type) delent.tuple());
       delent.tuple()->clear_latest();
       dbtuple::release(delent.tuple()); // rcu free it
     }

@@ -75,13 +75,13 @@ transaction<Protocol, Traits>::abort_impl(abort_reason reason)
 template <template <typename> class Protocol, typename Traits>
 void
 transaction<Protocol, Traits>::cleanup_inserted_tuple_marker(
-    dbtuple *marker, const std::string &key, btree *btr)
+    dbtuple *marker, const std::string &key, concurrent_btree *btr)
 {
   // XXX: this code should really live in txn_proto2_impl.h
   INVARIANT(marker->version == dbtuple::MAX_TID);
   INVARIANT(marker->is_locked());
   INVARIANT(marker->is_lock_owner());
-  btree::value_type removed = 0;
+  typename concurrent_btree::value_type removed = 0;
   const bool did_remove = btr->remove(varkey(key), &removed);
   if (unlikely(!did_remove)) {
 #ifdef CHECK_INVARIANTS
@@ -92,7 +92,7 @@ transaction<Protocol, Traits>::cleanup_inserted_tuple_marker(
     INVARIANT(false);
 #endif
   }
-  INVARIANT(removed == (btree::value_type) marker);
+  INVARIANT(removed == (typename concurrent_btree::value_type) marker);
   INVARIANT(marker->is_latest());
   marker->clear_latest();
   dbtuple::release(marker); // rcu free
@@ -342,7 +342,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         typename absent_set_map::iterator it     = absent_set.begin();
         typename absent_set_map::iterator it_end = absent_set.end();
         for (; it != it_end; ++it) {
-          const uint64_t v = btree::ExtractVersionNumber(it->first);
+          const uint64_t v = concurrent_btree::ExtractVersionNumber(it->first);
           if (unlikely(v != it->second.version)) {
             VERBOSE(std::cerr << "expected node " << util::hexify(it->first) << " at v="
                               << it->second.verison << ", got v=" << v << std::endl);
@@ -386,12 +386,12 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             unlock_head = true;
             // need to unlink tuple from underlying btree, replacing
             // with ret.rest_ (atomically)
-            btree::value_type old_v = 0;
+            typename concurrent_btree::value_type old_v = 0;
             if (it->get_btree()->insert(
-                  varkey(it->get_key()), (btree::value_type) ret.head_, &old_v, NULL))
+                  varkey(it->get_key()), (typename concurrent_btree::value_type) ret.head_, &old_v, NULL))
               // should already exist in tree
               INVARIANT(false);
-            INVARIANT(old_v == (btree::value_type) tuple);
+            INVARIANT(old_v == (typename concurrent_btree::value_type) tuple);
             // we don't RCU free this, because it is now part of the chain
             // (the cleaners will take care of this)
             ++evt_dbtuple_latest_replacement;
@@ -459,7 +459,7 @@ do_abort:
 template <template <typename> class Protocol, typename Traits>
 std::pair< dbtuple *, bool >
 transaction<Protocol, Traits>::try_insert_new_tuple(
-    btree &btr,
+    concurrent_btree &btr,
     const std::string *key,
     const void *value,
     dbtuple::tuple_writer_t writer)
@@ -485,9 +485,9 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
 
   // XXX: underlying btree api should return the existing value if insert
   // fails- this would allow us to avoid having to do another search
-  std::pair<const btree::node_opaque_t *, uint64_t> insert_info;
+  std::pair<const typename concurrent_btree::node_opaque_t *, uint64_t> insert_info;
   if (unlikely(!btr.insert_if_absent(
-          varkey(*key), (btree::value_type) tuple, &insert_info))) {
+          varkey(*key), (typename concurrent_btree::value_type) tuple, &insert_info))) {
     VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(key) << std::endl);
     tuple->clear_latest();
     tuple->unlock();
@@ -516,7 +516,7 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
       // otherwise, bump the version by 1
       it->second.version++; // XXX(stephentu): this doesn't properly handle wrap-around
       // but we're probably F-ed on a wrap around anyways for now
-      SINGLE_THREADED_INVARIANT(btree::ExtractVersionNumber(it->first) == it->second);
+      SINGLE_THREADED_INVARIANT(concurrent_btree::ExtractVersionNumber(it->first) == it->second);
     }
   }
   return std::make_pair(tuple, false);
@@ -587,7 +587,7 @@ transaction<Protocol, Traits>::do_tuple_read(
 template <template <typename> class Protocol, typename Traits>
 void
 transaction<Protocol, Traits>::do_node_read(
-    const btree::node_opaque_t *n, uint64_t v)
+    const typename concurrent_btree::node_opaque_t *n, uint64_t v)
 {
   INVARIANT(n);
   if (is_read_only())

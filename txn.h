@@ -190,7 +190,7 @@ protected:
                           const string_type *k,
                           const void *r,
                           dbtuple::tuple_writer_t w,
-                          btree *btr,
+                          concurrent_btree *btr,
                           bool insert)
       : tuple(tuple),
         k(k),
@@ -216,7 +216,7 @@ protected:
       // don't need the mask
       return btr.get_flags();
     }
-    inline btree *
+    inline concurrent_btree *
     get_btree() const
     {
       return btr.get();
@@ -241,7 +241,7 @@ protected:
     const string_type *k;
     const void *r;
     dbtuple::tuple_writer_t w;
-    marked_ptr<btree> btr; // first bit for inserted
+    marked_ptr<concurrent_btree> btr; // first bit for inserted
   };
 
   friend std::ostream &
@@ -509,7 +509,7 @@ protected:
     write_record_t,
     traits_type::write_set_expected_size> write_set_map_small;
   typedef small_unordered_map<
-    const btree::node_opaque_t *, absent_record_t,
+    const typename concurrent_btree::node_opaque_t *, absent_record_t,
     traits_type::absent_set_expected_size> absent_set_map_small;
 
   // static types
@@ -520,7 +520,7 @@ protected:
     write_record_t,
     traits_type::write_set_expected_size> write_set_map_static;
   typedef static_unordered_map<
-    const btree::node_opaque_t *, absent_record_t,
+    const typename concurrent_btree::node_opaque_t *, absent_record_t,
     traits_type::absent_set_expected_size> absent_set_map_static;
 
   // helper types for log writing
@@ -655,7 +655,7 @@ protected:
   // latest: removes marker from tree, and clears latest
   void cleanup_inserted_tuple_marker(
       dbtuple *marker, const std::string &key,
-      btree *btr);
+      concurrent_btree *btr);
 
   // low-level API for txn_btree
 
@@ -678,7 +678,7 @@ protected:
   // NOTE: assumes key/value are stable
   std::pair< dbtuple *, bool >
   try_insert_new_tuple(
-      btree &btr,
+      concurrent_btree &btr,
       const std::string *key,
       const void *value,
       dbtuple::tuple_writer_t writer);
@@ -690,7 +690,7 @@ protected:
   do_tuple_read(const dbtuple *tuple, ValueReader &value_reader);
 
   void
-  do_node_read(const btree::node_opaque_t *n, uint64_t version);
+  do_node_read(const typename concurrent_btree::node_opaque_t *n, uint64_t version);
 
 public:
   // expected public overrides
@@ -732,7 +732,7 @@ protected:
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
   // the logical node for actual deletion
-  void on_logical_delete(dbtuple *tuple, const std::string &key, btree *btr);
+  void on_logical_delete(dbtuple *tuple, const std::string &key, concurrent_btree *btr);
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called
   // with the commit tid. before on_tid_finish() is called, state is updated

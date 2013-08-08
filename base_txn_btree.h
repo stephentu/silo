@@ -2,6 +2,7 @@
 #define _NDB_BASE_TXN_BTREE_H_
 
 #include "btree.h"
+#include "btree_impl.h"
 #include "txn.h"
 #include "lockguard.h"
 #include "util.h"
@@ -16,7 +17,7 @@
 // behavior- the default implementation is just nops
 template <template <typename> class Transaction>
 struct base_txn_btree_handler {
-  inline void on_construct(const std::string &name, btree *underlying) {} // get a handle to the underying btree
+  inline void on_construct(const std::string &name, concurrent_btree *underlying) {} // get a handle to the underying btree
   inline void on_destruct() {} // called at the beginning of the txn_btree's dtor
   static const bool has_background_task = false;
 };
@@ -75,7 +76,7 @@ public:
 
   // XXX: only exists because can't declare friend of template parameter
   // Transaction
-  inline btree *
+  inline concurrent_btree *
   get_underlying_btree()
   {
     return &underlying_btree;
@@ -83,8 +84,8 @@ public:
 
 private:
 
-  struct purge_tree_walker : public btree::tree_walk_callback {
-    virtual void on_node_begin(const btree::node_opaque_t *n);
+  struct purge_tree_walker : public concurrent_btree::tree_walk_callback {
+    virtual void on_node_begin(const typename concurrent_btree::node_opaque_t *n);
     virtual void on_node_success();
     virtual void on_node_failure();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
@@ -107,7 +108,7 @@ private:
           it != purge_stats_nkeys_node.end(); ++it)
         v += *it;
       const double avg_nkeys_node = double(v)/double(purge_stats_nkeys_node.size());
-      const double avg_fill_factor = avg_nkeys_node/double(btree::NKeysPerNode);
+      const double avg_fill_factor = avg_nkeys_node/double(concurrent_btree::NKeysPerNode);
       std::cerr << "btree node stats" << std::endl;
       std::cerr << "    avg_nkeys_node: " << avg_nkeys_node << std::endl;
       std::cerr << "    avg_fill_factor: " << avg_fill_factor << std::endl;
@@ -136,7 +137,7 @@ private:
 #endif
 
   private:
-    std::vector< std::pair<btree::value_type, bool> > spec_values;
+    std::vector< std::pair<typename concurrent_btree::value_type, bool> > spec_values;
   };
 
 protected:
@@ -146,7 +147,7 @@ protected:
 
   template <typename Traits, typename Callback,
             typename KeyReader, typename ValueReader>
-  struct txn_search_range_callback : public btree::low_level_search_range_callback {
+  struct txn_search_range_callback : public concurrent_btree::low_level_search_range_callback {
     constexpr txn_search_range_callback(
           Transaction<Traits> *t,
           Callback *caller_callback,
@@ -155,9 +156,9 @@ protected:
       : t(t), caller_callback(caller_callback),
         key_reader(key_reader), value_reader(value_reader) {}
 
-    virtual void on_resp_node(const btree::node_opaque_t *n, uint64_t version);
-    virtual bool invoke(const btree::string_type &k, btree::value_type v,
-                        const btree::node_opaque_t *n, uint64_t version);
+    virtual void on_resp_node(const typename concurrent_btree::node_opaque_t *n, uint64_t version);
+    virtual bool invoke(const typename concurrent_btree::string_type &k, typename concurrent_btree::value_type v,
+                        const typename concurrent_btree::node_opaque_t *n, uint64_t version);
 
   private:
     Transaction<Traits> *const t;
@@ -194,7 +195,7 @@ protected:
                    dbtuple::tuple_writer_t writer,
                    bool expect_new);
 
-  btree underlying_btree;
+  concurrent_btree underlying_btree;
   size_type value_size_hint;
   std::string name;
   bool been_destructed;
@@ -221,8 +222,8 @@ base_txn_btree<Transaction, P>::do_search(
     key_writer.fully_materialize(true, t.string_allocator());
 
   // search the underlying btree to map k=>(btree_node|tuple)
-  btree::value_type underlying_v;
-  btree::versioned_node_t search_info;
+  typename concurrent_btree::value_type underlying_v;
+  concurrent_btree::versioned_node_t search_info;
   const bool found = this->underlying_btree.search(varkey(*key_str), underlying_v, &search_info);
   if (found) {
     const dbtuple * const tuple = reinterpret_cast<const dbtuple *>(underlying_v);
@@ -255,10 +256,10 @@ base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
 
 template <template <typename> class Transaction, typename P>
 void
-base_txn_btree<Transaction, P>::purge_tree_walker::on_node_begin(const btree::node_opaque_t *n)
+base_txn_btree<Transaction, P>::purge_tree_walker::on_node_begin(const typename concurrent_btree::node_opaque_t *n)
 {
   INVARIANT(spec_values.empty());
-  spec_values = btree::ExtractValues(n);
+  spec_values = concurrent_btree::ExtractValues(n);
 }
 
 template <template <typename> class Transaction, typename P>
@@ -348,7 +349,7 @@ retry:
   }
   if (!px) {
     // do regular search
-    btree::value_type bv = 0;
+    typename concurrent_btree::value_type bv = 0;
     if (!this->underlying_btree.search(varkey(*k), bv)) {
       // XXX(stephentu): if we are removing a key and we can't find it, then we
       // should just treat this as a read [of an empty-value], instead of
@@ -379,11 +380,11 @@ void
 base_txn_btree<Transaction, P>
   ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader>
   ::on_resp_node(
-    const btree::node_opaque_t *n, uint64_t version)
+    const typename concurrent_btree::node_opaque_t *n, uint64_t version)
 {
   VERBOSE(std::cerr << "on_resp_node(): <node=0x" << util::hexify(intptr_t(n))
                << ", version=" << version << ">" << std::endl);
-  VERBOSE(std::cerr << "  " << btree::NodeStringify(n) << std::endl);
+  VERBOSE(std::cerr << "  " << concurrent_btree::NodeStringify(n) << std::endl);
   t->do_node_read(n, version);
 }
 
@@ -394,8 +395,8 @@ bool
 base_txn_btree<Transaction, P>
   ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader>
   ::invoke(
-    const btree::string_type &k, btree::value_type v,
-    const btree::node_opaque_t *n, uint64_t version)
+    const typename concurrent_btree::string_type &k, typename concurrent_btree::value_type v,
+    const typename concurrent_btree::node_opaque_t *n, uint64_t version)
 {
   t->ensure_active();
   VERBOSE(std::cerr << "search range k: " << util::hexify(k) << " from <node=0x" << util::hexify(n)
