@@ -23,13 +23,6 @@
 #include "util.h"
 #include "small_vector.h"
 
-/** options */
-
-//#define LOCK_OWNERSHIP_CHECKING
-
-template <template <typename> class Transaction, class P>
-  class base_txn_btree;
-
 /**
  * A concurrent, variable key length b+-tree, optimized for read heavy
  * workloads.
@@ -50,7 +43,6 @@ template <template <typename> class Transaction, class P>
 class btree {
   template <template <typename> class T, typename P>
     friend class base_txn_btree;
-  friend class txn_walker_loop;
 public:
   typedef varkey key_type;
   typedef std::string string_type;

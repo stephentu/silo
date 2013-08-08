@@ -20,6 +20,7 @@
 #define USE_VARINT_ENCODING
 //#define DISABLE_FIELD_SELECTION
 //#define PARANOID_CHECKING
+//#define LOCK_OWNERSHIP_CHECKING
 
 /**
  * some non-sensical options, which only make sense for performance debugging
