@@ -3,6 +3,7 @@
 
 #include "abstract_db.h"
 #include "../btree.h"
+#include "../btree_impl.h"
 #include "../rcu.h"
 
 template <bool UseConcurrencyControl>
@@ -77,7 +78,13 @@ public:
   virtual std::map<std::string, uint64_t> clear();
 private:
   std::string name;
-  btree btr;
+  typedef
+    typename std::conditional<
+      UseConcurrencyControl,
+      concurrent_btree,
+      single_threaded_btree>::type
+    my_btree;
+   my_btree btr;
 };
 
 #endif /* _KVDB_WRAPPER_H_ */

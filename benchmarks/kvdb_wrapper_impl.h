@@ -310,7 +310,7 @@ kvdb_ordered_index<UseConcurrencyControl>::get(
 {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::get:", &private_::kvdb_get_probe0_cg);
-  btree::value_type v = 0;
+  typename my_btree::value_type v = 0;
   if (btr.search(varkey(key), v)) {
     ANON_REGION("kvdb_ordered_index::get:do_read:", &private_::kvdb_get_probe1_cg);
     const kvdb_record * const r = (const kvdb_record *) v;
@@ -330,7 +330,7 @@ kvdb_ordered_index<UseConcurrencyControl>::put(
 {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::put:", &private_::kvdb_put_probe0_cg);
-  btree::value_type v = 0, v_old = 0;
+  typename my_btree::value_type v = 0, v_old = 0;
   if (btr.search(varkey(key), v)) {
     // easy
     kvdb_record * const r = (kvdb_record *) v;
@@ -340,14 +340,14 @@ kvdb_ordered_index<UseConcurrencyControl>::put(
       return 0;
     // replace
     kvdb_record * const rnew = kvdb_record::alloc(value);
-    btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0);
-    INVARIANT((btree::value_type) r == v_old);
+    btr.insert(varkey(key), (typename my_btree::value_type) rnew, &v_old, 0);
+    INVARIANT((typename my_btree::value_type) r == v_old);
     // rcu-free the old record
     kvdb_record::release(r);
     return 0;
   }
   kvdb_record * const rnew = kvdb_record::alloc(value);
-  if (!btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0)) {
+  if (!btr.insert(varkey(key), (typename my_btree::value_type) rnew, &v_old, 0)) {
     kvdb_record * const r = (kvdb_record *) v_old;
     kvdb_record::release(r);
   }
@@ -363,16 +363,16 @@ kvdb_ordered_index<UseConcurrencyControl>::insert(void *txn,
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::insert:", &private_::kvdb_insert_probe0_cg);
   kvdb_record * const rnew = kvdb_record::alloc(value);
-  btree::value_type v_old = 0;
-  if (!btr.insert(varkey(key), (btree::value_type) rnew, &v_old, 0)) {
+  typename my_btree::value_type v_old = 0;
+  if (!btr.insert(varkey(key), (typename my_btree::value_type) rnew, &v_old, 0)) {
     kvdb_record * const r = (kvdb_record *) v_old;
     kvdb_record::release(r);
   }
   return 0;
 }
 
-template <bool UseConcurrencyControl>
-class kvdb_wrapper_search_range_callback : public btree::search_range_callback {
+template <typename Btree, bool UseConcurrencyControl>
+class kvdb_wrapper_search_range_callback : public Btree::search_range_callback {
 public:
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   kvdb_wrapper_search_range_callback(
@@ -381,7 +381,7 @@ public:
     : upcall(&upcall), arena(arena) {}
 
   virtual bool
-  invoke(const btree::string_type &k, btree::value_type v)
+  invoke(const typename Btree::string_type &k, typename Btree::value_type v)
   {
     const kvdb_record * const r = (const kvdb_record *) v;
     std::string * const s_px = likely(arena) ? arena->next() : nullptr;
@@ -406,7 +406,7 @@ kvdb_ordered_index<UseConcurrencyControl>::scan(
     str_arena *arena)
 {
   ANON_REGION("kvdb_ordered_index::scan:", &private_::kvdb_scan_probe0_cg);
-  kvdb_wrapper_search_range_callback<UseConcurrencyControl> c(callback, arena);
+  kvdb_wrapper_search_range_callback<my_btree, UseConcurrencyControl> c(callback, arena);
   const varkey end(end_key ? varkey(*end_key) : varkey());
   btr.search_range_call(varkey(start_key), end_key ? &end : 0, c, arena->next());
 }
@@ -417,7 +417,7 @@ kvdb_ordered_index<UseConcurrencyControl>::remove(void *txn, const std::string &
 {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::remove:", &private_::kvdb_remove_probe0_cg);
-  btree::value_type v = 0;
+  typename my_btree::value_type v = 0;
   if (btr.remove(varkey(key), &v)) {
     kvdb_record * const r = (kvdb_record *) v;
     kvdb_record::release(r);
@@ -431,8 +431,8 @@ kvdb_ordered_index<UseConcurrencyControl>::size() const
   return btr.size();
 }
 
-template <bool UseConcurrencyControl>
-struct purge_tree_walker : public btree::tree_walk_callback {
+template <typename Btree, bool UseConcurrencyControl>
+struct purge_tree_walker : public Btree::tree_walk_callback {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
 
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
@@ -451,7 +451,7 @@ struct purge_tree_walker : public btree::tree_walk_callback {
         it != purge_stats_nkeys_node.end(); ++it)
       v += *it;
     const double avg_nkeys_node = double(v)/double(purge_stats_nkeys_node.size());
-    const double avg_fill_factor = avg_nkeys_node/double(btree::NKeysPerNode);
+    const double avg_fill_factor = avg_nkeys_node/double(Btree::NKeysPerNode);
     std::cerr << "btree node stats" << std::endl;
     std::cerr << "    avg_nkeys_node: " << avg_nkeys_node << std::endl;
     std::cerr << "    avg_fill_factor: " << avg_fill_factor << std::endl;
@@ -461,10 +461,10 @@ struct purge_tree_walker : public btree::tree_walk_callback {
 #endif
 
   virtual void
-  on_node_begin(const btree::node_opaque_t *n)
+  on_node_begin(const typename Btree::node_opaque_t *n)
   {
     INVARIANT(spec_values.empty());
-    spec_values = btree::ExtractValues(n);
+    spec_values = Btree::ExtractValues(n);
   }
 
   virtual void
@@ -493,14 +493,14 @@ done:
   }
 
 private:
-  std::vector<std::pair<btree::value_type, bool>> spec_values;
+  std::vector<std::pair<typename Btree::value_type, bool>> spec_values;
 };
 
 template <bool UseConcurrencyControl>
 std::map<std::string, uint64_t>
 kvdb_ordered_index<UseConcurrencyControl>::clear()
 {
-  purge_tree_walker<UseConcurrencyControl> w;
+  purge_tree_walker<my_btree, UseConcurrencyControl> w;
   btr.tree_walk(w);
   btr.clear();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS

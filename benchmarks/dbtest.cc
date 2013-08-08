@@ -347,8 +347,8 @@ main(int argc, char **argv)
     cerr << "  disable-snapshots : " << disable_snapshots   << endl;
 
     cerr << "system properties:" << endl;
-    cerr << "  btree_internal_node_size: " << btree::InternalNodeSize() << endl;
-    cerr << "  btree_leaf_node_size    : " << btree::LeafNodeSize() << endl;
+    cerr << "  btree_internal_node_size: " << concurrent_btree::InternalNodeSize() << endl;
+    cerr << "  btree_leaf_node_size    : " << concurrent_btree::LeafNodeSize() << endl;
 
 #ifdef TUPLE_PREFETCH
     cerr << "  tuple_prefetch          : yes" << endl;
