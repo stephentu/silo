@@ -1021,7 +1021,7 @@ public:
     small_map_ns::Test();
     recordtest::Test();
     TestConcurrentBtreeFast();
-    TestConcurrentBtreeSlow();
+    //TestConcurrentBtreeSlow();
     txn_btree_test();
     ret = 0;
   }

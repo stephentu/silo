@@ -5,7 +5,7 @@ DEBUG ?= 0
 ifeq ($(strip $(DEBUG)),1)
         CXXFLAGS := -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x
 else
-        CXXFLAGS := -Ithird-party/lz4 -Wall -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
+        CXXFLAGS := -Ithird-party/lz4 -Wall -g -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})

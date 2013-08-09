@@ -121,8 +121,8 @@ namespace private_ {
     {
       INVARIANT(!(stablev & P::HDR_MODIFYING_MASK));
       COMPILER_MEMORY_FENCE;
-      return (Load(t) & ~P::HDR_MODIFYING_MASK) ==
-             (stablev & ~P::HDR_MODIFYING_MASK);
+      return (Load(t) & ~P::HDR_LOCKED_MASK) ==
+             (stablev & ~P::HDR_LOCKED_MASK);
     }
   };
 }
