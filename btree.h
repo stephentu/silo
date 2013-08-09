@@ -106,7 +106,7 @@ namespace private_ {
       Store(v, h);
     }
     static inline uint64_t
-    StableVersion(uint64_t t)
+    StableVersion(const std::atomic<uint64_t> &t)
     {
       uint64_t v = Load(t);
       while ((v & P::HDR_MODIFYING_MASK)) {
