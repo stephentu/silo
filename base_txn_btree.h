@@ -243,6 +243,7 @@ base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
   been_destructed = true;
   handler.on_destruct(); // stop background tasks
   purge_tree_walker w;
+  scoped_rcu_region guard;
   underlying_btree.tree_walk(w);
   underlying_btree.clear();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS

@@ -362,8 +362,8 @@ public:
   static inline bool
   CheckVersion(LoadVersionType v, uint64_t stablev)
   {
+    INVARIANT(!M0::IsModifying(stablev));
     COMPILER_MEMORY_FENCE;
-    INVARIANT(!IsModifying(v));
     return private_::u64extractor<VersionType>::equalsignoring(v, stablev, HDR_LOCKED_MASK);
   }
 
@@ -398,6 +398,7 @@ public:
 
 struct base_btree_config {
   static const unsigned int NKeysPerNode = 15;
+  static const bool RcuRespCaller = true;
 };
 
 struct concurrent_btree_traits : public base_btree_config {
@@ -1078,6 +1079,7 @@ public:
   search(const key_type &k, value_type &v,
          versioned_node_t *search_info = nullptr) const
   {
+    scoped_rcu_region guard(!P::RcuRespCaller);
     typename util::vec<leaf_node *>::type ns;
     return search_impl(k, v, ns, search_info);
   }
@@ -1252,6 +1254,7 @@ public:
          value_type *old_v = NULL,
          versioned_node_t *insert_info = NULL)
   {
+    scoped_rcu_region guard(!P::RcuRespCaller);
     return insert_impl((node **) &root_, k, v, false, old_v, insert_info);
   }
 
@@ -1263,6 +1266,7 @@ public:
   insert_if_absent(const key_type &k, value_type v,
                    versioned_node_t *insert_info = NULL)
   {
+    scoped_rcu_region guard(!P::RcuRespCaller);
     return insert_impl((node **) &root_, k, v, true, NULL, insert_info);
   }
 
@@ -1275,6 +1279,7 @@ public:
   inline bool
   remove(const key_type &k, value_type *old_v = NULL)
   {
+    scoped_rcu_region guard(!P::RcuRespCaller);
     return remove_impl((node **) &root_, k, old_v);
   }
 

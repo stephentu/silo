@@ -20,6 +20,11 @@
 using namespace std;
 using namespace util;
 
+struct testing_concurrent_btree_traits : public concurrent_btree_traits {
+  static const bool RcuRespCaller = false;
+};
+typedef btree<testing_concurrent_btree_traits> testing_concurrent_btree;
+
 class scoped_rate_timer {
 private:
   util::timer t;
@@ -41,87 +46,87 @@ public:
 
 class btree_worker : public ndb_thread {
 public:
-  btree_worker(concurrent_btree *btr) : btr(btr)  {}
-  btree_worker(concurrent_btree &btr) : btr(&btr) {}
+  btree_worker(testing_concurrent_btree *btr) : btr(btr)  {}
+  btree_worker(testing_concurrent_btree &btr) : btr(&btr) {}
 protected:
-  concurrent_btree *const btr;
+  testing_concurrent_btree *const btr;
 };
 
 static void
 test1()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   btr.invariant_checker();
 
   // fill up root leaf node
-  for (size_t i = 0; i < concurrent_btree::NKeysPerNode; i++) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+  for (size_t i = 0; i < testing_concurrent_btree::NKeysPerNode; i++) {
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
-  ALWAYS_ASSERT(btr.size() == concurrent_btree::NKeysPerNode);
+  ALWAYS_ASSERT(btr.size() == testing_concurrent_btree::NKeysPerNode);
 
   // induce a split
-  btr.insert(u64_varkey(concurrent_btree::NKeysPerNode), (typename concurrent_btree::value_type) (concurrent_btree::NKeysPerNode));
+  btr.insert(u64_varkey(testing_concurrent_btree::NKeysPerNode), (typename testing_concurrent_btree::value_type) (testing_concurrent_btree::NKeysPerNode));
   btr.invariant_checker();
-  ALWAYS_ASSERT(btr.size() == concurrent_btree::NKeysPerNode + 1);
+  ALWAYS_ASSERT(btr.size() == testing_concurrent_btree::NKeysPerNode + 1);
 
   // now make sure we can find everything post split
-  for (size_t i = 0; i < concurrent_btree::NKeysPerNode + 1; i++) {
-    typename concurrent_btree::value_type v = 0;
+  for (size_t i = 0; i < testing_concurrent_btree::NKeysPerNode + 1; i++) {
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 
   // now fill up the new root node
-  const size_t n = (concurrent_btree::NKeysPerNode + concurrent_btree::NKeysPerNode * (concurrent_btree::NMinKeysPerNode));
-  for (size_t i = concurrent_btree::NKeysPerNode + 1; i < n; i++) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+  const size_t n = (testing_concurrent_btree::NKeysPerNode + testing_concurrent_btree::NKeysPerNode * (testing_concurrent_btree::NMinKeysPerNode));
+  for (size_t i = testing_concurrent_btree::NKeysPerNode + 1; i < n; i++) {
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == n);
 
   // cause the root node to split
-  btr.insert(u64_varkey(n), (typename concurrent_btree::value_type) n);
+  btr.insert(u64_varkey(n), (typename testing_concurrent_btree::value_type) n);
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == n + 1);
 
   // once again make sure we can find everything
   for (size_t i = 0; i < n + 1; i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 }
 
 static void
 test2()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   const size_t n = 1000;
   for (size_t i = 0; i < n; i += 2) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 
   for (size_t i = 1; i < n; i += 2) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 
   ALWAYS_ASSERT(btr.size() == n);
@@ -130,69 +135,69 @@ test2()
 static void
 test3()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
-  for (size_t i = 0; i < concurrent_btree::NKeysPerNode * 2; i++) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+  for (size_t i = 0; i < testing_concurrent_btree::NKeysPerNode * 2; i++) {
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
-  ALWAYS_ASSERT(btr.size() == concurrent_btree::NKeysPerNode * 2);
+  ALWAYS_ASSERT(btr.size() == testing_concurrent_btree::NKeysPerNode * 2);
 
-  for (size_t i = 0; i < concurrent_btree::NKeysPerNode * 2; i++) {
+  for (size_t i = 0; i < testing_concurrent_btree::NKeysPerNode * 2; i++) {
     btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
 
-  for (size_t i = 0; i < concurrent_btree::NKeysPerNode * 2; i++) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+  for (size_t i = 0; i < testing_concurrent_btree::NKeysPerNode * 2; i++) {
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
-  ALWAYS_ASSERT(btr.size() == concurrent_btree::NKeysPerNode * 2);
+  ALWAYS_ASSERT(btr.size() == testing_concurrent_btree::NKeysPerNode * 2);
 
-  for (ssize_t i = concurrent_btree::NKeysPerNode * 2 - 1; i >= 0; i--) {
+  for (ssize_t i = testing_concurrent_btree::NKeysPerNode * 2 - 1; i >= 0; i--) {
     btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
 
-  for (size_t i = 0; i < concurrent_btree::NKeysPerNode * 2; i++) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+  for (size_t i = 0; i < testing_concurrent_btree::NKeysPerNode * 2; i++) {
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
-  ALWAYS_ASSERT(btr.size() == concurrent_btree::NKeysPerNode * 2);
+  ALWAYS_ASSERT(btr.size() == testing_concurrent_btree::NKeysPerNode * 2);
 
-  for (ssize_t i = concurrent_btree::NKeysPerNode; i >= 0; i--) {
+  for (ssize_t i = testing_concurrent_btree::NKeysPerNode; i >= 0; i--) {
     btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
 
-  for (size_t i = concurrent_btree::NKeysPerNode + 1; i < concurrent_btree::NKeysPerNode * 2; i++) {
+  for (size_t i = testing_concurrent_btree::NKeysPerNode + 1; i < testing_concurrent_btree::NKeysPerNode * 2; i++) {
     btr.remove(u64_varkey(i));
     btr.invariant_checker();
 
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
@@ -201,14 +206,14 @@ test3()
 static void
 test4()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   const size_t nkeys = 10000;
   for (size_t i = 0; i < nkeys; i++) {
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     btr.invariant_checker();
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == nkeys);
 
@@ -218,14 +223,14 @@ test4()
     size_t k = rand() % nkeys;
     btr.remove(u64_varkey(k));
     btr.invariant_checker();
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(k), v));
   }
 
   for (size_t i = 0; i < nkeys; i++) {
     btr.remove(u64_varkey(i));
     btr.invariant_checker();
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
@@ -235,7 +240,7 @@ static void
 test5()
 {
   // insert in random order, delete in random order
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   unsigned int seeds[] = {
     54321, 2013883780, 3028985725, 3058602342, 256561598, 2895653051
@@ -248,11 +253,11 @@ test5()
     for (size_t i = 0; i < nkeys; i++) {
       size_t k = rand() % nkeys;
       s.insert(k);
-      btr.insert(u64_varkey(k), (typename concurrent_btree::value_type) k);
+      btr.insert(u64_varkey(k), (typename testing_concurrent_btree::value_type) k);
       btr.invariant_checker();
-      typename concurrent_btree::value_type v = 0;
+      typename testing_concurrent_btree::value_type v = 0;
       ALWAYS_ASSERT(btr.search(u64_varkey(k), v));
-      ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) k);
+      ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) k);
     }
     ALWAYS_ASSERT(btr.size() == s.size());
 
@@ -260,7 +265,7 @@ test5()
       size_t k = rand() % nkeys;
       btr.remove(u64_varkey(k));
       btr.invariant_checker();
-      typename concurrent_btree::value_type v = 0;
+      typename testing_concurrent_btree::value_type v = 0;
       ALWAYS_ASSERT(!btr.search(u64_varkey(k), v));
     }
 
@@ -268,7 +273,7 @@ test5()
     for (size_t i = 0; i < nkeys; i++) {
       btr.remove(u64_varkey(i));
       btr.invariant_checker();
-      typename concurrent_btree::value_type v = 0;
+      typename testing_concurrent_btree::value_type v = 0;
       ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
     }
 
@@ -279,10 +284,10 @@ test5()
 namespace test6_ns {
   struct scan_callback {
     typedef vector<
-      pair< typename concurrent_btree::string_type, typename concurrent_btree::value_type > > kv_vec;
+      pair< typename testing_concurrent_btree::string_type, typename testing_concurrent_btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(const typename concurrent_btree::string_type &k, typename concurrent_btree::value_type v) const
+    operator()(const typename testing_concurrent_btree::string_type &k, typename testing_concurrent_btree::value_type v) const
     {
       data->push_back(make_pair(k, v));
       return true;
@@ -294,10 +299,10 @@ namespace test6_ns {
 static void
 test6()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   const size_t nkeys = 1000;
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == nkeys);
 
@@ -309,7 +314,7 @@ test6()
   ALWAYS_ASSERT(data.size() == 100);
   for (size_t i = 0; i < 100; i++) {
     ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
-    ALWAYS_ASSERT(data[i].second == (typename concurrent_btree::value_type) (500 + i));
+    ALWAYS_ASSERT(data[i].second == (typename testing_concurrent_btree::value_type) (500 + i));
   }
 
   data.clear();
@@ -317,33 +322,33 @@ test6()
   ALWAYS_ASSERT(data.size() == 500);
   for (size_t i = 0; i < 500; i++) {
     ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
-    ALWAYS_ASSERT(data[i].second == (typename concurrent_btree::value_type) (500 + i));
+    ALWAYS_ASSERT(data[i].second == (typename testing_concurrent_btree::value_type) (500 + i));
   }
 }
 
 static void
 test7()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   ALWAYS_ASSERT(!btr.remove(u64_varkey(0)));
-  ALWAYS_ASSERT(btr.insert(u64_varkey(0), (typename concurrent_btree::value_type) 0));
-  ALWAYS_ASSERT(!btr.insert(u64_varkey(0), (typename concurrent_btree::value_type) 1));
-  typename concurrent_btree::value_type v;
+  ALWAYS_ASSERT(btr.insert(u64_varkey(0), (typename testing_concurrent_btree::value_type) 0));
+  ALWAYS_ASSERT(!btr.insert(u64_varkey(0), (typename testing_concurrent_btree::value_type) 1));
+  typename testing_concurrent_btree::value_type v;
   ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
-  ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) 1);
-  ALWAYS_ASSERT(!btr.insert_if_absent(u64_varkey(0), (typename concurrent_btree::value_type) 2));
+  ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) 1);
+  ALWAYS_ASSERT(!btr.insert_if_absent(u64_varkey(0), (typename testing_concurrent_btree::value_type) 2));
   ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
-  ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) 1);
+  ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) 1);
   ALWAYS_ASSERT(btr.remove(u64_varkey(0)));
-  ALWAYS_ASSERT(btr.insert_if_absent(u64_varkey(0), (typename concurrent_btree::value_type) 2));
+  ALWAYS_ASSERT(btr.insert_if_absent(u64_varkey(0), (typename testing_concurrent_btree::value_type) 2));
   ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
-  ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) 2);
+  ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) 2);
 }
 
 static void
 test_varlen_single_layer()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   const char *k0 = "a";
   const char *k1 = "aa";
@@ -353,13 +358,13 @@ test_varlen_single_layer()
 
   const char *keys[] = {k0, k1, k2, k3, k4};
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (typename concurrent_btree::value_type) keys[i]));
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i]));
     btr.invariant_checker();
   }
 
   ALWAYS_ASSERT(btr.size() == ARRAY_NELEMS(keys));
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(keys[i]), v));
     ALWAYS_ASSERT(strcmp((const char *) v, keys[i]) == 0);
   }
@@ -374,7 +379,7 @@ test_varlen_single_layer()
 static void
 test_varlen_multi_layer()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   const char *k0 = "aaaaaaa";
   const char *k1 = "aaaaaaaa";
@@ -385,13 +390,13 @@ test_varlen_multi_layer()
   const char *keys[] = {k0, k1, k2, k3, k4, k5};
 
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (typename concurrent_btree::value_type) keys[i]));
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i]));
     btr.invariant_checker();
   }
 
   ALWAYS_ASSERT(btr.size() == ARRAY_NELEMS(keys));
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(keys[i]), v));
     ALWAYS_ASSERT(strcmp((const char *) v, keys[i]) == 0);
   }
@@ -409,24 +414,24 @@ test_two_layer()
   const char *k0 = "aaaaaaaaa";
   const char *k1 = "aaaaaaaaaa";
 
-  concurrent_btree btr;
-  ALWAYS_ASSERT(btr.insert(varkey(k0), (typename concurrent_btree::value_type) k0));
-  ALWAYS_ASSERT(btr.insert(varkey(k1), (typename concurrent_btree::value_type) k1));
+  testing_concurrent_btree btr;
+  ALWAYS_ASSERT(btr.insert(varkey(k0), (typename testing_concurrent_btree::value_type) k0));
+  ALWAYS_ASSERT(btr.insert(varkey(k1), (typename testing_concurrent_btree::value_type) k1));
   ALWAYS_ASSERT(btr.size() == 2);
 }
 
-class test_range_scan_helper : public concurrent_btree::search_range_callback {
+class test_range_scan_helper : public testing_concurrent_btree::search_range_callback {
 public:
 
   struct expect {
     expect() : tag(), expected_size() {}
     expect(size_t expected_size)
       : tag(0), expected_size(expected_size) {}
-    expect(const set<typename concurrent_btree::string_type> &expected_keys)
+    expect(const set<typename testing_concurrent_btree::string_type> &expected_keys)
       : tag(1), expected_keys(expected_keys) {}
     uint8_t tag;
     size_t expected_size;
-    set<typename concurrent_btree::string_type> expected_keys;
+    set<typename testing_concurrent_btree::string_type> expected_keys;
   };
 
   enum ExpectType {
@@ -435,12 +440,12 @@ public:
   };
 
   test_range_scan_helper(
-    concurrent_btree &btr,
-    const concurrent_btree::key_type &begin,
-    const concurrent_btree::key_type *end,
+    testing_concurrent_btree &btr,
+    const testing_concurrent_btree::key_type &begin,
+    const testing_concurrent_btree::key_type *end,
     const expect &expectation,
     ExpectType ex_type = EXPECT_EXACT)
-    : btr(&btr), begin(begin), end(end ? new concurrent_btree::key_type(*end) : NULL),
+    : btr(&btr), begin(begin), end(end ? new testing_concurrent_btree::key_type(*end) : NULL),
       expectation(expectation), ex_type(ex_type)
   {
   }
@@ -452,7 +457,7 @@ public:
   }
 
   virtual bool
-  invoke(const typename concurrent_btree::string_type &k, typename concurrent_btree::value_type v)
+  invoke(const typename testing_concurrent_btree::string_type &k, typename testing_concurrent_btree::value_type v)
   {
     VERBOSE(cerr << "test_range_scan_helper::invoke(): received key(size="
                  << k.size() << "): " << hexify(k) << endl);
@@ -479,7 +484,7 @@ public:
       switch (ex_type) {
       case EXPECT_EXACT: {
         ALWAYS_ASSERT(keys.size() == expectation.expected_keys.size());
-        vector<typename concurrent_btree::string_type> cmp(
+        vector<typename testing_concurrent_btree::string_type> cmp(
             expectation.expected_keys.begin(), expectation.expected_keys.end());
         for (size_t i = 0; i < keys.size(); i++) {
           if (keys[i] != cmp[i]) {
@@ -493,8 +498,8 @@ public:
       case EXPECT_ATLEAST: {
         ALWAYS_ASSERT(keys.size() >= expectation.expected_keys.size());
         // every key in the expected set must be present
-        set<typename concurrent_btree::string_type> keyset(keys.begin(), keys.end());
-        for (set<typename concurrent_btree::string_type>::iterator it = expectation.expected_keys.begin();
+        set<typename testing_concurrent_btree::string_type> keyset(keys.begin(), keys.end());
+        for (set<typename testing_concurrent_btree::string_type>::iterator it = expectation.expected_keys.begin();
              it != expectation.expected_keys.end(); ++it)
           ALWAYS_ASSERT(keyset.count(*it) == 1);
         break;
@@ -504,13 +509,13 @@ public:
   }
 
 private:
-  concurrent_btree *const btr;
-  concurrent_btree::key_type begin;
-  concurrent_btree::key_type *end;
+  testing_concurrent_btree *const btr;
+  testing_concurrent_btree::key_type begin;
+  testing_concurrent_btree::key_type *end;
   expect expectation;
   ExpectType ex_type;
 
-  vector<typename concurrent_btree::string_type> keys;
+  vector<typename testing_concurrent_btree::string_type> keys;
 };
 
 static void
@@ -526,13 +531,13 @@ test_two_layer_range_scan()
     "l", "m", "n", "o", "p", "q", "r", "s",
   };
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (typename concurrent_btree::value_type) keys[i]));
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i]));
     btr.invariant_checker();
   }
 
-  test_range_scan_helper::expect ex(set<typename concurrent_btree::string_type>(keys, keys + ARRAY_NELEMS(keys)));
+  test_range_scan_helper::expect ex(set<typename testing_concurrent_btree::string_type>(keys, keys + ARRAY_NELEMS(keys)));
   test_range_scan_helper tester(btr, varkey(""), NULL, ex);
   tester.test();
 }
@@ -560,8 +565,8 @@ test_multi_layer_scan()
 
   const varkey hikey(hikey_s);
 
-  concurrent_btree btr;
-  ALWAYS_ASSERT(btr.insert(varkey(lokey_s), (typename concurrent_btree::value_type) 0x123));
+  testing_concurrent_btree btr;
+  ALWAYS_ASSERT(btr.insert(varkey(lokey_s), (typename testing_concurrent_btree::value_type) 0x123));
 
   test_range_scan_helper::expect ex(0);
   test_range_scan_helper tester(btr, varkey(lokey_s_next), &hikey, ex);
@@ -584,34 +589,34 @@ test_null_keys()
   const uint8_t k10[] = {'\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'};
   const uint8_t *keys[] = {k0, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10};
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    ALWAYS_ASSERT(btr.insert(varkey(keys[i], i), (typename concurrent_btree::value_type) i));
+    ALWAYS_ASSERT(btr.insert(varkey(keys[i], i), (typename testing_concurrent_btree::value_type) i));
     btr.invariant_checker();
   }
 
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(keys[i], i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 
   for (size_t i = 1; i <= 20; i++) {
-    ALWAYS_ASSERT(btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i));
+    ALWAYS_ASSERT(btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i));
     btr.invariant_checker();
   }
 
   for (size_t i = 0; i < ARRAY_NELEMS(keys); i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(keys[i], i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 
   for (size_t i = 1; i <= 20; i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 }
 
@@ -620,44 +625,44 @@ test_null_keys_2()
 {
   const size_t nprefixes = 200;
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   fast_random r(9084398309893);
 
-  set<typename concurrent_btree::string_type> prefixes;
+  set<typename testing_concurrent_btree::string_type> prefixes;
   for (size_t i = 0; i < nprefixes; i++) {
   retry:
-    const typename concurrent_btree::string_type k = r.next_string(r.next() % 30);
+    const typename testing_concurrent_btree::string_type k = r.next_string(r.next() % 30);
     if (prefixes.count(k) == 1)
       goto retry;
     prefixes.insert(k);
   }
 
-  set<typename concurrent_btree::string_type> keys;
-  for (set<typename concurrent_btree::string_type>::iterator it = prefixes.begin();
+  set<typename testing_concurrent_btree::string_type> keys;
+  for (set<typename testing_concurrent_btree::string_type>::iterator it = prefixes.begin();
        it != prefixes.end(); ++it) {
-    const typename concurrent_btree::string_type k = *it;
+    const typename testing_concurrent_btree::string_type k = *it;
     for (size_t i = 1; i <= 12; i++) {
-      typename concurrent_btree::string_type x = k;
+      typename testing_concurrent_btree::string_type x = k;
       x.resize(x.size() + i);
       keys.insert(x);
     }
   }
 
   size_t ctr = 1;
-  for (set<typename concurrent_btree::string_type>::iterator it = keys.begin();
+  for (set<typename testing_concurrent_btree::string_type>::iterator it = keys.begin();
        it != keys.end(); ++it, ++ctr) {
-    ALWAYS_ASSERT(btr.insert(varkey(*it), (typename concurrent_btree::value_type) it->data()));
+    ALWAYS_ASSERT(btr.insert(varkey(*it), (typename testing_concurrent_btree::value_type) it->data()));
     btr.invariant_checker();
     ALWAYS_ASSERT(btr.size() == ctr);
   }
   ALWAYS_ASSERT(btr.size() == keys.size());
 
-  for (set<typename concurrent_btree::string_type>::iterator it = keys.begin();
+  for (set<typename testing_concurrent_btree::string_type>::iterator it = keys.begin();
        it != keys.end(); ++it) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(*it), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) it->data());
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) it->data());
   }
 
   test_range_scan_helper::expect ex(keys);
@@ -665,7 +670,7 @@ test_null_keys_2()
   tester.test();
 
   ctr = keys.size() - 1;
-  for (set<typename concurrent_btree::string_type>::iterator it = keys.begin();
+  for (set<typename testing_concurrent_btree::string_type>::iterator it = keys.begin();
        it != keys.end(); ++it, --ctr) {
     ALWAYS_ASSERT(btr.remove(varkey(*it)));
     btr.invariant_checker();
@@ -677,32 +682,32 @@ test_null_keys_2()
 static void
 test_random_keys()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   fast_random r(43698);
 
   const size_t nkeys = 10000;
   const unsigned int maxkeylen = 1000;
 
-  set<typename concurrent_btree::string_type> keyset;
-  vector<typename concurrent_btree::string_type> keys;
+  set<typename testing_concurrent_btree::string_type> keyset;
+  vector<typename testing_concurrent_btree::string_type> keys;
   keys.resize(nkeys);
   for (size_t i = 0; i < nkeys; i++) {
   retry:
-    typename concurrent_btree::string_type k = r.next_string(r.next() % (maxkeylen + 1));
+    typename testing_concurrent_btree::string_type k = r.next_string(r.next() % (maxkeylen + 1));
     if (keyset.count(k) == 1)
       goto retry;
     keyset.insert(k);
     swap(keys[i], k);
-    btr.insert(varkey(keys[i]), (typename concurrent_btree::value_type) keys[i].data());
+    btr.insert(varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i].data());
     btr.invariant_checker();
   }
 
   ALWAYS_ASSERT(btr.size() == keyset.size());
 
   for (size_t i = 0; i < nkeys; i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(keys[i]), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) keys[i].data());
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) keys[i].data());
   }
 
   test_range_scan_helper::expect ex(keyset);
@@ -719,7 +724,7 @@ test_random_keys()
 static void
 test_insert_remove_mix()
 {
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   fast_random r(38953623328597);
 
   // bootstrap with keys, then alternate insert/remove
@@ -734,7 +739,7 @@ test_insert_remove_mix()
       goto retry;
     start_keys_v.push_back(k);
     start_keys.insert(k);
-    ALWAYS_ASSERT(btr.insert(varkey(k), (typename concurrent_btree::value_type) k.data()));
+    ALWAYS_ASSERT(btr.insert(varkey(k), (typename testing_concurrent_btree::value_type) k.data()));
   }
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == start_keys.size());
@@ -752,7 +757,7 @@ test_insert_remove_mix()
 
   for (size_t i = 0; i < nkeys_start; i++) {
     ALWAYS_ASSERT(btr.remove(varkey(start_keys_v[i])));
-    ALWAYS_ASSERT(btr.insert(varkey(insert_keys_v[i]), (typename concurrent_btree::value_type) insert_keys_v[i].data()));
+    ALWAYS_ASSERT(btr.insert(varkey(insert_keys_v[i]), (typename testing_concurrent_btree::value_type) insert_keys_v[i].data()));
   }
   btr.invariant_checker();
   ALWAYS_ASSERT(btr.size() == insert_keys.size());
@@ -764,21 +769,21 @@ namespace mp_test1_ns {
 
   class ins0_worker : public btree_worker {
   public:
-    ins0_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    ins0_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       for (size_t i = 0; i < nkeys / 2; i++)
-        btr->insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+        btr->insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     }
   };
 
   class ins1_worker : public btree_worker {
   public:
-    ins1_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    ins1_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       for (size_t i = nkeys / 2; i < nkeys; i++)
-        btr->insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+        btr->insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     }
   };
 }
@@ -789,7 +794,7 @@ mp_test1()
   using namespace mp_test1_ns;
 
   // test a bunch of concurrent inserts
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   ins0_worker w0(btr);
   ins1_worker w1(btr);
@@ -799,9 +804,9 @@ mp_test1()
 
   btr.invariant_checker();
   for (size_t i = 0; i < nkeys; i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
   ALWAYS_ASSERT(btr.size() == nkeys);
 }
@@ -812,7 +817,7 @@ namespace mp_test2_ns {
 
   class rm0_worker : public btree_worker {
   public:
-    rm0_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    rm0_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       for (size_t i = 0; i < nkeys / 2; i++)
@@ -822,7 +827,7 @@ namespace mp_test2_ns {
 
   class rm1_worker : public btree_worker {
   public:
-    rm1_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    rm1_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       for (size_t i = nkeys / 2; i < nkeys; i++)
@@ -837,10 +842,10 @@ mp_test2()
   using namespace mp_test2_ns;
 
   // test a bunch of concurrent removes
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(u64_varkey(i)), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (typename testing_concurrent_btree::value_type) i);
   btr.invariant_checker();
 
   rm0_worker w0(btr);
@@ -851,7 +856,7 @@ mp_test2()
 
   btr.invariant_checker();
   for (size_t i = 0; i < nkeys; i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
   ALWAYS_ASSERT(btr.size() == 0);
@@ -863,7 +868,7 @@ namespace mp_test3_ns {
 
   class rm0_worker : public btree_worker {
   public:
-    rm0_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    rm0_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       // remove the even keys
@@ -874,12 +879,12 @@ namespace mp_test3_ns {
 
   class ins0_worker : public btree_worker {
   public:
-    ins0_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    ins0_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       // insert the odd keys
       for (size_t i = 1; i < nkeys; i += 2)
-        btr->insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+        btr->insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     }
   };
 }
@@ -890,11 +895,11 @@ mp_test3()
   using namespace mp_test3_ns;
 
   // test a bunch of concurrent inserts and removes
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   // insert the even keys
   for (size_t i = 0; i < nkeys; i += 2)
-    btr.insert(u64_varkey(u64_varkey(i)), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (typename testing_concurrent_btree::value_type) i);
   btr.invariant_checker();
 
   rm0_worker w0(btr);
@@ -907,15 +912,15 @@ mp_test3()
 
   // should find no even keys
   for (size_t i = 0; i < nkeys; i += 2) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(i), v));
   }
 
   // should find all odd keys
   for (size_t i = 1; i < nkeys; i += 2) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 
   ALWAYS_ASSERT(btr.size() == nkeys / 2);
@@ -927,38 +932,38 @@ namespace mp_test4_ns {
 
   class search0_worker : public btree_worker {
   public:
-    search0_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    search0_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       // search the even keys
       for (size_t i = 0; i < nkeys; i += 2) {
-        typename concurrent_btree::value_type v = 0;
+        typename testing_concurrent_btree::value_type v = 0;
         ALWAYS_ASSERT(btr->search(u64_varkey(i), v));
-        ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+        ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
       }
     }
   };
 
   class ins0_worker : public btree_worker {
   public:
-    ins0_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    ins0_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       // insert the odd keys
       for (size_t i = 1; i < nkeys; i += 2)
-        btr->insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+        btr->insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
     }
   };
 
   class rm0_worker : public btree_worker {
   public:
-    rm0_worker(concurrent_btree &btr) : btree_worker(btr) {}
+    rm0_worker(testing_concurrent_btree &btr) : btree_worker(btr) {}
     virtual void run()
     {
       // remove and reinsert odd keys
       for (size_t i = 1; i < nkeys; i += 2) {
         btr->remove(u64_varkey(i));
-        btr->insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+        btr->insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
       }
     }
   };
@@ -970,11 +975,11 @@ mp_test4()
   using namespace mp_test4_ns;
 
   // test a bunch of concurrent searches, inserts, and removes
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   // insert the even keys
   for (size_t i = 0; i < nkeys; i += 2)
-    btr.insert(u64_varkey(u64_varkey(i)), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(u64_varkey(i)), (typename testing_concurrent_btree::value_type) i);
   btr.invariant_checker();
 
   search0_worker w0(btr);
@@ -988,9 +993,9 @@ mp_test4()
 
   // should find all keys
   for (size_t i = 0; i < nkeys; i++) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(i), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) i);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) i);
   }
 
   ALWAYS_ASSERT(btr.size() == nkeys);
@@ -1002,7 +1007,7 @@ namespace mp_test_pinning_ns {
   static atomic<bool> running(true);
   class worker : public btree_worker {
   public:
-    worker(unsigned int thread, concurrent_btree &btr) : btree_worker(btr), thread(thread) {}
+    worker(unsigned int thread, testing_concurrent_btree &btr) : btree_worker(btr), thread(thread) {}
     virtual void
     run()
     {
@@ -1016,7 +1021,7 @@ namespace mp_test_pinning_ns {
             btr->remove(u64_varkey(i));
           } else {
             // insert
-            btr->insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+            btr->insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
           }
         }
       }
@@ -1030,7 +1035,7 @@ static void
 mp_test_pinning()
 {
   using namespace mp_test_pinning_ns;
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   vector<shared_ptr<worker>> workers;
   for (size_t i = 0; i < nthreads; i++)
     workers.emplace_back(new worker(i, btr));
@@ -1048,7 +1053,7 @@ namespace mp_test5_ns {
   static const size_t niters = 100000;
   static const size_t max_key = 45;
 
-  typedef set<typename concurrent_btree::key_slice> key_set;
+  typedef set<typename testing_concurrent_btree::key_slice> key_set;
 
   struct summary {
     key_set inserts;
@@ -1057,20 +1062,20 @@ namespace mp_test5_ns {
 
   class worker : public btree_worker {
   public:
-    worker(unsigned int seed, concurrent_btree &btr) : btree_worker(btr), seed(seed) {}
+    worker(unsigned int seed, testing_concurrent_btree &btr) : btree_worker(btr), seed(seed) {}
     virtual void run()
     {
       unsigned int s = seed;
       // 60% search, 30% insert, 10% remove
       for (size_t i = 0; i < niters; i++) {
         double choice = double(rand_r(&s)) / double(RAND_MAX);
-        typename concurrent_btree::key_slice k = rand_r(&s) % max_key;
+        typename testing_concurrent_btree::key_slice k = rand_r(&s) % max_key;
         if (choice < 0.6) {
-          typename concurrent_btree::value_type v = 0;
+          typename testing_concurrent_btree::value_type v = 0;
           if (btr->search(u64_varkey(k), v))
-            ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) k);
+            ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) k);
         } else if (choice < 0.9) {
-          btr->insert(u64_varkey(k), (typename concurrent_btree::value_type) k);
+          btr->insert(u64_varkey(k), (typename testing_concurrent_btree::value_type) k);
           sum.inserts.insert(k);
         } else {
           btr->remove(u64_varkey(k));
@@ -1089,7 +1094,7 @@ mp_test5()
 {
   using namespace mp_test5_ns;
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   worker w0(2145906155, btr);
   worker w1(409088773, btr);
@@ -1120,9 +1125,9 @@ mp_test5()
   for (key_set::iterator it = inserts.begin(); it != inserts.end(); ++it) {
     if (removes.count(*it) == 1)
       continue;
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(*it), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) *it);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) *it);
   }
 
   btr.invariant_checker();
@@ -1134,24 +1139,24 @@ namespace mp_test6_ns {
   static const size_t ninsertkeys_perthread = 100000;
   static const size_t nremovekeys_perthread = 100000;
 
-  typedef vector<typename concurrent_btree::key_slice> key_vec;
+  typedef vector<typename testing_concurrent_btree::key_slice> key_vec;
 
   class insert_worker : public btree_worker {
   public:
-    insert_worker(const vector<typename concurrent_btree::key_slice> &keys, concurrent_btree &btr)
+    insert_worker(const vector<typename testing_concurrent_btree::key_slice> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
       for (size_t i = 0; i < keys.size(); i++)
-        btr->insert(u64_varkey(keys[i]), (typename concurrent_btree::value_type) keys[i]);
+        btr->insert(u64_varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i]);
     }
   private:
-    vector<typename concurrent_btree::key_slice> keys;
+    vector<typename testing_concurrent_btree::key_slice> keys;
   };
 
   class remove_worker : public btree_worker {
   public:
-    remove_worker(const vector<typename concurrent_btree::key_slice> &keys, concurrent_btree &btr)
+    remove_worker(const vector<typename testing_concurrent_btree::key_slice> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -1159,7 +1164,7 @@ namespace mp_test6_ns {
         btr->remove(u64_varkey(keys[i]));
     }
   private:
-    vector<typename concurrent_btree::key_slice> keys;
+    vector<typename testing_concurrent_btree::key_slice> keys;
   };
 }
 
@@ -1168,7 +1173,7 @@ mp_test6()
 {
   using namespace mp_test6_ns;
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   vector<key_vec> inps;
   set<unsigned long> insert_keys, remove_keys;
 
@@ -1188,7 +1193,7 @@ mp_test6()
       unsigned long k = r.next();
       if (insert_keys.count(k) == 1)
         continue;
-      btr.insert(u64_varkey(k), (typename concurrent_btree::value_type) k);
+      btr.insert(u64_varkey(k), (typename testing_concurrent_btree::value_type) k);
       remove_keys.insert(k);
       inp.push_back(k);
       j++;
@@ -1211,13 +1216,13 @@ mp_test6()
   ALWAYS_ASSERT(btr.size() == insert_keys.size());
   for (set<unsigned long>::iterator it = insert_keys.begin();
        it != insert_keys.end(); ++it) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(u64_varkey(*it), v));
-    ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) *it);
+    ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) *it);
   }
   for (set<unsigned long>::iterator it = remove_keys.begin();
        it != remove_keys.end(); ++it) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(u64_varkey(*it), v));
   }
 
@@ -1229,14 +1234,14 @@ namespace mp_test7_ns {
   static const size_t nkeys = 50;
   static volatile bool running = false;
 
-  typedef vector<typename concurrent_btree::key_slice> key_vec;
+  typedef vector<typename testing_concurrent_btree::key_slice> key_vec;
 
   struct scan_callback {
     typedef vector<
-      pair< typename concurrent_btree::string_type, typename concurrent_btree::value_type > > kv_vec;
+      pair< typename testing_concurrent_btree::string_type, typename testing_concurrent_btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(const typename concurrent_btree::string_type &k, typename concurrent_btree::value_type v) const
+    operator()(const typename testing_concurrent_btree::string_type &k, typename testing_concurrent_btree::value_type v) const
     {
       //ALWAYS_ASSERT(data->empty() || data->back().first < k.str());
       if (!data->empty() && data->back().first >= k) {
@@ -1252,7 +1257,7 @@ namespace mp_test7_ns {
 
   class lookup_worker : public btree_worker {
   public:
-    lookup_worker(unsigned long seed, const key_vec &keys, concurrent_btree &btr)
+    lookup_worker(unsigned long seed, const key_vec &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), seed(seed), keys(keys)
     {}
     virtual void run()
@@ -1260,9 +1265,9 @@ namespace mp_test7_ns {
       fast_random r(seed);
       while (running) {
         uint64_t k = keys[r.next() % keys.size()];
-        typename concurrent_btree::value_type v = NULL;
+        typename testing_concurrent_btree::value_type v = NULL;
         ALWAYS_ASSERT(btr->search(u64_varkey(k), v));
-        ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) k);
+        ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) k);
       }
     }
     unsigned long seed;
@@ -1271,7 +1276,7 @@ namespace mp_test7_ns {
 
   class scan_worker : public btree_worker {
   public:
-    scan_worker(const key_vec &keys, concurrent_btree &btr)
+    scan_worker(const key_vec &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys)
     {}
     virtual void run()
@@ -1279,8 +1284,8 @@ namespace mp_test7_ns {
       while (running) {
         scan_callback::kv_vec data;
         btr->search_range(u64_varkey(nkeys / 2), NULL, scan_callback(&data));
-        set<typename concurrent_btree::string_type> scan_keys;
-        typename concurrent_btree::string_type prev;
+        set<typename testing_concurrent_btree::string_type> scan_keys;
+        typename testing_concurrent_btree::string_type prev;
         for (size_t i = 0; i < data.size(); i++) {
           if (i != 0) {
             ALWAYS_ASSERT(data[i].first != prev);
@@ -1301,7 +1306,7 @@ namespace mp_test7_ns {
 
   class mod_worker : public btree_worker {
   public:
-    mod_worker(const key_vec &keys, concurrent_btree &btr)
+    mod_worker(const key_vec &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys)
     {}
     virtual void run()
@@ -1309,7 +1314,7 @@ namespace mp_test7_ns {
       bool insert = true;
       for (size_t i = 0; running; i = (i + 1) % keys.size(), insert = !insert) {
         if (insert)
-          btr->insert(u64_varkey(keys[i]), (typename concurrent_btree::value_type) keys[i]);
+          btr->insert(u64_varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i]);
         else
           btr->remove(u64_varkey(keys[i]));
       }
@@ -1332,9 +1337,9 @@ mp_test7()
       lookup_keys.push_back(i);
   }
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   for (size_t i = 0; i < lookup_keys.size(); i++)
-    btr.insert(u64_varkey(lookup_keys[i]), (typename concurrent_btree::value_type) lookup_keys[i]);
+    btr.insert(u64_varkey(lookup_keys[i]), (typename testing_concurrent_btree::value_type) lookup_keys[i]);
   btr.invariant_checker();
 
   lookup_worker w0(2398430, lookup_keys, btr);
@@ -1364,12 +1369,12 @@ namespace mp_test8_ns {
 
   class insert_worker : public btree_worker {
   public:
-    insert_worker(const vector<string> &keys, concurrent_btree &btr)
+    insert_worker(const vector<string> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
       for (size_t i = 0; i < keys.size(); i++)
-        ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (typename concurrent_btree::value_type) keys[i].data()));
+        ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i].data()));
     }
   private:
     vector<string> keys;
@@ -1377,7 +1382,7 @@ namespace mp_test8_ns {
 
   class remove_worker : public btree_worker {
   public:
-    remove_worker(const vector<string> &keys, concurrent_btree &btr)
+    remove_worker(const vector<string> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -1394,7 +1399,7 @@ mp_test8()
 {
   using namespace mp_test8_ns;
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   vector<key_vec> inps;
   set<string> insert_keys, remove_keys;
 
@@ -1417,7 +1422,7 @@ mp_test8()
       string k = r.next_string(r.next() % 200);
       if (insert_keys.count(k) == 1 || remove_keys.count(k) == 1)
         continue;
-      ALWAYS_ASSERT(btr.insert(varkey(k), (typename concurrent_btree::value_type) k.data()));
+      ALWAYS_ASSERT(btr.insert(varkey(k), (typename testing_concurrent_btree::value_type) k.data()));
       remove_keys.insert(k);
       inp.push_back(k);
       j++;
@@ -1442,12 +1447,12 @@ mp_test8()
   ALWAYS_ASSERT(btr.size() == insert_keys.size());
   for (set<string>::iterator it = insert_keys.begin();
        it != insert_keys.end(); ++it) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(*it), v));
   }
   for (set<string>::iterator it = remove_keys.begin();
        it != remove_keys.end(); ++it) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(varkey(*it), v));
   }
 
@@ -1460,24 +1465,24 @@ namespace mp_test_long_keys_ns {
   static const size_t ninsertkeys_perthread = 500000;
   static const size_t nremovekeys_perthread = 500000;
 
-  typedef vector<typename concurrent_btree::string_type> key_vec;
+  typedef vector<typename testing_concurrent_btree::string_type> key_vec;
 
   class insert_worker : public btree_worker {
   public:
-    insert_worker(const vector<typename concurrent_btree::string_type> &keys, concurrent_btree &btr)
+    insert_worker(const vector<typename testing_concurrent_btree::string_type> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
       for (size_t i = 0; i < keys.size(); i++)
-        ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (typename concurrent_btree::value_type) keys[i].data()));
+        ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i].data()));
     }
   private:
-    vector<typename concurrent_btree::string_type> keys;
+    vector<typename testing_concurrent_btree::string_type> keys;
   };
 
   class remove_worker : public btree_worker {
   public:
-    remove_worker(const vector<typename concurrent_btree::string_type> &keys, concurrent_btree &btr)
+    remove_worker(const vector<typename testing_concurrent_btree::string_type> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -1485,14 +1490,14 @@ namespace mp_test_long_keys_ns {
         ALWAYS_ASSERT(btr->remove(varkey(keys[i])));
     }
   private:
-    vector<typename concurrent_btree::string_type> keys;
+    vector<typename testing_concurrent_btree::string_type> keys;
   };
 
   static volatile bool running = false;
 
   class scan_worker : public btree_worker {
   public:
-    scan_worker(const set<typename concurrent_btree::string_type> &ex, concurrent_btree &btr)
+    scan_worker(const set<typename testing_concurrent_btree::string_type> &ex, testing_concurrent_btree &btr)
       : btree_worker(btr), ex(ex) {}
     virtual void run()
     {
@@ -1512,18 +1517,18 @@ mp_test_long_keys()
   // all keys at least 9-bytes long
   using namespace mp_test_long_keys_ns;
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
   vector<key_vec> inps;
-  set<typename concurrent_btree::string_type> existing_keys, insert_keys, remove_keys;
+  set<typename testing_concurrent_btree::string_type> existing_keys, insert_keys, remove_keys;
 
   fast_random r(189230589352);
   for (size_t i = 0; i < 10000; i++) {
   retry0:
-    typename concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
+    typename testing_concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
     if (existing_keys.count(k) == 1)
       goto retry0;
     existing_keys.insert(k);
-    ALWAYS_ASSERT(btr.insert(varkey(k), (typename concurrent_btree::value_type) k.data()));
+    ALWAYS_ASSERT(btr.insert(varkey(k), (typename testing_concurrent_btree::value_type) k.data()));
   }
   ALWAYS_ASSERT(btr.size() == existing_keys.size());
 
@@ -1531,7 +1536,7 @@ mp_test_long_keys()
     key_vec inp;
     for (size_t j = 0; j < ninsertkeys_perthread; j++) {
     retry:
-      typename concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
+      typename testing_concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
       if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1)
         goto retry;
       insert_keys.insert(k);
@@ -1543,10 +1548,10 @@ mp_test_long_keys()
   for (size_t i = nthreads / 2; i < nthreads; i++) {
     key_vec inp;
     for (size_t j = 0; j < nremovekeys_perthread;) {
-      typename concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
+      typename testing_concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
       if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1 || remove_keys.count(k) == 1)
         continue;
-      ALWAYS_ASSERT(btr.insert(varkey(k), (typename concurrent_btree::value_type) k.data()));
+      ALWAYS_ASSERT(btr.insert(varkey(k), (typename testing_concurrent_btree::value_type) k.data()));
       remove_keys.insert(k);
       inp.push_back(k);
       j++;
@@ -1578,14 +1583,14 @@ mp_test_long_keys()
   btr.invariant_checker();
 
   ALWAYS_ASSERT(btr.size() == (insert_keys.size() + existing_keys.size()));
-  for (set<typename concurrent_btree::string_type>::iterator it = insert_keys.begin();
+  for (set<typename testing_concurrent_btree::string_type>::iterator it = insert_keys.begin();
        it != insert_keys.end(); ++it) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(*it), v));
   }
-  for (set<typename concurrent_btree::string_type>::iterator it = remove_keys.begin();
+  for (set<typename testing_concurrent_btree::string_type>::iterator it = remove_keys.begin();
        it != remove_keys.end(); ++it) {
-    typename concurrent_btree::value_type v = 0;
+    typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(varkey(*it), v));
   }
 
@@ -1624,18 +1629,18 @@ perf_test()
 
   {
     srand(9876);
-    concurrent_btree btr;
+    testing_concurrent_btree btr;
     {
       scoped_rate_timer t("btree insert", nrecs);
       for (size_t i = 0; i < nrecs; i++)
-        btr.insert(u64_varkey(u64_varkey(i)), (typename concurrent_btree::value_type) i);
+        btr.insert(u64_varkey(u64_varkey(i)), (typename testing_concurrent_btree::value_type) i);
     }
     {
       scoped_rate_timer t("btree random lookups", nlookups);
       for (size_t i = 0; i < nlookups; i++) {
         //uint64_t key = rand() % nrecs;
         uint64_t key = i;
-        typename concurrent_btree::value_type v = 0;
+        typename testing_concurrent_btree::value_type v = 0;
         ALWAYS_ASSERT(btr.search(u64_varkey(key), v));
       }
     }
@@ -1669,15 +1674,15 @@ namespace read_only_perf_test_ns {
 
   class worker : public btree_worker {
   public:
-    worker(unsigned int seed, concurrent_btree &btr) : btree_worker(btr), n(0), seed(seed) {}
+    worker(unsigned int seed, testing_concurrent_btree &btr) : btree_worker(btr), n(0), seed(seed) {}
     virtual void run()
     {
       fast_random r(seed);
       while (running) {
-        typename concurrent_btree::key_slice k = r.next() % nkeys;
-        typename concurrent_btree::value_type v = 0;
+        typename testing_concurrent_btree::key_slice k = r.next() % nkeys;
+        typename testing_concurrent_btree::value_type v = 0;
         ALWAYS_ASSERT(btr->search(u64_varkey(k), v));
-        ALWAYS_ASSERT(v == (typename concurrent_btree::value_type) k);
+        ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) k);
         n++;
       }
     }
@@ -1693,10 +1698,10 @@ read_only_perf_test()
 {
   using namespace read_only_perf_test_ns;
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   for (size_t i = 0; i < nkeys; i++)
-    btr.insert(u64_varkey(i), (typename concurrent_btree::value_type) i);
+    btr.insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
   cerr << "btree loaded, test starting" << endl;
 
   vector<worker *> workers;
@@ -1751,13 +1756,13 @@ namespace write_only_perf_test_ns {
 
   class worker : public btree_worker {
   public:
-    worker(unsigned int seed, concurrent_btree &btr) : btree_worker(btr), seed(seed) {}
+    worker(unsigned int seed, testing_concurrent_btree &btr) : btree_worker(btr), seed(seed) {}
     virtual void run()
     {
       fast_random r(seed);
       for (size_t i = 0; i < nkeys / ARRAY_NELEMS(seeds); i++) {
-        typename concurrent_btree::key_slice k = r.next() % nkeys;
-        btr->insert(u64_varkey(k), (typename concurrent_btree::value_type) k);
+        typename testing_concurrent_btree::key_slice k = r.next() % nkeys;
+        btr->insert(u64_varkey(k), (typename testing_concurrent_btree::value_type) k);
       }
     }
   private:
@@ -1771,7 +1776,7 @@ write_only_perf_test()
 {
   using namespace write_only_perf_test_ns;
 
-  concurrent_btree btr;
+  testing_concurrent_btree btr;
 
   vector<worker *> workers;
   for (size_t i = 0; i < ARRAY_NELEMS(seeds); i++)
@@ -1811,7 +1816,7 @@ TestConcurrentBtreeFast()
   test_random_keys();
   test_insert_remove_mix();
   mp_test_pinning();
-  cout << "concurrent_btree::TestFast passed" << endl;
+  cout << "testing_concurrent_btree::TestFast passed" << endl;
 }
 
 void
@@ -1830,5 +1835,5 @@ TestConcurrentBtreeSlow()
   //perf_test();
   //read_only_perf_test();
   //write_only_perf_test();
-  cout << "concurrent_btree::TestSlow passed" << endl;
+  cout << "testing_concurrent_btree::TestSlow passed" << endl;
 }
