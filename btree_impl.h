@@ -235,6 +235,7 @@ btree<P>::search_impl(const key_type &k, value_type &v,
                       typename util::vec<leaf_node *>::type &leaf_nodes,
                       versioned_node_t *search_info) const
 {
+  INVARIANT(rcu::s_instance.in_rcu_region());
   //ANON_REGION("btree<P>::search_impl:", &btree_search_impl_perf_cg);
   INVARIANT(leaf_nodes.empty());
 

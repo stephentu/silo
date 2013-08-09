@@ -1071,12 +1071,14 @@ public:
     root_->invariant_checker(NULL, NULL, NULL, NULL, true);
   }
 
+          /** NOTE: the public interface assumes that the caller has taken care
+           * of setting up RCU */
+
   inline bool
   search(const key_type &k, value_type &v,
          versioned_node_t *search_info = nullptr) const
   {
     typename util::vec<leaf_node *>::type ns;
-    INVARIANT(rcu::s_instance.in_rcu_region());
     return search_impl(k, v, ns, search_info);
   }
 
