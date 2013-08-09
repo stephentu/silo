@@ -26,67 +26,103 @@
 #include "small_vector.h"
 
 namespace private_ {
-  template <typename T> struct u64extractor;
-  template <>
-  struct u64extractor<uint64_t> {
-    static inline uint64_t load(uint64_t t) { return t; }
-    static inline void store(uint64_t &t, uint64_t v) { t = v; }
+  template <typename T, typename P> struct u64manip;
+  template <typename P>
+  struct u64manip<uint64_t, P> {
+    static inline uint64_t Load(uint64_t t) { return t; }
+    static inline void Store(uint64_t &t, uint64_t v) { t = v; }
     static inline void
-    lock(uint64_t &t, uint64_t lmask)
+    Lock(uint64_t &t)
     {
-      INVARIANT(!(t & lmask));
-      t |= lmask;
+#ifdef CHECK_INVARIANTS
+      INVARIANT(!P::IsLocked(t));
+      t |= P::HDR_LOCKED_MASK;
+#endif
+    }
+    static inline void
+    Unlock(uint64_t &t)
+    {
+#ifdef CHECK_INVARIANTS
+      INVARIANT(P::IsLocked(t));
+      t &= ~(P::HDR_LOCKED_MASK | P::HDR_MODIFYING_MASK);
+#endif
     }
     static inline uint64_t
-    spinuntilclear(uint64_t t, uint64_t mmask)
+    StableVersion(uint64_t t)
     {
-      INVARIANT(!(t & mmask));
+      INVARIANT(!P::IsModifying(t));
       return t;
     }
-    static inline uint64_t
-    equalsignoring(uint64_t t, uint64_t v, uint64_t mask)
+    static inline bool
+    CheckVersion(uint64_t t, uint64_t stablev)
     {
-      INVARIANT((t & ~mask) == (v & ~mask));
+      INVARIANT(!P::IsModifying(stablev));
+      INVARIANT((t & ~P::HDR_LOCKED_MASK) == (stablev & ~P::HDR_LOCKED_MASK));
       return true;
     }
   };
-  template <>
-  struct u64extractor<std::atomic<uint64_t>> {
+  template <typename P>
+  struct u64manip<std::atomic<uint64_t>, P> {
     static inline uint64_t
-    load(const std::atomic<uint64_t> &t)
+    Load(const std::atomic<uint64_t> &t)
     {
       return t.load(std::memory_order_acquire);
     }
     static inline void
-    store(std::atomic<uint64_t> &t, uint64_t v)
+    Store(std::atomic<uint64_t> &t, uint64_t v)
     {
       t.store(v, std::memory_order_release);
     }
     static inline void
-    lock(std::atomic<uint64_t> &t, uint64_t lmask)
+    Lock(std::atomic<uint64_t> &t)
     {
-      uint64_t v = load(t);
-      while ((v & lmask) ||
-             !t.compare_exchange_strong(v, v | lmask)) {
+      uint64_t v = Load(t);
+      while ((v & P::HDR_LOCKED_MASK) ||
+             !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
         nop_pause();
-        v = load(t);
+        v = Load(t);
       }
       COMPILER_MEMORY_FENCE;
     }
-    static inline uint64_t
-    spinuntilclear(const std::atomic<uint64_t> &t, uint64_t mmask)
+    static inline void
+    Unlock(std::atomic<uint64_t> &v)
     {
-      uint64_t v = load(t);
-      while ((v & mmask)) {
-        nop_pause();
-        v = load(t);
+      INVARIANT(P::IsLocked(v));
+      uint64_t h = Load(v);
+      bool newv = false;
+      if ((h & P::HDR_MODIFYING_MASK) ||
+          (h & P::HDR_DELETING_MASK)) {
+        newv = true;
+        const uint64_t n = (h & P::HDR_VERSION_MASK) >> P::HDR_VERSION_SHIFT;
+        h &= ~P::HDR_VERSION_MASK;
+        h |= (((n + 1) << P::HDR_VERSION_SHIFT) & P::HDR_VERSION_MASK);
       }
+      // clear locked + modifying bits
+      h &= ~(P::HDR_LOCKED_MASK | P::HDR_MODIFYING_MASK);
+      if (newv) INVARIANT(!CheckVersion(v, h));
+      INVARIANT(!(h & P::HDR_LOCKED_MASK));
+      INVARIANT(!(h & P::HDR_MODIFYING_MASK));
+      COMPILER_MEMORY_FENCE;
+      Store(v, h);
+    }
+    static inline uint64_t
+    StableVersion(uint64_t t)
+    {
+      uint64_t v = Load(t);
+      while ((v & P::HDR_MODIFYING_MASK)) {
+        nop_pause();
+        v = Load(t);
+      }
+      COMPILER_MEMORY_FENCE;
       return v;
     }
     static inline bool
-    equalsignoring(const std::atomic<uint64_t> &t, uint64_t v, uint64_t mask)
+    CheckVersion(uint64_t t, uint64_t stablev)
     {
-      return (load(t) & ~mask) == (v & ~mask);
+      INVARIANT(!(stablev & P::HDR_MODIFYING_MASK));
+      COMPILER_MEMORY_FENCE;
+      return (Load(t) & ~P::HDR_MODIFYING_MASK) ==
+             (stablev & ~P::HDR_MODIFYING_MASK);
     }
   };
 }
@@ -111,8 +147,15 @@ namespace private_ {
 template <typename VersionType, unsigned NKeysPerNode>
 class btree_version_manip {
 
-  typedef typename private_::typeutil<VersionType>::func_param_type LoadVersionType;
-  typedef btree_version_manip<uint64_t, NKeysPerNode> M0;
+  typedef
+    typename private_::typeutil<VersionType>::func_param_type
+    LoadVersionType;
+
+  typedef
+    private_::u64manip<
+      VersionType,
+      btree_version_manip<VersionType, NKeysPerNode>>
+    M;
 
   static inline constexpr uint64_t
   LowMask(uint64_t nbits)
@@ -173,13 +216,13 @@ public:
   static inline uint64_t
   Load(LoadVersionType v)
   {
-    return private_::u64extractor<VersionType>::load(v);
+    return M::Load(v);
   }
 
   static inline void
   Store(VersionType &t, uint64_t v)
   {
-    private_::u64extractor<VersionType>::store(t, v);
+    M::Store(t, v);
   }
 
   // accessors
@@ -347,10 +390,7 @@ public:
   static inline uint64_t
   StableVersion(LoadVersionType v)
   {
-    const uint64_t h =
-      private_::u64extractor<VersionType>::spinuntilclear(v, HDR_MODIFYING_MASK);
-    COMPILER_MEMORY_FENCE;
-    return h;
+    return M::StableVersion(v);
   }
 
   static inline uint64_t
@@ -362,38 +402,20 @@ public:
   static inline bool
   CheckVersion(LoadVersionType v, uint64_t stablev)
   {
-    INVARIANT(!M0::IsModifying(stablev));
-    COMPILER_MEMORY_FENCE;
-    return private_::u64extractor<VersionType>::equalsignoring(v, stablev, HDR_LOCKED_MASK);
+    return M::CheckVersion(v, stablev);
   }
 
   static inline void
   Lock(VersionType &v)
   {
-    private_::u64extractor<VersionType>::lock(v, HDR_LOCKED_MASK);
+    M::Lock(v);
   }
 
   static inline void
   Unlock(VersionType &v)
   {
-    INVARIANT(IsLocked(v));
-    uint64_t h = Load(v);
-    bool newv = false;
-    if (M0::IsModifying(h) || M0::IsDeleting(h)) {
-      newv = true;
-      const uint64_t n = M0::Version(h);
-      h &= ~HDR_VERSION_MASK;
-      h |= (((n + 1) << HDR_VERSION_SHIFT) & HDR_VERSION_MASK);
-    }
-    // clear locked + modifying bits
-    h &= ~(HDR_LOCKED_MASK | HDR_MODIFYING_MASK);
-    if (newv) INVARIANT(!CheckVersion(v, h));
-    INVARIANT(!M0::IsLocked(h));
-    INVARIANT(!M0::IsModifying(h));
-    COMPILER_MEMORY_FENCE;
-    Store(v, h);
+    M::Unlock(v);
   }
-
 };
 
 struct base_btree_config {
