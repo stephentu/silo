@@ -195,6 +195,7 @@ bench_runner::run()
   if (verbose) {
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
          it != open_tables.end(); ++it) {
+      scoped_rcu_region guard;
       const size_t s = it->second->size();
       cerr << "table " << it->first << " size " << s << endl;
       table_sizes_before[it->first] = s;
@@ -281,6 +282,7 @@ bench_runner::run()
     cerr << "--- table statistics ---" << endl;
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
          it != open_tables.end(); ++it) {
+      scoped_rcu_region guard;
       const size_t s = it->second->size();
       const ssize_t delta = ssize_t(s) - ssize_t(table_sizes_before[it->first]);
       cerr << "table " << it->first << " size " << it->second->size();

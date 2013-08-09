@@ -1332,7 +1332,7 @@ public:
       const string &value)
   {
     INVARIANT(key.size() == sizeof(new_order::key));
-    INVARIANT(value.size() == 1);
+    INVARIANT(value.size() == sizeof(new_order::value));
     k_no = Decode(key, k_no_temp);
 #ifdef CHECK_INVARIANTS
     new_order::value v_no_temp;
