@@ -417,6 +417,14 @@ public:
 
 }
 
+namespace test_insert_same_key_ns {
+  struct rec0 { rec0(int ch) { NDB_MEMSET(&buf[0], ch, sizeof(buf)); } char buf[8];    };
+  struct rec1 { rec1(int ch) { NDB_MEMSET(&buf[0], ch, sizeof(buf)); } char buf[128];  };
+  struct rec2 { rec2(int ch) { NDB_MEMSET(&buf[0], ch, sizeof(buf)); } char buf[1024]; };
+  struct rec3 { rec3(int ch) { NDB_MEMSET(&buf[0], ch, sizeof(buf)); } char buf[2048]; };
+  struct rec4 { rec4(int ch) { NDB_MEMSET(&buf[0], ch, sizeof(buf)); } char buf[4096]; };
+}
+
 template <template <typename> class TxnType, typename Traits>
 static void
 test_long_keys()
@@ -508,6 +516,39 @@ test_long_keys2()
       btr.search_range_call(t, varkey(lowkey_s), &highkey, c);
       AssertSuccessfulCommit(t);
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == 1);
+    }
+
+    txn_epoch_sync<TxnType>::sync();
+    txn_epoch_sync<TxnType>::finish();
+  }
+}
+
+template <template <typename> class TxnType, typename Traits>
+static void
+test_insert_same_key()
+{
+  using namespace test_insert_same_key_ns;
+  for (size_t txn_flags_idx = 0;
+       txn_flags_idx < ARRAY_NELEMS(TxnFlags);
+       txn_flags_idx++) {
+    const uint64_t txn_flags = TxnFlags[txn_flags_idx];
+
+    txn_btree<TxnType> btr;
+    typename Traits::StringAllocator arena;
+
+    {
+      TxnType<Traits> t(txn_flags, arena);
+      btr.insert_object(t, u64_varkey(0), rec0('a'));
+      btr.insert_object(t, u64_varkey(0), rec1('b'));
+      btr.insert_object(t, u64_varkey(0), rec2('c'));
+      AssertSuccessfulCommit(t);
+    }
+
+    {
+      TxnType<Traits> t(txn_flags, arena);
+      btr.insert_object(t, u64_varkey(0), rec3('d'));
+      btr.insert_object(t, u64_varkey(0), rec4('e'));
+      AssertSuccessfulCommit(t);
     }
 
     txn_epoch_sync<TxnType>::sync();
@@ -1741,15 +1782,16 @@ void txn_btree_test()
   //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  //test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
-  //test1<transaction_proto2, default_transaction_traits>();
-  //test2<transaction_proto2, default_transaction_traits>();
-  //test_absent_key_race<transaction_proto2, default_transaction_traits>();
-  //test_inc_value_size<transaction_proto2, default_transaction_traits>();
-  //test_multi_btree<transaction_proto2, default_transaction_traits>();
-  //test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
-  //test_long_keys<transaction_proto2, default_transaction_traits>();
-  //test_long_keys2<transaction_proto2, default_transaction_traits>();
+  test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
+  test1<transaction_proto2, default_transaction_traits>();
+  test2<transaction_proto2, default_transaction_traits>();
+  test_absent_key_race<transaction_proto2, default_transaction_traits>();
+  test_inc_value_size<transaction_proto2, default_transaction_traits>();
+  test_multi_btree<transaction_proto2, default_transaction_traits>();
+  test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
+  test_long_keys<transaction_proto2, default_transaction_traits>();
+  test_long_keys2<transaction_proto2, default_transaction_traits>();
+  test_insert_same_key<transaction_proto2, default_transaction_traits>();
 
   mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
   mp_test1<transaction_proto2, default_transaction_traits>();

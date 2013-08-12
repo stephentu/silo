@@ -179,7 +179,10 @@ protected:
 
   // the write set is logically a mapping from (tuple -> value_to_write).
   struct write_record_t {
-    enum { FLAGS_INSERT = 0x1 };
+    enum {
+      FLAGS_INSERT  = 0x1,
+      FLAGS_DOWRITE = 0x1 << 1,
+    };
 
     constexpr inline write_record_t()
       : tuple(), k(), r(), w(), btr()
@@ -213,8 +216,18 @@ protected:
     inline bool
     is_insert() const
     {
-      // don't need the mask
-      return btr.get_flags();
+      return btr.get_flags() & FLAGS_INSERT;
+    }
+    inline bool
+    do_write() const
+    {
+      return btr.get_flags() & FLAGS_DOWRITE;
+    }
+    inline void
+    set_do_write()
+    {
+      INVARIANT(!do_write());
+      btr.or_flags(FLAGS_DOWRITE);
     }
     inline concurrent_btree *
     get_btree() const
@@ -241,7 +254,7 @@ protected:
     const string_type *k;
     const void *r;
     dbtuple::tuple_writer_t w;
-    marked_ptr<concurrent_btree> btr; // first bit for inserted
+    marked_ptr<concurrent_btree> btr; // first bit for inserted, 2nd for dowrite
   };
 
   friend std::ostream &
@@ -258,13 +271,17 @@ protected:
       FLAGS_LOCKED = 0x1,
       FLAGS_INSERT = 0x1 << 1,
     };
-    dbtuple_write_info() : tuple(), entry(nullptr) {}
-    dbtuple_write_info(dbtuple *tuple, write_record_t *entry)
-      : tuple(tuple), entry(entry)
+    dbtuple_write_info() : tuple(), entry(nullptr), pos() {}
+    dbtuple_write_info(dbtuple *tuple, write_record_t *entry,
+                       bool is_insert, size_t pos)
+      : tuple(tuple), entry(entry), pos(pos)
     {
-      if (entry) // entry <=> insert
+      if (is_insert)
         this->tuple.set_flags(FLAGS_LOCKED | FLAGS_INSERT);
     }
+    // XXX: for searching only
+    explicit dbtuple_write_info(const dbtuple *tuple)
+      : tuple(const_cast<dbtuple *>(tuple)), entry(), pos() {}
     inline dbtuple *
     get_tuple()
     {
@@ -292,17 +309,19 @@ protected:
     {
       return tuple.get_flags() & FLAGS_INSERT;
     }
-    // for sorting- we want the tuples marked "inserted"
-    // to come first in the sort order [this simplifies the
-    // programming when acquiring locks and dealing with duplicates]
     inline ALWAYS_INLINE
     bool operator<(const dbtuple_write_info &o) const
     {
-      return tuple < o.tuple || (tuple == o.tuple && !is_insert() < !o.is_insert());
+      // the unique key is [tuple, !is_insert, pos]
+      return tuple < o.tuple ||
+             (tuple == o.tuple && !is_insert() < !o.is_insert()) ||
+             (tuple == o.tuple && !is_insert() == !o.is_insert() && pos < o.pos);
     }
     marked_ptr<dbtuple> tuple;
     write_record_t *entry;
+    size_t pos;
   };
+
 
   static event_counter g_evt_read_logical_deleted_node_search;
   static event_counter g_evt_read_logical_deleted_node_scan;
@@ -368,6 +387,7 @@ operator<<(
     << ", key=" << util::hexify(r.get_key())
     << ", value=" << util::hexify(r.get_value())
     << ", insert=" << r.is_insert()
+    << ", do_write=" << r.do_write()
     << "]";
   return o;
 }
@@ -556,6 +576,14 @@ protected:
   typedef std::vector<uint32_t> write_set_u32_vec;
 #endif
 
+  template <typename T>
+    using write_set_sized_vec =
+      typename std::conditional<
+        traits_type::hard_expected_sizes,
+        static_vector<T, traits_type::write_set_expected_size>,
+        typename util::vec<T, traits_type::write_set_expected_size>::type
+      >::type;
+
   // small type
   typedef
     typename util::vec<
@@ -581,8 +609,11 @@ protected:
       const dbtuple *tuple)
   {
     // XXX: skip binary search for small-sized dbtuples?
-    return std::binary_search(dbtuples.begin(), dbtuples.end(),
-        dbtuple_write_info(const_cast<dbtuple *>(tuple), nullptr));
+    return std::binary_search(
+        dbtuples.begin(), dbtuples.end(),
+        dbtuple_write_info(tuple),
+        [](const dbtuple_write_info &lhs, const dbtuple_write_info &rhs)
+          { return lhs.get_tuple() < rhs.get_tuple(); });
   }
 
 public:
@@ -789,6 +820,10 @@ protected:
   {
     return (scoped_rcu_region *) &rcu_guard_[0];
   }
+
+  inline bool
+  handle_last_tuple_in_group(
+      dbtuple_write_info &info, bool did_group_insert);
 
   read_set_map read_set;
   write_set_map write_set;

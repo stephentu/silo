@@ -1020,7 +1020,7 @@ public:
     small_vector_ns::Test();
     small_map_ns::Test();
     recordtest::Test();
-    TestConcurrentBtreeFast();
+    //TestConcurrentBtreeFast();
     //TestConcurrentBtreeSlow();
     txn_btree_test();
     ret = 0;

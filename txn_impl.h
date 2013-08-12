@@ -186,6 +186,45 @@ transaction<Protocol, Traits>::get_txn_counters() const
 
 template <template <typename> class Protocol, typename Traits>
 bool
+transaction<Protocol, Traits>::handle_last_tuple_in_group(
+    dbtuple_write_info &last,
+    bool did_group_insert)
+{
+  if (did_group_insert) {
+    // don't need to lock
+    if (!last.is_insert())
+      // we inserted the last run, and then we did 1+ more overwrites
+      // to it, so we do NOT need to lock the node (again), but we DO
+      // need to apply the latest write
+      last.entry->set_do_write();
+  } else {
+    dbtuple *tuple = last.get_tuple();
+    if (unlikely(tuple->version == dbtuple::MAX_TID)) {
+      // if we race to put/insert w/ another txn which has inserted a new
+      // record, we *must* abort b/c the other txn could try to put/insert
+      // into a new record which we hold the lock on, so we must abort
+      //
+      // other ideas:
+      // we could *not* abort if this txn did not insert any new records.
+      // we could also release our insert locks and try to acquire them
+      // again in sorted order
+      return false; // signal abort
+    }
+    const dbtuple::version_t v = tuple->lock(true); // lock for write
+    INVARIANT(dbtuple::IsLatest(v) == tuple->is_latest());
+    last.mark_locked();
+    if (unlikely(!dbtuple::IsLatest(v) ||
+                 !cast()->can_read_tid(tuple->version))) {
+      // XXX(stephentu): overly conservative (with the can_read_tid() check)
+      return false; // signal abort
+    }
+    last.entry->set_do_write();
+  }
+  return true;
+}
+
+template <template <typename> class Protocol, typename Traits>
+bool
 transaction<Protocol, Traits>::commit(bool doThrow)
 {
   PERF_DECL(
@@ -218,11 +257,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
     INVARIANT(!is_read_only());
     typename write_set_map::iterator it     = write_set.begin();
     typename write_set_map::iterator it_end = write_set.end();
-    for (; it != it_end; ++it) {
+    for (size_t pos = 0; it != it_end; ++it, ++pos) {
       INVARIANT(!it->is_insert() || it->get_tuple()->is_locked());
-      write_dbtuples.emplace_back(
-          it->get_tuple(),
-          it->is_insert() ? &(*it) : nullptr);
+      write_dbtuples.emplace_back(it->get_tuple(), &(*it), it->is_insert(), pos);
     }
   }
 
@@ -250,48 +287,32 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       }
       typename dbtuple_write_info_vec::iterator it     = write_dbtuples.begin();
       typename dbtuple_write_info_vec::iterator it_end = write_dbtuples.end();
-      dbtuple *last_px = nullptr;
-      for (; it != it_end; ++it) {
+      dbtuple_write_info *last_px = nullptr;
+      bool inserted_last_run = false;
+      for (; it != it_end; last_px = &(*it), ++it) {
+        if (likely(last_px && last_px->tuple != it->tuple)) {
+          // on boundary
+          if (unlikely(!handle_last_tuple_in_group(*last_px, inserted_last_run))) {
+            abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+            goto do_abort;
+          }
+          inserted_last_run = false;
+        }
         if (it->is_insert()) {
-          INVARIANT(last_px != it->get_tuple());
+          INVARIANT(!last_px || last_px->tuple != it->tuple);
           INVARIANT(it->is_locked());
           INVARIANT(it->get_tuple()->is_locked());
           INVARIANT(it->get_tuple()->is_lock_owner());
-          last_px = it->get_tuple();
-          continue;
+          it->entry->set_do_write(); // all inserts are marked do-write
+          inserted_last_run = true;
+        } else {
+          INVARIANT(!it->is_locked());
         }
-        VERBOSE(std::cerr << "locking node " << util::hexify(it->get_tuple()) << std::endl);
-        INVARIANT(!it->is_locked());
-        if (last_px == it->get_tuple()) {
-          INVARIANT(last_px->is_locked());
-          INVARIANT(last_px->is_lock_owner());
-          // already locked
-          continue;
-        }
-        dbtuple *tuple = it->get_tuple();
-        if (unlikely(tuple->version == dbtuple::MAX_TID)) {
-          // if we race to put/insert w/ another txn which has inserted a new
-          // record, we *must* abort b/c the other txn could try to put/insert
-          // into a new record which we hold the lock on, so we must abort
-          //
-          // other ideas:
-          // we could *not* abort if this txn did not insert any new records.
-          // we could also release our insert locks and try to acquire them
-          // again in sorted order
-          const transaction_base::abort_reason r = transaction_base::ABORT_REASON_INSERT_NODE_INTERFERENCE;
-          abort_trap((reason = r));
-          goto do_abort;
-        }
-        const dbtuple::version_t v = tuple->lock(true); // lock for write
-        INVARIANT(dbtuple::IsLatest(v) == tuple->is_latest());
-        it->mark_locked();
-        if (unlikely(!dbtuple::IsLatest(v) ||
-                     !cast()->can_read_tid(tuple->version))) {
-          // XXX(stephentu): overly conservative (with the can_read_tid() check)
-          abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
-          goto do_abort;
-        }
-        last_px = tuple;
+      }
+      if (likely(last_px) &&
+          unlikely(!handle_last_tuple_in_group(*last_px, inserted_last_run))) {
+        abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
+        goto do_abort;
       }
       commit_tid.first = true;
       PERF_DECL(
@@ -362,6 +383,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
       typename write_set_map::iterator it     = write_set.begin();
       typename write_set_map::iterator it_end = write_set.end();
       for (; it != it_end; ++it) {
+        if (unlikely(!it->do_write()))
+          continue;
         dbtuple * const tuple = it->get_tuple();
         INVARIANT(tuple->is_locked());
         VERBOSE(std::cerr << "writing dbtuple " << util::hexify(tuple)

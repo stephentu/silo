@@ -1022,11 +1022,21 @@ public:
           // we inserted this node, so we don't want to do the checks below
           continue;
         const tid_t t = it->tuple->version;
+
         // XXX(stephentu): we are overly conservative for now- technically this
         // abort isn't necessary (we really should just write the value in the correct
         // position)
-        INVARIANT(EpochId(t) <= current_epoch);
-        if (t > ret)
+        //if (EpochId(t) > current_epoch) {
+        //  std::cerr << "t: " << g_proto_version_str(t) << std::endl;
+        //  std::cerr << "current_epoch: " << current_epoch << std::endl;
+        //  this->dump_debug_info();
+        //}
+
+        // t == dbtuple::MAX_TID when a txn does an insert of a new tuple
+        // followed by 1+ writes to the same tuple.
+        INVARIANT(EpochId(t) <= current_epoch ||
+                  t == dbtuple::MAX_TID);
+        if (t != dbtuple::MAX_TID && t > ret)
           ret = t;
       }
       ret = MakeTid(my_core_id, NumId(ret) + 1, current_epoch);
@@ -1050,7 +1060,11 @@ public:
 
     INVARIANT(rcu::s_instance.in_rcu_region());
     INVARIANT(!tuple->is_latest());
-    INVARIANT(tuple_ahead->version > tuple->version);
+
+    // >= not > only b/c of the special case of inserting a new tuple +
+    // overwriting the newly inserted record with a longer sequence of bytes in
+    // the *same* txn
+    INVARIANT(tuple_ahead->version >= tuple->version);
 
     if (tuple->is_deleting()) {
       INVARIANT(tuple->is_locked());
