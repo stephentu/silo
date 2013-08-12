@@ -40,7 +40,7 @@ NTRIALS = 1 if DRYRUN else 3
 
 KNOB_ENABLE_YCSB_SCALE=False
 KNOB_ENABLE_TPCC_SCALE=False
-KNOB_ENABLE_TPCC_MULTIPART=False
+KNOB_ENABLE_TPCC_MULTIPART=True
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
 ## debugging runs
@@ -48,7 +48,7 @@ KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=False
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
 KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
-KNOB_ENABLE_TPCC_SCALE_GC=True
+KNOB_ENABLE_TPCC_SCALE_GC=False
 
 grids = []
 
@@ -246,7 +246,21 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'threads' : [28],
       'scale_factors': [28],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
+      'bench_opts' :
+          ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [False],
+      'numa_memory' : ['%dG' % (4 * 28)],
+    },
+    {
+      'name' : 'multipart:pct',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' :
+          ['--enable-separate-tree-per-partition --workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [False],
@@ -260,7 +274,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'benchmarks' : ['tpcc'],
       'bench_opts' :
         ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
-      'par_load' : [True],
+      'par_load' : [False],
       'retry' : [False],
       'persist' : [False],
       'numa_memory' : ['%dG' % (4 * 28)],
@@ -443,13 +457,17 @@ def run_configuration(
   print >>sys.stderr, '[INFO] running command:'
   print >>sys.stderr, ' '.join(args)
   if not DRYRUN:
-    p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE)
-    r = p.stdout.read()
-    p.wait()
-    toks = r.strip().split(' ')
+    with open('stderr.log', 'w') as err:
+      p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE, stderr=err)
+      print >>sys.stderr, 'pid=', p.pid
+      r = p.stdout.read()
+      retcode = p.wait()
+      toks = r.strip().split(' ')
   else:
     toks = [0,0,0,0,0]
-  assert len(toks) == 5
+  if len(toks) != 5:
+    print 'Failure: retcode=', retcode, ', stdout=', r
+    assert False
   return tuple(map(float, toks))
 
 if __name__ == '__main__':
