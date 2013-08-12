@@ -347,6 +347,7 @@ bench_runner::run()
        << avg_latency_ms << " "
        << avg_persist_latency_ms << " "
        << agg_abort_rate << endl;
+  cout.flush();
 
   if (!slow_exit)
     return;
