@@ -27,7 +27,6 @@
 #include "amd64.h"
 #include "record/serializer.h"
 #include "util.h"
-#include "ping_pong_channel.h"
 
 using namespace std;
 using namespace util;
