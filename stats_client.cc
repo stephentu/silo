@@ -61,6 +61,8 @@ main(int argc, char **argv)
         return 1;
       }
       if ((r = pkt.recvpkt(fd))) {
+        if (r == EOF)
+          return 0;
         perror("recv - disconnecting");
         return 1;
       }
