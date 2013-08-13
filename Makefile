@@ -75,6 +75,7 @@ HEADERS = allocator.h \
 	static_assert.h \
 	static_unordered_map.h \
 	static_vector.h \
+	stats_server.h \
 	ticker.h \
 	thread.h \
 	tuple.h \
@@ -96,6 +97,7 @@ SRCFILES = allocator.cc \
 	keyrange.cc \
 	memory.cc \
 	rcu.cc \
+	stats_server.cc \
 	thread.cc \
 	ticker.cc \
 	tuple.cc \

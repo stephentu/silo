@@ -236,16 +236,16 @@ CounterTest()
   evt_test_avg.offer(1);
   evt_test_avg.offer(2);
   evt_test_avg.offer(3);
-  map<string, event_counter::counter_data> m = event_counter::get_all_counters();
+  map<string, counter_data> m = event_counter::get_all_counters();
   ALWAYS_ASSERT(m.find("test") != m.end());
   ALWAYS_ASSERT(m.find("test1") != m.end());
   ALWAYS_ASSERT(m.find("test_avg") != m.end());
 
-  ALWAYS_ASSERT(m["test"].count == 2);
-  ALWAYS_ASSERT(m["test1"].count == 0);
-  ALWAYS_ASSERT(m["test_avg"].count == 3);
-  ALWAYS_ASSERT(m["test_avg"].sum == 6);
-  ALWAYS_ASSERT(m["test_avg"].max == 3);
+  ALWAYS_ASSERT(m["test"].count_ == 2);
+  ALWAYS_ASSERT(m["test1"].count_ == 0);
+  ALWAYS_ASSERT(m["test_avg"].count_ == 3);
+  ALWAYS_ASSERT(m["test_avg"].sum_ == 6);
+  ALWAYS_ASSERT(m["test_avg"].max_ == 3);
 
   cout << "event counters test passed" << endl;
 #endif
