@@ -40,7 +40,7 @@ extern int retry_aborted_transaction;
 static inline size_t
 MaxCpuForPinning()
 {
-  return coreid::num_cpus_online();
+  return std::min(static_cast<unsigned>(nthreads), coreid::num_cpus_online());
 }
 
 class scoped_db_thread_ctx : private util::noncopyable {
