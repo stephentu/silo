@@ -265,6 +265,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'retry' : [False],
       'persist' : [False],
       'numa_memory' : ['%dG' % (4 * 28)],
+      'disable_snapshots' : [False, True],
     },
     {
       'name' : 'multipart:pct',
@@ -429,7 +430,8 @@ if KNOB_ENABLE_TPCC_SCALE_GC:
 def run_configuration(
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
     par_load, retry_aborted_txn, numa_memory, logfiles,
-    assignments, log_fake_writes, log_nofsync, log_compress, disable_gc):
+    assignments, log_fake_writes, log_nofsync, log_compress,
+    disable_gc, disable_snapshots):
   # Note: assignments is a list of list of ints
   assert len(logfiles) == len(assignments)
   assert not log_fake_writes or len(logfiles)
@@ -453,7 +455,8 @@ def run_configuration(
     + ([] if not log_fake_writes else ['--log-fake-writes']) \
     + ([] if not log_nofsync else ['--log-nofsync']) \
     + ([] if not log_compress else ['--log-compress']) \
-    + ([] if not disable_gc else ['--disable-gc'])
+    + ([] if not disable_gc else ['--disable-gc']) \
+    + ([] if not disable_snapshots else ['--disable-snapshots'])
   print >>sys.stderr, '[INFO] running command:'
   print >>sys.stderr, ' '.join(args)
   if not DRYRUN:
@@ -478,14 +481,16 @@ if __name__ == '__main__':
   for grid in grids:
     for (db, bench, scale_factor, threads, bench_opts,
          par_load, retry, numa_memory, persist,
-         log_fake_writes, log_nofsync, log_compress, disable_gc) in it.product(
+         log_fake_writes, log_nofsync, log_compress,
+         disable_gc, disable_snapshots) in it.product(
         grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
         grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
         grid['numa_memory'], grid['persist'],
         grid.get('log_fake_writes', [False]),
         grid.get('log_nofsync', [False]),
         grid.get('log_compress', [False]),
-        grid.get('disable_gc', [False])):
+        grid.get('disable_gc', [False]),
+        grid.get('disable_snapshots', [False])):
       config = {
         'name'            : grid['name'],
         'db'              : db,
@@ -501,6 +506,7 @@ if __name__ == '__main__':
         'log_nofsync'     : log_nofsync,
         'log_compress'    : log_compress,
         'disable_gc'      : disable_gc,
+        'disable_snapshots' : disable_snapshots,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
       if persist:
@@ -517,7 +523,8 @@ if __name__ == '__main__':
             basedir, db, bench, scale_factor, threads,
             bench_opts, par_load, retry, numa_memory,
             logfiles, assignments, log_fake_writes,
-            log_nofsync, log_compress, disable_gc)
+            log_nofsync, log_compress, disable_gc,
+            disable_snapshots)
         values.append(value)
       results.append((config, values))
 
