@@ -94,7 +94,7 @@ public:
   inc(uint64_t i = 1)
   {
 #ifdef ENABLE_EVENT_COUNTERS
-    ctx_->counts_.my() += 1;
+    ctx_->counts_.my() += i;
 #endif
   }
 
