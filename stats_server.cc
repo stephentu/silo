@@ -43,7 +43,7 @@ stats_server::serve_forever()
     int cfd = accept(fd, nullptr, 0);
     if (cfd < 0)
       throw system_error(errno, system_category(), "accept failed");
-    thread(&stats_server::serve_client, this, fd).detach();
+    thread(&stats_server::serve_client, this, cfd).detach();
   }
 }
 

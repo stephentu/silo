@@ -27,7 +27,7 @@ public:
       if (r == 0)
         return EOF;
       if (r < 0) {
-        if (!(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
           continue;
         return r;
       }
