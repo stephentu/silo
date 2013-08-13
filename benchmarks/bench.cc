@@ -277,7 +277,7 @@ bench_runner::run()
       size_delta += workers[i]->get_size_delta();
     }
     const double size_delta_mb = double(size_delta)/1048576.0;
-    map<string, event_counter::counter_data> ctrs = event_counter::get_all_counters();
+    map<string, counter_data> ctrs = event_counter::get_all_counters();
 
     cerr << "--- table statistics ---" << endl;
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
@@ -321,7 +321,7 @@ bench_runner::run()
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
     cerr << "--- system counters (for benchmark) ---" << endl;
-    for (map<string, event_counter::counter_data>::iterator it = ctrs.begin();
+    for (map<string, counter_data>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
       cerr << it->first << ": " << it->second << endl;
     cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
