@@ -90,12 +90,23 @@ if __name__ == '__main__':
     def maflingo_regular_extractor(x):
         if x[0]['db'] != 'ndb-proto2':
             return False
-        return x[0]['bench_opts'].find('--enable-separate-tree-per-partition') == -1
+        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
+        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
+        return not has_sep_tree and has_snapshots
 
     def maflingo_sep_trees_extractor(x):
         if x[0]['db'] != 'ndb-proto2':
             return False
-        return x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
+        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
+        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
+        return has_sep_tree and has_snapshots
+
+    def maflingo_sep_trees_no_snapshots_extractor(x):
+        if x[0]['db'] != 'ndb-proto2':
+            return False
+        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
+        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
+        return has_sep_tree and not has_snapshots
 
     config = \
       {
@@ -113,6 +124,10 @@ if __name__ == '__main__':
             {
                 'label' : 'Partition-Maflingo',
                 'extractor' : maflingo_sep_trees_extractor,
+            },
+            {
+                'label' : 'Partition-Maflingo+NoSS',
+                'extractor' : maflingo_sep_trees_no_snapshots_extractor,
             },
         ],
         'x-label' : '% cross-partition',
