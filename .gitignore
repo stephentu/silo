@@ -6,6 +6,7 @@ core
 tags
 test
 persist_test
+stats_client
 benchmarks/dbtest
 benchmarks/masstree/kvtest
 new-benchmarks/dbtest

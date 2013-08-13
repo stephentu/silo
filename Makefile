@@ -54,6 +54,7 @@ HEADERS = allocator.h \
 	circbuf.h \
 	core.h \
 	counter.h \
+	fileutils.h \
 	hash_bytes.h \
 	imstring.h \
 	keyrange.h \
@@ -74,6 +75,7 @@ HEADERS = allocator.h \
 	spinlock.h \
 	static_unordered_map.h \
 	static_vector.h \
+	stats_common.h \
 	stats_server.h \
 	ticker.h \
 	thread.h \
@@ -171,6 +173,9 @@ third-party/lz4/liblz4.so:
 
 persist_test: persist_test.o third-party/lz4/liblz4.so
 	$(CXX) -o persist_test persist_test.o $(LDFLAGS) $(LZ4LDFLAGS)
+
+stats_client: stats_client.o $(HEADERS)
+	$(CXX) -o stats_client stats_client.o $(LDFLAGS)
 
 .PHONY: dbtest
 dbtest: benchmarks/dbtest

@@ -7,8 +7,10 @@
 
 #include "counter.h"
 #include "stats_server.h"
+#include "util.h"
 
 using namespace std;
+using namespace util;
 
 stats_server::stats_server(const string &sockfile)
   : sockfile_(sockfile) {}
@@ -45,67 +47,15 @@ stats_server::serve_forever()
   }
 }
 
-static int
-writeall(int fd, const char *buf, int n)
-{
-  while (n) {
-    int r = write(fd, buf, n);
-    if (unlikely(r < 0))
-      return r;
-    buf += r;
-    n -= r;
-  }
-  return 0;
-}
-
-static int
-readall(int fd, char *buf, int n)
-{
-  while (n) {
-    int r = read(fd, buf, n);
-    if (r == 0)
-      return EOF;
-    if (r < 0) {
-      if (!(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
-        continue;
-      return r;
-    }
-    buf += r;
-    n -= r;
-  }
-  return 0;
-}
-
-int
-stats_server::sendpkt(int fd, const packet &pkt)
-{
-  // XXX: we don't care about endianness
-  return writeall(fd, (const char *) &pkt.size_, sizeof(pkt.size_) + pkt.size_);
-}
-
-int
-stats_server::recvpkt(int fd, packet &pkt)
-{
-  // XXX: we don't care about endianness
-  int r;
-  if ((r = readall(fd, (char *) &pkt.size_, sizeof(pkt.size_))))
-    return r;
-  if (pkt.size_ > packet::MAX_DATA) {
-    cerr << "bad packet read with excessive size" << endl;
-    return -1;
-  }
-  if ((r = readall(fd, &pkt.data_[0], pkt.size_)))
-    return r;
-  return 0;
-}
 
 bool
 stats_server::handle_cmd_get_counter_value(const string &name, packet &pkt)
 {
-  counter_data d;
-  if (!event_counter::stat(name, d))
+  get_counter_value_t ret;
+  ret.timestamp_us_ = timer::cur_usec();
+  if (!event_counter::stat(name, ret.d_))
     cerr << "could not find counter " << name << endl;
-  pkt.assign((const char *) &d, sizeof(d));
+  pkt.assign((const char *) &ret, sizeof(ret));
   return true;
 }
 
@@ -115,7 +65,7 @@ stats_server::serve_client(int fd)
   packet pkt;
   string scratch;
   for (;;) {
-    int r = recvpkt(fd, pkt);
+    int r = pkt.recvpkt(fd);
     if (r == EOF) {
       cerr << "client disconnected" << endl;
       return;
@@ -124,16 +74,16 @@ stats_server::serve_client(int fd)
       perror("recv- dropping connection");
       return;
     }
-    INVARIANT(pkt.size_);
-    switch (pkt.data_[0]) {
-    case CMD_GET_COUNTER_VALUE:
+    INVARIANT(pkt.size());
+    switch (pkt.data()[0]) {
+    case static_cast<uint8_t>(stats_command::GET_COUNTER_VALUE):
       {
-        scratch.assign(pkt.data_[1], pkt.size_ - 1);
+        scratch.assign(pkt.data() + 1, pkt.size() - 1);
         if (!handle_cmd_get_counter_value(scratch, pkt)) {
           cerr << "error on handle_cmd_get_counter_value(), dropping" << endl;
           return;
         }
-        sendpkt(fd, pkt);
+        pkt.sendpkt(fd);
         break;
       }
     default:
