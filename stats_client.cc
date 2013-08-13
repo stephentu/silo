@@ -25,12 +25,12 @@ int
 main(int argc, char **argv)
 {
   if (argc != 3) {
-    cerr << "[usage] " << argv[0] << " sockfile counter" << endl;
+    cerr << "[usage] " << argv[0] << " sockfile counterspec" << endl;
     return 1;
   }
 
   const string sockfile(argv[1]);
-  const string counter_name(argv[2]);
+  const vector<string> counter_names = split(argv[2], ':');
 
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (fd < 0)
@@ -47,28 +47,30 @@ main(int argc, char **argv)
     throw system_error(errno, system_category(),
         "connecting to socket");
 
-  uint8_t buf[1 + counter_name.size()];
-  buf[0] = (uint8_t) stats_command::GET_COUNTER_VALUE;
-  memcpy(&buf[1], counter_name.data(), counter_name.size());
-
   packet pkt;
   int r;
   timer loop_timer;
   for (;;) {
-    pkt.assign((const char *) &buf[0], sizeof(buf));
-    if ((r = pkt.sendpkt(fd))) {
-      perror("send - disconnecting");
-      return 1;
+    for (auto &name : counter_names) {
+      uint8_t buf[1 + name.size()];
+      buf[0] = (uint8_t) stats_command::GET_COUNTER_VALUE;
+      memcpy(&buf[1], name.data(), name.size());
+      pkt.assign((const char *) &buf[0], sizeof(buf));
+      if ((r = pkt.sendpkt(fd))) {
+        perror("send - disconnecting");
+        return 1;
+      }
+      if ((r = pkt.recvpkt(fd))) {
+        perror("recv - disconnecting");
+        return 1;
+      }
+      const get_counter_value_t *resp = (const get_counter_value_t *) pkt.data();
+      cout << name                << " "
+           << resp->timestamp_us_ << " "
+           << resp->d_.count_     << " "
+           << resp->d_.sum_       << " "
+           << resp->d_.max_       << endl;
     }
-    if ((r = pkt.recvpkt(fd))) {
-      perror("recv - disconnecting");
-      return 1;
-    }
-    const get_counter_value_t *resp = (const get_counter_value_t *) pkt.data();
-    cout << resp->timestamp_us_ << " "
-         << resp->d_.count_     << " "
-         << resp->d_.sum_       << " "
-         << resp->d_.max_       << endl;
 
     const uint64_t last_loop_usec  = loop_timer.lap();
     const uint64_t delay_time_usec = 1000000;
