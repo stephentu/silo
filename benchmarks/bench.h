@@ -36,6 +36,7 @@ extern int enable_parallel_loading;
 extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
+extern int no_reset_counters;
 
 static inline size_t
 MaxCpuForPinning()

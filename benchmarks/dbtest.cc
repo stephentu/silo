@@ -100,6 +100,7 @@ main(int argc, char **argv)
       {"disable-gc"                 , no_argument       , &disable_gc                , 1}   ,
       {"disable-snapshots"          , no_argument       , &disable_snapshots         , 1}   ,
       {"stats-server-sockfile"      , required_argument , 0                          , 'x'} ,
+      {"no-reset-counters"          , no_argument       , &no_reset_counters         , 1}   ,
       {0, 0, 0, 0}
     };
     int option_index = 0;

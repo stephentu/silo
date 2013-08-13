@@ -41,6 +41,7 @@ int enable_parallel_loading = false;
 int pin_cpus = 0;
 int slow_exit = 0;
 int retry_aborted_transaction = 0;
+int no_reset_counters = 0;
 
 template <typename T>
 static void
@@ -179,8 +180,10 @@ bench_runner::run()
   }
   db->reset_ntxn_persisted();
 
-  event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
-  PERF_EXPR(scopedperf::perfsum_base::resetall());
+  if (!no_reset_counters) {
+    event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
+    PERF_EXPR(scopedperf::perfsum_base::resetall());
+  }
   {
     const auto persisted_info = db->get_ntxn_persisted();
     if (get<0>(persisted_info) != 0 ||
