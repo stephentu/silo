@@ -12,6 +12,7 @@
 #include <sys/sysinfo.h>
 
 #include "../allocator.h"
+#include "../stats_server.h"
 #include "bench.h"
 #include "bdb_wrapper.h"
 #include "ndb_wrapper.h"
@@ -72,6 +73,7 @@ main(int argc, char **argv)
   int disable_snapshots = 0;
   vector<string> logfiles;
   vector<vector<unsigned>> assignments;
+  string stats_server_sockfile;
   while (1) {
     static struct option long_options[] =
     {
@@ -97,10 +99,11 @@ main(int argc, char **argv)
       {"log-fake-writes"            , no_argument       , &fake_writes               , 1}   ,
       {"disable-gc"                 , no_argument       , &disable_gc                , 1}   ,
       {"disable-snapshots"          , no_argument       , &disable_snapshots         , 1}   ,
+      {"stats-server-sockfile"      , required_argument , 0                          , 'x'} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:l:a:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:l:a:x:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -174,6 +177,10 @@ main(int argc, char **argv)
           ParseCSVString<unsigned, RangeAwareParser<unsigned>>(optarg));
       break;
 
+    case 'x':
+      stats_server_sockfile = optarg;
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -212,6 +219,12 @@ main(int argc, char **argv)
   if (fake_writes && nofsync) {
     cerr << "[WARNING] --log-nofsync has no effect with --log-fake-writes enabled" << endl;
   }
+
+#ifndef ENABLE_EVENT_COUNTERS
+  if (!stats_server_sockfile.empty()) {
+    cerr << "[WARNING] --stats-server-sockfile with no event counters enabled is useless" << endl;
+  }
+#endif
 
   // initialize the numa allocator
   if (numa_memory > 0) {
@@ -255,7 +268,6 @@ main(int argc, char **argv)
     return 1;
   }
 #endif
-
 
   if (db_type == "bdb") {
     const string cmd = "rm -rf " + basedir + "/db/*";
@@ -345,6 +357,7 @@ main(int argc, char **argv)
     cerr << "  assignments : " << assignments               << endl;
     cerr << "  disable-gc : " << disable_gc                 << endl;
     cerr << "  disable-snapshots : " << disable_snapshots   << endl;
+    cerr << "  stats-server-sockfile: " << stats_server_sockfile << endl;
 
     cerr << "system properties:" << endl;
     cerr << "  btree_internal_node_size: " << concurrent_btree::InternalNodeSize() << endl;
@@ -362,6 +375,11 @@ main(int argc, char **argv)
     cerr << "  btree_node_prefetch     : no" << endl;
 #endif
 
+  }
+
+  if (!stats_server_sockfile.empty()) {
+    stats_server *srvr = new stats_server(stats_server_sockfile);
+    thread(&stats_server::serve_forever, srvr).detach();
   }
 
   vector<string> bench_toks = split_ws(bench_opts);
