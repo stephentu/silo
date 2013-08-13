@@ -21,7 +21,6 @@
 #include "prefetch.h"
 #include "amd64.h"
 #include "rcu.h"
-#include "static_assert.h"
 #include "util.h"
 #include "small_vector.h"
 

@@ -11,7 +11,6 @@
 
 #include "abstract_db.h"
 #include "../macros.h"
-#include "../static_assert.h"
 #include "../thread.h"
 #include "../util.h"
 #include "../spinbarrier.h"

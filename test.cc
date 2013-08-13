@@ -254,8 +254,8 @@ CounterTest()
 void
 UtilTest()
 {
-  _static_assert(CACHELINE_SIZE == 64);
-  _static_assert(LG_CACHELINE_SIZE == 6);
+  static_assert(CACHELINE_SIZE == 64, "xx");
+  static_assert(LG_CACHELINE_SIZE == 6, "xx");
 
   const bool e0 = round_up<size_t, 1>(3) == 4;
   ALWAYS_ASSERT(e0);

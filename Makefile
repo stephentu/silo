@@ -72,7 +72,6 @@ HEADERS = allocator.h \
 	small_vector.h \
 	spinbarrier.h \
 	spinlock.h \
-	static_assert.h \
 	static_unordered_map.h \
 	static_vector.h \
 	stats_server.h \

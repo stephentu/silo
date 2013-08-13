@@ -10,7 +10,6 @@
 
 #include "abstract_db.h"
 #include "../macros.h"
-#include "../static_assert.h"
 #include "../thread.h"
 #include "../util.h"
 #include "../spinbarrier.h"
@@ -289,7 +288,7 @@ public:
   static_limit_callback(str_arena *arena, bool ignore_key)
     : n(0), arena(arena), ignore_key(ignore_key)
   {
-    _static_assert(N > 0);
+    static_assert(N > 0, "xx");
   }
 
   virtual bool invoke(

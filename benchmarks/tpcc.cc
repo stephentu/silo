@@ -1531,7 +1531,7 @@ tpcc_worker::txn_payment()
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
-      _static_assert(sizeof(lastname_buf) == 16);
+      static_assert(sizeof(lastname_buf) == 16, "xx");
       NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
       GetNonUniformCustomerLastNameRun(lastname_buf, r);
 
@@ -1675,7 +1675,7 @@ tpcc_worker::txn_order_status()
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
-      _static_assert(sizeof(lastname_buf) == 16);
+      static_assert(sizeof(lastname_buf) == 16, "xx");
       NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
       GetNonUniformCustomerLastNameRun(lastname_buf, r);
 

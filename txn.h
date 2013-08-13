@@ -25,7 +25,6 @@
 #include "macros.h"
 #include "varkey.h"
 #include "util.h"
-#include "static_assert.h"
 #include "rcu.h"
 #include "thread.h"
 #include "spinlock.h"
