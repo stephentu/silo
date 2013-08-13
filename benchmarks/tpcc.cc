@@ -542,8 +542,6 @@ protected:
   {
     if (!pin_cpus)
       return;
-    //cerr << "worker with whse=" << warehouse_id << ", coreid=" << coreid::core_id()
-    //     << " pinned to thread " << (worker_id % MaxCpuForPinning()) << endl;
     rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
   }
 

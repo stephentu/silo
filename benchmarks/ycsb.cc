@@ -35,7 +35,7 @@ public:
               unsigned long seed, abstract_db *db,
               const map<string, abstract_ordered_index *> &open_tables,
               spin_barrier *barrier_a, spin_barrier *barrier_b)
-    : bench_worker(worker_id, false, seed, db,
+    : bench_worker(worker_id, true, seed, db,
                    open_tables, barrier_a, barrier_b),
       tbl(open_tables.at("USERTABLE")),
       computation_n(0)
@@ -356,12 +356,17 @@ protected:
   virtual vector<bench_worker *>
   make_workers()
   {
+    const unsigned alignment = coreid::num_cpus_online();
+    const int blockstart =
+      coreid::allocate_contiguous_aligned_block(nthreads, alignment);
+    ALWAYS_ASSERT(blockstart >= 0);
+    ALWAYS_ASSERT((blockstart % alignment) == 0);
     fast_random r(8544290);
     vector<bench_worker *> ret;
     for (size_t i = 0; i < nthreads; i++)
       ret.push_back(
         new ycsb_worker(
-          i, r.next(), db, open_tables,
+          blockstart + i, r.next(), db, open_tables,
           &barrier_a, &barrier_b));
     return ret;
   }
