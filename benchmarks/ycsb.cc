@@ -93,9 +93,10 @@ public:
     void * const txn = db->new_txn(txn_flags, arena, txn_buf(), abstract_db::HINT_KV_RMW);
     scoped_str_arena s_arena(arena);
     try {
-      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
+      const uint64_t key = r.next() % nkeys;
+      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(key).str(obj_key0), obj_v));
       computation_n += obj_v.size();
-      tbl->put(txn, u64_varkey(r.next() % nkeys).str(str()), str().assign(YCSBRecordSize, 'c'));
+      tbl->put(txn, obj_key0, str().assign(YCSBRecordSize, 'c'));
       measure_txn_counters(txn, "txn_rmw");
       if (likely(db->commit_txn(txn)))
         return txn_result(true, 0);
