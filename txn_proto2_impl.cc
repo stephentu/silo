@@ -475,6 +475,8 @@ txn_logger::wait_until_current_point_persisted()
 
 static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
+static event_avg_counter evt_avg_time_inbetween_ro_epochs_usec(
+    "avg_time_inbetween_ro_epochs_usec");
 
 void
 transaction_proto2_static::InitGC()
@@ -549,6 +551,12 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   INVARIANT(ctx.scratch_.empty());
   if (ctx.last_reaped_epoch_ == ro_tick_geq)
     return;
+
+#ifdef ENABLE_EVENT_COUNTERS
+  const uint64_t now = timer::cur_usec();
+  evt_avg_time_inbetween_ro_epochs_usec.offer(now - ctx.last_reaped_timestamp_us_);
+  ctx.last_reaped_timestamp_us_ = now;
+#endif
   ctx.last_reaped_epoch_ = ro_tick_geq;
 
 #ifdef CHECK_INVARIANTS

@@ -568,11 +568,18 @@ public:
   struct threadctx {
     uint64_t last_commit_tid_;
     unsigned last_reaped_epoch_;
+#ifdef ENABLE_EVENT_COUNTERS
+    uint64_t last_reaped_timestamp_us_;
+#endif
     px_queue queue_;
     px_queue scratch_;
     std::deque<std::string *> pool_;
     threadctx() :
-      last_commit_tid_(0), last_reaped_epoch_(0)
+        last_commit_tid_(0)
+      , last_reaped_epoch_(0)
+#ifdef ENABLE_EVENT_COUNTERS
+      , last_reaped_timestamp_us_(util::timer::cur_usec())
+#endif
     {
       queue_.alloc_freelist(rcu::NQueueGroups);
       scratch_.alloc_freelist(rcu::NQueueGroups);

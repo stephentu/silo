@@ -65,6 +65,9 @@ public:
     px_queue scratch_;
     unsigned depth_; // 0 indicates no rcu region
     unsigned last_reaped_epoch_;
+#ifdef ENABLE_EVENT_COUNTERS
+    uint64_t last_reaped_timestamp_us_;
+#endif
 
   private:
     rcu *impl_;
@@ -77,7 +80,13 @@ public:
 
   public:
     sync()
-      : depth_(0), last_reaped_epoch_(0), impl_(nullptr), pin_cpu_(-1)
+      : depth_(0)
+      , last_reaped_epoch_(0)
+#ifdef ENABLE_EVENT_COUNTERS
+      , last_reaped_timestamp_us_(util::timer::cur_usec())
+#endif
+      , impl_(nullptr)
+      , pin_cpu_(-1)
     {
       queue_.alloc_freelist(NQueueGroups);
       scratch_.alloc_freelist(NQueueGroups);

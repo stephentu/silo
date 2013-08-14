@@ -30,6 +30,7 @@ static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
 static event_avg_counter evt_avg_rcu_local_delete_queue_len("avg_rcu_local_delete_queue_len");
 static event_avg_counter evt_avg_rcu_sync_try_release("avg_rcu_sync_try_release");
+static event_avg_counter evt_avg_time_inbetween_rcu_epochs_usec("avg_time_inbetween_rcu_epochs_usec");
 
 void *
 rcu::sync::alloc(size_t sz)
@@ -115,6 +116,12 @@ rcu::sync::do_cleanup()
   INVARIANT(scratch_.empty());
   if (last_reaped_epoch_ == clean_tick)
     return;
+
+#ifdef ENABLE_EVENT_COUNTERS
+  const uint64_t now = timer::cur_usec();
+  evt_avg_time_inbetween_rcu_epochs_usec.offer(now - last_reaped_timestamp_us_);
+  last_reaped_timestamp_us_ = now;
+#endif
   last_reaped_epoch_ = clean_tick;
 
   scratch_.empty_accept_from(queue_, clean_tick);
