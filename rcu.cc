@@ -23,7 +23,8 @@ static event_counter evt_rcu_frees("rcu_frees");
 static event_counter evt_rcu_local_reaps("rcu_local_reaps");
 static event_counter evt_rcu_incomplete_local_reaps("rcu_incomplete_local_reaps");
 static event_counter evt_rcu_loop_reaps("rcu_loop_reaps");
-static event_counter evt_allocator_arena_allocation("allocator_arena_allocation");
+static event_counter *evt_allocator_arena_allocations[::allocator::MAX_ARENAS] = {nullptr};
+static event_counter *evt_allocator_arena_deallocations[::allocator::MAX_ARENAS] = {nullptr};
 static event_counter evt_allocator_large_allocation("allocator_large_allocation");
 
 static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
@@ -52,7 +53,7 @@ rcu::sync::alloc(size_t sz)
   void *p = arenas_[arena];
   ALWAYS_ASSERT(p);
   arenas_[arena] = *reinterpret_cast<void **>(p);
-  ++evt_allocator_arena_allocation;
+  evt_allocator_arena_allocations[arena]->inc();
   return p;
 }
 
@@ -80,6 +81,7 @@ rcu::sync::dealloc(void *p, size_t sz)
   ALWAYS_ASSERT(arena < ::allocator::MAX_ARENAS);
   *reinterpret_cast<void **>(p) = arenas_[arena];
   arenas_[arena] = p;
+  evt_allocator_arena_deallocations[arena]->inc();
   deallocs_[arena]++;
 }
 
@@ -201,4 +203,12 @@ rcu::fault_region()
 rcu::rcu()
   : syncs_([this](sync &s) { s.impl_ = this; })
 {
+  // XXX: these should really be instance members of RCU
+  // we are assuming only one rcu object is ever created
+  for (size_t i = 0; i < ::allocator::MAX_ARENAS; i++) {
+    evt_allocator_arena_allocations[i] =
+      new event_counter("allocator_arena" + to_string(i) + "_allocation");
+    evt_allocator_arena_deallocations[i] =
+      new event_counter("allocator_arena" + to_string(i) + "_deallocation");
+  }
 }
