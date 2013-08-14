@@ -554,7 +554,10 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
 
 #ifdef ENABLE_EVENT_COUNTERS
   const uint64_t now = timer::cur_usec();
-  evt_avg_time_inbetween_ro_epochs_usec.offer(now - ctx.last_reaped_timestamp_us_);
+  if (ctx.last_reaped_timestamp_us_ > 0) {
+    const uint64_t diff = now - ctx.last_reaped_timestamp_us_;
+    evt_avg_time_inbetween_ro_epochs_usec.offer(diff);
+  }
   ctx.last_reaped_timestamp_us_ = now;
 #endif
   ctx.last_reaped_epoch_ = ro_tick_geq;

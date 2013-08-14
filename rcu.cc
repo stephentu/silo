@@ -119,7 +119,10 @@ rcu::sync::do_cleanup()
 
 #ifdef ENABLE_EVENT_COUNTERS
   const uint64_t now = timer::cur_usec();
-  evt_avg_time_inbetween_rcu_epochs_usec.offer(now - last_reaped_timestamp_us_);
+  if (last_reaped_timestamp_us_ > 0) {
+    const uint64_t diff = now - last_reaped_timestamp_us_;
+    evt_avg_time_inbetween_rcu_epochs_usec.offer(diff);
+  }
   last_reaped_timestamp_us_ = now;
 #endif
   last_reaped_epoch_ = clean_tick;

@@ -83,7 +83,7 @@ public:
       : depth_(0)
       , last_reaped_epoch_(0)
 #ifdef ENABLE_EVENT_COUNTERS
-      , last_reaped_timestamp_us_(util::timer::cur_usec())
+      , last_reaped_timestamp_us_(0)
 #endif
       , impl_(nullptr)
       , pin_cpu_(-1)
