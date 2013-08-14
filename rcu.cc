@@ -30,7 +30,10 @@ static event_avg_counter evt_avg_gc_reaper_queue_len("avg_gc_reaper_queue_len");
 static event_avg_counter evt_avg_rcu_delete_queue_len("avg_rcu_delete_queue_len");
 static event_avg_counter evt_avg_rcu_local_delete_queue_len("avg_rcu_local_delete_queue_len");
 static event_avg_counter evt_avg_rcu_sync_try_release("avg_rcu_sync_try_release");
-static event_avg_counter evt_avg_time_inbetween_rcu_epochs_usec("avg_time_inbetween_rcu_epochs_usec");
+static event_avg_counter evt_avg_time_inbetween_rcu_epochs_usec(
+    "avg_time_inbetween_rcu_epochs_usec");
+static event_avg_counter evt_avg_time_inbetween_allocator_releases_usec(
+    "avg_time_inbetween_allocator_releases_usec");
 
 void *
 rcu::sync::alloc(size_t sz)
@@ -80,7 +83,7 @@ rcu::sync::dealloc(void *p, size_t sz)
   deallocs_[arena]++;
 }
 
-void
+bool
 rcu::sync::try_release()
 {
   // XXX: tune
@@ -92,7 +95,9 @@ rcu::sync::try_release()
   if (acc > threshold) {
     do_release();
     evt_avg_rcu_sync_try_release.offer(acc);
+    return true;
   }
+  return false;
 }
 
 void
@@ -145,7 +150,16 @@ rcu::sync::do_cleanup()
   evt_avg_rcu_local_delete_queue_len.offer(n);
 
   // try to release memory from allocator slabs back
-  impl_->try_release();
+  if (impl_->try_release()) {
+#ifdef ENABLE_EVENT_COUNTERS
+    const uint64_t now = timer::cur_usec();
+    if (last_release_timestamp_us_ > 0) {
+      const uint64_t diff = now - last_release_timestamp_us_;
+      evt_avg_time_inbetween_allocator_releases_usec.offer(diff);
+    }
+    last_release_timestamp_us_ = now;
+#endif
+  }
 }
 
 void

@@ -67,6 +67,7 @@ public:
     unsigned last_reaped_epoch_;
 #ifdef ENABLE_EVENT_COUNTERS
     uint64_t last_reaped_timestamp_us_;
+    uint64_t last_release_timestamp_us_;
 #endif
 
   private:
@@ -76,7 +77,7 @@ public:
     ssize_t pin_cpu_;
     void *arenas_[allocator::MAX_ARENAS];
     size_t deallocs_[allocator::MAX_ARENAS]; // keeps track of the number of
-                                            // un-released deallocations
+                                             // un-released deallocations
 
   public:
     sync()
@@ -84,6 +85,7 @@ public:
       , last_reaped_epoch_(0)
 #ifdef ENABLE_EVENT_COUNTERS
       , last_reaped_timestamp_us_(0)
+      , last_release_timestamp_us_(0)
 #endif
       , impl_(nullptr)
       , pin_cpu_(-1)
@@ -116,10 +118,10 @@ public:
 
     void dealloc(void *p, size_t sz);
 
-    // try to release local arenas back to the allocator based on
-    // some simple thresholding heuristics- should only be called
-    // by background cleaners
-    void try_release();
+    // try to release local arenas back to the allocator based on some simple
+    // thresholding heuristics-- is relative expensive operation.  returns true
+    // if a release was actually performed, false otherwise
+    bool try_release();
 
     void do_cleanup();
 
@@ -160,7 +162,7 @@ public:
     return mysync().dealloc(p, sz);
   }
 
-  inline void
+  inline bool
   try_release()
   {
     return mysync().try_release();
