@@ -75,7 +75,8 @@ main(int argc, char **argv)
     }
 
     const uint64_t last_loop_usec  = loop_timer.lap();
-    const uint64_t delay_time_usec = 1000000;
+    //const uint64_t delay_time_usec = 1000000;
+    const uint64_t delay_time_usec = 1000000/4;
     if (last_loop_usec < delay_time_usec) {
       const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
       struct timespec t;
