@@ -40,7 +40,8 @@ NTRIALS = 1 if DRYRUN else 3
 
 KNOB_ENABLE_YCSB_SCALE=False
 KNOB_ENABLE_TPCC_SCALE=False
-KNOB_ENABLE_TPCC_MULTIPART=True
+KNOB_ENABLE_TPCC_MULTIPART=False
+KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
 ## debugging runs
@@ -281,6 +282,37 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'numa_memory' : ['%dG' % (4 * 28)],
     },
   ]
+
+if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
+  def mk_grid(nthds):
+    return {
+      'name' : 'multipart:skew',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [nthds],
+      'scale_factors': [4],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix 100,0,0,0,0'],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [False],
+      'numa_memory' : ['%dG' % (4 * nthds)],
+    }
+  grids += [
+    {
+      'name' : 'multipart:skew',
+      'dbs' : ['kvdb-st'],
+      'threads' : [1],
+      'scale_factors': [4],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' :
+        ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks '],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [False],
+      'numa_memory' : ['%dG' % (4 * 4)],
+    },
+  ]
+  grids += [mk_grid(t) for t in [1, 4, 8, 12, 16, 20, 24]]
 
 # exp 4:
 #  * standard workload mix
