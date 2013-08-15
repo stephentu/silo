@@ -2050,7 +2050,8 @@ protected:
           new tpcc_worker(
             blockstart + i,
             r.next(), db, open_tables, partitions,
-            &barrier_a, &barrier_b, i+1, i+2));
+            &barrier_a, &barrier_b,
+            (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
     } else {
       const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
       for (size_t i = 0; i < nthreads; i++) {
