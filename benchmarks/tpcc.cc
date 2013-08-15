@@ -543,6 +543,7 @@ protected:
     if (!pin_cpus)
       return;
     rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
+    rcu::s_instance.fault_region();
   }
 
   inline ALWAYS_INLINE string &
