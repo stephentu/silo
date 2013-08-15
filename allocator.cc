@@ -7,8 +7,12 @@
 #include "spinlock.h"
 #include "lockguard.h"
 #include "static_vector.h"
+#include "counter.h"
 
 using namespace util;
+
+static event_counter evt_allocator_total_region_usage(
+    "allocator_total_region_usage_bytes");
 
 // page+alloc routines taken from masstree
 
@@ -171,6 +175,8 @@ allocator::AllocateUnmanagedWithLock(percore &pc, size_t nhugepgs)
   const bool needs_mmap = !pc.region_faulted;
   pc.region_begin = mynewpx;
   pc.lock.unlock();
+
+  evt_allocator_total_region_usage.inc(nhugepgs * hugepgsize);
 
   if (needs_mmap) {
     void * const x = mmap(mypx, hugepgsize, PROT_READ | PROT_WRITE,
