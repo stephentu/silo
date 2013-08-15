@@ -149,11 +149,27 @@ static unsigned g_txn_workload_mix[] = { 45, 43, 4, 4, 4 }; // default TPC-C wor
 
 static aligned_padded_elem<spinlock> *g_partition_locks = 0;
 
-static inline ALWAYS_INLINE spinlock *
-LockForWarehouse(unsigned int wid)
+// maps a wid => partition id
+static inline ALWAYS_INLINE unsigned int
+PartitionId(unsigned int wid)
 {
   INVARIANT(wid >= 1 && wid <= NumWarehouses());
-  return g_enable_partition_locks ? &g_partition_locks[wid - 1].elem : nullptr;
+  INVARIANT(g_enable_partition_locks);
+  wid -= 1; // 0-idx
+  if (NumWarehouses() <= nthreads)
+    // more workers than partitions, so its easy
+    return wid;
+  const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
+  const unsigned partid = wid / nwhse_per_partition;
+  if (partid >= nthreads)
+    return nthreads - 1;
+  return partid;
+}
+
+static inline ALWAYS_INLINE spinlock &
+LockForPartition(unsigned int wid)
+{
+  return g_partition_locks[PartitionId(wid)].elem;
 }
 
 struct checker {
@@ -275,10 +291,12 @@ protected: \
   static void
   PinToWarehouseId(unsigned int wid)
   {
-    //cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
-    //     << " pinned to whse=" << wid << endl;
-    ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
-    const unsigned long pinid = (wid - 1) % MaxCpuForPinning();
+    const unsigned int partid = PartitionId(wid);
+    const unsigned int pinid  = partid % MaxCpuForPinning();
+    if (verbose)
+      cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
+           << " pinned to whse=" << wid << " (partid=" << partid << ")"
+           << endl;
     rcu::s_instance.pin_current_thread(pinid);
     rcu::s_instance.fault_region();
   }
@@ -331,6 +349,17 @@ public:
   GetCustomerId(fast_random &r)
   {
     return CheckBetweenInclusive(NonUniformRandom(r, 1023, 259, 1, NumCustomersPerDistrict()), 1, NumCustomersPerDistrict());
+  }
+
+  // pick a number between [start, end)
+  static inline ALWAYS_INLINE unsigned
+  PickWarehouseId(fast_random &r, unsigned start, unsigned end)
+  {
+    INVARIANT(start < end);
+    const unsigned diff = end - start;
+    if (diff == 1)
+      return start;
+    return (r.next() % diff) + start;
   }
 
   static string NameTokens[];
@@ -444,20 +473,30 @@ STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
+  // resp for [warehouse_id_start, warehouse_id_end)
   tpcc_worker(unsigned int worker_id,
               unsigned long seed, abstract_db *db,
               const map<string, abstract_ordered_index *> &open_tables,
               const map<string, vector<abstract_ordered_index *>> &partitions,
               spin_barrier *barrier_a, spin_barrier *barrier_b,
-              uint warehouse_id)
+              uint warehouse_id_start, uint warehouse_id_end)
     : bench_worker(worker_id, true, seed, db,
                    open_tables, barrier_a, barrier_b),
       tpcc_worker_mixin(partitions),
-      warehouse_id(warehouse_id)
+      warehouse_id_start(warehouse_id_start),
+      warehouse_id_end(warehouse_id_end)
   {
-    INVARIANT(warehouse_id >= 1);
-    INVARIANT(warehouse_id <= NumWarehouses());
+    INVARIANT(warehouse_id_start >= 1);
+    INVARIANT(warehouse_id_start <= NumWarehouses());
+    INVARIANT(warehouse_id_end > warehouse_id_start);
+    INVARIANT(warehouse_id_end <= (NumWarehouses() + 1));
     NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
+    if (verbose) {
+      cerr << "tpcc: worker id " << worker_id
+        << " => warehouses [" << warehouse_id_start
+        << ", " << warehouse_id_end << ")"
+        << endl;
+    }
   }
 
   // XXX(stephentu): tune this
@@ -553,7 +592,8 @@ protected:
   }
 
 private:
-  const uint warehouse_id;
+  const uint warehouse_id_start;
+  const uint warehouse_id_end;
   int32_t last_no_o_ids[10]; // XXX(stephentu): hack
 
   // some scratch buffer space
@@ -1161,6 +1201,7 @@ static event_counter evt_tpcc_cross_partition_payment_txns("tpcc_cross_partition
 tpcc_worker::txn_result
 tpcc_worker::txn_new_order()
 {
+  const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
   const uint districtID = RandomNumber(r, 1, 10);
   const uint customerID = GetCustomerId(r);
   const uint numItems = RandomNumber(r, 5, 15);
@@ -1212,15 +1253,15 @@ tpcc_worker::txn_new_order()
   scoped_multilock<spinlock> mlock;
   if (g_enable_partition_locks) {
     if (allLocal) {
-      mlock.enq(*LockForWarehouse(warehouse_id));
+      mlock.enq(LockForPartition(warehouse_id));
     } else {
       small_unordered_map<unsigned int, bool, 64> lockset;
-      mlock.enq(*LockForWarehouse(warehouse_id));
-      lockset[warehouse_id] = 1;
+      mlock.enq(LockForPartition(warehouse_id));
+      lockset[PartitionId(warehouse_id)] = 1;
       for (uint i = 0; i < numItems; i++) {
-        if (lockset.find(supplierWarehouseIDs[i]) == lockset.end()) {
-          mlock.enq(*LockForWarehouse(supplierWarehouseIDs[i]));
-          lockset[supplierWarehouseIDs[i]] = 1;
+        if (lockset.find(PartitionId(supplierWarehouseIDs[i])) == lockset.end()) {
+          mlock.enq(LockForPartition(supplierWarehouseIDs[i]));
+          lockset[PartitionId(supplierWarehouseIDs[i])] = 1;
         }
       }
     }
@@ -1355,6 +1396,7 @@ STATIC_COUNTER_DECL(scopedperf::tod_ctr, delivery_probe0_tod, delivery_probe0_cg
 tpcc_worker::txn_result
 tpcc_worker::txn_delivery()
 {
+  const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
 
@@ -1378,7 +1420,8 @@ tpcc_worker::txn_delivery()
   //   num_txn_contexts : 4
   void *txn = db->new_txn(txn_flags, arena, txn_buf(), abstract_db::HINT_TPCC_DELIVERY);
   scoped_str_arena s_arena(arena);
-  scoped_lock_guard<spinlock> slock(LockForWarehouse(warehouse_id));
+  scoped_lock_guard<spinlock> slock(
+      g_enable_partition_locks ? &LockForPartition(warehouse_id) : nullptr);
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -1467,6 +1510,7 @@ static event_avg_counter evt_avg_cust_name_idx_scan_size("avg_cust_name_idx_scan
 tpcc_worker::txn_result
 tpcc_worker::txn_payment()
 {
+  const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   uint customerDistrictID, customerWarehouseID;
   if (likely(g_disable_xpartition_txn ||
@@ -1495,9 +1539,9 @@ tpcc_worker::txn_payment()
   scoped_str_arena s_arena(arena);
   scoped_multilock<spinlock> mlock;
   if (g_enable_partition_locks) {
-    mlock.enq(*LockForWarehouse(warehouse_id));
-    if (customerWarehouseID != warehouse_id)
-      mlock.enq(*LockForWarehouse(customerWarehouseID));
+    mlock.enq(LockForPartition(warehouse_id));
+    if (PartitionId(customerWarehouseID) != PartitionId(warehouse_id))
+      mlock.enq(LockForPartition(customerWarehouseID));
     mlock.multilock();
   }
   if (customerWarehouseID != warehouse_id)
@@ -1648,6 +1692,7 @@ STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_p
 tpcc_worker::txn_result
 tpcc_worker::txn_order_status()
 {
+  const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
 
   // output from txn counters:
@@ -1793,6 +1838,7 @@ static event_avg_counter evt_avg_stock_level_loop_join_lookups("stock_level_loop
 tpcc_worker::txn_result
 tpcc_worker::txn_stock_level()
 {
+  const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
 
@@ -1901,8 +1947,21 @@ private:
     const string s_name(name);
     vector<abstract_ordered_index *> ret(NumWarehouses());
     if (g_enable_separate_tree_per_partition && !is_read_only) {
-      for (size_t i = 0; i < NumWarehouses(); i++)
-        ret[i] = db->open_index(s_name + "_" + to_string(i), expected_size, is_append_only);
+      if (NumWarehouses() <= nthreads) {
+        for (size_t i = 0; i < NumWarehouses(); i++)
+          ret[i] = db->open_index(s_name + "_" + to_string(i), expected_size, is_append_only);
+      } else {
+        const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
+        for (size_t partid = 0; partid < nthreads; partid++) {
+          const unsigned wstart = partid * nwhse_per_partition;
+          const unsigned wend   = (partid + 1 == nthreads) ?
+            NumWarehouses() : (partid + 1) * nwhse_per_partition;
+          abstract_ordered_index *idx =
+            db->open_index(s_name + "_" + to_string(partid), expected_size, is_append_only);
+          for (size_t i = wstart; i < wend; i++)
+            ret[i] = idx;
+        }
+      }
     } else {
       abstract_ordered_index *idx = db->open_index(s_name, expected_size, is_append_only);
       for (size_t i = 0; i < NumWarehouses(); i++)
@@ -1935,7 +1994,7 @@ public:
       ALWAYS_ASSERT(px);
       ALWAYS_ASSERT(reinterpret_cast<uintptr_t>(px) % CACHELINE_SIZE == 0);
       g_partition_locks = reinterpret_cast<aligned_padded_elem<spinlock> *>(px);
-      for (size_t i = 0; i < NumWarehouses(); i++) {
+      for (size_t i = 0; i < nthreads; i++) {
         new (&g_partition_locks[i]) aligned_padded_elem<spinlock>();
         ALWAYS_ASSERT(!g_partition_locks[i].elem.is_locked());
       }
@@ -1985,13 +2044,26 @@ protected:
     ALWAYS_ASSERT((blockstart % alignment) == 0);
     fast_random r(23984543);
     vector<bench_worker *> ret;
-    for (size_t i = 0; i < nthreads; i++)
-      ret.push_back(
-        new tpcc_worker(
-          blockstart + i,
-          r.next(), db, open_tables, partitions,
-          &barrier_a, &barrier_b,
-          (i % NumWarehouses()) + 1));
+    if (NumWarehouses() <= nthreads) {
+      for (size_t i = 0; i < nthreads; i++)
+        ret.push_back(
+          new tpcc_worker(
+            blockstart + i,
+            r.next(), db, open_tables, partitions,
+            &barrier_a, &barrier_b, i+1, i+2));
+    } else {
+      const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
+      for (size_t i = 0; i < nthreads; i++) {
+        const unsigned wstart = i * nwhse_per_partition;
+        const unsigned wend   = (i + 1 == nthreads) ?
+          NumWarehouses() : (i + 1) * nwhse_per_partition;
+        ret.push_back(
+          new tpcc_worker(
+            blockstart + i,
+            r.next(), db, open_tables, partitions,
+            &barrier_a, &barrier_b, wstart+1, wend+1));
+      }
+    }
     return ret;
   }
 
