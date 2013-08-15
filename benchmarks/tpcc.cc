@@ -154,7 +154,6 @@ static inline ALWAYS_INLINE unsigned int
 PartitionId(unsigned int wid)
 {
   INVARIANT(wid >= 1 && wid <= NumWarehouses());
-  INVARIANT(g_enable_partition_locks);
   wid -= 1; // 0-idx
   if (NumWarehouses() <= nthreads)
     // more workers than partitions, so its easy
@@ -169,6 +168,7 @@ PartitionId(unsigned int wid)
 static inline ALWAYS_INLINE spinlock &
 LockForPartition(unsigned int wid)
 {
+  INVARIANT(g_enable_partition_locks);
   return g_partition_locks[PartitionId(wid)].elem;
 }
 
