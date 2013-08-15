@@ -21,6 +21,7 @@
 //#define DISABLE_FIELD_SELECTION
 //#define PARANOID_CHECKING
 //#define LOCK_OWNERSHIP_CHECKING
+#define MEMCHECK_MAGIC 0xFF
 
 /**
  * some non-sensical options, which only make sense for performance debugging

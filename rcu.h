@@ -138,6 +138,16 @@ public:
         return;
       INVARIANT(pin_cpu_ >= 0);
       arenas_[arena] = allocator::AllocateArenas(pin_cpu_, arena);
+#ifdef MEMCHECK_MAGIC
+      const size_t alloc_size = (arena + 1) * allocator::AllocAlignment;
+      void *p = arenas_[arena];
+      while (p) {
+        NDB_MEMSET(
+            (char *) p + sizeof(void **),
+            MEMCHECK_MAGIC, alloc_size - sizeof(void **));
+        p = *((void **) p);
+      }
+#endif
     }
   };
 

@@ -52,6 +52,13 @@ rcu::sync::alloc(size_t sz)
   ensure_arena(arena);
   void *p = arenas_[arena];
   ALWAYS_ASSERT(p);
+#ifdef MEMCHECK_MAGIC
+  // make sure nobody wrote over the memory
+  const size_t alloc_size = (arena + 1) * ::allocator::AllocAlignment;
+  for (size_t off = sizeof(void **); off < alloc_size; off++)
+    ALWAYS_ASSERT( (unsigned char) *((const char *) p + off) ==
+                   (unsigned char) MEMCHECK_MAGIC );
+#endif
   arenas_[arena] = *reinterpret_cast<void **>(p);
   evt_allocator_arena_allocations[arena]->inc();
   return p;
@@ -80,6 +87,12 @@ rcu::sync::dealloc(void *p, size_t sz)
   auto arena = sizes.second;
   ALWAYS_ASSERT(arena < ::allocator::MAX_ARENAS);
   *reinterpret_cast<void **>(p) = arenas_[arena];
+#ifdef MEMCHECK_MAGIC
+  const size_t alloc_size = (arena + 1) * ::allocator::AllocAlignment;
+  NDB_MEMSET(
+      (char *) p + sizeof(void **),
+      MEMCHECK_MAGIC, alloc_size - sizeof(void **));
+#endif
   arenas_[arena] = p;
   evt_allocator_arena_deallocations[arena]->inc();
   deallocs_[arena]++;
