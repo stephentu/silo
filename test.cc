@@ -1011,19 +1011,19 @@ public:
 #ifdef PROTO2_CAN_DISABLE_GC
     transaction_proto2_static::InitGC();
 #endif
-    varkeytest::Test();
-    pxqueuetest::Test();
-    CounterTest();
-    UtilTest();
-    XbufTest();
-    varint::Test();
-    small_vector_ns::Test();
-    small_map_ns::Test();
-    recordtest::Test();
+    //varkeytest::Test();
+    //pxqueuetest::Test();
+    //CounterTest();
+    //UtilTest();
+    //XbufTest();
+    //varint::Test();
+    //small_vector_ns::Test();
+    //small_map_ns::Test();
+    //recordtest::Test();
     rcu::Test();
     //TestConcurrentBtreeFast();
     //TestConcurrentBtreeSlow();
-    txn_btree_test();
+    //txn_btree_test();
     ret = 0;
   }
 
