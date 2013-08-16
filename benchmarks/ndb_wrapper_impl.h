@@ -291,9 +291,14 @@ ndb_wrapper<Transaction>::close_index(abstract_ordered_index *idx)
 }
 
 template <template <typename> class Transaction>
-ndb_ordered_index<Transaction>::ndb_ordered_index(const std::string &name, size_t value_size_hint, bool mostly_append)
+ndb_ordered_index<Transaction>::ndb_ordered_index(
+    const std::string &name, size_t value_size_hint, bool mostly_append)
   : name(name), btr(value_size_hint, mostly_append, name)
 {
+  // for debugging
+  //std::cerr << name << " : btree= "
+  //          << btr.get_underlying_btree()
+  //          << std::endl;
 }
 
 template <template <typename> class Transaction>
