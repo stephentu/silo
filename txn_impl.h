@@ -89,8 +89,8 @@ transaction<Protocol, Traits>::cleanup_inserted_tuple_marker(
 #ifdef TUPLE_CHECK_KEY
     std::cerr << " *** original key        : " << util::hexify(marker->key) << std::endl;
 #endif
-    INVARIANT(false);
 #endif
+    ALWAYS_ASSERT(false);
   }
   INVARIANT(removed == (typename concurrent_btree::value_type) marker);
   INVARIANT(marker->is_latest());
@@ -227,6 +227,10 @@ template <template <typename> class Protocol, typename Traits>
 bool
 transaction<Protocol, Traits>::commit(bool doThrow)
 {
+#ifdef TUPLE_MAGIC
+  try {
+#endif
+
   PERF_DECL(
       static std::string probe0_name(
         std::string(__PRETTY_FUNCTION__) + std::string(":total:")));
@@ -477,6 +481,13 @@ do_abort:
   if (doThrow)
     throw transaction_abort_exception(reason);
   return false;
+
+#ifdef TUPLE_MAGIC
+  } catch (dbtuple::magic_failed_exception &) {
+    dump_debug_info();
+    ALWAYS_ASSERT(false);
+  }
+#endif
 }
 
 template <template <typename> class Protocol, typename Traits>

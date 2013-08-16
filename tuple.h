@@ -125,6 +125,22 @@ private:
 
 public:
 
+#ifdef TUPLE_MAGIC
+  class magic_failed_exception: public std::exception {};
+  static const uint8_t TUPLE_MAGIC = 0x29U;
+  uint8_t magic;
+  inline ALWAYS_INLINE void CheckMagic() const
+  {
+    if (unlikely(magic != TUPLE_MAGIC)) {
+      print(1);
+      // so we can catch it later and print out useful debugging output
+      throw magic_failed_exception();
+    }
+  }
+#else
+  inline ALWAYS_INLINE void CheckMagic() const {}
+#endif
+
   // NB(stephentu): ABA problem happens after some multiple of
   // 2^(NBits(version_t)-6) concurrent modifications- somewhat low probability
   // event, so we let it happen
@@ -179,7 +195,11 @@ private:
 
   // creates a (new) record with a tentative value at MAX_TID
   dbtuple(size_type size, size_type alloc_size, bool acquire_lock)
-    : hdr(HDR_LATEST_MASK |
+    :
+#ifdef TUPLE_MAGIC
+      magic(TUPLE_MAGIC),
+#endif
+      hdr(HDR_LATEST_MASK |
           (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0) |
           (!size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
@@ -214,7 +234,11 @@ private:
           struct dbtuple *base,
           size_type alloc_size,
           bool set_latest)
-    : hdr(set_latest ? HDR_LATEST_MASK : 0)
+    :
+#ifdef TUPLE_MAGIC
+      magic(TUPLE_MAGIC),
+#endif
+      hdr(set_latest ? HDR_LATEST_MASK : 0)
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
       , lock_owner(0) // not portable
 #endif
@@ -241,7 +265,11 @@ private:
           size_type old_size, size_type new_size,
           size_type alloc_size,
           struct dbtuple *next, bool set_latest)
-    : hdr((set_latest ? HDR_LATEST_MASK : 0) | (!new_size ? HDR_DELETING_MASK : 0))
+    :
+#ifdef TUPLE_MAGIC
+      magic(TUPLE_MAGIC),
+#endif
+      hdr((set_latest ? HDR_LATEST_MASK : 0) | (!new_size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
       , lock_owner(0) // not portable
 #endif
@@ -317,6 +345,7 @@ public:
   inline version_t
   lock(bool write_intent)
   {
+    CheckMagic();
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nspins = 0;
 #endif
@@ -350,6 +379,7 @@ public:
   inline void
   unlock()
   {
+    CheckMagic();
     version_t v = hdr;
     bool newv = false;
     INVARIANT(IsLocked(v));
@@ -393,6 +423,7 @@ public:
   inline void
   mark_deleting()
   {
+    CheckMagic();
     // the lock on the latest version guards non-latest versions
     INVARIANT(!is_latest() || is_locked());
     INVARIANT(!is_latest() || is_lock_owner());
@@ -403,6 +434,7 @@ public:
   inline void
   clear_deleting()
   {
+    CheckMagic();
     INVARIANT(is_locked());
     INVARIANT(is_lock_owner());
     INVARIANT(is_deleting());
@@ -418,6 +450,7 @@ public:
   inline void
   mark_modifying()
   {
+    CheckMagic();
     version_t v = hdr;
     INVARIANT(IsLocked(v));
     INVARIANT(is_lock_owner());
@@ -461,6 +494,7 @@ public:
   inline void
   clear_latest()
   {
+    CheckMagic();
     INVARIANT(is_locked());
     INVARIANT(is_lock_owner());
     INVARIANT(is_latest());
@@ -553,18 +587,21 @@ public:
   inline ALWAYS_INLINE void
   set_next(struct dbtuple *next)
   {
+    CheckMagic();
     this->next = next;
   }
 
   inline void
   clear_next()
   {
+    CheckMagic();
     this->next = nullptr;
   }
 
   inline ALWAYS_INLINE uint8_t *
   get_value_start()
   {
+    CheckMagic();
     return &value_start[0];
   }
 
@@ -819,6 +856,7 @@ public:
   write_record_at(const Transaction *txn, tid_t t,
                   const void *v, tuple_writer_t writer)
   {
+    CheckMagic();
     INVARIANT(is_locked());
     INVARIANT(is_lock_owner());
     INVARIANT(is_latest());

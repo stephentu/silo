@@ -382,11 +382,12 @@ operator<<(
     std::ostream &o,
     const transaction_base::write_record_t &r)
 {
-  o << "[tuple=" << util::hexify(r.get_tuple())
+  o << "[tuple=" << r.get_tuple()
     << ", key=" << util::hexify(r.get_key())
     << ", value=" << util::hexify(r.get_value())
     << ", insert=" << r.is_insert()
     << ", do_write=" << r.do_write()
+    << ", btree=" << r.get_btree()
     << "]";
   return o;
 }

@@ -30,6 +30,7 @@ __thread vector<const dbtuple *> *dbtuple::tl_locked_nodes(nullptr);
 
 dbtuple::~dbtuple()
 {
+  CheckMagic();
   INVARIANT(!is_locked());
   INVARIANT(!is_latest());
   INVARIANT(!is_write_intent());
