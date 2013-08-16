@@ -679,6 +679,83 @@ protected:
   const uint64_t txn_flags;
 };
 
+namespace mp_stress_test_allocator_ns {
+
+  static const size_t nworkers = 28;
+  static const size_t nkeys = nworkers * 4;
+
+  static atomic<bool> running(true);
+
+  template <template <typename> class TxnType, typename Traits>
+  class worker : public txn_btree_worker<TxnType> {
+  public:
+    worker(unsigned id, txn_btree<TxnType> &btr, uint64_t txn_flags)
+      : txn_btree_worker<TxnType>(btr, txn_flags),
+        id(id), commits(0), aborts(0) {}
+    ~worker() {}
+    virtual void run()
+    {
+      rcu::s_instance.pin_current_thread(id);
+      fast_random r(reinterpret_cast<unsigned long>(this));
+      string v;
+      while (running.load()) {
+        typename Traits::StringAllocator arena;
+        TxnType<Traits> t(this->txn_flags, arena);
+        try {
+          // RMW on a small space of keys
+          const u64_varkey k(r.next() % nkeys);
+          ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, k, v));
+          ((rec *) v.data())->v++;
+          this->btr->put(t, k, v);
+          t.commit(true);
+          commits++;
+        } catch (transaction_abort_exception &e) {
+          aborts++;
+        }
+      }
+    }
+    unsigned get_id() const { return id; }
+    unsigned get_commits() const { return commits; }
+    unsigned get_aborts() const { return aborts; }
+  private:
+    unsigned id;
+    unsigned commits;
+    unsigned aborts;
+  };
+
+};
+
+template <template <typename> class TxnType, typename Traits>
+static void
+mp_stress_test_allocator()
+{
+  using namespace mp_stress_test_allocator_ns;
+  txn_btree<TxnType> btr;
+  {
+    rcu::s_instance.pin_current_thread(0);
+    typename Traits::StringAllocator arena;
+    TxnType<Traits> t(0, arena);
+    for (size_t i = 0; i < nkeys; i++)
+      btr.insert_object(t, u64_varkey(i), rec(0));
+    AssertSuccessfulCommit(t);
+  }
+  vector< shared_ptr< worker<TxnType, Traits> > > v;
+  for (size_t i = 0; i < nworkers; i++)
+    v.emplace_back(new worker<TxnType, Traits>(i, btr, 0));
+  for (auto &p : v)
+    p->start();
+  sleep(60);
+  running.store(false);
+  for (auto &p : v) {
+    p->join();
+    cerr << "worker " << p->get_id()
+         << " commits " << p->get_commits()
+         << " aborts " << p->get_aborts()
+         << endl;
+  }
+  cerr << "mp_stress_test_allocator passed" << endl;
+}
+
 namespace mp_stress_test_insert_removes_ns {
   struct big_rec {
     static const size_t S = numeric_limits<dbtuple::node_size_type>::max();
@@ -1782,23 +1859,24 @@ void txn_btree_test()
   //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
-  test1<transaction_proto2, default_transaction_traits>();
-  test2<transaction_proto2, default_transaction_traits>();
-  test_absent_key_race<transaction_proto2, default_transaction_traits>();
-  test_inc_value_size<transaction_proto2, default_transaction_traits>();
-  test_multi_btree<transaction_proto2, default_transaction_traits>();
-  test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
-  test_long_keys<transaction_proto2, default_transaction_traits>();
-  test_long_keys2<transaction_proto2, default_transaction_traits>();
-  test_insert_same_key<transaction_proto2, default_transaction_traits>();
+  //test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
+  //test1<transaction_proto2, default_transaction_traits>();
+  //test2<transaction_proto2, default_transaction_traits>();
+  //test_absent_key_race<transaction_proto2, default_transaction_traits>();
+  //test_inc_value_size<transaction_proto2, default_transaction_traits>();
+  //test_multi_btree<transaction_proto2, default_transaction_traits>();
+  //test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
+  //test_long_keys<transaction_proto2, default_transaction_traits>();
+  //test_long_keys2<transaction_proto2, default_transaction_traits>();
+  //test_insert_same_key<transaction_proto2, default_transaction_traits>();
 
-  mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
-  mp_test1<transaction_proto2, default_transaction_traits>();
-  mp_test2<transaction_proto2, default_transaction_traits>();
-  mp_test3<transaction_proto2, default_transaction_traits>();
-  mp_test_simple_write_skew<transaction_proto2, default_transaction_traits>();
-  mp_test_batch_processing<transaction_proto2, default_transaction_traits>();
+  mp_stress_test_allocator<transaction_proto2, default_transaction_traits>();
+  //mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
+  //mp_test1<transaction_proto2, default_transaction_traits>();
+  //mp_test2<transaction_proto2, default_transaction_traits>();
+  //mp_test3<transaction_proto2, default_transaction_traits>();
+  //mp_test_simple_write_skew<transaction_proto2, default_transaction_traits>();
+  //mp_test_batch_processing<transaction_proto2, default_transaction_traits>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();

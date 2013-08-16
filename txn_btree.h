@@ -371,6 +371,16 @@ public:
 
   template <typename Traits>
   inline void
+  put(Transaction<Traits> &t, const varkey &k, const value_type &v)
+  {
+    INVARIANT(!v.empty());
+    this->do_tree_put(
+        t, stablize(t, k), stablize(t, v),
+        txn_btree_::tuple_writer, false);
+  }
+
+  template <typename Traits>
+  inline void
   insert(Transaction<Traits> &t, const key_type &k, const value_type &v)
   {
     INVARIANT(!v.empty());

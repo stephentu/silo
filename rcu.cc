@@ -300,32 +300,40 @@ rcu::rcu()
   }
 }
 
+struct rcu_stress_test_rec {
+  uint64_t magic_;
+  uint64_t counter_;
+} PACKED;
+
 static const uint64_t rcu_stress_test_magic = 0xABCDDEAD01234567UL;
-static const size_t rcu_stress_test_nthreads = 24;
-static atomic<uint64_t *> rcu_stress_test_array[rcu_stress_test_nthreads];
+static const size_t rcu_stress_test_nthreads = 28;
+static atomic<rcu_stress_test_rec *> rcu_stress_test_array[rcu_stress_test_nthreads];
 static atomic<bool> rcu_stress_test_keep_going(true);
 
 static void
 rcu_stress_test_deleter_fn(void *px)
 {
-  ALWAYS_ASSERT( *((uint64_t *)px) == rcu_stress_test_magic );
+  ALWAYS_ASSERT( ((rcu_stress_test_rec *) px)->magic_ == rcu_stress_test_magic );
+  rcu::s_instance.dealloc(px, sizeof(rcu_stress_test_rec));
 }
 
 static void
 rcu_stress_test_worker(unsigned id)
 {
   rcu::s_instance.pin_current_thread(id);
-  uint64_t *mypx =
-    (uint64_t *) rcu::s_instance.alloc(sizeof(uint64_t));
-  *mypx = rcu_stress_test_magic;
+  rcu_stress_test_rec *mypx =
+    (rcu_stress_test_rec *) rcu::s_instance.alloc(sizeof(rcu_stress_test_rec));
+  mypx->magic_ = rcu_stress_test_magic;
+  mypx->counter_ = 0;
   rcu_stress_test_array[id].store(mypx, memory_order_release);
   while (rcu_stress_test_keep_going.load(memory_order_acquire)) {
     scoped_rcu_region rcu;
     for (size_t i = 0; i < rcu_stress_test_nthreads; i++) {
-      uint64_t *p = rcu_stress_test_array[i].load(memory_order_acquire);
+      rcu_stress_test_rec *p = rcu_stress_test_array[i].load(memory_order_acquire);
       if (!p)
         continue;
-      ALWAYS_ASSERT(*p == rcu_stress_test_magic);
+      ALWAYS_ASSERT(p->magic_ == rcu_stress_test_magic);
+      p->counter_++; // let it be racy, doesn't matter
     }
     // swap it out
     mypx = rcu_stress_test_array[id].load(memory_order_acquire);
@@ -333,8 +341,10 @@ rcu_stress_test_worker(unsigned id)
       rcu_stress_test_array[id].store(nullptr, memory_order_release);
       rcu::s_instance.free_with_fn(mypx, rcu_stress_test_deleter_fn);
     } else {
-      mypx = (uint64_t *) rcu::s_instance.alloc(sizeof(uint64_t));
-      *mypx = rcu_stress_test_magic;
+      mypx = (rcu_stress_test_rec *)
+        rcu::s_instance.alloc(sizeof(rcu_stress_test_rec));
+      mypx->magic_ = rcu_stress_test_magic;
+      mypx->counter_ = 0;
       rcu_stress_test_array[id].store(mypx, memory_order_release);
     }
   }
@@ -348,7 +358,7 @@ rcu_stress_test()
   vector<thread> workers;
   for (size_t i = 0; i < rcu_stress_test_nthreads; i++)
     workers.emplace_back(rcu_stress_test_worker, i);
-  sleep(30);
+  sleep(120);
   rcu_stress_test_keep_going.store(false, memory_order_release);
   for (auto &t : workers)
     t.join();
