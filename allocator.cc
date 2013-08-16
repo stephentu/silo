@@ -16,6 +16,26 @@ static event_counter evt_allocator_total_region_usage(
 
 // page+alloc routines taken from masstree
 
+#ifdef MEMCHECK_MAGIC
+const allocator::pgmetadata *
+allocator::PointerToPgMetadata(const void *p)
+{
+  static const size_t hugepgsize = GetHugepageSize();
+  if (unlikely(!ManagesPointer(p)))
+    return nullptr;
+  const size_t cpu = PointerToCpu(p);
+  const percore &pc = g_regions[cpu].elem;
+  if (p >= pc.region_begin)
+    return nullptr;
+  // round pg down to page
+  p = (const void *) ((uintptr_t)p & ~(hugepgsize-1));
+  const pgmetadata *pmd = (const pgmetadata *) p;
+  ALWAYS_ASSERT((pmd->unit_ % AllocAlignment) == 0);
+  ALWAYS_ASSERT((MAX_ARENAS * AllocAlignment) >= pmd->unit_);
+  return pmd;
+}
+#endif
+
 size_t
 allocator::GetHugepageSizeImpl()
 {
@@ -90,6 +110,8 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
       reinterpret_cast<char *>(g_memstart) + (i * g_maxpercore);
     g_regions[i]->region_end   =
       reinterpret_cast<char *>(g_memstart) + ((i + 1) * g_maxpercore);
+    std::cerr << "cpu" << i << " owns [" << g_regions[i]->region_begin
+              << ", " << g_regions[i]->region_end << ")" << std::endl;
   }
 
   s_init = true;
@@ -112,16 +134,36 @@ allocator::DumpStats()
 static void *
 initialize_page(void *page, const size_t pagesize, const size_t unit)
 {
+  ALWAYS_ASSERT(((uintptr_t)page % pagesize) == 0);
+
+#ifdef MEMCHECK_MAGIC
+  ::allocator::pgmetadata *pmd = (::allocator::pgmetadata *) page;
+  pmd->unit_ = unit;
+  page = (void *) ((uintptr_t)page + sizeof(*pmd));
+#endif
+
   void *first = (void *)util::iceil((uintptr_t)page, (uintptr_t)unit);
-  assert((uintptr_t)first + unit <= (uintptr_t)page + pagesize);
+  ALWAYS_ASSERT((uintptr_t)first + unit <= (uintptr_t)page + pagesize);
   void **p = (void **)first;
   void *next = (void *)((uintptr_t)p + unit);
   while ((uintptr_t)next + unit <= (uintptr_t)page + pagesize) {
+    ALWAYS_ASSERT(((uintptr_t)p % unit) == 0);
     *p = next;
+#ifdef MEMCHECK_MAGIC
+    NDB_MEMSET(
+        (char *) p + sizeof(void **),
+        MEMCHECK_MAGIC, unit - sizeof(void **));
+#endif
     p = (void **)next;
     next = (void *)((uintptr_t)next + unit);
   }
+  ALWAYS_ASSERT(((uintptr_t)p % unit) == 0);
   *p = NULL;
+#ifdef MEMCHECK_MAGIC
+  NDB_MEMSET(
+      (char *) p + sizeof(void **),
+      MEMCHECK_MAGIC, unit - sizeof(void **));
+#endif
   return first;
 }
 

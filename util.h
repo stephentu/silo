@@ -114,6 +114,21 @@ struct big_endian_trfm<uint64_t> {
   inline ALWAYS_INLINE uint64_t operator()(uint64_t t) const { return htobe64(t); }
 };
 
+inline std::string
+hexify_buf(const char *buf, size_t len)
+{
+  const char *const lut = "0123456789ABCDEF";
+  std::string output;
+  output.reserve(2 * len);
+  for (size_t i = 0; i < len; ++i) {
+    const unsigned char c = (unsigned char) buf[i];
+    output.push_back(lut[c >> 4]);
+    output.push_back(lut[c & 15]);
+  }
+  return output;
+}
+
+
 template <typename T>
 inline std::string
 hexify(const T &t)
@@ -127,17 +142,7 @@ template <>
 inline std::string
 hexify(const std::string &input)
 {
-  size_t len = input.length();
-  const char *const lut = "0123456789ABCDEF";
-
-  std::string output;
-  output.reserve(2 * len);
-  for (size_t i = 0; i < len; ++i) {
-    const unsigned char c = (unsigned char) input[i];
-    output.push_back(lut[c >> 4]);
-    output.push_back(lut[c & 15]);
-  }
-  return output;
+  return hexify_buf(input.data(), input.size());
 }
 
 template <typename T, unsigned int lgbase>
@@ -168,13 +173,24 @@ iceil(T x, U y)
   return x + (mod ? y - mod : 0);
 }
 
-static inline size_t
-slow_round_up(size_t x, size_t q)
+template <typename T>
+static inline T
+slow_round_up(T x, T q)
 {
-  const size_t r = x % q;
+  const T r = x % q;
   if (!r)
     return x;
   return x + (q - r);
+}
+
+template <typename T>
+static inline T
+slow_round_down(T x, T q)
+{
+  const T r = x % q;
+  if (!r)
+    return x;
+  return x - r;
 }
 
 //// xor-shift:

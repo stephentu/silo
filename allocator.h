@@ -55,7 +55,7 @@ public:
 
   // returns true if managed by this allocator, false otherwise
   static inline bool
-  ManagesPointer(void *p)
+  ManagesPointer(const void *p)
   {
     return p >= g_memstart && p < g_memend;
   }
@@ -63,15 +63,27 @@ public:
   // assumes p is managed by this allocator- returns the CPU from which this pointer
   // was allocated
   static inline size_t
-  PointerToCpu(void *p)
+  PointerToCpu(const void *p)
   {
-    INVARIANT(p >= g_memstart);
-    INVARIANT(p < g_memend);
+    ALWAYS_ASSERT(p >= g_memstart);
+    ALWAYS_ASSERT(p < g_memend);
     const size_t ret =
-      (reinterpret_cast<char *>(p) - reinterpret_cast<char *>(g_memstart)) / g_maxpercore;
-    INVARIANT(ret < g_ncpus);
+      (reinterpret_cast<const char *>(p) -
+       reinterpret_cast<const char *>(g_memstart)) / g_maxpercore;
+    ALWAYS_ASSERT(ret < g_ncpus);
     return ret;
   }
+
+#ifdef MEMCHECK_MAGIC
+  struct pgmetadata {
+    uint32_t unit_; // 0-indexed
+  } PACKED;
+
+  // returns nullptr if p is not managed, or has not been allocated yet.
+  // p does not have to be properly aligned
+  static const pgmetadata *
+  PointerToPgMetadata(const void *p);
+#endif
 
   static size_t
   GetPageSize()

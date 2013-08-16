@@ -92,8 +92,8 @@ public:
     {
       queue_.alloc_freelist(NQueueGroups);
       scratch_.alloc_freelist(NQueueGroups);
-      NDB_MEMSET(arenas_, 0, sizeof(arenas_));
-      NDB_MEMSET(deallocs_, 0, sizeof(deallocs_));
+      NDB_MEMSET(&arenas_[0], 0, sizeof(arenas_));
+      NDB_MEMSET(&deallocs_[0], 0, sizeof(deallocs_));
     }
 
     inline void
@@ -138,16 +138,6 @@ public:
         return;
       INVARIANT(pin_cpu_ >= 0);
       arenas_[arena] = allocator::AllocateArenas(pin_cpu_, arena);
-#ifdef MEMCHECK_MAGIC
-      const size_t alloc_size = (arena + 1) * allocator::AllocAlignment;
-      void *p = arenas_[arena];
-      while (p) {
-        NDB_MEMSET(
-            (char *) p + sizeof(void **),
-            MEMCHECK_MAGIC, alloc_size - sizeof(void **));
-        p = *((void **) p);
-      }
-#endif
     }
   };
 
@@ -243,6 +233,8 @@ public:
   rcu(); // initer
 
   static rcu s_instance; // system wide instance
+
+  static void Test();
 
 private:
 

@@ -36,6 +36,69 @@ static event_avg_counter evt_avg_time_inbetween_rcu_epochs_usec(
 static event_avg_counter evt_avg_time_inbetween_allocator_releases_usec(
     "avg_time_inbetween_allocator_releases_usec");
 
+#ifdef MEMCHECK_MAGIC
+static void
+report_error_and_die(
+    const void *p, size_t alloc_size, const char *msg,
+    const string &prefix="", unsigned recurse=3, bool first=true)
+{
+  // print the entire allocation block, for debugging reference
+  static_assert(::allocator::AllocAlignment % 8 == 0, "xx");
+  const void *pnext = *((const void **) p);
+  cerr << prefix << "Address " << p << " error found! (next ptr " << pnext << ")" << endl;
+  if (pnext) {
+    const ::allocator::pgmetadata *pmd = ::allocator::PointerToPgMetadata(pnext);
+    if (!pmd) {
+      cerr << prefix << "Error: could not get pgmetadata for next ptr" << endl;
+      cerr << prefix << "Allocator managed next ptr? " << ::allocator::ManagesPointer(pnext) << endl;
+    } else {
+      cerr << prefix << "Next ptr allocation size: " << pmd->unit_ << endl;
+      if (((uintptr_t)pnext % pmd->unit_) == 0) {
+        if (recurse)
+          report_error_and_die(
+              pnext, pmd->unit_, "", prefix + "    ", recurse - 1, false);
+        else
+          cerr << prefix << "recursion stopped" << endl;
+      } else {
+        cerr << prefix << "Next ptr not properly aligned" << endl;
+        if (recurse)
+          report_error_and_die(
+              (const void *) slow_round_down((uintptr_t)pnext, (uintptr_t)pmd->unit_),
+              pmd->unit_, "", prefix + "    ", recurse - 1, false);
+        else
+          cerr << prefix << "recursion stopped" << endl;
+      }
+    }
+  }
+  cerr << prefix << "Msg: " << msg << endl;
+  cerr << prefix << "Allocation size: " << alloc_size << endl;
+  cerr << prefix << "Ptr aligned properly? " << (((uintptr_t)p % alloc_size) == 0) << endl;
+  for (const char *buf = (const char *) p;
+      buf < (const char *) p + alloc_size;
+      buf += 8) {
+    cerr << prefix << hexify_buf(buf, 8) << endl;
+  }
+  if (first)
+    ALWAYS_ASSERT(false);
+}
+
+static void
+check_pointer_or_die(void *p, size_t alloc_size)
+{
+  ALWAYS_ASSERT(p);
+  if (unlikely(((uintptr_t)p % alloc_size) != 0))
+    report_error_and_die(p, alloc_size, "pointer not properly aligned");
+  for (size_t off = sizeof(void **); off < alloc_size; off++)
+    if (unlikely(
+         (unsigned char) *((const char *) p + off) !=
+         (unsigned char) MEMCHECK_MAGIC ) )
+      report_error_and_die(p, alloc_size, "memory magic not found");
+  void *pnext = *((void **) p);
+  if (unlikely(((uintptr_t)pnext % alloc_size) != 0))
+    report_error_and_die(p, alloc_size, "next pointer not properly aligned");
+}
+#endif
+
 void *
 rcu::sync::alloc(size_t sz)
 {
@@ -51,13 +114,10 @@ rcu::sync::alloc(size_t sz)
   }
   ensure_arena(arena);
   void *p = arenas_[arena];
-  ALWAYS_ASSERT(p);
+  INVARIANT(p);
 #ifdef MEMCHECK_MAGIC
-  // make sure nobody wrote over the memory
   const size_t alloc_size = (arena + 1) * ::allocator::AllocAlignment;
-  for (size_t off = sizeof(void **); off < alloc_size; off++)
-    ALWAYS_ASSERT( (unsigned char) *((const char *) p + off) ==
-                   (unsigned char) MEMCHECK_MAGIC );
+  check_pointer_or_die(p, alloc_size);
 #endif
   arenas_[arena] = *reinterpret_cast<void **>(p);
   evt_allocator_arena_allocations[arena]->inc();
@@ -89,9 +149,12 @@ rcu::sync::dealloc(void *p, size_t sz)
   *reinterpret_cast<void **>(p) = arenas_[arena];
 #ifdef MEMCHECK_MAGIC
   const size_t alloc_size = (arena + 1) * ::allocator::AllocAlignment;
+  ALWAYS_ASSERT( ((uintptr_t)p % alloc_size) == 0 );
   NDB_MEMSET(
       (char *) p + sizeof(void **),
       MEMCHECK_MAGIC, alloc_size - sizeof(void **));
+  ALWAYS_ASSERT(*((void **) p) == arenas_[arena]);
+  check_pointer_or_die(p, alloc_size);
 #endif
   arenas_[arena] = p;
   evt_allocator_arena_deallocations[arena]->inc();
@@ -118,9 +181,19 @@ rcu::sync::try_release()
 void
 rcu::sync::do_release()
 {
-  ::allocator::ReleaseArenas(arenas_);
-  NDB_MEMSET(arenas_, 0, sizeof(arenas_));
-  NDB_MEMSET(deallocs_, 0, sizeof(deallocs_));
+#ifdef MEMCHECK_MAGIC
+  for (size_t i = 0; i < ::allocator::MAX_ARENAS; i++) {
+    const size_t alloc_size = (i + 1) * ::allocator::AllocAlignment;
+    void *p = arenas_[i];
+    while (p) {
+      check_pointer_or_die(p, alloc_size);
+      p = *((void **) p);
+    }
+  }
+#endif
+  ::allocator::ReleaseArenas(&arenas_[0]);
+  NDB_MEMSET(&arenas_[0], 0, sizeof(arenas_));
+  NDB_MEMSET(&deallocs_[0], 0, sizeof(deallocs_));
 }
 
 void
@@ -224,4 +297,10 @@ rcu::rcu()
     evt_allocator_arena_deallocations[i] =
       new event_counter("allocator_arena" + to_string(i) + "_deallocation");
   }
+}
+
+void
+rcu::Test()
+{
+
 }
