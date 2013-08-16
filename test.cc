@@ -1020,10 +1020,10 @@ public:
     //small_vector_ns::Test();
     //small_map_ns::Test();
     //recordtest::Test();
-    rcu::Test();
+    //rcu::Test();
     //TestConcurrentBtreeFast();
     //TestConcurrentBtreeSlow();
-    //txn_btree_test();
+    txn_btree_test();
     ret = 0;
   }
 

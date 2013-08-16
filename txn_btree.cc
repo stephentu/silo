@@ -1859,24 +1859,24 @@ void txn_btree_test()
   //mp_test_batch_processing<transaction_proto1>();
 
   cerr << "Test proto2" << endl;
-  //test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
-  //test1<transaction_proto2, default_transaction_traits>();
-  //test2<transaction_proto2, default_transaction_traits>();
-  //test_absent_key_race<transaction_proto2, default_transaction_traits>();
-  //test_inc_value_size<transaction_proto2, default_transaction_traits>();
-  //test_multi_btree<transaction_proto2, default_transaction_traits>();
-  //test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
-  //test_long_keys<transaction_proto2, default_transaction_traits>();
-  //test_long_keys2<transaction_proto2, default_transaction_traits>();
-  //test_insert_same_key<transaction_proto2, default_transaction_traits>();
+  test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
+  test1<transaction_proto2, default_transaction_traits>();
+  test2<transaction_proto2, default_transaction_traits>();
+  test_absent_key_race<transaction_proto2, default_transaction_traits>();
+  test_inc_value_size<transaction_proto2, default_transaction_traits>();
+  test_multi_btree<transaction_proto2, default_transaction_traits>();
+  test_read_only_snapshot<transaction_proto2, default_transaction_traits>();
+  test_long_keys<transaction_proto2, default_transaction_traits>();
+  test_long_keys2<transaction_proto2, default_transaction_traits>();
+  test_insert_same_key<transaction_proto2, default_transaction_traits>();
 
-  mp_stress_test_allocator<transaction_proto2, default_transaction_traits>();
-  //mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
-  //mp_test1<transaction_proto2, default_transaction_traits>();
-  //mp_test2<transaction_proto2, default_transaction_traits>();
-  //mp_test3<transaction_proto2, default_transaction_traits>();
-  //mp_test_simple_write_skew<transaction_proto2, default_transaction_traits>();
-  //mp_test_batch_processing<transaction_proto2, default_transaction_traits>();
+  //mp_stress_test_allocator<transaction_proto2, default_transaction_traits>();
+  mp_stress_test_insert_removes<transaction_proto2, default_transaction_traits>();
+  mp_test1<transaction_proto2, default_transaction_traits>();
+  mp_test2<transaction_proto2, default_transaction_traits>();
+  mp_test3<transaction_proto2, default_transaction_traits>();
+  mp_test_simple_write_skew<transaction_proto2, default_transaction_traits>();
+  mp_test_batch_processing<transaction_proto2, default_transaction_traits>();
 
   //read_only_perf<transaction_proto1>();
   //read_only_perf<transaction_proto2>();
