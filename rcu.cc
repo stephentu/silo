@@ -254,13 +254,15 @@ rcu::sync::do_cleanup()
 void
 rcu::free_with_fn(void *p, deleter_t fn)
 {
-  uint64_t rcu_tick = 0;
-  const bool in_region = in_rcu_region(rcu_tick);
-  if (!in_region)
-    INVARIANT(false);
-  // already locked by the scoped region
   sync &s = mysync();
-  s.queue_.enqueue(delete_entry(p, fn), rcu_tick);
+  uint64_t cur_tick = 0; // ticker units
+  const bool is_guarded = ticker::s_instance.is_locally_guarded(cur_tick);
+  if (!is_guarded)
+    INVARIANT(false);
+  INVARIANT(s.depth());
+  // all threads are either at cur_tick or cur_tick + 1, so we must wait for
+  // the system to move beyond cur_tick + 1
+  s.queue_.enqueue(delete_entry(p, fn), to_rcu_ticks(cur_tick + 1));
   ++evt_rcu_frees;
 }
 
