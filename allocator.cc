@@ -24,7 +24,7 @@ allocator::PointerToPgMetadata(const void *p)
   if (unlikely(!ManagesPointer(p)))
     return nullptr;
   const size_t cpu = PointerToCpu(p);
-  const percore &pc = g_regions[cpu].elem;
+  const regionctx &pc = g_regions[cpu];
   if (p >= pc.region_begin)
     return nullptr;
   // round pg down to page
@@ -106,12 +106,12 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
       (reinterpret_cast<uintptr_t>(x) + (g_ncpus * g_maxpercore + hugepgsize)));
 
   for (size_t i = 0; i < g_ncpus; i++) {
-    g_regions[i]->region_begin =
+    g_regions[i].region_begin =
       reinterpret_cast<char *>(g_memstart) + (i * g_maxpercore);
-    g_regions[i]->region_end   =
+    g_regions[i].region_end   =
       reinterpret_cast<char *>(g_memstart) + ((i + 1) * g_maxpercore);
-    std::cerr << "cpu" << i << " owns [" << g_regions[i]->region_begin
-              << ", " << g_regions[i]->region_end << ")" << std::endl;
+    //std::cerr << "cpu" << i << " owns [" << g_regions[i].region_begin
+    //          << ", " << g_regions[i].region_end << ")" << std::endl;
   }
 
   s_init = true;
@@ -122,10 +122,10 @@ allocator::DumpStats()
 {
   std::cerr << "[allocator] ncpus=" << g_ncpus << std::endl;
   for (size_t i = 0; i < g_ncpus; i++) {
-    const bool f = g_regions[i]->region_faulted;
+    const bool f = g_regions[i].region_faulted;
     const size_t remaining =
-      intptr_t(g_regions[i]->region_end) -
-      intptr_t(g_regions[i]->region_begin);
+      intptr_t(g_regions[i].region_end) -
+      intptr_t(g_regions[i].region_begin);
     std::cerr << "[allocator] cpu=" << i << " fully_faulted?=" << f
               << " remaining=" << remaining << " bytes" << std::endl;
   }
@@ -176,7 +176,7 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
   INVARIANT(g_maxpercore);
   static const size_t hugepgsize = GetHugepageSize();
 
-  percore &pc = g_regions[cpu].elem;
+  regionctx &pc = g_regions[cpu];
   pc.lock.lock();
   if (likely(pc.arenas[arena])) {
     // claim
@@ -193,13 +193,13 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
 void *
 allocator::AllocateUnmanaged(size_t cpu, size_t nhugepgs)
 {
-  percore &pc = g_regions[cpu].elem;
+  regionctx &pc = g_regions[cpu];
   pc.lock.lock();
   return AllocateUnmanagedWithLock(pc, nhugepgs); // releases lock
 }
 
 void *
-allocator::AllocateUnmanagedWithLock(percore &pc, size_t nhugepgs)
+allocator::AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs)
 {
   static const size_t hugepgsize = GetHugepageSize();
 
@@ -270,7 +270,7 @@ allocator::ReleaseArenas(void **arenas)
   }
   for (auto &p : m) {
     INVARIANT(!p.second.empty());
-    percore &pc = g_regions[p.first].elem;
+    regionctx &pc = g_regions[p.first];
     lock_guard<spinlock> l(pc.lock);
     for (size_t arena = 0; arena < MAX_ARENAS; arena++) {
       INVARIANT(bool(p.second[arena].first) == bool(p.second[arena].second));
@@ -288,7 +288,7 @@ allocator::FaultRegion(size_t cpu)
   static const size_t hugepgsize = GetHugepageSize();
   //static const size_t pgsize = GetPageSize();
   INVARIANT(cpu < g_ncpus);
-  percore &pc = g_regions[cpu].elem;
+  regionctx &pc = g_regions[cpu];
   if (pc.region_faulted)
     return;
   lock_guard<std::mutex> l1(pc.fault_lock);
@@ -328,4 +328,4 @@ void *allocator::g_memstart = nullptr;
 void *allocator::g_memend = nullptr;
 size_t allocator::g_ncpus = 0;
 size_t allocator::g_maxpercore = 0;
-aligned_padded_elem<allocator::percore> allocator::g_regions[NMAXCORES];
+percore<allocator::regionctx> allocator::g_regions;

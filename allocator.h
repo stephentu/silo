@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "util.h"
+#include "core.h"
 #include "macros.h"
 #include "spinlock.h"
 
@@ -103,17 +104,17 @@ private:
   static size_t GetPageSizeImpl();
   static size_t GetHugepageSizeImpl();
 
-  struct percore {
-    percore()
+  struct regionctx {
+    regionctx()
       : region_begin(nullptr),
         region_end(nullptr),
         region_faulted(false)
     {
       NDB_MEMSET(arenas, 0, sizeof(arenas));
     }
-    percore(const percore &) = delete;
-    percore(percore &&) = delete;
-    percore &operator=(const percore &) = delete;
+    regionctx(const regionctx &) = delete;
+    regionctx(regionctx &&) = delete;
+    regionctx &operator=(const regionctx &) = delete;
 
     // set by Initialize()
     void *region_begin;
@@ -126,10 +127,10 @@ private:
     void *arenas[MAX_ARENAS];
   };
 
-  // assumes caller has the percore lock held, and
+  // assumes caller has the regionctx lock held, and
   // will release the lock.
   static void *
-  AllocateUnmanagedWithLock(percore &pc, size_t nhugepgs);
+  AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs);
 
   // [g_memstart, g_memstart + ncpus * maxpercore) is the region of memory mmap()-ed
   static void *g_memstart;
@@ -137,7 +138,7 @@ private:
   static size_t g_ncpus;
   static size_t g_maxpercore;
 
-  static util::aligned_padded_elem<percore> g_regions[NMAXCORES];
+  static percore<regionctx> g_regions;
 };
 
 #endif /* _NDB_ALLOCATOR_H_ */
