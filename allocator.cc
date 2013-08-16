@@ -134,7 +134,7 @@ allocator::DumpStats()
 static void *
 initialize_page(void *page, const size_t pagesize, const size_t unit)
 {
-  ALWAYS_ASSERT(((uintptr_t)page % pagesize) == 0);
+  INVARIANT(((uintptr_t)page % pagesize) == 0);
 
 #ifdef MEMCHECK_MAGIC
   ::allocator::pgmetadata *pmd = (::allocator::pgmetadata *) page;
@@ -143,11 +143,11 @@ initialize_page(void *page, const size_t pagesize, const size_t unit)
 #endif
 
   void *first = (void *)util::iceil((uintptr_t)page, (uintptr_t)unit);
-  ALWAYS_ASSERT((uintptr_t)first + unit <= (uintptr_t)page + pagesize);
+  INVARIANT((uintptr_t)first + unit <= (uintptr_t)page + pagesize);
   void **p = (void **)first;
   void *next = (void *)((uintptr_t)p + unit);
   while ((uintptr_t)next + unit <= (uintptr_t)page + pagesize) {
-    ALWAYS_ASSERT(((uintptr_t)p % unit) == 0);
+    INVARIANT(((uintptr_t)p % unit) == 0);
     *p = next;
 #ifdef MEMCHECK_MAGIC
     NDB_MEMSET(
@@ -157,7 +157,7 @@ initialize_page(void *page, const size_t pagesize, const size_t unit)
     p = (void **)next;
     next = (void *)((uintptr_t)next + unit);
   }
-  ALWAYS_ASSERT(((uintptr_t)p % unit) == 0);
+  INVARIANT(((uintptr_t)p % unit) == 0);
   *p = NULL;
 #ifdef MEMCHECK_MAGIC
   NDB_MEMSET(
