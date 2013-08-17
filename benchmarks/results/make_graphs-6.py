@@ -155,8 +155,8 @@ if __name__ == '__main__':
 
     configs = [
       {
-        'file'    : 'istc3-8-15-13_multipart_skew.py',
-        'outfile' : 'istc3-8-15-13_multipart_skew.pdf',
+        'file'    : 'istc3-8-16-13_multipart_skew.py',
+        'outfile' : 'istc3-8-16-13_multipart_skew.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
