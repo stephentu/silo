@@ -30,6 +30,10 @@ def extract_pct(x):
     return math.fsum([(1.0/11.0)*pn(float(n), p) for n in range(5, 16)])
   return ex(p/100.0) * 100.0
 
+def extract_nthreads(x):
+  x = x[0]['threads']
+  return x
+
 def deal_with_posK_res(k):
     def fn(x):
         x = x[1]
@@ -37,6 +41,13 @@ def deal_with_posK_res(k):
             return [e[k] for e in x]
         return x[k]
     return fn
+
+def longest_line(ls):
+    best, bestlen = ls[0], len(ls[0])
+    for i in xrange(1, len(ls)):
+        if len(ls[i]) > bestlen:
+            best, bestline = ls[i], len(ls[i])
+    return best
 
 def mkplot(results, desc, outfilename):
     def mean(x):   return sum(x)/len(x)
@@ -50,6 +61,13 @@ def mkplot(results, desc, outfilename):
         xpts = map(desc['x-axis'], line_results)
         ypts = map(desc['y-axis'], line_results)
         lines.append({ 'xpts' : xpts, 'ypts' : ypts })
+    longest = longest_line([x['xpts'] for x in lines])
+    for idx in xrange(len(desc['lines'])):
+        line_desc = desc['lines'][idx]
+        if 'extend' in line_desc and line_desc['extend']:
+            assert len(lines[idx]['xpts']) == 1
+            lines[idx]['xpts'] = longest
+            lines[idx]['ypts'] = [lines[idx]['ypts'][0] for _ in longest]
     if not desc['show-error-bars']:
         for l in lines:
             ax.plot(l['xpts'], [median(y) for y in l['ypts']])
@@ -84,9 +102,6 @@ def KFormatter(x, p):
   return '%.1fK' % v
 
 if __name__ == '__main__':
-    (_, inp) = sys.argv
-    execfile(inp)
-
     def maflingo_regular_extractor(x):
         if x[0]['db'] != 'ndb-proto2':
             return False
@@ -108,34 +123,66 @@ if __name__ == '__main__':
         has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
         return has_sep_tree and not has_snapshots
 
-    config = \
+    #config = \
+    #  {
+    #    'x-axis' : extract_pct,
+    #    'y-axis' : deal_with_posK_res(0),
+    #    'lines' : [
+    #        {
+    #            'label' : 'Partition-Store',
+    #            'extractor' : lambda x: x[0]['db'] == 'kvdb-st',
+    #        },
+    #        {
+    #            'label' : 'Maflingo',
+    #            'extractor' : maflingo_regular_extractor,
+    #        },
+    #        {
+    #            'label' : 'Partition-Maflingo',
+    #            'extractor' : maflingo_sep_trees_extractor,
+    #        },
+    #        {
+    #            'label' : 'Partition-Maflingo+NoSS',
+    #            'extractor' : maflingo_sep_trees_no_snapshots_extractor,
+    #        },
+    #    ],
+    #    'x-label' : '% cross-partition',
+    #    'y-label' : 'throughput (txns/sec)',
+    #    'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+    #    'x-axis-set-major-locator' : False,
+    #    'show-error-bars' : True,
+    #    'legend' : 'upper right',
+    #  }
+
+    configs = [
       {
-        'x-axis' : extract_pct,
+        'file'    : 'istc3-8-15-13_multipart_skew.py',
+        'outfile' : 'istc3-8-15-13_multipart_skew.pdf',
+        'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
             {
                 'label' : 'Partition-Store',
                 'extractor' : lambda x: x[0]['db'] == 'kvdb-st',
+                'extend' : True,
             },
             {
                 'label' : 'Maflingo',
                 'extractor' : maflingo_regular_extractor,
             },
-            {
-                'label' : 'Partition-Maflingo',
-                'extractor' : maflingo_sep_trees_extractor,
-            },
-            {
-                'label' : 'Partition-Maflingo+NoSS',
-                'extractor' : maflingo_sep_trees_no_snapshots_extractor,
-            },
         ],
-        'x-label' : '% cross-partition',
+        'x-label' : 'nthreads',
         'y-label' : 'throughput (txns/sec)',
         'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'upper right',
-      }
+      },
+    ]
 
-    mkplot(RESULTS, config, 'istc3-8-12-13_multipart.pdf')
+    #mkplot(RESULTS, config, 'istc3-8-15-13_multipart.pdf')
+
+    for config in configs:
+      g, l = {}, {}
+      execfile(config['file'], g, l)
+      mkplot(l['RESULTS'], config, config['outfile'])
+
