@@ -18,7 +18,6 @@
 #include <cxxabi.h>
 
 #include "macros.h"
-#include "xbuf.h"
 #include "small_vector.h"
 
 namespace util {
@@ -397,14 +396,6 @@ inline std::string
 next_key(const std::string &s)
 {
   std::string s0(s);
-  s0.resize(s.size() + 1);
-  return s0;
-}
-
-inline xbuf
-next_key(const xbuf &s)
-{
-  xbuf s0(s);
   s0.resize(s.size() + 1);
   return s0;
 }

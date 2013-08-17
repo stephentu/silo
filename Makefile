@@ -55,7 +55,6 @@ HEADERS = allocator.h \
 	core.h \
 	counter.h \
 	fileutils.h \
-	hash_bytes.h \
 	imstring.h \
 	keyrange.h \
 	lockguard.h \
@@ -88,13 +87,11 @@ HEADERS = allocator.h \
 	typed_txn_btree.h \
 	util.h \
 	varint.h \
-	varkey.h \
-	xbuf.h
+	varkey.h 
 SRCFILES = allocator.cc \
 	btree.cc \
 	core.cc \
 	counter.cc \
-	hash_bytes.cc \
 	keyrange.cc \
 	memory.cc \
 	rcu.cc \

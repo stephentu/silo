@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <map>
 #include <iostream>
+#include <cstring>
 
 #include "allocator.h"
 #include "spinlock.h"
