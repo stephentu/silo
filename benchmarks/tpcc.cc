@@ -145,9 +145,11 @@ static int g_disable_read_only_scans = 0;
 static int g_enable_partition_locks = 0;
 static int g_enable_separate_tree_per_partition = 0;
 static int g_new_order_remote_item_pct = 1;
+static int g_new_order_fast_id_gen = 0;
 static unsigned g_txn_workload_mix[] = { 45, 43, 4, 4, 4 }; // default TPC-C workload mix
 
-static aligned_padded_elem<spinlock> *g_partition_locks = 0;
+static aligned_padded_elem<spinlock> *g_partition_locks = nullptr;
+static aligned_padded_elem<atomic<uint64_t>> *g_district_ids = nullptr;
 
 // maps a wid => partition id
 static inline ALWAYS_INLINE unsigned int
@@ -170,6 +172,22 @@ LockForPartition(unsigned int wid)
 {
   INVARIANT(g_enable_partition_locks);
   return g_partition_locks[PartitionId(wid)].elem;
+}
+
+static inline atomic<uint64_t> &
+NewOrderIdHolder(unsigned warehouse, unsigned district)
+{
+  INVARIANT(warehouse >= 1 && warehouse <= NumWarehouses());
+  INVARIANT(district >= 1 && district <= NumDistrictsPerWarehouse());
+  const unsigned idx =
+    (warehouse - 1) * NumDistrictsPerWarehouse() + (district - 1);
+  return g_district_ids[idx].elem;
+}
+
+static inline uint64_t
+FastNewOrderIdGen(unsigned warehouse, unsigned district)
+{
+  return NewOrderIdHolder(warehouse, district).fetch_add(1, memory_order_acq_rel);
 }
 
 struct checker {
@@ -1287,16 +1305,20 @@ tpcc_worker::txn_new_order()
     const district::value *v_d = Decode(obj_v, v_d_temp);
     checker::SanityCheckDistrict(&k_d, v_d);
 
-    const new_order::key k_no(warehouse_id, districtID, v_d->d_next_o_id);
+    const uint64_t my_next_o_id = g_new_order_fast_id_gen ?
+        FastNewOrderIdGen(warehouse_id, districtID) : v_d->d_next_o_id;
+
+    const new_order::key k_no(warehouse_id, districtID, my_next_o_id);
     const new_order::value v_no;
     const size_t new_order_sz = Size(v_no);
     tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k_no), Encode(str(), v_no));
     ret += new_order_sz;
 
-    district::value v_d_new(*v_d);
-    v_d_new.d_next_o_id++;
-
-    tbl_district(warehouse_id)->put(txn, Encode(str(), k_d), Encode(str(), v_d_new));
+    if (!g_new_order_fast_id_gen) {
+      district::value v_d_new(*v_d);
+      v_d_new.d_next_o_id++;
+      tbl_district(warehouse_id)->put(txn, Encode(str(), k_d), Encode(str(), v_d_new));
+    }
 
     const oorder::key k_oo(warehouse_id, districtID, k_no.no_o_id);
     oorder::value v_oo;
@@ -1868,11 +1890,15 @@ tpcc_worker::txn_stock_level()
     const district::value *v_d = Decode(obj_v, v_d_temp);
     checker::SanityCheckDistrict(&k_d, v_d);
 
+    const uint64_t cur_next_o_id = g_new_order_fast_id_gen ?
+      NewOrderIdHolder(warehouse_id, districtID).load(memory_order_acquire) :
+      v_d->d_next_o_id;
+
     // manual joins are fun!
     order_line_scan_callback c;
-    const int32_t lower = v_d->d_next_o_id >= 20 ? (v_d->d_next_o_id - 20) : 0;
+    const int32_t lower = cur_next_o_id >= 20 ? (cur_next_o_id - 20) : 0;
     const order_line::key k_ol_0(warehouse_id, districtID, lower, 0);
-    const order_line::key k_ol_1(warehouse_id, districtID, v_d->d_next_o_id, 0);
+    const order_line::key k_ol_1(warehouse_id, districtID, cur_next_o_id, 0);
     {
       ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
       tbl_order_line(warehouse_id)->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c, s_arena.get());
@@ -1990,7 +2016,7 @@ public:
 
     if (g_enable_partition_locks) {
       static_assert(sizeof(aligned_padded_elem<spinlock>) == CACHELINE_SIZE, "xx");
-      void * const px = memalign(CACHELINE_SIZE, sizeof(aligned_padded_elem<spinlock>) * NumWarehouses());
+      void * const px = memalign(CACHELINE_SIZE, sizeof(aligned_padded_elem<spinlock>) * nthreads);
       ALWAYS_ASSERT(px);
       ALWAYS_ASSERT(reinterpret_cast<uintptr_t>(px) % CACHELINE_SIZE == 0);
       g_partition_locks = reinterpret_cast<aligned_padded_elem<spinlock> *>(px);
@@ -1998,7 +2024,17 @@ public:
         new (&g_partition_locks[i]) aligned_padded_elem<spinlock>();
         ALWAYS_ASSERT(!g_partition_locks[i].elem.is_locked());
       }
-      COMPILER_MEMORY_FENCE;
+    }
+
+    if (g_new_order_fast_id_gen) {
+      void * const px =
+        memalign(
+            CACHELINE_SIZE,
+            sizeof(aligned_padded_elem<atomic<uint64_t>>) *
+              NumWarehouses() * NumDistrictsPerWarehouse());
+      g_district_ids = reinterpret_cast<aligned_padded_elem<atomic<uint64_t>> *>(px);
+      for (size_t i = 0; i < NumWarehouses() * NumDistrictsPerWarehouse(); i++)
+        new (&g_district_ids[i]) atomic<uint64_t>(3001);
     }
   }
 
@@ -2086,6 +2122,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
       {"enable-partition-locks"               , no_argument       , &g_enable_partition_locks             , 1}   ,
       {"enable-separate-tree-per-partition"   , no_argument       , &g_enable_separate_tree_per_partition , 1}   ,
       {"new-order-remote-item-pct"            , required_argument , 0                                     , 'r'} ,
+      {"new-order-fast-id-gen"                , no_argument       , &g_new_order_fast_id_gen              , 1}   ,
       {"workload-mix"                         , required_argument , 0                                     , 'w'} ,
       {0, 0, 0, 0}
     };
@@ -2142,6 +2179,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
     cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
     cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
     cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
+    cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
     cerr << "  workload_mix                 : " << format_list(g_txn_workload_mix,
                                                                g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
   }
