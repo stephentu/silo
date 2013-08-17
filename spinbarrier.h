@@ -9,13 +9,17 @@
  * Barrier implemented by spinning
  */
 
-class spin_barrier : private util::noncopyable {
+class spin_barrier {
 public:
   spin_barrier(size_t n)
     : n(n)
   {
     ALWAYS_ASSERT(n > 0);
   }
+
+  spin_barrier(const spin_barrier &) = delete;
+  spin_barrier(spin_barrier &&) = delete;
+  spin_barrier &operator=(const spin_barrier &) = delete;
 
   ~spin_barrier()
   {

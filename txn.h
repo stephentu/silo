@@ -49,7 +49,7 @@ class transaction_read_only_exception {};
 extern std::string (*g_proto_version_str)(uint64_t v);
 
 // base class with very simple definitions- nothing too exciting yet
-class transaction_base : private util::noncopyable {
+class transaction_base {
   template <template <typename> class T, typename P>
     friend class base_txn_btree;
 public:
@@ -107,10 +107,14 @@ public:
     return 0;
   }
 
-  inline transaction_base(uint64_t flags)
+  transaction_base(uint64_t flags)
     : state(TXN_EMBRYO),
       reason(ABORT_REASON_NONE),
       flags(flags) {}
+
+  transaction_base(const transaction_base &) = delete;
+  transaction_base(transaction_base &&) = delete;
+  transaction_base &operator=(const transaction_base &) = delete;
 
 protected:
 #define EVENT_COUNTER_DEF_X(x) \

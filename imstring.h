@@ -18,7 +18,7 @@
  * RCU for GC
  */
 template <bool RCU>
-class base_imstring : private util::noncopyable {
+class base_imstring {
 
   template <bool R>
   friend class base_imstring;
@@ -39,7 +39,7 @@ class base_imstring : private util::noncopyable {
   static event_avg_counter g_evt_avg_imstring_len;
 
 public:
-  inline base_imstring() : p(NULL), l(0) {}
+  base_imstring() : p(NULL), l(0) {}
 
   base_imstring(const uint8_t *src, size_t l)
     : p(new uint8_t[l]), l(CheckBounds(l))
@@ -56,6 +56,10 @@ public:
     g_evt_avg_imstring_len.offer(l);
     NDB_MEMCPY(p, s.data(), l);
   }
+
+  base_imstring(const base_imstring &) = delete;
+  base_imstring(base_imstring &&) = delete;
+  base_imstring &operator=(const base_imstring &) = delete;
 
   template <bool R>
   inline void

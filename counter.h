@@ -126,7 +126,7 @@ private:
 #endif
 };
 
-class event_avg_counter : private util::noncopyable {
+class event_avg_counter {
 public:
   event_avg_counter(const std::string &name);
 

@@ -58,8 +58,12 @@ MaxCpuForPinning()
 // classes to templatetized [for sanity in compliation times]; we trade off
 // a bit of type-safety for more rapid development cycles
 
-class scoped_db_thread_ctx : private util::noncopyable {
+class scoped_db_thread_ctx {
 public:
+  scoped_db_thread_ctx(const scoped_db_thread_ctx &) = delete;
+  scoped_db_thread_ctx(scoped_db_thread_ctx &&) = delete;
+  scoped_db_thread_ctx &operator=(const scoped_db_thread_ctx &) = delete;
+
   scoped_db_thread_ctx(abstract_db *db, bool loader)
     : db(db)
   {
@@ -223,8 +227,12 @@ protected:
   str_arena arena;
 };
 
-class bench_runner : private util::noncopyable {
+class bench_runner {
 public:
+  bench_runner(const bench_runner &) = delete;
+  bench_runner(bench_runner &&) = delete;
+  bench_runner &operator=(const bench_runner &) = delete;
+
   bench_runner(abstract_db *db)
     : db(db), barrier_a(nthreads), barrier_b(1) {}
   virtual ~bench_runner() {}

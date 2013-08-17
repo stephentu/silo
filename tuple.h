@@ -35,7 +35,7 @@ extern std::string (*g_proto_version_str)(uint64_t v);
  * into underlying (non-transactional) data structures- it
  * also contains the memory of the value
  */
-struct dbtuple : private util::noncopyable {
+struct dbtuple {
   friend std::ostream &
   operator<<(std::ostream &o, const dbtuple &tuple);
 
@@ -192,6 +192,10 @@ private:
     INVARIANT(s <= std::numeric_limits<node_size_type>::max());
     return s;
   }
+
+  dbtuple(const dbtuple &) = delete;
+  dbtuple(dbtuple &&) = delete;
+  dbtuple &operator=(const dbtuple &) = delete;
 
   // creates a (new) record with a tentative value at MAX_TID
   dbtuple(size_type size, size_type alloc_size, bool acquire_lock)

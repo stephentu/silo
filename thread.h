@@ -18,7 +18,7 @@
  * Note that ndb_threads are thin wrappers around pthread's API
  */
 
-class ndb_thread : private util::noncopyable {
+class ndb_thread {
 public:
 
   typedef void (*run_t)(void);
@@ -27,6 +27,10 @@ public:
     : body(NULL), daemon(daemon), name(name) {}
   ndb_thread(run_t body, bool daemon = false, const std::string &name = "thd")
     : body(body), daemon(daemon), name(name) {}
+
+  ndb_thread(const ndb_thread &) = delete;
+  ndb_thread(ndb_thread &&) = delete;
+  ndb_thread &operator=(const ndb_thread &) = delete;
 
   virtual ~ndb_thread();
 

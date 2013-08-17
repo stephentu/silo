@@ -7,9 +7,13 @@
 #include "macros.h"
 #include "util.h"
 
-class spinlock : private util::noncopyable {
+class spinlock {
 public:
   spinlock() : value(0) {}
+
+  spinlock(const spinlock &) = delete;
+  spinlock(spinlock &&) = delete;
+  spinlock &operator=(const spinlock &) = delete;
 
   inline void
   lock()
