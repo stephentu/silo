@@ -107,7 +107,16 @@ if __name__ == '__main__':
             return False
         has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
         has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
-        return not has_sep_tree and has_snapshots
+        has_fast_id_gen = x[0]['bench_opts'].find('--new-order-fast-id-gen') != -1
+        return not has_sep_tree and has_snapshots and not has_fast_id_gen
+
+    def maflingo_fast_id_gen_extractor(x):
+        if x[0]['db'] != 'ndb-proto2':
+            return False
+        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
+        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
+        has_fast_id_gen = x[0]['bench_opts'].find('--new-order-fast-id-gen') != -1
+        return not has_sep_tree and has_snapshots and has_fast_id_gen
 
     def maflingo_sep_trees_extractor(x):
         if x[0]['db'] != 'ndb-proto2':
@@ -168,6 +177,10 @@ if __name__ == '__main__':
             {
                 'label' : 'Maflingo',
                 'extractor' : maflingo_regular_extractor,
+            },
+            {
+                'label' : 'Maflingo+FastIds',
+                'extractor' : maflingo_fast_id_gen_extractor,
             },
         ],
         'x-label' : 'nthreads',
