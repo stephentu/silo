@@ -5,7 +5,4 @@
 core
 tags
 config.mk
-out-check-invariants
-out-perf
-out-factor-gc
-out-factor-gc-nowriteinplace
+out-*

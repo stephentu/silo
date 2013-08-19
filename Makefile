@@ -42,9 +42,9 @@ else ifeq ($(strip $(MODE)),factor-gc-nowriteinplace)
 endif
 
 ifeq ($(strip $(DEBUG)),1)
-        CXXFLAGS := -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
+        CXXFLAGS := -MD -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
 else
-        CXXFLAGS := -Ithird-party/lz4 -Wall -g -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
+        CXXFLAGS := -MD -Ithird-party/lz4 -Wall -g -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
@@ -67,50 +67,6 @@ ifneq ($(strip $(CUSTOM_LDPATH)), )
         LDFLAGS+=$(CUSTOM_LDPATH)
 endif
 
-# XXX(stephentu): have GCC discover header deps for us automatically
-HEADERS = allocator.h \
-	amd64.h \
-	base_txn_btree.h \
-	btree.h \
-	btree_impl.h \
-	circbuf.h \
-	core.h \
-	counter.h \
-	fileutils.h \
-	imstring.h \
-	keyrange.h \
-	lockguard.h \
-	macros.h \
-	marked_ptr.h \
-	ndb_type_traits.h \
-	prefetch.h \
-	rcu.h \
-	record/cursor.h \
-	record/encoder.h \
-	record/inline_str.h \
-	record/serializer.h \
-	scopedperf.hh \
-	small_unordered_map.h \
-	small_vector.h \
-	spinbarrier.h \
-	spinlock.h \
-	static_unordered_map.h \
-	static_vector.h \
-	stats_common.h \
-	stats_server.h \
-	ticker.h \
-	thread.h \
-	tuple.h \
-	txn_btree.h \
-	txn.h \
-	txn_impl.h \
-	txn_proto1_impl.h \
-	txn_proto2_impl.h \
-	typed_txn_btree.h \
-	util.h \
-	varint.h \
-	varkey.h \
-	$(CONFIG_H)
 SRCFILES = allocator.cc \
 	btree.cc \
 	core.cc \
@@ -129,23 +85,11 @@ SRCFILES = allocator.cc \
 	varint.cc
 
 OBJFILES := $(patsubst %.cc, $(O)/%.o, $(SRCFILES))
+DEPFILES := $(patsubst %.cc, $(O)/%.d, $(SRCFILES))
 
 BENCH_CXXFLAGS := $(CXXFLAGS) -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
 BENCH_LDFLAGS := $(LDFLAGS) -L/usr/lib/mysql -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
 
-BENCH_HEADERS = $(HEADERS) \
-	benchmarks/abstract_db.h \
-	benchmarks/abstract_ordered_index.h \
-	benchmarks/bdb_wrapper.h \
-	benchmarks/bench.h \
-	benchmarks/kvdb_wrapper.h \
-	benchmarks/kvdb_wrapper_impl.h \
-	benchmarks/masstree/kvrandom.hh \
-	benchmarks/mysql_wrapper.h \
-	benchmarks/ndb_wrapper.h \
-	benchmarks/ndb_wrapper_impl.h \
-	benchmarks/str_arena.h \
-	benchmarks/tpcc.h
 BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/bench.cc \
 	benchmarks/encstress.cc \
@@ -156,35 +100,29 @@ BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/ycsb.cc
 
 BENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(BENCH_SRCFILES))
+BENCH_DEPFILES := $(patsubst %.cc, $(O)/%.d, $(BENCH_SRCFILES))
 
-NEWBENCH_HEADERS = $(HEADERS) \
-	new-benchmarks/abstract_db.h \
-	new-benchmarks/abstract_ordered_index.h \
-	new-benchmarks/bench.h \
-	new-benchmarks/kvdb_database.h \
-	new-benchmarks/ndb_database.h \
-	new-benchmarks/str_arena.h \
-	new-benchmarks/tpcc.h
 NEWBENCH_SRCFILES = new-benchmarks/bench.cc \
 	new-benchmarks/tpcc.cc
 
 NEWBENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(NEWBENCH_SRCFILES))
+NEWBENCH_DEPFILES := $(patsubst %.cc, $(O)/%.d, $(NEWBENCH_SRCFILES))
 
 all: $(O)/test
 
-$(O)/benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
+$(O)/benchmarks/%.o: benchmarks/%.cc
 	@mkdir -p $(@D)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
-$(O)/benchmarks/masstree/%.o: benchmarks/masstree/%.cc $(BENCH_HEADERS)
+$(O)/benchmarks/masstree/%.o: benchmarks/masstree/%.cc
 	@mkdir -p $(@D)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
-$(O)/new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
+$(O)/new-benchmarks/%.o: new-benchmarks/%.cc
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(O)/%.o: %.cc $(HEADERS)
+$(O)/%.o: %.cc
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -197,7 +135,7 @@ third-party/lz4/liblz4.so:
 $(O)/persist_test: persist_test.o third-party/lz4/liblz4.so
 	$(CXX) -o $(O)/persist_test persist_test.o $(LDFLAGS) $(LZ4LDFLAGS)
 
-$(O)/stats_client: stats_client.o $(HEADERS)
+$(O)/stats_client: stats_client.o
 	$(CXX) -o $(O)/stats_client stats_client.o $(LDFLAGS)
 
 .PHONY: dbtest
@@ -218,7 +156,19 @@ newdbtest: $(O)/new-benchmarks/dbtest
 $(O)/new-benchmarks/dbtest: $(O)/new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES) third-party/lz4/liblz4.so
 	$(CXX) -o $(O)/new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS)
 
+-include $(DEPFILES)
+-include $(BENCH_DEPFILES)
+-include $(NEWBENCH_DEPFILES)
+
+# executables
+-include $(O)/test.d
+-include $(O)/persist_test.d
+-include $(O)/stats_client.d
+-include $(O)/benchmarks/dbtest.d
+-include $(O)/benchmarks/masstress/kvtest.d
+-include $(O)/new-benchmarks/dbtest.d
+
 .PHONY: clean
 clean:
-	rm -rf out-check-invariants out-perf out-factor-gc
+	rm -rf out-*
 	make -C third-party/lz4 clean
