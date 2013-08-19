@@ -1,4 +1,4 @@
-Silos
+Silo
 =====
 
 This project contains the prototype of the database system described in 
