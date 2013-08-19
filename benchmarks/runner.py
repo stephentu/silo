@@ -6,31 +6,6 @@ import math
 import subprocess
 import sys
 
-#DBS = ('mysql', 'bdb', 'ndb-proto1', 'ndb-proto2')
-#DBS = ('ndb-proto1', 'ndb-proto2')
-#DBS = ('ndb-proto2', 'kvdb')
-#DBS = ('kvdb', 'ndb-proto2')
-#DBS = ('ndb-proto1',)
-
-# config for tom
-#THREADS = (1, 2, 4, 8, 12, 18, 24, 30, 36, 42, 48)
-#THREADS = (1,)
-
-# config for ben
-#THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80)
-
-# config for istc*
-#THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
-#THREADS = (28, 32)
-
-#TXN_FLAGS = (0x0, 0x1)
-#TXN_FLAGS = (0x1,)
-
-#SCALE_FACTORS = (10,)
-
-# tuples of (benchname, amplification-factor)
-#BENCHMARKS = ( ('ycsb', 1000), ('tpcc', 1), )
-
 DRYRUN = True
 
 NTRIALS = 1 if DRYRUN else 3
@@ -38,50 +13,6 @@ NTRIALS = 1 if DRYRUN else 3
 PERSIST_REAL='persist-real'
 PERSIST_TEMP='persist-temp'
 PERSIST_NONE='persist-none'
-
-### NOTE: for TPC-C, in general, allocate 4GB of memory per thread for the experiments.
-### this is over-conservative
-
-KNOB_ENABLE_YCSB_SCALE=True
-KNOB_ENABLE_TPCC_SCALE=True
-KNOB_ENABLE_TPCC_MULTIPART=True
-KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
-KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
-
-## debugging runs
-KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
-KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=False
-KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
-KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
-KNOB_ENABLE_TPCC_SCALE_GC=False
-
-grids = []
-
-# exp 1:
-#   scale graph: kvdb VS ndb on ycsb 80/20 w/ fixed scale factor 320000
-
-#grids += [
-#  {
-#    'name' : 'scale',
-#    'dbs' : DBS,
-#    'threads' : THREADS,
-#    'scale_factors' : [320000],
-#    'benchmarks' : ['ycsb'],
-#    'bench_opts' : ['--workload-mix 80,20,0,0'],
-#    'par_load' : [True],
-#    'retry' : [False],
-#  },
-#  {
-#    'name' : 'scale_rmw',
-#    'dbs' : DBS,
-#    'threads' : THREADS,
-#    'scale_factors' : [320000],
-#    'benchmarks' : ['ycsb'],
-#    'bench_opts' : ['--workload-mix 80,0,20,0'],
-#    'par_load' : [True],
-#    'retry' : [False],
-#  },
-#]
 
 MACHINE_LOG_CONFIG = {
   'modis2' : (
@@ -95,7 +26,29 @@ MACHINE_LOG_CONFIG = {
         ('/f1/stephentu/data.log', 7./24.),
         ('/f2/stephentu/data.log', 7./24.),
       ),
+  'istc4' : (
+        ('data.log', 1),
+      ),
 }
+
+TPCC_STANDARD_MIX='45,43,4,4,4'
+TPCC_REALISTIC_MIX='39,37,4,10,10'
+
+KNOB_ENABLE_YCSB_SCALE=True
+KNOB_ENABLE_TPCC_SCALE=True
+KNOB_ENABLE_TPCC_MULTIPART=True
+KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
+
+## debugging runs
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=False
+KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
+KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
+KNOB_ENABLE_TPCC_SCALE_GC=False
+KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
+
+grids = []
 
 ### helpers for log allocation
 def normalize(x):
@@ -219,10 +172,13 @@ if KNOB_ENABLE_TPCC_SCALE:
       'threads' : [nthds],
       'scale_factors' : [nthds],
       'benchmarks' : [bench],
-      'bench_opts' : [''],
+      'bench_opts' : [
+        '--workload-mix %s' % TPCC_STANDARD_MIX,
+        '--workload-mix %s' % TPCC_REALISTIC_MIX,
+      ],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [PERSIST_REAL, PERSIST_TEMP, PERSIST_NONE],
+      'persist' : [PERSIST_REAL, PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * nthds)],
     }
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
@@ -309,6 +265,58 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
   ]
   thds = [1,2,4,6,8,10,12,16,20,24,28,32]
   grids += [mk_grid(t) for t in thds]
+
+if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
+  # order is:
+  # baseline (jemalloc, no-overwrites, gc, snapshots)
+  # +allocator
+  # +insert
+  # -snapshots
+  # -gc
+  grids += [
+    {
+      'binary' : ['../out-factor-gc-nowriteinplace/dbtest'],
+      'name' : 'factoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'numa_memory' : [None, '%dG' % (4 * 28)],
+    },
+    {
+      'binary' : ['../out-factor-gc/dbtest'],
+      'name' : 'factoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'numa_memory' : ['%dG' % (4 * 28)],
+      'disable_snapshots' : [False, True],
+    },
+    {
+      'binary' : ['../out-factor-gc/dbtest'],
+      'name' : 'factoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'numa_memory' : ['%dG' % (4 * 28)],
+      'disable_snapshots' : [True],
+      'disable_gc' : [True],
+    },
+  ]
 
 # exp 5:
 #  * 50% new order, 50% stock level
@@ -430,6 +438,7 @@ if KNOB_ENABLE_TPCC_SCALE_GC:
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 def run_configuration(
+    binary,
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
     par_load, retry_aborted_txn, numa_memory, logfiles,
     assignments, log_fake_writes, log_nofsync, log_compress,
@@ -440,7 +449,7 @@ def run_configuration(
   assert not log_nofsync or len(logfiles)
   assert not log_compress or len(logfiles)
   args = [
-      './dbtest',
+      binary,
       '--bench', bench,
       '--basedir', basedir,
       '--db-type', dbtype,
@@ -481,11 +490,12 @@ if __name__ == '__main__':
   # iterate over all configs
   results = []
   for grid in grids:
-    for (db, bench, scale_factor, threads, bench_opts,
+    for (binary, db, bench, scale_factor, threads, bench_opts,
          par_load, retry, numa_memory, persist,
          log_fake_writes, log_nofsync, log_compress,
          disable_gc, disable_snapshots) in it.product(
-        grid['dbs'], grid['benchmarks'], grid['scale_factors'], \
+        grid.get('binary', ['../out-perf/dbtest']),
+        grid['dbs'], grid['benchmarks'], grid['scale_factors'],
         grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
         grid['numa_memory'], grid['persist'],
         grid.get('log_fake_writes', [False]),
@@ -494,6 +504,7 @@ if __name__ == '__main__':
         grid.get('disable_gc', [False]),
         grid.get('disable_snapshots', [False])):
       config = {
+        'binary'          : binary,
         'name'            : grid['name'],
         'db'              : db,
         'bench'           : bench,
@@ -524,6 +535,7 @@ if __name__ == '__main__':
       values = []
       for _ in range(NTRIALS):
         value = run_configuration(
+            binary,
             basedir, db, bench, scale_factor, threads,
             bench_opts, par_load, retry, numa_memory,
             logfiles, assignments, log_fake_writes,
