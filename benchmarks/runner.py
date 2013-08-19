@@ -291,7 +291,7 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
       'threads' : [nthds],
       'scale_factors': [4],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix 100,0,0,0,0'],
+      'bench_opts' : ['--workload-mix 100,0,0,0,0', '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [False],
@@ -312,7 +312,8 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
       'numa_memory' : ['%dG' % (4 * 4)],
     },
   ]
-  grids += [mk_grid(t) for t in [1, 4, 8, 12, 16, 20, 24]]
+  thds = [1,2,4,6,8,10,12,16,20,24,28]
+  grids += [mk_grid(t) for t in thds]
 
 # exp 4:
 #  * standard workload mix
