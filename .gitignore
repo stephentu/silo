@@ -4,10 +4,8 @@
 *.so
 core
 tags
-test
-persist_test
-stats_client
-benchmarks/dbtest
-benchmarks/masstree/kvtest
-new-benchmarks/dbtest
 config.mk
+out-check-invariants
+out-perf
+out-factor-gc
+out-factor-gc-nowriteinplace
