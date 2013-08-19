@@ -10,7 +10,7 @@ import sys
 #DBS = ('ndb-proto1', 'ndb-proto2')
 #DBS = ('ndb-proto2', 'kvdb')
 #DBS = ('kvdb', 'ndb-proto2')
-DBS = ('ndb-proto1',)
+#DBS = ('ndb-proto1',)
 
 # config for tom
 #THREADS = (1, 2, 4, 8, 12, 18, 24, 30, 36, 42, 48)
@@ -20,7 +20,7 @@ DBS = ('ndb-proto1',)
 #THREADS = (1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80)
 
 # config for istc*
-THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
+#THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
 #THREADS = (28, 32)
 
 #TXN_FLAGS = (0x0, 0x1)
@@ -31,16 +31,20 @@ THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
 # tuples of (benchname, amplification-factor)
 #BENCHMARKS = ( ('ycsb', 1000), ('tpcc', 1), )
 
-DRYRUN = False
+DRYRUN = True
 
 NTRIALS = 1 if DRYRUN else 3
+
+PERSIST_REAL='persist-real'
+PERSIST_TEMP='persist-temp'
+PERSIST_NONE='persist-none'
 
 ### NOTE: for TPC-C, in general, allocate 4GB of memory per thread for the experiments.
 ### this is over-conservative
 
-KNOB_ENABLE_YCSB_SCALE=False
-KNOB_ENABLE_TPCC_SCALE=False
-KNOB_ENABLE_TPCC_MULTIPART=False
+KNOB_ENABLE_YCSB_SCALE=True
+KNOB_ENABLE_TPCC_SCALE=True
+KNOB_ENABLE_TPCC_MULTIPART=True
 KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
@@ -186,35 +190,23 @@ def allocate(nworkers, weights):
     acc += x
   return ret
 
-def mk_ycsb_entries(nthds):
-  return [
-    {
-      'name' : 'scale',
-      'dbs' : DBS,
-      'threads' : [nthds],
-      'scale_factors' : [320000],
-      'benchmarks' : ['ycsb'],
-      'bench_opts' : ['--workload-mix 80,20,0,0'],
-      'par_load' : [True],
-      'retry' : [False],
-      'persist' : [False],
-      'numa_memory' : ['%dG' % int(100 + 1.4*nthds)],
-    },
-    {
-      'name' : 'scale_rmw',
-      'dbs' : DBS,
-      'threads' : [nthds],
-      'scale_factors' : [320000],
-      'benchmarks' : ['ycsb'],
-      'bench_opts' : ['--workload-mix 80,0,20,0'],
-      'par_load' : [True],
-      'retry' : [False],
-      'persist' : [False],
-      'numa_memory' : ['%dG' % int(100 + 1.4*nthds)],
-    },
-  ]
-
 if KNOB_ENABLE_YCSB_SCALE:
+  def mk_ycsb_entries(nthds):
+    return [
+      {
+        'name' : 'scale_rmw',
+        'dbs' : ['kvdb', 'ndb-proto1', 'ndb-proto2'],
+        'threads' : [nthds],
+        'scale_factors' : [320000],
+        'benchmarks' : ['ycsb'],
+        'bench_opts' : ['--workload-mix 80,0,20,0'],
+        'par_load' : [True],
+        'retry' : [False],
+        'persist' : [PERSIST_NONE],
+        'numa_memory' : ['%dG' % int(100 + 1.4*nthds)],
+      },
+    ]
+  THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
   for nthds in THREADS:
     grids += mk_ycsb_entries(nthds)
 
@@ -230,7 +222,7 @@ if KNOB_ENABLE_TPCC_SCALE:
       'bench_opts' : [''],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [True, False],
+      'persist' : [PERSIST_REAL, PERSIST_TEMP, PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * nthds)],
     }
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
@@ -251,7 +243,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
           ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * 28)],
     },
     {
@@ -264,7 +256,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
           ['--enable-separate-tree-per-partition --workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * 28)],
       'disable_snapshots' : [False, True],
     },
@@ -278,7 +270,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
         ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks --new-order-remote-item-pct %d' % d for d in D_RANGE],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * 28)],
     },
   ]
@@ -291,10 +283,13 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
       'threads' : [nthds],
       'scale_factors': [4],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix 100,0,0,0,0', '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'],
+      'bench_opts' : [
+        '--workload-mix 100,0,0,0,0', '--workload-mix 100,0,0,0,0',
+        '--workload-mix 100,0,0,0,0', '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'
+      ],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * nthds)],
     }
   grids += [
@@ -305,43 +300,15 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
       'scale_factors': [4],
       'benchmarks' : ['tpcc'],
       'bench_opts' :
-        ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks '],
+        ['--workload-mix 100,0,0,0,0 --enable-separate-tree-per-partition --enable-partition-locks'],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * 4)],
     },
   ]
-  thds = [1,2,4,6,8,10,12,16,20,24,28]
+  thds = [1,2,4,6,8,10,12,16,20,24,28,32]
   grids += [mk_grid(t) for t in thds]
-
-# exp 4:
-#  * standard workload mix
-#  * fix the tpc-c scale factor at 8
-#  * for volt, do one run @ 8-threads
-#  * for ndb, vary threads [8, 12, 16, 20, 24, 28, 32]
-#grids += [
-#  {
-#    'name' : 'multipart:cpu',
-#    'dbs' : ['kvdb'],
-#    'threads' : [8],
-#    'scale_factors': [8],
-#    'benchmarks' : ['tpcc'],
-#    'bench_opts' : ['--enable-separate-tree-per-partition --enable-partition-locks'],
-#    'par_load' : [True],
-#    'retry' : [False],
-#  },
-#  {
-#    'name' : 'multipart:cpu',
-#    'dbs' : ['ndb-proto2'],
-#    'threads' : [8, 12, 16, 20, 24, 28, 32],
-#    'scale_factors': [8],
-#    'benchmarks' : ['tpcc'],
-#    'bench_opts' : [''],
-#    'par_load' : [False],
-#    'retry' : [False],
-#  },
-#]
 
 # exp 5:
 #  * 50% new order, 50% stock level
@@ -359,8 +326,9 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
       'bench_opts' : ['--workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
       'par_load' : [False],
       'retry' : [True],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * 16)],
+      'disable_snapshots' : [False],
     },
     {
       'name' : 'readonly',
@@ -371,8 +339,9 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
       'bench_opts' : ['--disable-read-only-snapshots --workload-mix 50,0,0,0,50 --new-order-remote-item-pct %d' % d for d in RO_DRANGE],
       'par_load' : [False],
       'retry' : [True],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * 16)],
+      'disable_snapshots' : [True],
     },
   ]
 
@@ -387,7 +356,7 @@ if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST:
       'bench_opts' : [''],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [True],
+      'persist' : [PERSIST_REAL],
       'numa_memory' : ['%dG' % (4 * nthds)],
     }
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
@@ -403,7 +372,7 @@ if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS:
       'bench_opts' : [''],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [True],
+      'persist' : [PERSIST_REAL],
       'numa_memory' : ['%dG' % (4 * nthds)],
       'log_compress' : [True],
     }
@@ -420,7 +389,7 @@ if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC:
       'bench_opts' : [''],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [True],
+      'persist' : [PERSIST_REAL],
       'numa_memory' : ['%dG' % (4 * nthds)],
       'log_nofsync' : [True],
     }
@@ -437,7 +406,7 @@ if KNOB_ENABLE_TPCC_SCALE_FAKEWRITES:
       'bench_opts' : [''],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [True],
+      'persist' : [PERSIST_REAL],
       'numa_memory' : ['%dG' % (4 * nthds)],
       'log_fake_writes' : [True],
     }
@@ -454,7 +423,7 @@ if KNOB_ENABLE_TPCC_SCALE_GC:
       'bench_opts' : [''],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [False],
+      'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * nthds)],
       'disable_gc' : [False, True],
     }
@@ -542,11 +511,13 @@ if __name__ == '__main__':
         'disable_snapshots' : disable_snapshots,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
-      if persist:
+      if persist != PERSIST_NONE:
         node = platform.node()
-        inf = MACHINE_LOG_CONFIG[node]
-        logfiles = [x[0] for x in inf]
-        weights = normalize([x[1] for x in inf])
+        info = MACHINE_LOG_CONFIG[node]
+        logfiles = \
+            [x[0] for x in info] if persist == PERSIST_REAL \
+              else ['/tmp/data%d.log' % (idx) for idx in xrange(len(info))]
+        weights = normalize([x[1] for x in info])
         assignments = allocate(threads, weights)
       else:
         logfiles, assignments = [], []
