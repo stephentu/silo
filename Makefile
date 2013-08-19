@@ -18,6 +18,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 #   * check-invariants
 #   * perf
 #   * factor-gc
+#   * factor-gc-nowriteinplace
 MODE ?= perf
 
 ifeq ($(strip $(DEBUG)),1)
@@ -35,6 +36,9 @@ else ifeq ($(strip $(MODE)),perf)
 else ifeq ($(strip $(MODE)),factor-gc)
 	O = out-factor-gc$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc.h
+else ifeq ($(strip $(MODE)),factor-gc-nowriteinplace)
+	O = out-factor-gc-nowriteinplace$(OSUFFIX)
+	CONFIG_H = config/config-factor-gc-nowriteinplace.h
 endif
 
 ifeq ($(strip $(DEBUG)),1)

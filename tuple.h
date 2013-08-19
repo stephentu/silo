@@ -860,6 +860,7 @@ public:
   write_record_at(const Transaction *txn, tid_t t,
                   const void *v, tuple_writer_t writer)
   {
+#ifndef DISABLE_OVERWRITE_IN_PLACE
     CheckMagic();
     INVARIANT(is_locked());
     INVARIANT(is_lock_owner());
@@ -941,7 +942,8 @@ public:
       return write_record_ret(this, spill, true);
     }
 
-    dbtuple * const rep = alloc_spill(t, get_value_start(), old_sz, new_sz, this, true);
+    dbtuple * const rep =
+      alloc_spill(t, get_value_start(), old_sz, new_sz, this, true);
     if (v)
       writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
@@ -950,6 +952,33 @@ public:
     clear_latest();
     ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
     return write_record_ret(rep, this, true);
+#else
+    CheckMagic();
+    INVARIANT(is_locked());
+    INVARIANT(is_lock_owner());
+    INVARIANT(is_latest());
+    INVARIANT(is_write_intent());
+
+    const size_t new_sz =
+      v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
+    INVARIANT(!v || new_sz);
+    INVARIANT(is_deleting() || size);
+    const size_t old_sz = is_deleting() ? 0 : size;
+
+    if (!new_sz)
+      ++g_evt_dbtuple_logical_deletes;
+
+    dbtuple * const rep =
+      alloc_spill(t, get_value_start(), old_sz, new_sz, this, true);
+    if (v)
+      writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
+    INVARIANT(rep->is_latest());
+    INVARIANT(rep->size == new_sz);
+    INVARIANT(new_sz || rep->is_deleting()); // set by alloc_spill()
+    clear_latest();
+    ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
+    return write_record_ret(rep, this, true);
+#endif
   }
 
   // NB: we round up allocation sizes because jemalloc will do this
