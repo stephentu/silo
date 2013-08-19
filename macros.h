@@ -23,6 +23,8 @@
 //#define LOCK_OWNERSHIP_CHECKING
 //#define MEMCHECK_MAGIC 0xFF
 //#define TUPLE_MAGIC
+//#define PROTO2_CAN_DISABLE_GC
+//#define PROTO2_CAN_DISABLE_SNAPSHOTS
 
 /**
  * some non-sensical options, which only make sense for performance debugging
@@ -31,8 +33,6 @@
 //#define LOGGER_UNSAFE_FAKE_COMPRESSION
 //#define LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
 //#define LOGGER_STRIDE_OVER_BUFFER
-//#define PROTO2_CAN_DISABLE_GC
-//#define PROTO2_CAN_DISABLE_SNAPSHOTS
 
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 #define LG_CACHELINE_SIZE __builtin_ctz(CACHELINE_SIZE)
