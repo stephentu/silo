@@ -25,6 +25,13 @@
 //#define TUPLE_MAGIC
 //#define PROTO2_CAN_DISABLE_GC
 //#define PROTO2_CAN_DISABLE_SNAPSHOTS
+//#define USE_PERF_CTRS
+
+#ifndef CONFIG_H
+#error "no CONFIG_H set"
+#endif
+
+#include CONFIG_H
 
 /**
  * some non-sensical options, which only make sense for performance debugging

@@ -1,17 +1,8 @@
 -include config.mk
 
+### Options ###
+
 DEBUG ?= 0
-
-ifeq ($(strip $(DEBUG)),1)
-        CXXFLAGS := -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x
-else
-        CXXFLAGS := -Ithird-party/lz4 -Wall -g -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x
-endif
-
-TOP     := $(shell echo $${PWD-`pwd`})
-LDFLAGS := -lpthread -lnuma -lrt
-
-LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
 
 # 0 = libc malloc
 # 1 = jemalloc
@@ -19,33 +10,50 @@ LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
 # 3 = flow
 USE_MALLOC_MODE ?= 1
 
-# 0 = disable perf counters
-# 1 = enable perf counters
-USE_PERF_CTRS ?= 0
+MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
+
+###############
+
+# Available modes
+#   * check-invariants
+#   * perf
+MODE ?= perf
+
+ifeq ($(strip $(MODE)),check-invariants)
+	O = out-check-invariants
+	CONFIG_H = config/config-check-invariants.h
+else ifeq ($(strip $(MODE)),perf)
+	O = out-perf
+	CONFIG_H = config/config-perf.h
+endif
+
+ifeq ($(strip $(DEBUG)),1)
+        CXXFLAGS := -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
+else
+        CXXFLAGS := -Ithird-party/lz4 -Wall -g -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
+endif
+
+TOP     := $(shell echo $${PWD-`pwd`})
+LDFLAGS := -lpthread -lnuma -lrt
+
+LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
 
 ifeq ($(strip $(USE_MALLOC_MODE)),1)
         CXXFLAGS+=-DUSE_JEMALLOC
         LDFLAGS+=-ljemalloc
-else
-ifeq ($(strip $(USE_MALLOC_MODE)),2)
+else ifeq ($(strip $(USE_MALLOC_MODE)),2)
         CXXFLAGS+=-DUSE_TCMALLOC
         LDFLAGS+=-ltcmalloc
-else
-ifeq ($(strip $(USE_MALLOC_MODE)),3)
+else ifeq ($(strip $(USE_MALLOC_MODE)),3)
         CXXFLAGS+=-DUSE_FLOW
         LDFLAGS+=-lflow
-endif
-endif
 endif
 
 ifneq ($(strip $(CUSTOM_LDPATH)), )
         LDFLAGS+=$(CUSTOM_LDPATH)
 endif
 
-ifeq ($(USE_PERF_CTRS),1)
-	CXXFLAGS+=-DUSE_PERF_CTRS
-endif
-
+# XXX(stephentu): have GCC discover header deps for us automatically
 HEADERS = allocator.h \
 	amd64.h \
 	base_txn_btree.h \
@@ -87,7 +95,8 @@ HEADERS = allocator.h \
 	typed_txn_btree.h \
 	util.h \
 	varint.h \
-	varkey.h 
+	varkey.h \
+	$(CONFIG_H)
 SRCFILES = allocator.cc \
 	btree.cc \
 	core.cc \
@@ -105,9 +114,7 @@ SRCFILES = allocator.cc \
 	txn_proto2_impl.cc \
 	varint.cc
 
-OBJFILES = $(SRCFILES:.cc=.o)
-
-MYSQL_SHARE_DIR=/x/stephentu/mysql-5.5.29/build/sql/share
+OBJFILES := $(patsubst %.cc, $(O)/%.o, $(SRCFILES))
 
 BENCH_CXXFLAGS := $(CXXFLAGS) -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
 BENCH_LDFLAGS := $(LDFLAGS) -L/usr/lib/mysql -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
@@ -133,7 +140,8 @@ BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/queue.cc \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc
-BENCH_OBJFILES = $(BENCH_SRCFILES:.cc=.o)
+
+BENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(BENCH_SRCFILES))
 
 NEWBENCH_HEADERS = $(HEADERS) \
 	new-benchmarks/abstract_db.h \
@@ -143,58 +151,60 @@ NEWBENCH_HEADERS = $(HEADERS) \
 	new-benchmarks/ndb_database.h \
 	new-benchmarks/str_arena.h \
 	new-benchmarks/tpcc.h
-
 NEWBENCH_SRCFILES = new-benchmarks/bench.cc \
 	new-benchmarks/tpcc.cc
-NEWBENCH_OBJFILES = $(NEWBENCH_SRCFILES:.cc=.o)
 
-all: test
+NEWBENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(NEWBENCH_SRCFILES))
 
-benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
+all: $(O)/test
+
+$(O)/benchmarks/%.o: benchmarks/%.cc $(BENCH_HEADERS)
+	@mkdir -p $(@D)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
-benchmarks/masstree/%.o: benchmarks/masstree/%.cc $(BENCH_HEADERS)
+$(O)/benchmarks/masstree/%.o: benchmarks/masstree/%.cc $(BENCH_HEADERS)
+	@mkdir -p $(@D)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
-new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
+$(O)/new-benchmarks/%.o: new-benchmarks/%.cc $(NEWBENCH_HEADERS)
+	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-%.o: %.cc $(HEADERS)
+$(O)/%.o: %.cc $(HEADERS)
+	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-test: test.o $(OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o test $^ $(LDFLAGS) $(LZ4LDFLAGS)
+$(O)/test: $(O)/test.o $(OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/test $^ $(LDFLAGS) $(LZ4LDFLAGS)
 
 third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
-persist_test: persist_test.o third-party/lz4/liblz4.so
-	$(CXX) -o persist_test persist_test.o $(LDFLAGS) $(LZ4LDFLAGS)
+$(O)/persist_test: persist_test.o third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/persist_test persist_test.o $(LDFLAGS) $(LZ4LDFLAGS)
 
-stats_client: stats_client.o $(HEADERS)
-	$(CXX) -o stats_client stats_client.o $(LDFLAGS)
+$(O)/stats_client: stats_client.o $(HEADERS)
+	$(CXX) -o $(O)/stats_client stats_client.o $(LDFLAGS)
 
 .PHONY: dbtest
-dbtest: benchmarks/dbtest
+dbtest: $(O)/benchmarks/dbtest
 
-benchmarks/dbtest: benchmarks/dbtest.o $(OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS)
+$(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS)
 
 .PHONY: kvtest
-kvtest: benchmarks/masstree/kvtest
+kvtest: $(O)/benchmarks/masstree/kvtest
 
-benchmarks/masstree/kvtest: benchmarks/masstree/kvtest.o $(OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) -o benchmarks/masstree/kvtest $^ $(BENCH_LDFLAGS)
+$(O)/benchmarks/masstree/kvtest: $(O)/benchmarks/masstree/kvtest.o $(OBJFILES) $(BENCH_OBJFILES)
+	$(CXX) -o $(O)/benchmarks/masstree/kvtest $^ $(BENCH_LDFLAGS)
 
 .PHONY: newdbtest
-newdbtest: new-benchmarks/dbtest
+newdbtest: $(O)/new-benchmarks/dbtest
 
-new-benchmarks/dbtest: new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS)
+$(O)/new-benchmarks/dbtest: $(O)/new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS)
 
 .PHONY: clean
 clean:
-	rm -f *.o test persist_test benchmarks/*.o benchmarks/dbtest \
-		benchmarks/masstree/*.o benchmarks/masstree/kvtest \
-		new-benchmarks/*.o new-benchmarks/dbtest
+	rm -rf out-check-invariants out-perf
 	make -C third-party/lz4 clean
