@@ -17,14 +17,24 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 # Available modes
 #   * check-invariants
 #   * perf
+#   * factor-gc
 MODE ?= perf
 
+ifeq ($(strip $(DEBUG)),1)
+	OSUFFIX=.debug
+else
+	OSUFFIX=
+endif
+
 ifeq ($(strip $(MODE)),check-invariants)
-	O = out-check-invariants
+	O = out-check-invariants$(OSUFFIX)
 	CONFIG_H = config/config-check-invariants.h
 else ifeq ($(strip $(MODE)),perf)
-	O = out-perf
+	O = out-perf$(OSUFFIX)
 	CONFIG_H = config/config-perf.h
+else ifeq ($(strip $(MODE)),factor-gc)
+	O = out-factor-gc$(OSUFFIX)
+	CONFIG_H = config/config-factor-gc.h
 endif
 
 ifeq ($(strip $(DEBUG)),1)
@@ -206,5 +216,5 @@ $(O)/new-benchmarks/dbtest: $(O)/new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_
 
 .PHONY: clean
 clean:
-	rm -rf out-check-invariants out-perf
+	rm -rf out-check-invariants out-perf out-factor-gc
 	make -C third-party/lz4 clean
