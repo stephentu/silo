@@ -141,8 +141,28 @@ protected:
   char bytes_[sizeof(util::aligned_padded_elem<T>) * NMAXCORES];
 };
 
+namespace private_ {
+  template <typename T>
+  struct buf {
+    bool init_;
+    char bytes_[sizeof(T)];
+    constexpr buf() : init_(false) {}
+    inline T *
+    cast()
+    {
+      return (T *) &bytes_[0];
+    }
+    inline const T *
+    cast() const
+    {
+      return (T *) &bytes_[0];
+    }
+  };
+}
+
 template <typename T>
-class percore_lazy : public percore<T *, false> {
+class percore_lazy : public percore<private_::buf<T>, false> {
+  typedef private_::buf<T> buf_t;
 public:
 
   percore_lazy(std::function<void(T &)> init = [](T &) {})
@@ -151,13 +171,14 @@ public:
   inline T &
   operator[](unsigned i)
   {
-    T * px = this->elems()[i].elem;
-    if (unlikely(!px)) {
-      T &ret = *(this->elems()[i].elem = new T);
-      init_(ret);
-      return ret;
+    buf_t &b = this->elems()[i].elem;
+    if (unlikely(!b.init_)) {
+      b.init_ = true;
+      T *px = new (&b.bytes_[0]) T();
+      init_(*px);
+      return *px;
     }
-    return *px;
+    return *b.cast();
   }
 
   inline T &
@@ -169,21 +190,24 @@ public:
   inline T *
   view(unsigned i)
   {
-    return percore<T *>::operator[](i);
+    buf_t &b = this->elems()[i].elem;
+    return b.init_ ? b.cast() : nullptr;
   }
 
   inline const T *
   view(unsigned i) const
   {
-    return percore<T *>::operator[](i);
+    const buf_t &b = this->elems()[i].elem;
+    return b.init_ ? b.cast() : nullptr;
   }
 
   inline const T *
   myview() const
   {
-    return percore<T *>::my();
+    return view(coreid::core_id());
   }
 
 private:
   std::function<void(T &)> init_;
+  CACHE_PADOUT; // ugh, wasteful
 };
