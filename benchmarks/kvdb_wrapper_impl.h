@@ -500,7 +500,9 @@ template <bool UseConcurrencyControl>
 std::map<std::string, uint64_t>
 kvdb_ordered_index<UseConcurrencyControl>::clear()
 {
+
   purge_tree_walker<my_btree, UseConcurrencyControl> w;
+  scoped_rcu_region guard;
   btr.tree_walk(w);
   btr.clear();
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
