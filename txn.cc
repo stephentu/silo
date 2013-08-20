@@ -62,33 +62,6 @@ event_counter transaction_base::g_evt_dbtuple_write_search_failed
 event_counter transaction_base::g_evt_dbtuple_write_insert_failed
     ("dbtuple_write_insert_failed");
 
-//void
-//transaction_base::Test()
-//{
-//  txn_context t;
-//
-//  t.add_absent_range(key_range_t(u64_varkey(10), u64_varkey(20)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(20), u64_varkey(30)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(60)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(31), u64_varkey(40)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(49), u64_varkey(50)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(47), u64_varkey(50)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(39), u64_varkey(50)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(100), u64_varkey(200)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(300), u64_varkey(400)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//  t.add_absent_range(key_range_t(u64_varkey(50), u64_varkey(212)));
-//  cout << key_range_t::PrintRangeSet(t.absent_range_set) << endl;
-//}
-
 event_counter transaction_base::evt_local_search_lookups("local_search_lookups");
 event_counter transaction_base::evt_local_search_write_set_hits("local_search_write_set_hits");
 event_counter transaction_base::evt_dbtuple_latest_replacement("dbtuple_latest_replacement");
