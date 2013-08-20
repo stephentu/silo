@@ -237,9 +237,9 @@ protected:
           string v(YCSBRecordSize, 'a');
           tbl->insert(txn, k, v);
         }
+        ALWAYS_ASSERT(db->commit_txn(txn));
         if (verbose)
           cerr << "batch 1/1 done" << endl;
-        ALWAYS_ASSERT(db->commit_txn(txn));
       } else {
         for (size_t i = 0; i < nbatches; i++) {
           scoped_str_arena s_arena(arena);
@@ -250,9 +250,9 @@ protected:
             string v(YCSBRecordSize, 'a');
             tbl->insert(txn, k, v);
           }
-          if (verbose)
-            cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
           ALWAYS_ASSERT(db->commit_txn(txn));
+          if (verbose && !((i + 1) % 1000))
+            cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
         }
       }
     } catch (abstract_db::abstract_abort_exception &ex) {
