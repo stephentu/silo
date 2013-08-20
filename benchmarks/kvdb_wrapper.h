@@ -10,6 +10,8 @@ template <bool UseConcurrencyControl>
 class kvdb_wrapper : public abstract_db {
 public:
 
+  virtual ssize_t txn_max_batch_size() const OVERRIDE { return 100; }
+
   virtual void do_txn_epoch_sync() const { }
 
   virtual void do_txn_finish() const { }
