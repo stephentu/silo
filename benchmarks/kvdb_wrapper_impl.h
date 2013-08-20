@@ -222,7 +222,7 @@ struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
   inline void
   prefetch() const
   {
-#ifdef TUPLE_PREFETCH
+#ifdef PREFETCH
     prefetch_bytes(this, sizeof(*this) + size());
 #endif
   }
@@ -297,6 +297,14 @@ public:
     if (unlikely(!r))
       return;
     rcu::s_instance.free_with_fn(r, deleter);
+  }
+
+  static void
+  release_no_rcu(basic_kvdb_record *r)
+  {
+    if (unlikely(!r))
+      return;
+    deleter(r);
   }
 
 } PACKED;
@@ -439,6 +447,8 @@ struct purge_tree_walker : public Btree::tree_walk_callback {
   purge_tree_walker()
     : purge_stats_nodes(0),
       purge_stats_nosuffix_nodes(0) {}
+  std::map<size_t, size_t> purge_stats_record_size_counts; // just the record
+  std::map<size_t, size_t> purge_stats_alloc_size_counts; // includes overhead
   std::vector<uint16_t> purge_stats_nkeys_node;
   size_t purge_stats_nodes;
   size_t purge_stats_nosuffix_nodes;
@@ -457,6 +467,14 @@ struct purge_tree_walker : public Btree::tree_walk_callback {
     std::cerr << "    avg_fill_factor: " << avg_fill_factor << std::endl;
     std::cerr << "    num_nodes: " << purge_stats_nodes << std::endl;
     std::cerr << "    num_nosuffix_nodes: " << purge_stats_nosuffix_nodes << std::endl;
+    std::cerr << "record size stats (nbytes => count)" << std::endl;
+    for (std::map<size_t, size_t>::iterator it = purge_stats_record_size_counts.begin();
+        it != purge_stats_record_size_counts.end(); ++it)
+      std::cerr << "    " << it->first << " => " << it->second << std::endl;
+    std::cerr << "alloc size stats  (nbytes => count)" << std::endl;
+    for (std::map<size_t, size_t>::iterator it = purge_stats_alloc_size_counts.begin();
+        it != purge_stats_alloc_size_counts.end(); ++it)
+      std::cerr << "    " << (it->first + sizeof(kvdb_record)) << " => " << it->second << std::endl;
   }
 #endif
 
@@ -472,7 +490,9 @@ struct purge_tree_walker : public Btree::tree_walk_callback {
   {
     for (size_t i = 0; i < spec_values.size(); i++) {
       kvdb_record * const r = (kvdb_record *) spec_values[i].first;
-      free(r);
+      purge_stats_record_size_counts[r->size()]++;
+      purge_stats_alloc_size_counts[r->alloc_size]++;
+      kvdb_record::release_no_rcu(r);
     }
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
     purge_stats_nkeys_node.push_back(spec_values.size());

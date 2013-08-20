@@ -102,7 +102,7 @@ private:
     std::map<std::string, uint64_t>
     dump_stats()
     {
-    std::map<std::string, uint64_t> ret;
+      std::map<std::string, uint64_t> ret;
       size_t v = 0;
       for (std::vector<uint16_t>::iterator it = purge_stats_nkeys_node.begin();
           it != purge_stats_nkeys_node.end(); ++it)
@@ -268,8 +268,7 @@ void
 base_txn_btree<Transaction, P>::purge_tree_walker::on_node_success()
 {
   for (size_t i = 0; i < spec_values.size(); i++) {
-    dbtuple *tuple =
-      (dbtuple *) spec_values[i].first;
+    dbtuple *tuple = (dbtuple *) spec_values[i].first;
     INVARIANT(tuple);
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
     // XXX(stephentu): should we also walk the chain?

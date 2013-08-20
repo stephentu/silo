@@ -380,7 +380,7 @@ struct purge_tree_walker : public Btree::tree_walk_callback {
   {
     for (size_t i = 0; i < spec_values.size(); i++) {
       kvdb_record * const r = (kvdb_record *) spec_values[i].first;
-      free(r);
+      kvdb_record::release_no_rcu(r);
     }
 #ifdef TXN_BTREE_DUMP_PURGE_STATS
     purge_stats_nkeys_node.push_back(spec_values.size());
