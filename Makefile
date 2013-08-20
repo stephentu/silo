@@ -33,6 +33,9 @@ ifeq ($(strip $(MODE)),check-invariants)
 else ifeq ($(strip $(MODE)),perf)
 	O = out-perf$(OSUFFIX)
 	CONFIG_H = config/config-perf.h
+else ifeq ($(strip $(MODE)),perf-counters)
+	O = out-perf-counters$(OSUFFIX)
+	CONFIG_H = config/config-perf-counters.h
 else ifeq ($(strip $(MODE)),factor-gc)
 	O = out-factor-gc$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc.h
@@ -71,7 +74,6 @@ SRCFILES = allocator.cc \
 	btree.cc \
 	core.cc \
 	counter.cc \
-	keyrange.cc \
 	memory.cc \
 	rcu.cc \
 	stats_server.cc \
