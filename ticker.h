@@ -233,10 +233,8 @@ private:
 
   percore<tickinfo> ticks_;
 
-  std::atomic<uint64_t> current_tick_ CACHE_ALIGNED; // which tick are we currenlty on?
+  std::atomic<uint64_t> current_tick_; // which tick are we currenlty on?
   std::atomic<uint64_t> last_tick_inclusive_;
     // all threads have *completed* ticks <= last_tick_inclusive_
     // (< current_tick_)
-
-  CACHE_PADOUT;
 };
