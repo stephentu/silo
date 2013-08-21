@@ -20,8 +20,10 @@ extern void tpcc_do_test(abstract_db *db, int argc, char **argv);
 extern void queue_do_test(abstract_db *db, int argc, char **argv);
 extern void encstress_do_test(abstract_db *db, int argc, char **argv);
 
-enum { RUNMODE_TIME = 0,
-       RUNMODE_OPS  = 1};
+enum {
+  RUNMODE_TIME = 0,
+  RUNMODE_OPS  = 1
+};
 
 // benchmark global variables
 extern size_t nthreads;
@@ -69,6 +71,7 @@ public:
                const std::map<std::string, abstract_ordered_index *> &open_tables)
     : r(seed), db(db), open_tables(open_tables), b(0)
   {
+    txn_obj_buf.reserve(str_arena::MinStrReserveLength);
     txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
   }
   inline void
@@ -117,6 +120,7 @@ public:
       ntxn_commits(0), ntxn_aborts(0),
       latency_numer_us(0),  size_delta(0)
   {
+    txn_obj_buf.reserve(str_arena::MinStrReserveLength);
     txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
   }
 

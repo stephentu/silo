@@ -40,6 +40,9 @@ public:
       tbl(open_tables.at("USERTABLE")),
       computation_n(0)
   {
+    obj_key0.reserve(str_arena::MinStrReserveLength);
+    obj_key1.reserve(str_arena::MinStrReserveLength);
+    obj_v.reserve(str_arena::MinStrReserveLength);
   }
 
   txn_result

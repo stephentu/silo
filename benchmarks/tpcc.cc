@@ -515,6 +515,9 @@ public:
         << ", " << warehouse_id_end << ")"
         << endl;
     }
+    obj_key0.reserve(str_arena::MinStrReserveLength);
+    obj_key1.reserve(str_arena::MinStrReserveLength);
+    obj_v.reserve(str_arena::MinStrReserveLength);
   }
 
   // XXX(stephentu): tune this
