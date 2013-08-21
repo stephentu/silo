@@ -48,12 +48,6 @@ extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
 
-static inline size_t
-MaxCpuForPinning()
-{
-  return coreid::num_cpus_online();
-}
-
 // NOTE: the typed_* versions of classes exist so we don't have to convert all
 // classes to templatetized [for sanity in compliation times]; we trade off
 // a bit of type-safety for more rapid development cycles

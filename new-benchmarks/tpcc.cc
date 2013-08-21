@@ -259,7 +259,9 @@ public:
     //cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
     //     << " pinned to whse=" << wid << endl;
     ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
-    const unsigned long pinid = (wid - 1) % MaxCpuForPinning();
+    const unsigned long pinid = (wid - 1);
+    // XXX: need to port changes over from benchmarks/tpcc.cc
+    ALWAYS_ASSERT(pinid < nthreads);
     rcu::s_instance.pin_current_thread(pinid);
     rcu::s_instance.fault_region();
   }
@@ -508,7 +510,10 @@ protected:
   {
     if (!pin_cpus)
       return;
-    rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
+    const size_t a = worker_id % coreid::num_cpus_online();
+    const size_t b = a % nthreads;
+    rcu::s_instance.pin_current_thread(b);
+    rcu::s_instance.fault_region();
   }
 
 private:

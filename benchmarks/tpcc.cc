@@ -310,7 +310,8 @@ protected: \
   PinToWarehouseId(unsigned int wid)
   {
     const unsigned int partid = PartitionId(wid);
-    const unsigned int pinid  = partid % MaxCpuForPinning();
+    ALWAYS_ASSERT(partid < nthreads);
+    const unsigned int pinid  = partid;
     if (verbose)
       cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
            << " pinned to whse=" << wid << " (partid=" << partid << ")"
@@ -602,7 +603,9 @@ protected:
   {
     if (!pin_cpus)
       return;
-    rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
+    const size_t a = worker_id % coreid::num_cpus_online();
+    const size_t b = a % nthreads;
+    rcu::s_instance.pin_current_thread(b);
     rcu::s_instance.fault_region();
   }
 

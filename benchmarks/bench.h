@@ -40,12 +40,6 @@ extern int slow_exit;
 extern int retry_aborted_transaction;
 extern int no_reset_counters;
 
-static inline size_t
-MaxCpuForPinning()
-{
-  return std::min(static_cast<unsigned>(nthreads), coreid::num_cpus_online());
-}
-
 class scoped_db_thread_ctx {
 public:
   scoped_db_thread_ctx(const scoped_db_thread_ctx &) = delete;

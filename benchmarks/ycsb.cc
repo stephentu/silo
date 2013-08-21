@@ -195,7 +195,9 @@ protected:
   {
     if (!pin_cpus)
       return;
-    rcu::s_instance.pin_current_thread(worker_id % MaxCpuForPinning());
+    const size_t a = worker_id % coreid::num_cpus_online();
+    const size_t b = a % nthreads;
+    rcu::s_instance.pin_current_thread(b);
   }
 
   inline ALWAYS_INLINE string &
@@ -286,7 +288,8 @@ protected:
   load()
   {
     if (pin_cpus) {
-      rcu::s_instance.pin_current_thread(id % MaxCpuForPinning());
+      ALWAYS_ASSERT(id < coreid::num_cpus_online());
+      rcu::s_instance.pin_current_thread(id % nthreads);
       rcu::s_instance.fault_region();
       ALWAYS_ASSERT(!numa_run_on_node(-1)); // XXX: HACK
       ALWAYS_ASSERT(!sched_yield());
