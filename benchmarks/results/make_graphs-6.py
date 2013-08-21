@@ -149,6 +149,9 @@ if __name__ == '__main__':
     def name_extractor(name):
       return lambda x: x[0]['name'] == name
 
+    def persist_extractor(mode):
+      return lambda x: 'persist' in x[0] and x[0]['persist'] == mode
+
     def AND(*extractors):
       def fn(x):
         for ex in extractors:
@@ -269,6 +272,58 @@ if __name__ == '__main__':
             {
                 'label' : 'Silo+GlobalTID',
                 'extractor' : AND(name_extractor('scale_rmw'), db_extractor('ndb-proto1')),
+            },
+        ],
+        'x-label' : 'nthreads',
+        'y-label' : 'throughput/core (txns/sec/core)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'lower left',
+      },
+      {
+        'file'    : 'istc3-8-19-13_cameraready.py',
+        'outfile' : 'istc3-8-19-13_cameraready-scale_tpcc.pdf',
+        'x-axis' : extract_nthreads,
+        'y-axis' : deal_with_posK_res(0),
+        'lines' : [
+            {
+                'label' : 'Silo',
+                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-none')),
+            },
+            #{
+            #    'label' : 'Silo+PersistTemp',
+            #    'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-temp')),
+            #},
+            {
+                'label' : 'Silo+Persist',
+                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-real')),
+            },
+        ],
+        'x-label' : 'nthreads',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'upper left',
+      },
+      {
+        'file'    : 'istc3-8-19-13_cameraready.py',
+        'outfile' : 'istc3-8-19-13_cameraready-scale_tpcc-percore.pdf',
+        'x-axis' : extract_nthreads,
+        'y-axis' : deal_with_posK_res_percore(0),
+        'lines' : [
+            {
+                'label' : 'Silo',
+                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-none')),
+            },
+            #{
+            #    'label' : 'Silo+PersistTemp',
+            #    'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-temp')),
+            #},
+            {
+                'label' : 'Silo+Persist',
+                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-real')),
             },
         ],
         'x-label' : 'nthreads',
