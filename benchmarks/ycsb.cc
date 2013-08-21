@@ -383,12 +383,14 @@ protected:
         for (size_t i = 0; i < numa_nodes_used.size(); i++) {
           // allocate loaders_per_node loaders to this numa node
           const vector<unsigned> cpus = numa_node_to_cpus(numa_nodes_used[i]);
+          const vector<unsigned> cpus_avail = exclude(cpus, nthreads);
           const unsigned nloaders = node_allocations[i];
           for (size_t j = 0; j < nloaders; j++, loader_i++)
             ret.push_back(
                 new ycsb_parallel_usertable_loader(
-                  0, db, open_tables, cpus[j % cpus.size()],
-                  loader_i * nkeysperloader, min((loader_i + 1) * nkeysperloader, nkeys)));
+                  0, db, open_tables, cpus_avail[j % cpus_avail.size()],
+                  loader_i * nkeysperloader,
+                  min((loader_i + 1) * nkeysperloader, nkeys)));
         }
       }
     } else {
@@ -420,6 +422,7 @@ protected:
   }
 
 private:
+
   static vector<unsigned>
   get_numa_nodes_used(unsigned nthds)
   {
@@ -444,6 +447,16 @@ private:
       if (numa_bitmask_isbitset(bm, i))
         ret.push_back(i);
     numa_free_cpumask(bm);
+    return ret;
+  }
+
+  static vector<unsigned>
+  exclude(const vector<unsigned> &cpus, unsigned nthds)
+  {
+    vector<unsigned> ret;
+    for (auto n : cpus)
+      if (n < nthds)
+        ret.push_back(n);
     return ret;
   }
 
