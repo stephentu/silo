@@ -3,6 +3,7 @@
 #include <map>
 #include <iostream>
 #include <cstring>
+#include <numa.h>
 
 #include "allocator.h"
 #include "spinlock.h"
@@ -294,6 +295,15 @@ allocator::ReleaseArenas(void **arenas)
   }
 }
 
+static void
+numa_hint_memory_placement(void *px, size_t sz, unsigned node)
+{
+  struct bitmask *bm = numa_allocate_nodemask();
+  numa_bitmask_setbit(bm, node);
+  numa_interleave_memory(px, sz, bm);
+  numa_free_nodemask(bm);
+}
+
 void
 allocator::FaultRegion(size_t cpu)
 {
@@ -329,6 +339,10 @@ allocator::FaultRegion(size_t cpu)
     perror("madvise");
     ALWAYS_ASSERT(false);
   }
+  numa_hint_memory_placement(
+      pc.region_begin,
+      (uintptr_t)pc.region_end - (uintptr_t)pc.region_begin,
+      numa_node_of_cpu(cpu));
   std::cerr << "cpu" << cpu << " starting faulting region ("
             << intptr_t(pc.region_end) - intptr_t(pc.region_begin) << " bytes)"
             << std::endl;
