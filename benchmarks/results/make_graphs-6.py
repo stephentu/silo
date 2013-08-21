@@ -42,6 +42,15 @@ def deal_with_posK_res(k):
         return x[k]
     return fn
 
+def deal_with_posK_res_percore(k):
+    def fn(x):
+        nthds = float(extract_nthreads(x))
+        x = x[1]
+        if type(x) == list:
+            return [e[k]/nthds for e in x]
+        return x[k]/nthds
+    return fn
+
 def longest_line(ls):
     best, bestlen = ls[0], len(ls[0])
     for i in xrange(1, len(ls)):
@@ -83,6 +92,8 @@ def mkplot(results, desc, outfilename):
     ax.set_ylabel(desc['y-label'])
     ax.set_ylim(ymin = 0)
     ax.legend([l['label'] for l in desc['lines']], loc=desc['legend'])
+    if 'y-axis-major-formatter' in desc:
+        ax.yaxis.set_major_formatter(desc['y-axis-major-formatter'])
     fig.savefig(outfilename, format='pdf')
 
 def MFormatter(x, p):
@@ -132,6 +143,28 @@ if __name__ == '__main__':
         has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
         return has_sep_tree and not has_snapshots
 
+    def db_extractor(db):
+      return lambda x: x[0]['db'] == db
+
+    def name_extractor(name):
+      return lambda x: x[0]['name'] == name
+
+    def AND(*extractors):
+      def fn(x):
+        for ex in extractors:
+          if not ex(x):
+            return False
+        return True
+      return fn
+
+    def OR(*extractors):
+      def fn(x):
+        for ex in extractors:
+          if ex(x):
+            return True
+        return False
+      return fn
+
     #config = \
     #  {
     #    'x-axis' : extract_pct,
@@ -162,25 +195,54 @@ if __name__ == '__main__':
     #    'legend' : 'upper right',
     #  }
 
+    #configs = [
+    #  {
+    #    'file'    : 'istc3-8-16-13_multipart_skew.py',
+    #    'outfile' : 'istc3-8-16-13_multipart_skew.pdf',
+    #    'x-axis' : extract_nthreads,
+    #    'y-axis' : deal_with_posK_res(0),
+    #    'lines' : [
+    #        {
+    #            'label' : 'Partition-Store',
+    #            'extractor' : lambda x: x[0]['db'] == 'kvdb-st',
+    #            'extend' : True,
+    #        },
+    #        {
+    #            'label' : 'Maflingo',
+    #            'extractor' : maflingo_regular_extractor,
+    #        },
+    #        {
+    #            'label' : 'Maflingo+FastIds',
+    #            'extractor' : maflingo_fast_id_gen_extractor,
+    #        },
+    #    ],
+    #    'x-label' : 'nthreads',
+    #    'y-label' : 'throughput (txns/sec)',
+    #    'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+    #    'x-axis-set-major-locator' : False,
+    #    'show-error-bars' : True,
+    #    'legend' : 'upper right',
+    #  },
+    #]
+
     configs = [
       {
-        'file'    : 'istc3-8-16-13_multipart_skew.py',
-        'outfile' : 'istc3-8-16-13_multipart_skew.pdf',
+        'file'    : 'istc3-8-21-13_cameraready.py',
+        'outfile' : 'istc3-8-21-13_cameraready-scale_rmw.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
             {
-                'label' : 'Partition-Store',
-                'extractor' : lambda x: x[0]['db'] == 'kvdb-st',
-                'extend' : True,
+                'label' : 'Key-Value',
+                'extractor' : AND(name_extractor('scale_rmw'), db_extractor('kvdb')),
             },
             {
-                'label' : 'Maflingo',
-                'extractor' : maflingo_regular_extractor,
+                'label' : 'Silo',
+                'extractor' : AND(name_extractor('scale_rmw'), db_extractor('ndb-proto2')),
             },
             {
-                'label' : 'Maflingo+FastIds',
-                'extractor' : maflingo_fast_id_gen_extractor,
+                'label' : 'Silo+GlobalTID',
+                'extractor' : AND(name_extractor('scale_rmw'), db_extractor('ndb-proto1')),
             },
         ],
         'x-label' : 'nthreads',
@@ -188,11 +250,35 @@ if __name__ == '__main__':
         'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
-        'legend' : 'upper right',
+        'legend' : 'upper left',
+      },
+      {
+        'file'    : 'istc3-8-21-13_cameraready.py',
+        'outfile' : 'istc3-8-21-13_cameraready-scale_rmw-percore.pdf',
+        'x-axis' : extract_nthreads,
+        'y-axis' : deal_with_posK_res_percore(0),
+        'lines' : [
+            {
+                'label' : 'Key-Value',
+                'extractor' : AND(name_extractor('scale_rmw'), db_extractor('kvdb')),
+            },
+            {
+                'label' : 'Silo',
+                'extractor' : AND(name_extractor('scale_rmw'), db_extractor('ndb-proto2')),
+            },
+            {
+                'label' : 'Silo+GlobalTID',
+                'extractor' : AND(name_extractor('scale_rmw'), db_extractor('ndb-proto1')),
+            },
+        ],
+        'x-label' : 'nthreads',
+        'y-label' : 'throughput/core (txns/sec/core)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'lower left',
       },
     ]
-
-    #mkplot(RESULTS, config, 'istc3-8-15-13_multipart.pdf')
 
     for config in configs:
       g, l = {}, {}
