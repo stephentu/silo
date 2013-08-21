@@ -35,10 +35,10 @@ TPCC_STANDARD_MIX='45,43,4,4,4'
 TPCC_REALISTIC_MIX='39,37,4,10,10'
 
 KNOB_ENABLE_YCSB_SCALE=True
-KNOB_ENABLE_TPCC_SCALE=True
-KNOB_ENABLE_TPCC_MULTIPART=True
-KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
-KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
+KNOB_ENABLE_TPCC_SCALE=False
+KNOB_ENABLE_TPCC_MULTIPART=False
+KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
@@ -275,7 +275,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
   # -gc
   grids += [
     {
-      'binary' : ['../out-factor-gc-nowriteinplace/dbtest'],
+      'binary' : ['../out-factor-gc-nowriteinplace/benchmarks/dbtest'],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -288,7 +288,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'numa_memory' : [None, '%dG' % (4 * 28)],
     },
     {
-      'binary' : ['../out-factor-gc/dbtest'],
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -302,7 +302,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'disable_snapshots' : [False, True],
     },
     {
-      'binary' : ['../out-factor-gc/dbtest'],
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -494,7 +494,7 @@ if __name__ == '__main__':
          par_load, retry, numa_memory, persist,
          log_fake_writes, log_nofsync, log_compress,
          disable_gc, disable_snapshots) in it.product(
-        grid.get('binary', ['../out-perf/dbtest']),
+        grid.get('binary', ['../out-perf/benchmarks/dbtest']),
         grid['dbs'], grid['benchmarks'], grid['scale_factors'],
         grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
         grid['numa_memory'], grid['persist'],
