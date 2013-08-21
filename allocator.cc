@@ -101,7 +101,7 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
 
   void * const endpx = (void *) ((uintptr_t)x + g_ncpus * g_maxpercore + hugepgsize);
   std::cerr << "allocator::Initialize()" << std::endl
-            << "  mmapp() region [" << x << ", " << endpx << ")" << std::endl;
+            << "  mmap() region [" << x << ", " << endpx << ")" << std::endl;
 
   g_memstart = reinterpret_cast<void *>(iceil(uintptr_t(x), hugepgsize));
   g_memend = reinterpret_cast<char *>(g_memstart) + (g_ncpus * g_maxpercore);
@@ -220,7 +220,11 @@ allocator::AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs)
   void * const mynewpx =
     reinterpret_cast<char *>(mypx) + nhugepgs * hugepgsize;
 
-  ALWAYS_ASSERT(mynewpx <= pc.region_end); // out of memory otherwise
+  if (unlikely(mynewpx > pc.region_end)) {
+    std::cerr << "allocator::AllocateUnmanagedWithLock():" << std::endl
+              << "  region ending at " << pc.region_end << " OOM" << std::endl;
+    ALWAYS_ASSERT(false); // out of memory otherwise
+  }
 
   const bool needs_mmap = !pc.region_faulted;
   pc.region_begin = mynewpx;
