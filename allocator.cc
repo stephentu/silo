@@ -99,6 +99,10 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
     ALWAYS_ASSERT(false);
   }
 
+  void * const endpx = (void *) ((uintptr_t)x + g_ncpus * g_maxpercore + hugepgsize);
+  std::cerr << "allocator::Initialize()" << std::endl
+            << "  mmapp() region [" << x << ", " << endpx << ")" << std::endl;
+
   g_memstart = reinterpret_cast<void *>(iceil(uintptr_t(x), hugepgsize));
   g_memend = reinterpret_cast<char *>(g_memstart) + (g_ncpus * g_maxpercore);
 
@@ -111,8 +115,11 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
       reinterpret_cast<char *>(g_memstart) + (i * g_maxpercore);
     g_regions[i].region_end   =
       reinterpret_cast<char *>(g_memstart) + ((i + 1) * g_maxpercore);
-    //std::cerr << "cpu" << i << " owns [" << g_regions[i].region_begin
-    //          << ", " << g_regions[i].region_end << ")" << std::endl;
+    std::cerr << "cpu" << i << " owns [" << g_regions[i].region_begin
+              << ", " << g_regions[i].region_end << ")" << std::endl;
+    ALWAYS_ASSERT(g_regions[i].region_begin < g_regions[i].region_end);
+    ALWAYS_ASSERT(g_regions[i].region_begin >= x);
+    ALWAYS_ASSERT(g_regions[i].region_end <= endpx);
   }
 
   s_init = true;
@@ -287,8 +294,7 @@ void
 allocator::FaultRegion(size_t cpu)
 {
   static const size_t hugepgsize = GetHugepageSize();
-  //static const size_t pgsize = GetPageSize();
-  INVARIANT(cpu < g_ncpus);
+  ALWAYS_ASSERT(cpu < g_ncpus);
   regionctx &pc = g_regions[cpu];
   if (pc.region_faulted)
     return;
@@ -306,9 +312,12 @@ allocator::FaultRegion(size_t cpu)
       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   if (unlikely(x == MAP_FAILED)) {
     perror("mmap");
+    std::cerr << "  cpu" << cpu
+              << " [" << pc.region_begin << ", " << pc.region_end << ")"
+              << std::endl;
     ALWAYS_ASSERT(false);
   }
-  INVARIANT(x == pc.region_begin);
+  ALWAYS_ASSERT(x == pc.region_begin);
   static const bool s_use_madv_willneed = getenv("USE_MADV_WILLNEED");
   const int advice =
     s_use_madv_willneed ? (MADV_HUGEPAGE | MADV_WILLNEED) : MADV_HUGEPAGE;
