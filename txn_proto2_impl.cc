@@ -698,8 +698,7 @@ aligned_padded_elem<transaction_proto2_static::hackstruct>
 aligned_padded_elem<transaction_proto2_static::flags>
   transaction_proto2_static::g_flags;
 percore_lazy<transaction_proto2_static::threadctx>
-  transaction_proto2_static::g_threadctxs(
-      [](transaction_proto2_static::threadctx &) {});
+  transaction_proto2_static::g_threadctxs;
 event_counter
   transaction_proto2_static::g_evt_worker_thread_wait_log_buffer(
       "worker_thread_wait_log_buffer");

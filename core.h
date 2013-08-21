@@ -144,61 +144,54 @@ protected:
 namespace private_ {
   template <typename T>
   struct buf {
-    bool init_;
     char bytes_[sizeof(T)];
-    constexpr buf() : init_(false) {}
-    inline T *
-    cast()
-    {
-      return (T *) &bytes_[0];
-    }
-    inline const T *
-    cast() const
-    {
-      return (T *) &bytes_[0];
-    }
+    inline T * cast() { return (T *) &bytes_[0]; }
+    inline const T * cast() const { return (T *) &bytes_[0]; }
   };
 }
 
 template <typename T>
-class percore_lazy : public percore<private_::buf<T>, false> {
+class percore_lazy : private percore<private_::buf<T>, false> {
   typedef private_::buf<T> buf_t;
 public:
 
-  percore_lazy(std::function<void(T &)> init = [](T &) {})
-    : init_(init) {}
+  percore_lazy()
+  {
+    NDB_MEMSET(&flags_[0], 0, sizeof(flags_));
+  }
 
+  template <class... Args>
   inline T &
-  operator[](unsigned i)
+  get(unsigned i, Args &&... args)
   {
     buf_t &b = this->elems()[i].elem;
-    if (unlikely(!b.init_)) {
-      b.init_ = true;
-      T *px = new (&b.bytes_[0]) T();
-      init_(*px);
+    if (unlikely(!flags_[i])) {
+      flags_[i] = true;
+      T *px = new (&b.bytes_[0]) T(std::forward<Args>(args)...);
       return *px;
     }
     return *b.cast();
   }
 
+  template <class... Args>
   inline T &
-  my()
+  my(Args &&... args)
   {
-    return (*this)[coreid::core_id()];
+    return get(coreid::core_id(), std::forward<Args>(args)...);
   }
 
   inline T *
   view(unsigned i)
   {
     buf_t &b = this->elems()[i].elem;
-    return b.init_ ? b.cast() : nullptr;
+    return flags_[i] ? b.cast() : nullptr;
   }
 
   inline const T *
   view(unsigned i) const
   {
     const buf_t &b = this->elems()[i].elem;
-    return b.init_ ? b.cast() : nullptr;
+    return flags_[i] ? b.cast() : nullptr;
   }
 
   inline const T *
@@ -208,6 +201,6 @@ public:
   }
 
 private:
-  std::function<void(T &)> init_;
-  CACHE_PADOUT; // ugh, wasteful
+  bool flags_[NMAXCORES];
+  CACHE_PADOUT;
 };

@@ -239,7 +239,7 @@ rcu::sync::do_cleanup()
   evt_avg_rcu_local_delete_queue_len.offer(n);
 
   // try to release memory from allocator slabs back
-  if (impl_->try_release()) {
+  if (try_release()) {
 #ifdef ENABLE_EVENT_COUNTERS
     const uint64_t now = timer::cur_usec();
     if (last_release_timestamp_us_ > 0) {
@@ -290,7 +290,7 @@ rcu::fault_region()
 }
 
 rcu::rcu()
-  : syncs_([this](sync &s) { s.impl_ = this; })
+  : syncs_()
 {
   // XXX: these should really be instance members of RCU
   // we are assuming only one rcu object is ever created

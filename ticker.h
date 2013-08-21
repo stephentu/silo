@@ -86,10 +86,6 @@ public:
   class guard {
   public:
 
-    guard()
-      : impl_(nullptr), core_(0), tick_(0),
-        depth_(0), start_us_(0) {}
-
     guard(ticker &impl)
       : impl_(&impl), core_(coreid::core_id()), start_us_(0)
     {
@@ -177,7 +173,7 @@ public:
     uint64_t start_us_;
   };
 
-  static ticker s_instance; // system wide ticker
+  static ticker s_instance CACHE_ALIGNED; // system wide ticker
 
 private:
 
@@ -222,18 +218,25 @@ private:
 
   struct tickinfo {
     spinlock lock_; // guards current_tick_ and depth_
+
     std::atomic<uint64_t> current_tick_; // last RCU epoch this thread has seen
                                          // (implies completion through current_tick_ - 1)
     std::atomic<uint64_t> depth_; // 0 if not in RCU section
     std::atomic<uint64_t> start_us_; // 0 if not in RCU section
 
-    tickinfo() : current_tick_(1), depth_(0), start_us_(0) {}
+    tickinfo()
+      : current_tick_(1), depth_(0), start_us_(0)
+    {
+      INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+    }
   };
 
   percore<tickinfo> ticks_;
 
-  std::atomic<uint64_t> current_tick_; // which tick are we currenlty on?
+  std::atomic<uint64_t> current_tick_ CACHE_ALIGNED; // which tick are we currenlty on?
   std::atomic<uint64_t> last_tick_inclusive_;
     // all threads have *completed* ticks <= last_tick_inclusive_
     // (< current_tick_)
+
+  CACHE_PADOUT;
 };

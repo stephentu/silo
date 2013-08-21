@@ -57,7 +57,7 @@ public:
   // a sync struct
   //
   // this is also serving as a memory allocator for the time being
-  struct sync {
+  class sync {
     friend class rcu;
     template <bool> friend class scoped_rcu_base;
   public:
@@ -80,16 +80,18 @@ public:
                                              // un-released deallocations
 
   public:
-    sync()
+
+    sync(rcu *impl)
       : depth_(0)
       , last_reaped_epoch_(0)
 #ifdef ENABLE_EVENT_COUNTERS
       , last_reaped_timestamp_us_(0)
       , last_release_timestamp_us_(0)
 #endif
-      , impl_(nullptr)
+      , impl_(impl)
       , pin_cpu_(-1)
     {
+      INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
       queue_.alloc_freelist(NQueueGroups);
       scratch_.alloc_freelist(NQueueGroups);
       NDB_MEMSET(&arenas_[0], 0, sizeof(arenas_));
@@ -195,7 +197,7 @@ public:
   in_rcu_region(uint64_t &rcu_tick) const
   {
     const sync *s = syncs_.myview();
-    if (!s)
+    if (unlikely(!s))
       return false;
     const bool is_guarded = ticker::s_instance.is_locally_guarded(rcu_tick);
     const bool has_depth = s->depth();
@@ -230,13 +232,13 @@ public:
 
   void fault_region();
 
-  rcu(); // initer
-
-  static rcu s_instance; // system wide instance
+  static rcu s_instance CACHE_ALIGNED; // system wide instance
 
   static void Test();
 
 private:
+
+  rcu(); // private ctor to enforce singleton
 
   static inline uint64_t constexpr
   to_rcu_ticks(uint64_t ticks)
@@ -244,7 +246,7 @@ private:
     return ticks / EpochTimeMultiplier;
   }
 
-  inline sync &mysync() { return syncs_.my(); }
+  inline sync &mysync() { return syncs_.my(this); }
 
   percore_lazy<sync> syncs_;
 };

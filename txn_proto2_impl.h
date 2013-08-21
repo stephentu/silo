@@ -552,19 +552,6 @@ protected:
 
   typedef basic_px_queue<delete_entry, 4096> px_queue;
 
-public:
-
-  // stores last commit TID for each core
-  // XXX: currently has to be public so we can initialize
-  // g_threadctxs as:
-  //   percore_lazy<transaction_proto2_static::threadctx>
-  //     transaction_proto2_static::g_threadctxs(
-  //         [](transaction_proto2_static::threadctx &) {});
-  //
-  // if we don't explicitly provide a no-op init functor, g++-4.7
-  // will crash with an internal error:
-  //  txn_proto2_impl.cc: In constructor percore_lazy<T>::percore_lazy(std::function<void(T&)>) [with T = transaction_proto2_static::threadctx]
-  //  txn_proto2_impl.cc:642:30: internal compiler error: in tsubst_copy, at cp/pt.c:12141
   struct threadctx {
     uint64_t last_commit_tid_;
     unsigned last_reaped_epoch_;
@@ -581,12 +568,11 @@ public:
       , last_reaped_timestamp_us_(0)
 #endif
     {
+      INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
       queue_.alloc_freelist(rcu::NQueueGroups);
       scratch_.alloc_freelist(rcu::NQueueGroups);
     }
   };
-
-protected:
 
   static void
   clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq);
@@ -988,7 +974,7 @@ public:
   gen_commit_tid(const dbtuple_write_info_vec &write_tuples)
   {
     const size_t my_core_id = this->rcu_guard()->guard()->core();
-    threadctx &ctx = g_threadctxs[my_core_id];
+    threadctx &ctx = g_threadctxs.get(my_core_id);
     const tid_t l_last_commit_tid = ctx.last_commit_tid_;
     INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
               CoreId(l_last_commit_tid) == my_core_id);
