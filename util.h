@@ -24,17 +24,31 @@ namespace util {
 
 // padded, aligned primitives
 template <typename T>
-struct aligned_padded_elem {
+class aligned_padded_elem {
+public:
+
   template <class... Args>
   aligned_padded_elem(Args &&... args)
-    : elem(std::forward<Args>(args)...) {}
+    : elem(std::forward<Args>(args)...)
+  {
+    INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+  }
+
   T elem;
+  CACHE_PADOUT;
+
   // syntactic sugar- can treat like a pointer
   inline T & operator*() { return elem; }
   inline const T & operator*() const { return elem; }
   inline T * operator->() { return &elem; }
   inline const T * operator->() const { return &elem; }
-  CACHE_PADOUT;
+
+private:
+  inline void
+  __cl_asserter() const
+  {
+    static_assert((sizeof(*this) % CACHELINE_SIZE) == 0, "xx");
+  }
 } CACHE_ALIGNED;
 
 // some pre-defs
