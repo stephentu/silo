@@ -216,6 +216,54 @@ private:
   uint64_t computation_n;
 };
 
+static void
+ycsb_load_keyrange(
+    uint64_t keystart,
+    uint64_t keyend,
+    unsigned int pinid,
+    abstract_db *db,
+    abstract_ordered_index *tbl,
+    str_arena &arena,
+    uint64_t txn_flags,
+    void *txn_buf)
+{
+  if (pin_cpus) {
+    ALWAYS_ASSERT(pinid < nthreads);
+    rcu::s_instance.pin_current_thread(pinid);
+    rcu::s_instance.fault_region();
+  }
+
+  const size_t batchsize = (db->txn_max_batch_size() == -1) ?
+    10000 : db->txn_max_batch_size();
+  ALWAYS_ASSERT(batchsize > 0);
+  const size_t nkeys = keyend - keystart;
+  ALWAYS_ASSERT(nkeys > 0);
+  const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
+  for (size_t batchid = 0; batchid < nbatches;) {
+    scoped_str_arena s_arena(arena);
+    void * const txn = db->new_txn(txn_flags, arena, txn_buf);
+    try {
+      const size_t rend = (batchid + 1 == nbatches) ?
+        keyend : keystart + ((batchid + 1) * batchsize);
+      for (size_t i = batchid * batchsize + keystart; i < rend; i++) {
+        ALWAYS_ASSERT(i >= keystart && i < keyend);
+        const string k = u64_varkey(i).str();
+        const string v(YCSBRecordSize, 'a');
+        tbl->insert(txn, k, v);
+      }
+      if (db->commit_txn(txn))
+        batchid++;
+      else
+        db->abort_txn(txn);
+    } catch (abstract_db::abstract_abort_exception &ex) {
+      db->abort_txn(txn);
+    }
+  }
+  if (verbose)
+    cerr << "[INFO] finished loading USERTABLE range [kstart="
+      << keystart << ", kend=" << keyend << ") - nkeys: " << nkeys << endl;
+}
+
 class ycsb_usertable_loader : public bench_loader {
 public:
   ycsb_usertable_loader(unsigned long seed,
@@ -229,44 +277,20 @@ protected:
   load()
   {
     abstract_ordered_index *tbl = open_tables.at("USERTABLE");
-    try {
-      // load
-      const size_t batchsize = (db->txn_max_batch_size() == -1) ?
-        10000 : db->txn_max_batch_size();
-      ALWAYS_ASSERT(batchsize > 0);
-      const size_t nbatches = nkeys / batchsize;
-      if (nbatches == 0) {
-        scoped_str_arena s_arena(arena);
-        void *txn = db->new_txn(txn_flags, arena, txn_buf());
-        for (size_t j = 0; j < nkeys; j++) {
-          string k = u64_varkey(j).str();
-          string v(YCSBRecordSize, 'a');
-          tbl->insert(txn, k, v);
-        }
-        ALWAYS_ASSERT(db->commit_txn(txn));
-        if (verbose)
-          cerr << "batch 1/1 done" << endl;
-      } else {
-        for (size_t i = 0; i < nbatches; i++) {
-          scoped_str_arena s_arena(arena);
-          const size_t keyend = (i == nbatches - 1) ? nkeys : (i + 1) * batchsize;
-          void *txn = db->new_txn(txn_flags, arena, txn_buf());
-          for (size_t j = i * batchsize; j < keyend; j++) {
-            string k = u64_varkey(j).str();
-            string v(YCSBRecordSize, 'a');
-            tbl->insert(txn, k, v);
-          }
-          ALWAYS_ASSERT(db->commit_txn(txn));
-          if (verbose && !((i + 1) % 1000))
-            cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
-        }
-      }
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      // shouldn't abort on loading!
-      ALWAYS_ASSERT(false);
+    const size_t nkeysperthd = nkeys / nthreads;
+    for (size_t i = 0; i < nthreads; i++) {
+      const size_t keystart = i * nkeysperthd;
+      const size_t keyend = min((i + 1) * nkeysperthd, nkeys);
+      ycsb_load_keyrange(
+          keystart,
+          keyend,
+          i,
+          db,
+          tbl,
+          arena,
+          txn_flags,
+          txn_buf());
     }
-    if (verbose)
-      cerr << "[INFO] finished loading USERTABLE" << endl;
   }
 };
 
@@ -282,7 +306,6 @@ public:
       pinid(pinid), keystart(keystart), keyend(keyend)
   {
     INVARIANT(keyend > keystart);
-
     if (verbose)
       cerr << "[INFO] YCSB par loader cpu " << pinid
            << " [" << keystart << ", " << keyend << ")" << endl;
@@ -292,44 +315,16 @@ protected:
   virtual void
   load()
   {
-    if (pin_cpus) {
-      ALWAYS_ASSERT(pinid < nthreads);
-      rcu::s_instance.pin_current_thread(pinid);
-      rcu::s_instance.fault_region();
-      ALWAYS_ASSERT(!numa_run_on_node(-1)); // XXX: HACK
-      ALWAYS_ASSERT(!sched_yield());
-    }
-
     abstract_ordered_index *tbl = open_tables.at("USERTABLE");
-    const size_t batchsize = (db->txn_max_batch_size() == -1) ?
-      10000 : db->txn_max_batch_size();
-    ALWAYS_ASSERT(batchsize > 0);
-    const size_t nkeys = keyend - keystart;
-    ALWAYS_ASSERT(nkeys > 0);
-    const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
-    for (size_t batchid = 0; batchid < nbatches;) {
-      scoped_str_arena s_arena(arena);
-      void * const txn = db->new_txn(txn_flags, arena, txn_buf());
-      try {
-        const size_t rend = (batchid + 1 == nbatches) ?
-          keyend : keystart + ((batchid + 1) * batchsize);
-        for (size_t i = batchid * batchsize + keystart; i < rend; i++) {
-          ALWAYS_ASSERT(i >= keystart && i < keyend);
-          const string k = u64_varkey(i).str();
-          const string v(YCSBRecordSize, 'a');
-          tbl->insert(txn, k, v);
-        }
-        if (db->commit_txn(txn))
-          batchid++;
-        else
-          db->abort_txn(txn);
-      } catch (abstract_db::abstract_abort_exception &ex) {
-        db->abort_txn(txn);
-      }
-    }
-    if (verbose)
-      cerr << "[INFO] finished loading USERTABLE range [kstart="
-           << keystart << ", kend=" << keyend << ") - nkeys: " << nkeys << endl;
+    ycsb_load_keyrange(
+        keystart,
+        keyend,
+        pinid,
+        db,
+        tbl,
+        arena,
+        txn_flags,
+        txn_buf());
   }
 
 private:
@@ -360,7 +355,8 @@ protected:
         for (size_t i = 0; i < ncpus; i++)
           ret.push_back(
               new ycsb_parallel_usertable_loader(
-                0, db, open_tables, i, i * nkeysperloader,
+                0, db, open_tables, i,
+                i * nkeysperloader,
                 min((i + 1) * nkeysperloader, nkeys)));
       } else {
         // load balance the loaders amongst numa nodes in RR fashion
@@ -394,10 +390,6 @@ protected:
         }
       }
     } else {
-      // non-parallel loading doesn't get the NUMA allocations correct
-      if (pin_cpus && verbose)
-        cerr << "[WARNING] non parallel loading does not "
-             << "get numa allocations correct - perf may suffer" << endl;
       ret.push_back(new ycsb_usertable_loader(0, db, open_tables));
     }
     return ret;
