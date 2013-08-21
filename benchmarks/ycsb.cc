@@ -3,6 +3,7 @@
 #include <vector>
 #include <utility>
 #include <string>
+#include <set>
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -274,13 +275,17 @@ public:
   ycsb_parallel_usertable_loader(unsigned long seed,
                                  abstract_db *db,
                                  const map<string, abstract_ordered_index *> &open_tables,
-                                 unsigned int id,
+                                 unsigned int pinid,
                                  uint64_t keystart,
                                  uint64_t keyend)
     : bench_loader(seed, db, open_tables),
-      id(id), keystart(keystart), keyend(keyend)
+      pinid(pinid), keystart(keystart), keyend(keyend)
   {
     INVARIANT(keyend > keystart);
+
+    if (verbose)
+      cerr << "[INFO] YCSB par loader cpu " << pinid
+           << " [" << keystart << ", " << keyend << ")" << endl;
   }
 
 protected:
@@ -288,8 +293,8 @@ protected:
   load()
   {
     if (pin_cpus) {
-      ALWAYS_ASSERT(id < coreid::num_cpus_online());
-      rcu::s_instance.pin_current_thread(id % nthreads);
+      ALWAYS_ASSERT(pinid < nthreads);
+      rcu::s_instance.pin_current_thread(pinid);
       rcu::s_instance.fault_region();
       ALWAYS_ASSERT(!numa_run_on_node(-1)); // XXX: HACK
       ALWAYS_ASSERT(!sched_yield());
@@ -328,7 +333,7 @@ protected:
   }
 
 private:
-  unsigned int id;
+  unsigned int pinid;
   uint64_t keystart;
   uint64_t keyend;
 };
@@ -348,13 +353,49 @@ protected:
   {
     vector<bench_loader *> ret;
     const unsigned long ncpus = coreid::num_cpus_online();
-    if (enable_parallel_loading && nkeys >= ncpus) {
-      if (verbose)
-        cerr << "[INFO] parallel loading with ncpus=" << ncpus << endl;
-      const size_t nkeysperthd = nkeys / ncpus;
-      for (size_t i = 0; i < ncpus; i++)
-        ret.push_back(new ycsb_parallel_usertable_loader(0, db, open_tables, i, i * nkeysperthd, min((i + 1) * nkeysperthd, nkeys)));
+    if (enable_parallel_loading && nkeys >= nthreads) {
+      // divide the key space amongst all the loaders
+      const size_t nkeysperloader = nkeys / ncpus;
+      if (nthreads > ncpus) {
+        for (size_t i = 0; i < ncpus; i++)
+          ret.push_back(
+              new ycsb_parallel_usertable_loader(
+                0, db, open_tables, i, i * nkeysperloader,
+                min((i + 1) * nkeysperloader, nkeys)));
+      } else {
+        // load balance the loaders amongst numa nodes in RR fashion
+        //
+        // XXX: here we hardcode an assumption about the NUMA topology of
+        // the system
+        const vector<unsigned> numa_nodes_used = get_numa_nodes_used(nthreads);
+
+        // assign loaders to cores based on numa node assignment in RR fashion
+        const unsigned loaders_per_node = ncpus / numa_nodes_used.size();
+
+        vector<unsigned> node_allocations(numa_nodes_used.size(), loaders_per_node);
+        // RR the remaining
+        for (unsigned i = 0;
+             i < (ncpus - loaders_per_node * numa_nodes_used.size());
+             i++)
+          node_allocations[i]++;
+
+        size_t loader_i = 0;
+        for (size_t i = 0; i < numa_nodes_used.size(); i++) {
+          // allocate loaders_per_node loaders to this numa node
+          const vector<unsigned> cpus = numa_node_to_cpus(numa_nodes_used[i]);
+          const unsigned nloaders = node_allocations[i];
+          for (size_t j = 0; j < nloaders; j++, loader_i++)
+            ret.push_back(
+                new ycsb_parallel_usertable_loader(
+                  0, db, open_tables, cpus[j % cpus.size()],
+                  loader_i * nkeysperloader, min((loader_i + 1) * nkeysperloader, nkeys)));
+        }
+      }
     } else {
+      // non-parallel loading doesn't get the NUMA allocations correct
+      if (pin_cpus && verbose)
+        cerr << "[WARNING] non parallel loading does not "
+             << "get numa allocations correct - perf may suffer" << endl;
       ret.push_back(new ycsb_usertable_loader(0, db, open_tables));
     }
     return ret;
@@ -377,6 +418,35 @@ protected:
           &barrier_a, &barrier_b));
     return ret;
   }
+
+private:
+  static vector<unsigned>
+  get_numa_nodes_used(unsigned nthds)
+  {
+    // assuming CPUs [0, nthds) are used, what are all the
+    // NUMA nodes touched by [0, nthds)
+    set<unsigned> ret;
+    for (unsigned i = 0; i < nthds; i++) {
+      const int node = numa_node_of_cpu(i);
+      ALWAYS_ASSERT(node >= 0);
+      ret.insert(node);
+    }
+    return vector<unsigned>(ret.begin(), ret.end());
+  }
+
+  static vector<unsigned>
+  numa_node_to_cpus(unsigned node)
+  {
+    struct bitmask *bm = numa_allocate_cpumask();
+    ALWAYS_ASSERT(!::numa_node_to_cpus(node, bm));
+    vector<unsigned> ret;
+    for (int i = 0; i < numa_num_configured_cpus(); i++)
+      if (numa_bitmask_isbitset(bm, i))
+        ret.push_back(i);
+    numa_free_cpumask(bm);
+    return ret;
+  }
+
 };
 
 void
