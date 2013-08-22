@@ -48,8 +48,8 @@ TPCC_STANDARD_MIX='45,43,4,4,4'
 TPCC_REALISTIC_MIX='39,37,4,10,10'
 
 KNOB_ENABLE_YCSB_SCALE=False
-KNOB_ENABLE_TPCC_SCALE=True
-KNOB_ENABLE_TPCC_MULTIPART=False
+KNOB_ENABLE_TPCC_SCALE=False
+KNOB_ENABLE_TPCC_MULTIPART=True
 KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
 
@@ -222,6 +222,22 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'numa_memory' : ['%dG' % (4 * 28)],
     },
     {
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'name' : 'multipart:pct',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' :
+          ['--workload-mix 100,0,0,0,0 --new-order-remote-item-pct %d' % d for d in D_RANGE],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'disable_snapshots' : [True],
+      'numa_memory' : ['%dG' % (4 * 28)],
+    },
+    {
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
       'name' : 'multipart:pct',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -232,8 +248,8 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_NONE],
+      'disable_snapshots' : [True],
       'numa_memory' : ['%dG' % (4 * 28)],
-      'disable_snapshots' : [False, True],
     },
     {
       'name' : 'multipart:pct',
@@ -502,6 +518,7 @@ def run_configuration(
       retcode = p.wait()
       toks = r.strip().split(' ')
   else:
+    assert os.path.isfile(binary) and os.access(binary, os.X_OK)
     toks = [0,0,0,0,0]
   if len(toks) != 5:
     print 'Failure: retcode=', retcode, ', stdout=', r
