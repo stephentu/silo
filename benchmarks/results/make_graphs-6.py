@@ -94,6 +94,8 @@ def mkplot(results, desc, outfilename):
     ax.legend([l['label'] for l in desc['lines']], loc=desc['legend'])
     if 'y-axis-major-formatter' in desc:
         ax.yaxis.set_major_formatter(desc['y-axis-major-formatter'])
+    if 'title' in desc:
+        ax.set_title(desc['title'])
     fig.savefig(outfilename, format='pdf')
 
 def MFormatter(x, p):
@@ -234,8 +236,8 @@ if __name__ == '__main__':
 
     configs = [
       {
-        'file'    : 'istc3-8-21-13_cameraready.py',
-        'outfile' : 'istc3-8-21-13_cameraready-scale_rmw.pdf',
+        'file'    : 'istc3-8-21-13_cameraready-1.py',
+        'outfile' : 'istc3-8-21-13_cameraready-1-scale_rmw.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -258,10 +260,11 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'upper left',
+        'title' : 'YCSB scale',
       },
       {
-        'file'    : 'istc3-8-21-13_cameraready.py',
-        'outfile' : 'istc3-8-21-13_cameraready-scale_rmw-percore.pdf',
+        'file'    : 'istc3-8-21-13_cameraready-1.py',
+        'outfile' : 'istc3-8-21-13_cameraready-1-scale_rmw-percore.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res_percore(0),
         'lines' : [
@@ -284,6 +287,7 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'lower left',
+        'title' : 'YCSB scale per-core',
       },
       {
         'file'    : 'istc3-8-22-13_cameraready.py',
@@ -319,6 +323,7 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'upper left',
+        'title' : 'TPC-C scale (standard mix)',
       },
       {
         'file'    : 'istc3-8-22-13_cameraready.py',
@@ -354,6 +359,7 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'lower left',
+        'title' : 'TPC-C scale per-core (standard mix)',
       },
       {
         'file'    : 'istc3-8-22-13_cameraready.py',
@@ -389,6 +395,7 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'upper left',
+        'title' : 'TPC-C scale (realistic mix)',
       },
       {
         'file'    : 'istc3-8-22-13_cameraready.py',
@@ -424,11 +431,18 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'lower left',
+        'title' : 'TPC-C scale per-core (realistic mix)',
       },
     ]
 
+    FINAL_OUTPUT_FILENAME='istc3-cameraready.pdf'
+    from PyPDF2 import PdfFileWriter, PdfFileReader
+    output = PdfFileWriter()
     for config in configs:
       g, l = {}, {}
       execfile(config['file'], g, l)
       mkplot(l['RESULTS'], config, config['outfile'])
+      inp = PdfFileReader(open(config['outfile'], 'rb'))
+      output.addPage(inp.getPage(0))
 
+    output.write(file(FINAL_OUTPUT_FILENAME, 'wb'))
