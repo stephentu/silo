@@ -8,7 +8,7 @@ import sys
 import multiprocessing as mp
 import os
 
-DRYRUN = True
+DRYRUN = False
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -466,7 +466,7 @@ def run_configuration(
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
     par_load, retry_aborted_txn, numa_memory, logfiles,
     assignments, log_fake_writes, log_nofsync, log_compress,
-    disable_gc, disable_snapshots):
+    disable_gc, disable_snapshots, ntries=5):
   # Note: assignments is a list of list of ints
   assert len(logfiles) == len(assignments)
   assert not log_fake_writes or len(logfiles)
@@ -505,7 +505,18 @@ def run_configuration(
     toks = [0,0,0,0,0]
   if len(toks) != 5:
     print 'Failure: retcode=', retcode, ', stdout=', r
-    assert False
+    import shutil
+    shutil.copyfile('stderr.log', 'stderr.%d.log' % p.pid)
+    if ntries:
+      return run_configuration(
+          binary,
+          basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
+          par_load, retry_aborted_txn, numa_memory, logfiles,
+          assignments, log_fake_writes, log_nofsync, log_compress,
+          disable_gc, disable_snapshots, ntries - 1)
+    else:
+      print "Out of tries!"
+      assert False
   return tuple(map(float, toks))
 
 if __name__ == '__main__':
