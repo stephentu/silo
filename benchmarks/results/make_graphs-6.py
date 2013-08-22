@@ -152,6 +152,10 @@ if __name__ == '__main__':
     def persist_extractor(mode):
       return lambda x: 'persist' in x[0] and x[0]['persist'] == mode
 
+    def workload_mix_extractor(mix):
+      mixstr = '--workload-mix %s' % (','.join(map(str, mix)))
+      return lambda x: x[0]['bench_opts'].find(mixstr) != -1
+
     def AND(*extractors):
       def fn(x):
         for ex in extractors:
@@ -282,22 +286,31 @@ if __name__ == '__main__':
         'legend' : 'lower left',
       },
       {
-        'file'    : 'istc3-8-19-13_cameraready.py',
-        'outfile' : 'istc3-8-19-13_cameraready-scale_tpcc.pdf',
+        'file'    : 'istc3-8-22-13_cameraready.py',
+        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-reg.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
             {
                 'label' : 'Silo',
-                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-none')),
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-none'),
+                    workload_mix_extractor([45,43,4,4,4])),
             },
-            #{
-            #    'label' : 'Silo+PersistTemp',
-            #    'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-temp')),
-            #},
+            {
+                'label' : 'Silo+PersistTemp',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-temp'),
+                    workload_mix_extractor([45,43,4,4,4])),
+            },
             {
                 'label' : 'Silo+Persist',
-                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-real')),
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-real'),
+                    workload_mix_extractor([45,43,4,4,4])),
             },
         ],
         'x-label' : 'nthreads',
@@ -308,22 +321,101 @@ if __name__ == '__main__':
         'legend' : 'upper left',
       },
       {
-        'file'    : 'istc3-8-19-13_cameraready.py',
-        'outfile' : 'istc3-8-19-13_cameraready-scale_tpcc-percore.pdf',
+        'file'    : 'istc3-8-22-13_cameraready.py',
+        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-reg-percore.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res_percore(0),
         'lines' : [
             {
                 'label' : 'Silo',
-                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-none')),
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-none'),
+                    workload_mix_extractor([45,43,4,4,4])),
             },
-            #{
-            #    'label' : 'Silo+PersistTemp',
-            #    'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-temp')),
-            #},
+            {
+                'label' : 'Silo+PersistTemp',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-temp'),
+                    workload_mix_extractor([45,43,4,4,4])),
+            },
             {
                 'label' : 'Silo+Persist',
-                'extractor' : AND(name_extractor('scale_tpcc'), persist_extractor('persist-real')),
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-real'),
+                    workload_mix_extractor([45,43,4,4,4])),
+            },
+        ],
+        'x-label' : 'nthreads',
+        'y-label' : 'throughput/core (txns/sec/core)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'lower left',
+      },
+      {
+        'file'    : 'istc3-8-22-13_cameraready.py',
+        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-realistic.pdf',
+        'x-axis' : extract_nthreads,
+        'y-axis' : deal_with_posK_res(0),
+        'lines' : [
+            {
+                'label' : 'Silo',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-none'),
+                    workload_mix_extractor([39,37,4,10,10])),
+            },
+            {
+                'label' : 'Silo+PersistTemp',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-temp'),
+                    workload_mix_extractor([39,37,4,10,10])),
+            },
+            {
+                'label' : 'Silo+Persist',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-real'),
+                    workload_mix_extractor([39,37,4,10,10])),
+            },
+        ],
+        'x-label' : 'nthreads',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'upper left',
+      },
+      {
+        'file'    : 'istc3-8-22-13_cameraready.py',
+        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-realistic-percore.pdf',
+        'x-axis' : extract_nthreads,
+        'y-axis' : deal_with_posK_res_percore(0),
+        'lines' : [
+            {
+                'label' : 'Silo',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-none'),
+                    workload_mix_extractor([39,37,4,10,10])),
+            },
+            {
+                'label' : 'Silo+PersistTemp',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-temp'),
+                    workload_mix_extractor([39,37,4,10,10])),
+            },
+            {
+                'label' : 'Silo+Persist',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-real'),
+                    workload_mix_extractor([39,37,4,10,10])),
             },
         ],
         'x-label' : 'nthreads',
