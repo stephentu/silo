@@ -146,6 +146,7 @@ static int g_enable_partition_locks = 0;
 static int g_enable_separate_tree_per_partition = 0;
 static int g_new_order_remote_item_pct = 1;
 static int g_new_order_fast_id_gen = 0;
+static int g_uniform_item_dist = 0;
 static unsigned g_txn_workload_mix[] = { 45, 43, 4, 4, 4 }; // default TPC-C workload mix
 
 static aligned_padded_elem<spinlock> *g_partition_locks = nullptr;
@@ -361,7 +362,11 @@ public:
   static inline ALWAYS_INLINE int
   GetItemId(fast_random &r)
   {
-    return CheckBetweenInclusive(NonUniformRandom(r, 8191, 7911, 1, NumItems()), 1, NumItems());
+    return CheckBetweenInclusive(
+        g_uniform_item_dist ?
+          RandomNumber(r, 1, NumItems()) :
+          NonUniformRandom(r, 8191, 7911, 1, NumItems()),
+        1, NumItems());
   }
 
   static inline ALWAYS_INLINE int
@@ -2129,6 +2134,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
       {"enable-separate-tree-per-partition"   , no_argument       , &g_enable_separate_tree_per_partition , 1}   ,
       {"new-order-remote-item-pct"            , required_argument , 0                                     , 'r'} ,
       {"new-order-fast-id-gen"                , no_argument       , &g_new_order_fast_id_gen              , 1}   ,
+      {"uniform-item-dist"                    , no_argument       , &g_uniform_item_dist                  , 1}   ,
       {"workload-mix"                         , required_argument , 0                                     , 'w'} ,
       {0, 0, 0, 0}
     };
@@ -2186,8 +2192,10 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
     cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
     cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
     cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
-    cerr << "  workload_mix                 : " << format_list(g_txn_workload_mix,
-                                                               g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
+    cerr << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
+    cerr << "  workload_mix                 : " <<
+      format_list(g_txn_workload_mix,
+                  g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
   }
 
   tpcc_bench_runner r(db);
