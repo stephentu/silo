@@ -273,6 +273,12 @@ public:
     return next(32);
   }
 
+  inline uint16_t
+  next_u16()
+  {
+    return next(16);
+  }
+
   /** [0.0, 1.0) */
   inline double
   next_uniform()
