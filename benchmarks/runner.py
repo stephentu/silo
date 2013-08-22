@@ -6,7 +6,7 @@ import math
 import subprocess
 import sys
 
-DRYRUN = True
+DRYRUN = False
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -150,13 +150,13 @@ if KNOB_ENABLE_YCSB_SCALE:
         'name' : 'scale_rmw',
         'dbs' : ['kvdb', 'ndb-proto1', 'ndb-proto2'],
         'threads' : [nthds],
-        'scale_factors' : [320000],
+        'scale_factors' : [160000],
         'benchmarks' : ['ycsb'],
         'bench_opts' : ['--workload-mix 80,0,20,0'],
         'par_load' : [True],
         'retry' : [False],
         'persist' : [PERSIST_NONE],
-        'numa_memory' : ['%dG' % int(100 + 1.4*nthds)],
+        'numa_memory' : ['%dG' % (40 + 2 * nthds)],
       },
     ]
   THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
