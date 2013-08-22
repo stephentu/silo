@@ -836,6 +836,12 @@ btree<P>::insert0(node *np,
       }
       INVARIANT(kslicelen == 9);
       if (leaf->value_is_layer(lenmatch)) {
+#ifdef ENABLE_EVENT_COUNTERS
+        static event_counter evt_btree_lock_held_on_leaf_layer(
+            util::cxx_typename<btree<P>>::value() +
+            std::string("_btree_lock_held_on_leaf_layer"));
+        ++evt_btree_lock_held_on_leaf_layer;
+#endif
         // need to insert in next level btree (using insert_impl())
         node **root_location = &leaf->values_[lenmatch].n_;
         bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v, insert_info);

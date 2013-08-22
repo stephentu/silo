@@ -38,6 +38,12 @@ namespace private_ {
       t |= P::HDR_LOCKED_MASK;
 #endif
     }
+    static inline unsigned
+    LockWithSpinCount(uint64_t &t)
+    {
+      Lock(t);
+      return 0;
+    }
     static inline void
     Unlock(uint64_t &t)
     {
@@ -82,6 +88,20 @@ namespace private_ {
         v = Load(t);
       }
       COMPILER_MEMORY_FENCE;
+    }
+    static inline unsigned
+    LockWithSpinCount(std::atomic<uint64_t> &t)
+    {
+      unsigned spins = 0;
+      uint64_t v = Load(t);
+      while ((v & P::HDR_LOCKED_MASK) ||
+             !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
+        nop_pause();
+        v = Load(t);
+        spins++;
+      }
+      COMPILER_MEMORY_FENCE;
+      return spins;
     }
     static inline void
     Unlock(std::atomic<uint64_t> &v)
@@ -410,6 +430,12 @@ public:
     M::Lock(v);
   }
 
+  static inline unsigned
+  LockWithSpinCount(VersionType &v)
+  {
+    return M::LockWithSpinCount(v);
+  }
+
   static inline void
   Unlock(VersionType &v)
   {
@@ -549,7 +575,23 @@ private:
     inline void
     lock()
     {
+#ifdef ENABLE_EVENT_COUNTERS
+      static event_avg_counter
+        evt_avg_btree_leaf_node_lock_acquire_spins(
+            util::cxx_typename<btree<P>>::value() +
+            std::string("_avg_btree_leaf_node_lock_acquire_spins"));
+      static event_avg_counter
+        evt_avg_btree_internal_node_lock_acquire_spins(
+            util::cxx_typename<btree<P>>::value() +
+            std::string("_avg_btree_internal_node_lock_acquire_spins"));
+      const unsigned spins = M::LockWithSpinCount(hdr_);
+      if (is_leaf_node())
+        evt_avg_btree_leaf_node_lock_acquire_spins.offer(spins);
+      else
+        evt_avg_btree_internal_node_lock_acquire_spins.offer(spins);
+#else
       M::Lock(hdr_);
+#endif
 #ifdef LOCK_OWNERSHIP_CHECKING
       lock_owner_ = pthread_self();
 #endif
