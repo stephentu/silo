@@ -7,6 +7,7 @@
 #include <utility>
 #include <limits>
 #include <unordered_map>
+#include <ostream>
 
 #include "amd64.h"
 #include "core.h"
@@ -180,7 +181,7 @@ public:
   // must be last field
   uint8_t value_start[0];
 
-  void print(unsigned len) const;
+  void print(std::ostream &o, unsigned len) const;
 
 private:
   // private ctor/dtor b/c we do some special memory stuff

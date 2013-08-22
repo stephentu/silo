@@ -81,12 +81,12 @@ format_tuple(ostream &o, const dbtuple &t)
   return o;
 }
 
-static void
-print_ostream(ostream &o, const dbtuple &t, unsigned len)
+void
+dbtuple::print(ostream &o, unsigned len) const
 {
-  o << "dbtuple: hdr=" << dbtuple::VersionInfoStr(t.unstable_version()) << endl;
+  o << "dbtuple: hdr=" << VersionInfoStr(unstable_version()) << endl;
   size_t n = 0;
-  for (const dbtuple *p = &t;
+  for (const dbtuple *p = this;
        p && n < len;
        p = p->get_next(), ++n) {
     o << "  ";
@@ -95,15 +95,9 @@ print_ostream(ostream &o, const dbtuple &t, unsigned len)
   }
 }
 
-void
-dbtuple::print(unsigned len) const
-{
-  print_ostream(cerr, *this, len);
-}
-
 ostream &
 operator<<(ostream &o, const dbtuple &t)
 {
-  print_ostream(o, t, 1);
+  t.print(o, 1);
   return o;
 }
