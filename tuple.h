@@ -171,6 +171,7 @@ public:
 #ifdef TUPLE_CHECK_KEY
   // for debugging
   std::string key;
+  void *tree;
 #endif
 
 #ifdef CHECK_INVARIANTS
@@ -214,6 +215,10 @@ private:
       , size(CheckBounds(size))
       , alloc_size(CheckBounds(alloc_size))
       , next(nullptr)
+#ifdef TUPLE_CHECK_KEY
+      , key()
+      , tree(nullptr)
+#endif
 #ifdef CHECK_INVARIANTS
       , opaque(0)
 #endif
@@ -251,6 +256,10 @@ private:
       , size(base->size)
       , alloc_size(CheckBounds(alloc_size))
       , next(base->next)
+#ifdef TUPLE_CHECK_KEY
+      , key()
+      , tree(nullptr)
+#endif
 #ifdef CHECK_INVARIANTS
       , opaque(0)
 #endif
@@ -282,6 +291,10 @@ private:
       , size(CheckBounds(new_size))
       , alloc_size(CheckBounds(alloc_size))
       , next(next)
+#ifdef TUPLE_CHECK_KEY
+      , key()
+      , tree(nullptr)
+#endif
 #ifdef CHECK_INVARIANTS
       , opaque(0)
 #endif

@@ -84,7 +84,14 @@ format_tuple(ostream &o, const dbtuple &t)
 void
 dbtuple::print(ostream &o, unsigned len) const
 {
-  o << "dbtuple: hdr=" << VersionInfoStr(unstable_version()) << endl;
+  o << "dbtuple:" << endl
+    << "  hdr=" << VersionInfoStr(unstable_version())
+#ifdef TUPLE_CHECK_KEY
+    << endl << "  key=" << hexify(key)
+    << endl << "  tree=" << tree
+#endif
+    << endl;
+
   size_t n = 0;
   for (const dbtuple *p = this;
        p && n < len;

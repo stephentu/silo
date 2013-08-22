@@ -357,6 +357,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
                             << "  txn read version: " << g_proto_version_str(it->second.get_tid()) << std::endl
                             << "  tuple=" << *it->first << std::endl);
 
+          //std::cerr << "failed tuple: " << *it->get_tuple() << std::endl;
+
           abort_trap((reason = ABORT_REASON_READ_NODE_INTEREFERENCE));
           goto do_abort;
         }
@@ -515,6 +517,7 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
   INVARIANT(tuple->is_write_intent());
 #ifdef TUPLE_CHECK_KEY
   tuple->key.assign(key->data(), key->size());
+  tuple->tree = (void *) &btr;
 #endif
 
   // XXX: underlying btree api should return the existing value if insert
