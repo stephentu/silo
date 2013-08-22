@@ -5,8 +5,10 @@ import platform
 import math
 import subprocess
 import sys
+import multiprocessing as mp
+import os
 
-DRYRUN = False
+DRYRUN = True
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -15,27 +17,38 @@ PERSIST_TEMP='persist-temp'
 PERSIST_NONE='persist-none'
 
 MACHINE_LOG_CONFIG = {
-  'modis2' : (
-        ('data.log', 1.),
-        ('/data/scidb/001/2/stephentu/data.log', 1.),
-        ('/data/scidb/001/3/stephentu/data.log', 1.),
+  'modis2' : {
+      'logfiles' : (
+          ('data.log', 1.),
+          ('/data/scidb/001/2/stephentu/data.log', 1.),
+          ('/data/scidb/001/3/stephentu/data.log', 1.),
       ),
-  'istc3' : (
-        ('data.log', 3./24.),
-        ('/f0/stephentu/data.log', 7./24.),
-        ('/f1/stephentu/data.log', 7./24.),
-        ('/f2/stephentu/data.log', 7./24.),
+      'tempprefix' : '/tmp',
+  },
+  'istc3' : {
+      'logfiles' : (
+          ('data.log', 3./24.),
+          ('/f0/stephentu/data.log', 7./24.),
+          ('/f1/stephentu/data.log', 7./24.),
+          ('/f2/stephentu/data.log', 7./24.),
       ),
-  'istc4' : (
-        ('data.log', 1),
+      'tempprefix' : '/run/shm',
+  },
+  'istc4' : {
+      'logfiles' : (
+          ('data.log', 1.),
       ),
+      'tempprefix' : '/run/shm',
+  },
 }
+
+NCPUS = mp.cpu_count()
 
 TPCC_STANDARD_MIX='45,43,4,4,4'
 TPCC_REALISTIC_MIX='39,37,4,10,10'
 
-KNOB_ENABLE_YCSB_SCALE=True
-KNOB_ENABLE_TPCC_SCALE=False
+KNOB_ENABLE_YCSB_SCALE=False
+KNOB_ENABLE_TPCC_SCALE=True
 KNOB_ENABLE_TPCC_MULTIPART=False
 KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
@@ -49,6 +62,11 @@ KNOB_ENABLE_TPCC_SCALE_GC=False
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
 grids = []
+
+def get_scale_threads(stride):
+  thds = range(0, NCPUS + 1, stride)
+  thds[0] = 1
+  return thds
 
 ### helpers for log allocation
 def normalize(x):
@@ -159,7 +177,7 @@ if KNOB_ENABLE_YCSB_SCALE:
         'numa_memory' : ['%dG' % (40 + 2 * nthds)],
       },
     ]
-  THREADS = (1, 4, 8, 12, 16, 20, 24, 28, 32)
+  THREADS = get_scale_threads(4)
   for nthds in THREADS:
     grids += mk_ycsb_entries(nthds)
 
@@ -178,9 +196,10 @@ if KNOB_ENABLE_TPCC_SCALE:
       ],
       'par_load' : [False],
       'retry' : [False],
-      'persist' : [PERSIST_REAL, PERSIST_NONE],
+      'persist' : [PERSIST_REAL, PERSIST_TEMP, PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * nthds)],
     }
+  THREADS = get_scale_threads(4)
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 # exp 3:
@@ -367,6 +386,7 @@ if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST:
       'persist' : [PERSIST_REAL],
       'numa_memory' : ['%dG' % (4 * nthds)],
     }
+  THREADS = get_scale_threads(4)
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS:
@@ -384,6 +404,7 @@ if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS:
       'numa_memory' : ['%dG' % (4 * nthds)],
       'log_compress' : [True],
     }
+  THREADS = get_scale_threads(4)
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC:
@@ -401,6 +422,7 @@ if KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC:
       'numa_memory' : ['%dG' % (4 * nthds)],
       'log_nofsync' : [True],
     }
+  THREADS = get_scale_threads(4)
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 if KNOB_ENABLE_TPCC_SCALE_FAKEWRITES:
@@ -418,6 +440,7 @@ if KNOB_ENABLE_TPCC_SCALE_FAKEWRITES:
       'numa_memory' : ['%dG' % (4 * nthds)],
       'log_fake_writes' : [True],
     }
+  THREADS = get_scale_threads(4)
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 if KNOB_ENABLE_TPCC_SCALE_GC:
@@ -435,6 +458,7 @@ if KNOB_ENABLE_TPCC_SCALE_GC:
       'numa_memory' : ['%dG' % (4 * nthds)],
       'disable_gc' : [False, True],
     }
+  THREADS = get_scale_threads(4)
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 def run_configuration(
@@ -524,11 +548,14 @@ if __name__ == '__main__':
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
       if persist != PERSIST_NONE:
         node = platform.node()
-        info = MACHINE_LOG_CONFIG[node]
+        info = MACHINE_LOG_CONFIG[node]['logfiles']
+        tempprefix = MACHINE_LOG_CONFIG[node]['tempprefix']
         logfiles = \
             [x[0] for x in info] if persist == PERSIST_REAL \
-              else ['/tmp/data%d.log' % (idx) for idx in xrange(len(info))]
-        weights = normalize([x[1] for x in info])
+              else [os.path.join(tempprefix, 'data%d.log' % (idx)) for idx in xrange(len(info))]
+        weights = \
+          normalize([x[1] for x in info]) if persist == PERSIST_REAL else \
+          normalize([1.0 for _ in info])
         assignments = allocate(threads, weights)
       else:
         logfiles, assignments = [], []
