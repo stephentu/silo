@@ -40,6 +40,9 @@ else ifeq ($(strip $(MODE)),perf-counters)
 else ifeq ($(strip $(MODE)),factor-gc)
 	O = out-factor-gc$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc.h
+else ifeq ($(strip $(MODE)),factor-gc-nowriteinplace)
+	O = out-factor-gc-nowriteinplace$(OSUFFIX)
+	CONFIG_H = config/config-factor-gc-nowriteinplace.h
 else ifeq ($(strip $(MODE)),sandbox)
 	O = out-sandbox$(OSUFFIX)
 	CONFIG_H = config/config-sandbox.h
