@@ -302,6 +302,8 @@ struct typed_txn_btree_ {
     INVARIANT(v);
     const value_type *vx = reinterpret_cast<const value_type *>(v);
     switch (mode) {
+    case dbtuple::TUPLE_WRITER_NEEDS_OLD_VALUE:
+      return 1;
     case dbtuple::TUPLE_WRITER_COMPUTE_NEEDED:
       return compute_needed_standalone(vx, Fields, p, sz);
     case dbtuple::TUPLE_WRITER_COMPUTE_DELTA_NEEDED:

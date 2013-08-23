@@ -273,12 +273,16 @@ private:
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
   }
 
-  // creates a spill record, copying in the *old* value, but setting
-  // the size to the *new* value
-  dbtuple(tid_t version, const_record_type r,
-          size_type old_size, size_type new_size,
+  // creates a spill record, copying in the *old* value if necessary, but
+  // setting the size to the *new* value
+  dbtuple(tid_t version,
+          const_record_type r,
+          size_type old_size,
+          size_type new_size,
           size_type alloc_size,
-          struct dbtuple *next, bool set_latest)
+          struct dbtuple *next,
+          bool set_latest,
+          bool needs_old_value)
     :
 #ifdef TUPLE_MAGIC
       magic(TUPLE_MAGIC),
@@ -299,11 +303,12 @@ private:
       , opaque(0)
 #endif
   {
-    INVARIANT(old_size <= new_size);
+    INVARIANT(!needs_old_value || old_size <= alloc_size);
     INVARIANT(new_size <= alloc_size);
     INVARIANT(set_latest == is_latest());
     INVARIANT(new_size || is_deleting());
-    NDB_MEMCPY(&value_start[0], r, old_size);
+    if (needs_old_value)
+      NDB_MEMCPY(&value_start[0], r, old_size);
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
   }
@@ -852,6 +857,7 @@ public:
   // XXX: kind of hacky, but we do this to avoid virtual
   // functions / passing multiple function pointers around
   enum TupleWriterMode {
+    TUPLE_WRITER_NEEDS_OLD_VALUE, // all three args ignored
     TUPLE_WRITER_COMPUTE_NEEDED,
     TUPLE_WRITER_COMPUTE_DELTA_NEEDED, // last two args ignored
     TUPLE_WRITER_DO_WRITE,
@@ -917,10 +923,14 @@ public:
       //
       // XXX(stephentu): alloc_spill() should acquire the lock on
       // the returned tuple in the ctor, as an optimization
+
+      const bool needs_old_value =
+        writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
       INVARIANT(new_sz);
       INVARIANT(v);
       dbtuple * const rep =
-        alloc_spill(t, get_value_start(), old_sz, new_sz, this, true);
+        alloc_spill(t, get_value_start(), old_sz, new_sz,
+                    this, true, needs_old_value);
       writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), old_sz);
       INVARIANT(rep->is_latest());
       INVARIANT(rep->size == new_sz);
@@ -956,8 +966,11 @@ public:
       return write_record_ret(this, spill, true);
     }
 
+    const bool needs_old_value =
+      writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
     dbtuple * const rep =
-      alloc_spill(t, get_value_start(), old_sz, new_sz, this, true);
+      alloc_spill(t, get_value_start(), old_sz, new_sz,
+                  this, true, needs_old_value);
     if (v)
       writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
@@ -982,8 +995,11 @@ public:
     if (!new_sz)
       ++g_evt_dbtuple_logical_deletes;
 
+    const bool needs_old_value =
+      writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
     dbtuple * const rep =
-      alloc_spill(t, get_value_start(), old_sz, new_sz, this, true);
+      alloc_spill(t, get_value_start(), old_sz, new_sz,
+                  this, true, needs_old_value);
     if (v)
       writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
@@ -1033,21 +1049,25 @@ public:
 
   static inline dbtuple *
   alloc_spill(tid_t version, const_record_type value, size_type oldsz,
-              size_type newsz, struct dbtuple *next, bool set_latest)
+              size_type newsz, struct dbtuple *next, bool set_latest,
+              bool copy_old_value)
   {
+    INVARIANT(oldsz <= std::numeric_limits<node_size_type>::max());
     INVARIANT(newsz <= std::numeric_limits<node_size_type>::max());
-    INVARIANT(newsz >= oldsz);
+
+    const size_t needed_sz =
+      copy_old_value ? std::max(newsz, oldsz) : newsz;
     const size_t max_alloc_sz =
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
       std::min(
-          util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + newsz),
+          util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + needed_sz),
           max_alloc_sz);
     char *p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
     return new (p) dbtuple(
         version, value, oldsz, newsz,
-        alloc_sz - sizeof(dbtuple), next, set_latest);
+        alloc_sz - sizeof(dbtuple), next, set_latest, copy_old_value);
   }
 
 

@@ -154,8 +154,9 @@ struct txn_btree_ {
   tuple_writer(dbtuple::TupleWriterMode mode, const void *v, uint8_t *p, size_t sz)
   {
     const std::string * const vx = reinterpret_cast<const std::string *>(v);
-    INVARIANT(vx);
     switch (mode) {
+    case dbtuple::TUPLE_WRITER_NEEDS_OLD_VALUE:
+      return 0;
     case dbtuple::TUPLE_WRITER_COMPUTE_NEEDED:
     case dbtuple::TUPLE_WRITER_COMPUTE_DELTA_NEEDED:
       return vx->size();
