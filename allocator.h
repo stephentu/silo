@@ -138,7 +138,7 @@ private:
   static size_t g_ncpus;
   static size_t g_maxpercore;
 
-  static percore<regionctx> g_regions;
+  static percore<regionctx> g_regions CACHE_ALIGNED;
 };
 
 #endif /* _NDB_ALLOCATOR_H_ */
