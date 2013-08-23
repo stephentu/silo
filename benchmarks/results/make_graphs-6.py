@@ -115,35 +115,13 @@ def KFormatter(x, p):
   return '%.1fK' % v
 
 if __name__ == '__main__':
-    def maflingo_regular_extractor(x):
-        if x[0]['db'] != 'ndb-proto2':
-            return False
-        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
-        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
-        has_fast_id_gen = x[0]['bench_opts'].find('--new-order-fast-id-gen') != -1
-        return not has_sep_tree and has_snapshots and not has_fast_id_gen
-
-    def maflingo_fast_id_gen_extractor(x):
-        if x[0]['db'] != 'ndb-proto2':
-            return False
-        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
-        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
-        has_fast_id_gen = x[0]['bench_opts'].find('--new-order-fast-id-gen') != -1
-        return not has_sep_tree and has_snapshots and has_fast_id_gen
-
-    def maflingo_sep_trees_extractor(x):
-        if x[0]['db'] != 'ndb-proto2':
-            return False
-        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
-        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
-        return has_sep_tree and has_snapshots
-
-    def maflingo_sep_trees_no_snapshots_extractor(x):
-        if x[0]['db'] != 'ndb-proto2':
-            return False
-        has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
-        has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
-        return has_sep_tree and not has_snapshots
+    #def maflingo_fast_id_gen_extractor(x):
+    #    if x[0]['db'] != 'ndb-proto2':
+    #        return False
+    #    has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
+    #    has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
+    #    has_fast_id_gen = x[0]['bench_opts'].find('--new-order-fast-id-gen') != -1
+    #    return not has_sep_tree and has_snapshots and has_fast_id_gen
 
     def db_extractor(db):
       return lambda x: x[0]['db'] == db
@@ -153,6 +131,15 @@ if __name__ == '__main__':
 
     def persist_extractor(mode):
       return lambda x: 'persist' in x[0] and x[0]['persist'] == mode
+
+    def snapshots_extractor(enabled):
+      if enabled:
+        return lambda x: 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
+      else:
+        return lambda x: 'disable_snapshots' in x[0] and x[0]['disable_snapshots']
+
+    def sep_trees_extractor(enabled):
+      return lambda x: (x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1) == enabled
 
     def workload_mix_extractor(mix):
       mixstr = '--workload-mix %s' % (','.join(map(str, mix)))
@@ -173,36 +160,6 @@ if __name__ == '__main__':
             return True
         return False
       return fn
-
-    #config = \
-    #  {
-    #    'x-axis' : extract_pct,
-    #    'y-axis' : deal_with_posK_res(0),
-    #    'lines' : [
-    #        {
-    #            'label' : 'Partition-Store',
-    #            'extractor' : lambda x: x[0]['db'] == 'kvdb-st',
-    #        },
-    #        {
-    #            'label' : 'Maflingo',
-    #            'extractor' : maflingo_regular_extractor,
-    #        },
-    #        {
-    #            'label' : 'Partition-Maflingo',
-    #            'extractor' : maflingo_sep_trees_extractor,
-    #        },
-    #        {
-    #            'label' : 'Partition-Maflingo+NoSS',
-    #            'extractor' : maflingo_sep_trees_no_snapshots_extractor,
-    #        },
-    #    ],
-    #    'x-label' : '% cross-partition',
-    #    'y-label' : 'throughput (txns/sec)',
-    #    'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
-    #    'x-axis-set-major-locator' : False,
-    #    'show-error-bars' : True,
-    #    'legend' : 'upper right',
-    #  }
 
     #configs = [
     #  {
@@ -432,6 +389,49 @@ if __name__ == '__main__':
         'show-error-bars' : True,
         'legend' : 'lower left',
         'title' : 'TPC-C scale per-core (realistic mix)',
+      },
+      {
+        'file'    : 'istc3-8-22-13_cameraready_2.py',
+        'outfile' : 'istc3-8-22-13_cameraready_2-multipart_pct.pdf',
+        'x-axis' : extract_pct,
+        'y-axis' : deal_with_posK_res(0),
+        'lines' : [
+            {
+                'label' : 'Partition-Store',
+                'extractor' : AND(
+                    name_extractor('multipart:pct'),
+                    db_extractor('kvdb-st')),
+            },
+            {
+                'label' : 'Maflingo',
+                'extractor' : AND(
+                    name_extractor('multipart:pct'),
+                    db_extractor('ndb-proto2'),
+                    snapshots_extractor(True)),
+            },
+            {
+                'label' : 'Maflingo+NoSS',
+                'extractor' : AND(
+                    name_extractor('multipart:pct'),
+                    db_extractor('ndb-proto2'),
+                    snapshots_extractor(False),
+                    sep_trees_extractor(False)),
+            },
+            {
+                'label' : 'Partition-Maflingo+NoSS',
+                'extractor' : AND(
+                    name_extractor('multipart:pct'),
+                    db_extractor('ndb-proto2'),
+                    snapshots_extractor(False),
+                    sep_trees_extractor(True)),
+            },
+        ],
+        'x-label' : '% cross-partition',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'upper right',
       },
     ]
 
