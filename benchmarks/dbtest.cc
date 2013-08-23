@@ -307,6 +307,10 @@ main(int argc, char **argv)
   } else
     ALWAYS_ASSERT(false);
 
+#ifdef DEBUG
+  cerr << "WARNING: benchmark built in DEBUG mode!!!" << endl;
+#endif
+
 #ifdef CHECK_INVARIANTS
   cerr << "WARNING: invariant checking is enabled - should disable for benchmark" << endl;
 #ifdef PARANOID_CHECKING
