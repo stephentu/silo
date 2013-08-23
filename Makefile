@@ -3,6 +3,7 @@
 ### Options ###
 
 DEBUG ?= 0
+CHECK_INVARIANTS ?= 0
 
 # 0 = libc malloc
 # 1 = jemalloc
@@ -12,48 +13,54 @@ USE_MALLOC_MODE ?= 1
 
 MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 
-###############
-
 # Available modes
-#   * check-invariants
 #   * perf
 #   * factor-gc
 #   * factor-gc-nowriteinplace
 #   * sandbox
 MODE ?= perf
 
-ifeq ($(strip $(DEBUG)),1)
-	OSUFFIX=.debug
-else
-	OSUFFIX=
-endif
+###############
 
-ifeq ($(strip $(MODE)),check-invariants)
-	O = out-check-invariants$(OSUFFIX)
-	CONFIG_H = config/config-check-invariants.h
-else ifeq ($(strip $(MODE)),perf)
+DEBUG_S=$(strip $(DEBUG))
+CHECK_INVARIANTS_S=$(strip $(CHECK_INVARIANTS))
+USE_MALLOC_MODE_S=$(strip $(USE_MALLOC_MODE))
+MODE_S=$(strip $(MODE))
+
+ifeq ($(DEBUG_S),1)
+	OSUFFIX_D=.debug
+endif
+ifeq ($(CHECK_INVARIANTS_S),1)
+	OSUFFIX_S=.check
+endif
+OSUFFIX=$(OSUFFIX_D)$(OSUFFIX_S)
+
+ifeq ($(MODE_S),perf)
 	O = out-perf$(OSUFFIX)
 	CONFIG_H = config/config-perf.h
-else ifeq ($(strip $(MODE)),perf-counters)
+else ifeq ($(MODE_S),perf-counters)
 	O = out-perf-counters$(OSUFFIX)
 	CONFIG_H = config/config-perf-counters.h
-else ifeq ($(strip $(MODE)),factor-gc)
+else ifeq ($(MODE_S),factor-gc)
 	O = out-factor-gc$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc.h
-else ifeq ($(strip $(MODE)),factor-gc-nowriteinplace)
+else ifeq ($(MODE_S),factor-gc-nowriteinplace)
 	O = out-factor-gc-nowriteinplace$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc-nowriteinplace.h
-else ifeq ($(strip $(MODE)),sandbox)
+else ifeq ($(MODE_S),sandbox)
 	O = out-sandbox$(OSUFFIX)
 	CONFIG_H = config/config-sandbox.h
 else
 	$(error invalid mode)
 endif
 
-ifeq ($(strip $(DEBUG)),1)
-        CXXFLAGS := -MD -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
+ifeq ($(DEBUG_S),1)
+        CXXFLAGS := -MD -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\" -DDEBUG
 else
         CXXFLAGS := -MD -Ithird-party/lz4 -Wall -g -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
+endif
+ifeq ($(CHECK_INVARIANTS_S),1)
+	CXXFLAGS += -DCHECK_INVARIANTS
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
@@ -61,13 +68,13 @@ LDFLAGS := -lpthread -lnuma -lrt
 
 LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
 
-ifeq ($(strip $(USE_MALLOC_MODE)),1)
+ifeq ($(USE_MALLOC_MODE_S),1)
         CXXFLAGS+=-DUSE_JEMALLOC
         LDFLAGS+=-ljemalloc
-else ifeq ($(strip $(USE_MALLOC_MODE)),2)
+else ifeq ($(USE_MALLOC_MODE_S),2)
         CXXFLAGS+=-DUSE_TCMALLOC
         LDFLAGS+=-ltcmalloc
-else ifeq ($(strip $(USE_MALLOC_MODE)),3)
+else ifeq ($(USE_MALLOC_MODE_S),3)
         CXXFLAGS+=-DUSE_FLOW
         LDFLAGS+=-lflow
 endif
