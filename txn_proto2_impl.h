@@ -954,10 +954,19 @@ public:
   inline std::pair<bool, transaction_base::tid_t>
   consistent_snapshot_tid() const
   {
-    if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY)
+    if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY) {
+#ifdef PROTO2_CAN_DISABLE_SNAPSHOTS
+      if (!IsSnapshotsEnabled())
+        // when snapshots are disabled, but we have a RO txn, we simply allow
+        // it to read all the latest values and treat them as consistent
+        //
+        // it's not correct, but its for the factor analysis
+        return std::make_pair(true, dbtuple::MAX_TID);
+#endif
       return std::make_pair(true, last_consistent_tid);
-    else
+    } else {
       return std::make_pair(false, 0);
+    }
   }
 
   void
