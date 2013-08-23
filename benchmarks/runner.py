@@ -8,7 +8,7 @@ import sys
 import multiprocessing as mp
 import os
 
-DRYRUN = False
+DRYRUN = True
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -49,9 +49,9 @@ TPCC_REALISTIC_MIX='39,37,4,10,10'
 
 KNOB_ENABLE_YCSB_SCALE=False
 KNOB_ENABLE_TPCC_SCALE=False
-KNOB_ENABLE_TPCC_MULTIPART=True
+KNOB_ENABLE_TPCC_MULTIPART=False
 KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
-KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
@@ -509,7 +509,7 @@ def run_configuration(
     + ([] if not disable_gc else ['--disable-gc']) \
     + ([] if not disable_snapshots else ['--disable-snapshots'])
   print >>sys.stderr, '[INFO] running command:'
-  print >>sys.stderr, ' '.join(args)
+  print >>sys.stderr, ' '.join([x.replace(' ', r'\ ') for x in args])
   if not DRYRUN:
     with open('stderr.log', 'w') as err:
       p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE, stderr=err)
