@@ -22,6 +22,10 @@
 #include "record/inline_str.h"
 #include "record/cursor.h"
 
+#ifdef PROTO2_CAN_DISABLE_GC
+#include "txn_proto2_impl.h"
+#endif
+
 #define MYREC_KEY_FIELDS(x, y) \
   x(int32_t,k0) \
   y(int32_t,k1)
