@@ -1119,7 +1119,7 @@ protected:
 
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
-              const new_order::value v_no(0);
+              const new_order::value v_no;
 
               checker::SanityCheckNewOrder(&k_no, &v_no);
               const size_t sz = Size(v_no);
