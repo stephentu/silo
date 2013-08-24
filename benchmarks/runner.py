@@ -51,7 +51,8 @@ KNOB_ENABLE_YCSB_SCALE=False
 KNOB_ENABLE_TPCC_SCALE=False
 KNOB_ENABLE_TPCC_MULTIPART=False
 KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
-KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
+KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=True
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
@@ -350,6 +351,43 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'numa_memory' : ['%dG' % (4 * 28)],
       'disable_snapshots' : [True],
       'disable_gc' : [True],
+    },
+  ]
+
+if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
+  # write zero length log records (perfect/fake compression)
+  # write delta encoded log records
+  # lz4-compress buffers
+  grids += [
+    {
+      'binary' : [
+          '../out-factor-fake-compression/benchmarks/dbtest',
+          '../out-perf/new-benchmarks/dbtest',
+      ],
+      'name' : 'persistfactoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_REAL],
+      'numa_memory' : [None, '%dG' % (4 * 28)],
+    },
+    {
+      'binary' : ['../out-perf/benchmarks/dbtest'],
+      'name' : 'persistfactoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_REAL],
+      'numa_memory' : [None, '%dG' % (4 * 28)],
+      'log_compress' : [True],
     },
   ]
 
