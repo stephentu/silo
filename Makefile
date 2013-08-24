@@ -47,6 +47,9 @@ else ifeq ($(MODE_S),factor-gc)
 else ifeq ($(MODE_S),factor-gc-nowriteinplace)
 	O = out-factor-gc-nowriteinplace$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc-nowriteinplace.h
+else ifeq ($(MODE_S),factor-fake-compression)
+	O = out-factor-fake-compression$(OSUFFIX)
+	CONFIG_H = config/config-factor-fake-compression.h
 else ifeq ($(MODE_S),sandbox)
 	O = out-sandbox$(OSUFFIX)
 	CONFIG_H = config/config-sandbox.h
