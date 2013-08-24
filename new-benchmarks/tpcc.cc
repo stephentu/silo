@@ -135,15 +135,50 @@ static int g_disable_read_only_scans = 0;
 static int g_enable_partition_locks = 0;
 static int g_enable_separate_tree_per_partition = 0;
 static int g_new_order_remote_item_pct = 1;
+static int g_new_order_fast_id_gen = 0;
+static int g_uniform_item_dist = 0;
 static unsigned g_txn_workload_mix[] = { 45, 43, 4, 4, 4 }; // default TPC-C workload mix
 
-static aligned_padded_elem<spinlock> *g_partition_locks = 0;
+static aligned_padded_elem<spinlock> *g_partition_locks = nullptr;
+static aligned_padded_elem<atomic<uint64_t>> *g_district_ids = nullptr;
 
-static inline ALWAYS_INLINE spinlock *
-LockForWarehouse(unsigned int wid)
+// maps a wid => partition id
+static inline ALWAYS_INLINE unsigned int
+PartitionId(unsigned int wid)
 {
   INVARIANT(wid >= 1 && wid <= NumWarehouses());
-  return g_enable_partition_locks ? &g_partition_locks[wid - 1].elem : nullptr;
+  wid -= 1; // 0-idx
+  if (NumWarehouses() <= nthreads)
+    // more workers than partitions, so its easy
+    return wid;
+  const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
+  const unsigned partid = wid / nwhse_per_partition;
+  if (partid >= nthreads)
+    return nthreads - 1;
+  return partid;
+}
+
+static inline ALWAYS_INLINE spinlock &
+LockForPartition(unsigned int wid)
+{
+  INVARIANT(g_enable_partition_locks);
+  return g_partition_locks[PartitionId(wid)].elem;
+}
+
+static inline atomic<uint64_t> &
+NewOrderIdHolder(unsigned warehouse, unsigned district)
+{
+  INVARIANT(warehouse >= 1 && warehouse <= NumWarehouses());
+  INVARIANT(district >= 1 && district <= NumDistrictsPerWarehouse());
+  const unsigned idx =
+    (warehouse - 1) * NumDistrictsPerWarehouse() + (district - 1);
+  return g_district_ids[idx].elem;
+}
+
+static inline uint64_t
+FastNewOrderIdGen(unsigned warehouse, unsigned district)
+{
+  return NewOrderIdHolder(warehouse, district).fetch_add(1, memory_order_acq_rel);
 }
 
 struct checker {
@@ -256,12 +291,13 @@ public:
   static void
   PinToWarehouseId(unsigned int wid)
   {
-    //cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
-    //     << " pinned to whse=" << wid << endl;
-    ALWAYS_ASSERT(wid >= 1 && wid <= NumWarehouses());
-    const unsigned long pinid = (wid - 1);
-    // XXX: need to port changes over from benchmarks/tpcc.cc
-    ALWAYS_ASSERT(pinid < nthreads);
+    const unsigned int partid = PartitionId(wid);
+    ALWAYS_ASSERT(partid < nthreads);
+    const unsigned int pinid  = partid;
+    if (verbose)
+      cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
+           << " pinned to whse=" << wid << " (partid=" << partid << ")"
+           << endl;
     rcu::s_instance.pin_current_thread(pinid);
     rcu::s_instance.fault_region();
   }
@@ -305,7 +341,11 @@ public:
   static inline ALWAYS_INLINE int
   GetItemId(fast_random &r)
   {
-    return CheckBetweenInclusive(NonUniformRandom(r, 8191, 7911, 1, NumItems()), 1, NumItems());
+    return CheckBetweenInclusive(
+        g_uniform_item_dist ?
+          RandomNumber(r, 1, NumItems()) :
+          NonUniformRandom(r, 8191, 7911, 1, NumItems()),
+        1, NumItems());
   }
 
   static inline ALWAYS_INLINE int
@@ -314,6 +354,16 @@ public:
     return CheckBetweenInclusive(NonUniformRandom(r, 1023, 259, 1, NumCustomersPerDistrict()), 1, NumCustomersPerDistrict());
   }
 
+  // pick a number between [start, end)
+  static inline ALWAYS_INLINE unsigned
+  PickWarehouseId(fast_random &r, unsigned start, unsigned end)
+  {
+    INVARIANT(start < end);
+    const unsigned diff = end - start;
+    if (diff == 1)
+      return start;
+    return (r.next() % diff) + start;
+  }
   // all tokens are at most 5 chars long
   static const size_t CustomerLastNameMaxSize = 5 * 3;
 
@@ -415,17 +465,26 @@ public:
               unsigned long seed, Database *db,
               const tpcc_tables<Database> &tables,
               spin_barrier *barrier_a, spin_barrier *barrier_b,
-              uint warehouse_id)
+              uint warehouse_id_start, uint warehouse_id_end)
     : bench_worker(worker_id, true, seed, db,
                    barrier_a, barrier_b),
       tpcc_worker_mixin(),
       tables(tables),
-      warehouse_id(warehouse_id)
+      warehouse_id_start(warehouse_id_start),
+      warehouse_id_end(warehouse_id_end)
   {
     ALWAYS_ASSERT(g_disable_read_only_scans == !AllowReadOnlyScans);
-    INVARIANT(warehouse_id >= 1);
-    INVARIANT(warehouse_id <= NumWarehouses());
+    INVARIANT(warehouse_id_start >= 1);
+    INVARIANT(warehouse_id_start <= NumWarehouses());
+    INVARIANT(warehouse_id_end > warehouse_id_start);
+    INVARIANT(warehouse_id_end <= (NumWarehouses() + 1));
     NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
+    if (verbose) {
+      cerr << "tpcc: worker id " << worker_id
+        << " => warehouses [" << warehouse_id_start
+        << ", " << warehouse_id_end << ")"
+        << endl;
+    }
   }
 
   // XXX(stephentu): tune this
@@ -518,7 +577,8 @@ protected:
 
 private:
   tpcc_tables<Database> tables;
-  const uint warehouse_id;
+  const uint warehouse_id_start;
+  const uint warehouse_id_end;
   int32_t last_no_o_ids[10]; // XXX(stephentu): hack
 };
 
@@ -1138,6 +1198,7 @@ template <typename Database, bool AllowReadOnlyScans>
 typename tpcc_worker<Database, AllowReadOnlyScans>::txn_result
 tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
 {
+  const uint warehouse_id = PickWarehouseId(this->r, warehouse_id_start, warehouse_id_end);
   const uint districtID = RandomNumber(this->r, 1, 10);
   const uint customerID = GetCustomerId(r);
   const uint numItems = RandomNumber(this->r, 5, 15);
@@ -1189,15 +1250,15 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
   scoped_multilock<spinlock> mlock;
   if (g_enable_partition_locks) {
     if (allLocal) {
-      mlock.enq(*LockForWarehouse(warehouse_id));
+      mlock.enq(LockForPartition(warehouse_id));
     } else {
       small_unordered_map<unsigned int, bool, 64> lockset;
-      mlock.enq(*LockForWarehouse(warehouse_id));
-      lockset[warehouse_id] = 1;
+      mlock.enq(LockForPartition(warehouse_id));
+      lockset[PartitionId(warehouse_id)] = 1;
       for (uint i = 0; i < numItems; i++) {
-        if (lockset.find(supplierWarehouseIDs[i]) == lockset.end()) {
-          mlock.enq(*LockForWarehouse(supplierWarehouseIDs[i]));
-          lockset[supplierWarehouseIDs[i]] = 1;
+        if (lockset.find(PartitionId(supplierWarehouseIDs[i])) == lockset.end()) {
+          mlock.enq(LockForPartition(supplierWarehouseIDs[i]));
+          lockset[PartitionId(supplierWarehouseIDs[i])] = 1;
         }
       }
     }
@@ -1231,16 +1292,20 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
             district::value::d_tax_field)));
     checker::SanityCheckDistrict(&k_d, &v_d);
 
-    const new_order::key k_no(warehouse_id, districtID, v_d.d_next_o_id);
+    const uint64_t my_next_o_id = g_new_order_fast_id_gen ?
+        FastNewOrderIdGen(warehouse_id, districtID) : v_d.d_next_o_id;
+
+    const new_order::key k_no(warehouse_id, districtID, my_next_o_id);
     const new_order::value v_no(0);
     const size_t new_order_sz = Size(v_no);
     tables.tbl_new_order(warehouse_id)->insert(txn, k_no, v_no);
     ret += new_order_sz;
 
-    v_d.d_next_o_id++;
-
-    tables.tbl_district(warehouse_id)->put(txn, k_d, v_d,
-        GUARDED_FIELDS(district::value::d_next_o_id_field));
+    if (!g_new_order_fast_id_gen) {
+      v_d.d_next_o_id++;
+      tables.tbl_district(warehouse_id)->put(txn, k_d, v_d,
+          GUARDED_FIELDS(district::value::d_next_o_id_field));
+    }
 
     const oorder::key k_oo(warehouse_id, districtID, k_no.no_o_id);
     oorder::value v_oo;
@@ -1338,6 +1403,7 @@ template <typename Database, bool AllowReadOnlyScans>
 typename tpcc_worker<Database, AllowReadOnlyScans>::txn_result
 tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
 {
+  const uint warehouse_id = PickWarehouseId(this->r, warehouse_id_start, warehouse_id_end);
   const uint o_carrier_id = RandomNumber(this->r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
 
@@ -1361,7 +1427,8 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
   //   num_txn_contexts : 4
   typename Database::template TransactionType<abstract_db::HINT_TPCC_DELIVERY>::type txn(txn_flags, this->arena);
   scoped_str_arena s_arena(this->arena);
-  scoped_lock_guard<spinlock> slock(LockForWarehouse(warehouse_id));
+  scoped_lock_guard<spinlock> slock(
+      g_enable_partition_locks ? &LockForPartition(warehouse_id) : nullptr);
   try {
     ssize_t ret = 0;
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
@@ -1449,6 +1516,7 @@ template <typename Database, bool AllowReadOnlyScans>
 typename tpcc_worker<Database, AllowReadOnlyScans>::txn_result
 tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
 {
+  const uint warehouse_id = PickWarehouseId(this->r, warehouse_id_start, warehouse_id_end);
   const uint districtID = RandomNumber(this->r, 1, NumDistrictsPerWarehouse());
   uint customerDistrictID, customerWarehouseID;
   if (likely(g_disable_xpartition_txn ||
@@ -1477,9 +1545,9 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_payment()
   scoped_str_arena s_arena(this->arena);
   scoped_multilock<spinlock> mlock;
   if (g_enable_partition_locks) {
-    mlock.enq(*LockForWarehouse(warehouse_id));
-    if (customerWarehouseID != warehouse_id)
-      mlock.enq(*LockForWarehouse(customerWarehouseID));
+    mlock.enq(LockForPartition(warehouse_id));
+    if (PartitionId(customerWarehouseID) != PartitionId(warehouse_id))
+      mlock.enq(LockForPartition(customerWarehouseID));
     mlock.multilock();
   }
   if (customerWarehouseID != warehouse_id)
@@ -1645,6 +1713,7 @@ template <typename Database, bool AllowReadOnlyScans>
 typename tpcc_worker<Database, AllowReadOnlyScans>::txn_result
 tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
 {
+  const uint warehouse_id = PickWarehouseId(this->r, warehouse_id_start, warehouse_id_end);
   const uint districtID = RandomNumber(this->r, 1, NumDistrictsPerWarehouse());
 
   // output from txn counters:
@@ -1656,11 +1725,6 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_order_status()
   //   num_txn_contexts : 4
   const uint64_t read_only_mask =
     !AllowReadOnlyScans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
-  //const abstract_db::TxnProfileHint hint =
-  //  g_disable_read_only_scans ?
-  //    abstract_db::HINT_TPCC_ORDER_STATUS :
-  //    abstract_db::HINT_TPCC_ORDER_STATUS_READ_ONLY;
-  //void *txn = db->new_txn(txn_flags | read_only_mask, txn_buf(), hint);
   typename Database::template TransactionType<
     AllowReadOnlyScans ?
       abstract_db::HINT_TPCC_ORDER_STATUS_READ_ONLY :
@@ -1814,6 +1878,7 @@ template <typename Database, bool AllowReadOnlyScans>
 typename tpcc_worker<Database, AllowReadOnlyScans>::txn_result
 tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
 {
+  const uint warehouse_id = PickWarehouseId(this->r, warehouse_id_start, warehouse_id_end);
   const uint threshold = RandomNumber(this->r, 10, 20);
   const uint districtID = RandomNumber(this->r, 1, NumDistrictsPerWarehouse());
 
@@ -1924,8 +1989,21 @@ private:
     const string s_name(name);
     vector<typename Database::template IndexType<Schema>::ptr_type> ret(NumWarehouses());
     if (g_enable_separate_tree_per_partition && !is_read_only) {
-      for (size_t i = 0; i < NumWarehouses(); i++)
-        ret[i] = db->template open_index<Schema>(s_name + "_" + to_string(i), expected_size, is_append_only);
+      if (NumWarehouses() <= nthreads) {
+        for (size_t i = 0; i < NumWarehouses(); i++)
+          ret[i] = db->template open_index<Schema>(s_name + "_" + to_string(i), expected_size, is_append_only);
+      } else {
+        const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
+        for (size_t partid = 0; partid < nthreads; partid++) {
+          const unsigned wstart = partid * nwhse_per_partition;
+          const unsigned wend   = (partid + 1 == nthreads) ?
+            NumWarehouses() : (partid + 1) * nwhse_per_partition;
+          auto idx =
+            db->template open_index<Schema>(s_name + "_" + to_string(partid), expected_size, is_append_only);
+          for (size_t i = wstart; i < wend; i++)
+            ret[i] = idx;
+        }
+      }
     } else {
       auto idx = db->template open_index<Schema>(s_name, expected_size, is_append_only);
       for (size_t i = 0; i < NumWarehouses(); i++)
@@ -1953,15 +2031,25 @@ public:
 
     if (g_enable_partition_locks) {
       static_assert(sizeof(aligned_padded_elem<spinlock>) == CACHELINE_SIZE, "xx");
-      void * const px = memalign(CACHELINE_SIZE, sizeof(aligned_padded_elem<spinlock>) * NumWarehouses());
+      void * const px = memalign(CACHELINE_SIZE, sizeof(aligned_padded_elem<spinlock>) * nthreads);
       ALWAYS_ASSERT(px);
       ALWAYS_ASSERT(reinterpret_cast<uintptr_t>(px) % CACHELINE_SIZE == 0);
       g_partition_locks = reinterpret_cast<aligned_padded_elem<spinlock> *>(px);
-      for (size_t i = 0; i < NumWarehouses(); i++) {
+      for (size_t i = 0; i < nthreads; i++) {
         new (&g_partition_locks[i]) aligned_padded_elem<spinlock>();
         ALWAYS_ASSERT(!g_partition_locks[i].elem.is_locked());
       }
-      COMPILER_MEMORY_FENCE;
+    }
+
+    if (g_new_order_fast_id_gen) {
+      void * const px =
+        memalign(
+            CACHELINE_SIZE,
+            sizeof(aligned_padded_elem<atomic<uint64_t>>) *
+              NumWarehouses() * NumDistrictsPerWarehouse());
+      g_district_ids = reinterpret_cast<aligned_padded_elem<atomic<uint64_t>> *>(px);
+      for (size_t i = 0; i < NumWarehouses() * NumDistrictsPerWarehouse(); i++)
+        new (&g_district_ids[i]) atomic<uint64_t>(3001);
     }
   }
 
@@ -1997,8 +2085,10 @@ protected:
     return ret;
   }
 
-  virtual vector<unique_ptr<bench_worker>>
-  make_workers()
+private:
+  template <bool RO>
+  vector<unique_ptr<bench_worker>>
+  make_workers_impl()
   {
     const unsigned alignment = coreid::num_cpus_online();
     const int blockstart =
@@ -2007,22 +2097,35 @@ protected:
     ALWAYS_ASSERT((blockstart % alignment) == 0);
     fast_random r(23984543);
     vector<unique_ptr<bench_worker>> ret;
-    for (size_t i = 0; i < nthreads; i++)
-      if (g_disable_read_only_scans)
+    if (NumWarehouses() <= nthreads) {
+      for (size_t i = 0; i < nthreads; i++)
         ret.emplace_back(
-          new tpcc_worker<Database, false>(
+          new tpcc_worker<Database, RO>(
             blockstart + i,
             r.next(), this->typed_db(), tables,
             &this->barrier_a, &this->barrier_b,
-            (i % NumWarehouses()) + 1));
-      else
+            (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
+    } else {
+      const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
+      for (size_t i = 0; i < nthreads; i++) {
+        const unsigned wstart = i * nwhse_per_partition;
+        const unsigned wend   = (i + 1 == nthreads) ?
+          NumWarehouses() : (i + 1) * nwhse_per_partition;
         ret.emplace_back(
-          new tpcc_worker<Database, true>(
+          new tpcc_worker<Database, RO>(
             blockstart + i,
             r.next(), this->typed_db(), tables,
-            &this->barrier_a, &this->barrier_b,
-            (i % NumWarehouses()) + 1));
+            &this->barrier_a, &this->barrier_b, wstart+1, wend+2));
+      }
+    }
     return ret;
+  }
+
+protected:
+  virtual vector<unique_ptr<bench_worker>>
+  make_workers()
+  {
+    return g_disable_read_only_scans ? make_workers_impl<false>() : make_workers_impl<true>();
   }
 
 private:
@@ -2055,6 +2158,8 @@ tpcc_do_test(const string &dbtype,
       {"enable-partition-locks"               , no_argument       , &g_enable_partition_locks             , 1}   ,
       {"enable-separate-tree-per-partition"   , no_argument       , &g_enable_separate_tree_per_partition , 1}   ,
       {"new-order-remote-item-pct"            , required_argument , 0                                     , 'r'} ,
+      {"new-order-fast-id-gen"                , no_argument       , &g_new_order_fast_id_gen              , 1}   ,
+      {"uniform-item-dist"                    , no_argument       , &g_uniform_item_dist                  , 1}   ,
       {"workload-mix"                         , required_argument , 0                                     , 'w'} ,
       {0, 0, 0, 0}
     };

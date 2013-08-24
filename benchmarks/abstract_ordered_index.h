@@ -7,7 +7,7 @@
 #include <map>
 
 #include "../macros.h"
-#include "str_arena.h"
+#include "../str_arena.h"
 
 /**
  * The underlying index manages memory for keys/values, but

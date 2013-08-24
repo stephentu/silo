@@ -9,7 +9,7 @@
 #include <string>
 
 #include "abstract_ordered_index.h"
-#include "str_arena.h"
+#include "../str_arena.h"
 
 /**
  * Abstract interface for a DB. This is to facilitate writing

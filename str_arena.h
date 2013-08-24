@@ -1,9 +1,8 @@
-#ifndef _STR_ARENA_H_
-#define _STR_ARENA_H_
+#pragma once
 
 #include <string>
 #include <memory>
-#include "../small_vector.h"
+#include "small_vector.h"
 
 // XXX: str arena hardcoded now to handle at most 1024 strings
 class str_arena {
@@ -132,5 +131,3 @@ public:
 private:
   str_arena *arena;
 };
-
-#endif /* _STR_ARENA_H_ */

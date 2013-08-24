@@ -7,7 +7,7 @@
 #include <map>
 
 #include "../macros.h"
-#include "str_arena.h"
+#include "../str_arena.h"
 
 class abstract_ordered_index {
 public:
