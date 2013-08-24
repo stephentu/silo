@@ -1296,7 +1296,7 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_new_order()
         FastNewOrderIdGen(warehouse_id, districtID) : v_d.d_next_o_id;
 
     const new_order::key k_no(warehouse_id, districtID, my_next_o_id);
-    const new_order::value v_no(0);
+    const new_order::value v_no;
     const size_t new_order_sz = Size(v_no);
     tables.tbl_new_order(warehouse_id)->insert(txn, k_no, v_no);
     ret += new_order_sz;
