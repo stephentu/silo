@@ -58,9 +58,10 @@ def longest_line(ls):
             best, bestline = ls[i], len(ls[i])
     return best
 
+def mean(x):   return sum(x)/len(x)
+def median(x): return sorted(x)[len(x)/2]
+
 def mkplot(results, desc, outfilename):
-    def mean(x):   return sum(x)/len(x)
-    def median(x): return sorted(x)[len(x)/2]
     fig = plt.figure()
     ax = plt.subplot(111)
     lines = []
@@ -98,6 +99,43 @@ def mkplot(results, desc, outfilename):
         ax.set_title(desc['title'])
     fig.savefig(outfilename, format='pdf')
 
+def mkbar(results, desc, outfilename):
+    fig = plt.figure()
+    ax = plt.subplot(111)
+    bars = []
+    for bar_desc in desc['bars']:
+        predfn = bar_desc['extractor']
+        bar_results = [d for d in results if predfn(d)]
+        if len(bar_results) != 1:
+            print "bar_results:", bar_results
+        assert len(bar_results) == 1, 'bad predicate'
+        bars.append({ 'ypts' : desc['y-axis'](bar_results[0]) })
+    width = 0.15
+    inds = np.arange(len(bars)) * width
+    if not desc['show-error-bars']:
+        ax.bar(inds, [median(y['ypts']) for y in bars], width)
+    else:
+        def geterr(ypts):
+            ymin = min(ypts)
+            ymax = max(ypts)
+            ymid = median(ypts)
+            yerr = [ymid - ymin, ymax - ymid]
+            return yerr
+        yerrs = [[geterr(y['ypts'])[0] for y in bars],
+                 [geterr(y['ypts'])[1] for y in bars]]
+        ax.bar(inds, [median(y['ypts']) for y in bars], width, yerr=yerrs)
+    ax.set_xticks(inds + width/2.)
+    ax.set_xticklabels( [l['label'] for l in desc['bars']], rotation='vertical' )
+    ax.set_ylabel(desc['y-label'])
+    ax.set_ylim(ymin = 0)
+    if 'y-axis-major-formatter' in desc:
+        ax.yaxis.set_major_formatter(desc['y-axis-major-formatter'])
+    if 'title' in desc:
+        ax.set_title(desc['title'])
+    SI = fig.get_size_inches()
+    fig.set_size_inches((SI[0]/2., SI[1]))
+    fig.savefig(outfilename, format='pdf')
+
 def MFormatter(x, p):
   if x == 0:
     return '0'
@@ -115,6 +153,8 @@ def KFormatter(x, p):
   return '%.1fK' % v
 
 if __name__ == '__main__':
+    matplotlib.rcParams.update({'figure.autolayout' : True})
+
     #def maflingo_fast_id_gen_extractor(x):
     #    if x[0]['db'] != 'ndb-proto2':
     #        return False
@@ -132,11 +172,26 @@ if __name__ == '__main__':
     def persist_extractor(mode):
       return lambda x: 'persist' in x[0] and x[0]['persist'] == mode
 
+    def binary_extractor(binary):
+      return lambda x: x[0]['binary'] == binary
+
     def snapshots_extractor(enabled):
       if enabled:
         return lambda x: 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
       else:
         return lambda x: 'disable_snapshots' in x[0] and x[0]['disable_snapshots']
+
+    def gc_extractor(enabled):
+      if enabled:
+        return lambda x: 'disable_gc' not in x[0] or not x[0]['disable_gc']
+      else:
+        return lambda x: 'disable_gc' in x[0] and x[0]['disable_gc']
+
+    def numa_extractor(enabled):
+      if enabled:
+        return lambda x: x[0]['numa_memory'] is not None
+      else:
+        return lambda x: x[0]['numa_memory'] is None
 
     def sep_trees_extractor(enabled):
       return lambda x: (x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1) == enabled
@@ -433,6 +488,64 @@ if __name__ == '__main__':
         'show-error-bars' : True,
         'legend' : 'upper right',
       },
+      {
+        'file'    : 'istc3-8-23-13_cameraready.py',
+        'outfile' : 'istc3-8-23-13_cameraready-factor-analysis.pdf',
+        'y-axis' : deal_with_posK_res(0),
+        'bars' : [
+            {
+                'label' : 'Baseline',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc-nowriteinplace/benchmarks/dbtest'),
+                    snapshots_extractor(True),
+                    numa_extractor(False)),
+            },
+            {
+                'label' : '+NumaAllocator',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc-nowriteinplace/benchmarks/dbtest'),
+                    snapshots_extractor(True),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : '+Overwrites',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
+                    snapshots_extractor(True),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : '-Snapshots',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
+                    snapshots_extractor(False),
+                    gc_extractor(True),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : '-GC',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
+                    snapshots_extractor(False),
+                    gc_extractor(False),
+                    numa_extractor(True)),
+            },
+        ],
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+      },
     ]
 
     FINAL_OUTPUT_FILENAME='istc3-cameraready.pdf'
@@ -441,7 +554,12 @@ if __name__ == '__main__':
     for config in configs:
       g, l = {}, {}
       execfile(config['file'], g, l)
-      mkplot(l['RESULTS'], config, config['outfile'])
+      if 'lines' in config:
+        mkplot(l['RESULTS'], config, config['outfile'])
+      elif 'bars' in config:
+        mkbar(l['RESULTS'], config, config['outfile'])
+      else:
+        assert False, "bad config"
       inp = PdfFileReader(open(config['outfile'], 'rb'))
       output.addPage(inp.getPage(0))
 
