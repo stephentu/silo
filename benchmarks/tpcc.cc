@@ -16,13 +16,13 @@
 #include <set>
 #include <vector>
 
-#include "bench.h"
-#include "tpcc.h"
 #include "../txn.h"
 #include "../macros.h"
 #include "../scopedperf.hh"
 #include "../spinlock.h"
 
+#include "bench.h"
+#include "tpcc.h"
 using namespace std;
 using namespace util;
 
