@@ -8,6 +8,7 @@ import re
 import os
 import sys
 import math
+import itertools as it
 
 def predicate(fn):
     def pred(x):
@@ -97,6 +98,8 @@ def mkplot(results, desc, outfilename):
         ax.yaxis.set_major_formatter(desc['y-axis-major-formatter'])
     if 'title' in desc:
         ax.set_title(desc['title'])
+    if 'subplots-adjust' in desc:
+        fig.subplots_adjust(**desc['subplots-adjust'])
     fig.savefig(outfilename, format='pdf')
 
 def mkbar(results, desc, outfilename):
@@ -133,6 +136,8 @@ def mkbar(results, desc, outfilename):
     if 'title' in desc:
         ax.set_title(desc['title'])
     SI = fig.get_size_inches()
+    if 'subplots-adjust' in desc:
+        fig.subplots_adjust(**desc['subplots-adjust'])
     fig.set_size_inches((SI[0]/2., SI[1]))
     fig.savefig(outfilename, format='pdf')
 
@@ -152,6 +157,8 @@ def KFormatter(x, p):
     return '%dK' % v
   return '%.1fK' % v
 
+TPCC_REGULAR_MIX=[45, 43, 4, 4, 4]
+TPCC_REALISTIC_MIX=[39, 37, 4, 10, 10]
 if __name__ == '__main__':
     matplotlib.rcParams.update({'figure.autolayout' : True})
 
@@ -187,6 +194,9 @@ if __name__ == '__main__':
       else:
         return lambda x: 'disable_gc' in x[0] and x[0]['disable_gc']
 
+    def log_compress_extractor(enabled):
+      return lambda x: 'log_compress' in x[0] and x[0]['log_compress']
+
     def numa_extractor(enabled):
       if enabled:
         return lambda x: x[0]['numa_memory'] is not None
@@ -199,6 +209,9 @@ if __name__ == '__main__':
     def workload_mix_extractor(mix):
       mixstr = '--workload-mix %s' % (','.join(map(str, mix)))
       return lambda x: x[0]['bench_opts'].find(mixstr) != -1
+
+    def nthreads_extractor(nthreads):
+      return lambda x: x[0]['threads'] == nthreads
 
     def AND(*extractors):
       def fn(x):
@@ -312,21 +325,21 @@ if __name__ == '__main__':
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-none'),
-                    workload_mix_extractor([45,43,4,4,4])),
+                    workload_mix_extractor(TPCC_REGULAR_MIX)),
             },
             {
                 'label' : 'Silo+PersistTemp',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-temp'),
-                    workload_mix_extractor([45,43,4,4,4])),
+                    workload_mix_extractor(TPCC_REGULAR_MIX)),
             },
             {
                 'label' : 'Silo+Persist',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-real'),
-                    workload_mix_extractor([45,43,4,4,4])),
+                    workload_mix_extractor(TPCC_REGULAR_MIX)),
             },
         ],
         'x-label' : 'nthreads',
@@ -348,21 +361,21 @@ if __name__ == '__main__':
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-none'),
-                    workload_mix_extractor([45,43,4,4,4])),
+                    workload_mix_extractor(TPCC_REGULAR_MIX)),
             },
             {
                 'label' : 'Silo+PersistTemp',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-temp'),
-                    workload_mix_extractor([45,43,4,4,4])),
+                    workload_mix_extractor(TPCC_REGULAR_MIX)),
             },
             {
                 'label' : 'Silo+Persist',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-real'),
-                    workload_mix_extractor([45,43,4,4,4])),
+                    workload_mix_extractor(TPCC_REGULAR_MIX)),
             },
         ],
         'x-label' : 'nthreads',
@@ -384,21 +397,21 @@ if __name__ == '__main__':
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-none'),
-                    workload_mix_extractor([39,37,4,10,10])),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
             },
             {
                 'label' : 'Silo+PersistTemp',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-temp'),
-                    workload_mix_extractor([39,37,4,10,10])),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
             },
             {
                 'label' : 'Silo+Persist',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-real'),
-                    workload_mix_extractor([39,37,4,10,10])),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
             },
         ],
         'x-label' : 'nthreads',
@@ -420,21 +433,21 @@ if __name__ == '__main__':
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-none'),
-                    workload_mix_extractor([39,37,4,10,10])),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
             },
             {
                 'label' : 'Silo+PersistTemp',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-temp'),
-                    workload_mix_extractor([39,37,4,10,10])),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
             },
             {
                 'label' : 'Silo+Persist',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
                     persist_extractor('persist-real'),
-                    workload_mix_extractor([39,37,4,10,10])),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
             },
         ],
         'x-label' : 'nthreads',
@@ -545,19 +558,80 @@ if __name__ == '__main__':
         'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
+        'subplots-adjust' : {'bottom' : 0.25},
       },
+      {
+        'file'    : ['istc3-8-24-13_cameraready.py', 'istc3-8-22-13_cameraready.py'],
+        'outfile' : 'istc3-8-24-13_cameraready-persist-factor-analysis.pdf',
+        'y-axis' : deal_with_posK_res(0),
+        'bars' : [
+            {
+                'label' : 'NoPersist',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    nthreads_extractor(28),
+                    persist_extractor('persist-none'),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX),
+                    db_extractor('ndb-proto2')),
+            },
+            {
+                'label' : 'ConstRecs',
+                'extractor' : AND(
+                    name_extractor('persistfactoranalysis'),
+                    binary_extractor('../out-factor-fake-compression/benchmarks/dbtest'),
+                    persist_extractor('persist-real'),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : 'Regular',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    nthreads_extractor(28),
+                    persist_extractor('persist-real'),
+                    workload_mix_extractor(TPCC_REALISTIC_MIX),
+                    db_extractor('ndb-proto2')),
+            },
+            {
+                'label' : 'Compress',
+                'extractor' : AND(
+                    name_extractor('persistfactoranalysis'),
+                    persist_extractor('persist-real'),
+                    log_compress_extractor(True),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : 'DeltaEncode',
+                'extractor' : AND(
+                    name_extractor('persistfactoranalysis'),
+                    binary_extractor('../out-perf/new-benchmarks/dbtest'),
+                    persist_extractor('persist-real'),
+                    numa_extractor(True)),
+            },
+        ],
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'subplots-adjust' : {'bottom' : 0.2},
+      }
     ]
+
+    def extract_from_files(f):
+        if type(f) == list:
+            return list(it.chain.from_iterable([extract_from_files(ff) for ff in f]))
+        g, l = {}, {}
+        execfile(f, g, l)
+        return l['RESULTS']
 
     FINAL_OUTPUT_FILENAME='istc3-cameraready.pdf'
     from PyPDF2 import PdfFileWriter, PdfFileReader
     output = PdfFileWriter()
     for config in configs:
-      g, l = {}, {}
-      execfile(config['file'], g, l)
+      res = extract_from_files(config['file'])
       if 'lines' in config:
-        mkplot(l['RESULTS'], config, config['outfile'])
+        mkplot(res, config, config['outfile'])
       elif 'bars' in config:
-        mkbar(l['RESULTS'], config, config['outfile'])
+        mkbar(res, config, config['outfile'])
       else:
         assert False, "bad config"
       inp = PdfFileReader(open(config['outfile'], 'rb'))
