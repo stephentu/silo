@@ -373,7 +373,7 @@ if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_REAL],
-      'numa_memory' : [None, '%dG' % (4 * 28)],
+      'numa_memory' : ['%dG' % (4 * 28)],
     },
     {
       'binary' : ['../out-perf/benchmarks/dbtest'],
@@ -386,7 +386,7 @@ if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_REAL],
-      'numa_memory' : [None, '%dG' % (4 * 28)],
+      'numa_memory' : ['%dG' % (4 * 28)],
       'log_compress' : [True],
     },
   ]
