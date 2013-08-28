@@ -81,10 +81,23 @@ namespace private_ {
     static inline void
     Lock(std::atomic<uint64_t> &t)
     {
+#ifdef SPINLOCK_BACKOFF
+      uint64_t backoff_shift = 0;
+#endif
       uint64_t v = Load(t);
       while ((v & P::HDR_LOCKED_MASK) ||
              !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
+#ifdef SPINLOCK_BACKOFF
+        if (backoff_shift < 63)
+          backoff_shift++;
+        uint64_t spins = (1UL << backoff_shift) * BACKOFF_SPINS_FACTOR;
+        while (spins) {
+          nop_pause();
+          spins--;
+        }
+#else
         nop_pause();
+#endif
         v = Load(t);
       }
       COMPILER_MEMORY_FENCE;
@@ -92,11 +105,24 @@ namespace private_ {
     static inline unsigned
     LockWithSpinCount(std::atomic<uint64_t> &t)
     {
+#ifdef SPINLOCK_BACKOFF
+      uint64_t backoff_shift = 0;
+#endif
       unsigned spins = 0;
       uint64_t v = Load(t);
       while ((v & P::HDR_LOCKED_MASK) ||
              !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
+#ifdef SPINLOCK_BACKOFF
+        if (backoff_shift < 63)
+          backoff_shift++;
+        uint64_t backoff_spins = (1UL << backoff_shift) * BACKOFF_SPINS_FACTOR;
+        while (backoff_spins) {
+          nop_pause();
+          backoff_spins--;
+        }
+#else
         nop_pause();
+#endif
         v = Load(t);
         spins++;
       }

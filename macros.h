@@ -92,6 +92,10 @@
 #define SMALL_SIZE_MAP       64
 #define EXTRA_SMALL_SIZE_MAP 8
 
+//#define BACKOFF_SPINS_FACTOR 1000
+//#define BACKOFF_SPINS_FACTOR 100
+#define BACKOFF_SPINS_FACTOR 10
+
 // throw exception after the assert(), so that GCC knows
 // we'll never return
 #define NDB_UNIMPLEMENTED(what) \

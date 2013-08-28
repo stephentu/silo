@@ -368,9 +368,10 @@ public:
   inline version_t
   lock(bool write_intent)
   {
+    // XXX: implement SPINLOCK_BACKOFF
     CheckMagic();
 #ifdef ENABLE_EVENT_COUNTERS
-    unsigned long nspins = 0;
+    unsigned nspins = 0;
 #endif
     version_t v = hdr;
     const version_t lockmask = write_intent ?
