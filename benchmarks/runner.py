@@ -8,7 +8,7 @@ import sys
 import multiprocessing as mp
 import os
 
-DRYRUN = True
+DRYRUN = False
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -50,9 +50,9 @@ TPCC_REALISTIC_MIX='39,37,4,10,10'
 KNOB_ENABLE_YCSB_SCALE=False
 KNOB_ENABLE_TPCC_SCALE=False
 KNOB_ENABLE_TPCC_MULTIPART=False
-KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
+KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
-KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=True
+KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=False
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
@@ -270,6 +270,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
 if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
   def mk_grid(nthds):
     return {
+      'binary' : ['../out-backoff/benchmarks/dbtest'],
       'name' : 'multipart:skew',
       'dbs' : ['ndb-proto2'],
       'threads' : [nthds],
@@ -280,9 +281,11 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
         '--workload-mix 100,0,0,0,0', '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'
       ],
       'par_load' : [False],
-      'retry' : [False],
+      'retry' : [True],
+      'backoff' : [True],
       'persist' : [PERSIST_NONE],
-      'numa_memory' : ['%dG' % (4 * nthds)],
+      #'numa_memory' : ['%dG' % (4 * nthds)],
+      'numa_memory' : [None],
     }
   grids += [
     {
@@ -296,7 +299,8 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_NONE],
-      'numa_memory' : ['%dG' % (4 * 4)],
+      #'numa_memory' : ['%dG' % (4 * 4)],
+      'numa_memory' : [None],
     },
   ]
   thds = [1,2,4,6,8,10,12,16,20,24,28,32]
@@ -518,7 +522,7 @@ if KNOB_ENABLE_TPCC_SCALE_GC:
 def run_configuration(
     binary,
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
-    par_load, retry_aborted_txn, numa_memory, logfiles,
+    par_load, retry_aborted_txn, backoff_aborted_txn, numa_memory, logfiles,
     assignments, log_fake_writes, log_nofsync, log_compress,
     disable_gc, disable_snapshots, ntries=5):
   # Note: assignments is a list of list of ints
@@ -538,6 +542,7 @@ def run_configuration(
   ] + ([] if not bench_opts else ['--bench-opts', bench_opts]) \
     + ([] if not par_load else ['--parallel-loading']) \
     + ([] if not retry_aborted_txn else ['--retry-aborted-transactions']) \
+    + ([] if not backoff_aborted_txn else ['--backoff-aborted-transactions']) \
     + ([] if not numa_memory else ['--numa-memory', numa_memory]) \
     + ([] if not logfiles else list(it.chain.from_iterable([['--logfile', f] for f in logfiles]))) \
     + ([] if not assignments else list(it.chain.from_iterable([['--assignment', ','.join(map(str, x))] for x in assignments]))) \
@@ -566,7 +571,7 @@ def run_configuration(
       return run_configuration(
           binary,
           basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
-          par_load, retry_aborted_txn, numa_memory, logfiles,
+          par_load, retry_aborted_txn, backoff_aborted_txn, numa_memory, logfiles,
           assignments, log_fake_writes, log_nofsync, log_compress,
           disable_gc, disable_snapshots, ntries - 1)
     else:
@@ -581,12 +586,13 @@ if __name__ == '__main__':
   results = []
   for grid in grids:
     for (binary, db, bench, scale_factor, threads, bench_opts,
-         par_load, retry, numa_memory, persist,
+         par_load, retry, backoff, numa_memory, persist,
          log_fake_writes, log_nofsync, log_compress,
          disable_gc, disable_snapshots) in it.product(
         grid.get('binary', ['../out-perf/benchmarks/dbtest']),
         grid['dbs'], grid['benchmarks'], grid['scale_factors'],
-        grid['threads'], grid['bench_opts'], grid['par_load'], grid['retry'],
+        grid['threads'], grid['bench_opts'], grid['par_load'],
+        grid['retry'], grid.get('backoff', [False]),
         grid['numa_memory'], grid['persist'],
         grid.get('log_fake_writes', [False]),
         grid.get('log_nofsync', [False]),
@@ -603,6 +609,7 @@ if __name__ == '__main__':
         'bench_opts'      : bench_opts,
         'par_load'        : par_load,
         'retry'           : retry,
+        'backoff'         : backoff,
         'persist'         : persist,
         'numa_memory'     : numa_memory,
         'log_fake_writes' : log_fake_writes,
@@ -630,7 +637,7 @@ if __name__ == '__main__':
         value = run_configuration(
             binary,
             basedir, db, bench, scale_factor, threads,
-            bench_opts, par_load, retry, numa_memory,
+            bench_opts, par_load, retry, backoff, numa_memory,
             logfiles, assignments, log_fake_writes,
             log_nofsync, log_compress, disable_gc,
             disable_snapshots)
