@@ -126,7 +126,7 @@ bench_worker::run()
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
       retry:
         timer t;
-        // XXX: reset random seeds
+        const unsigned long old_seed = r.get_seed();
         const auto ret = workload[i].fn(this);
         if (likely(ret.first)) {
           ++ntxn_commits;
@@ -147,6 +147,7 @@ bench_worker::run()
                 spins--;
               }
             }
+            r.set_seed(old_seed);
             goto retry;
           }
         }
