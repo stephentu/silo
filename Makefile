@@ -15,6 +15,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 
 # Available modes
 #   * perf
+#   * backoff
 #   * factor-gc
 #   * factor-gc-nowriteinplace
 #   * sandbox
@@ -24,6 +25,7 @@ MODE ?= perf
 
 DEBUG_S=$(strip $(DEBUG))
 CHECK_INVARIANTS_S=$(strip $(CHECK_INVARIANTS))
+EVENT_COUNTERS_S=$(strip $(EVENT_COUNTERS))
 USE_MALLOC_MODE_S=$(strip $(USE_MALLOC_MODE))
 MODE_S=$(strip $(MODE))
 
@@ -33,14 +35,17 @@ endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	OSUFFIX_S=.check
 endif
-OSUFFIX=$(OSUFFIX_D)$(OSUFFIX_S)
+ifeq ($(EVENT_COUNTERS_S),1)
+	OSUFFIX_S=.ectrs
+endif
+OSUFFIX=$(OSUFFIX_D)$(OSUFFIX_S)$(EVENT_COUNTERS_S)
 
 ifeq ($(MODE_S),perf)
 	O = out-perf$(OSUFFIX)
 	CONFIG_H = config/config-perf.h
-else ifeq ($(MODE_S),perf-counters)
-	O = out-perf-counters$(OSUFFIX)
-	CONFIG_H = config/config-perf-counters.h
+else ifeq ($(MODE_S),backoff)
+	O = out-backoff$(OSUFFIX)
+	CONFIG_H = config/config-backoff.h
 else ifeq ($(MODE_S),factor-gc)
 	O = out-factor-gc$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc.h
@@ -64,6 +69,9 @@ else
 endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	CXXFLAGS += -DCHECK_INVARIANTS
+endif
+ifeq ($(EVENT_COUNTERS_S),1)
+	CXXFLAGS += -DENABLE_EVENT_COUNTERS
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
