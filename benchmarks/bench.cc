@@ -138,9 +138,8 @@ bench_worker::run()
             if (backoff_aborted_transaction) {
               if (backoff_shifts < 63)
                 backoff_shifts++;
-              const uint64_t factor = 100000;
-              uint64_t spins = r.next_uniform() * ((1UL << backoff_shifts) - 1);
-              spins *= factor;
+              uint64_t spins = 1UL << backoff_shifts;
+              spins *= 100000; // XXX: tuned pretty arbitrarily
               evt_avg_abort_spins.offer(spins);
               while (spins) {
                 nop_pause();
