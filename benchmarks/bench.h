@@ -39,6 +39,7 @@ extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
 extern int no_reset_counters;
+extern int backoff_aborted_transaction;
 
 class scoped_db_thread_ctx {
 public:
@@ -112,7 +113,9 @@ public:
       barrier_a(barrier_a), barrier_b(barrier_b),
       // the ntxn_* numbers are per worker
       ntxn_commits(0), ntxn_aborts(0),
-      latency_numer_us(0),  size_delta(0)
+      latency_numer_us(0),
+      backoff_shifts(0), // spin between [0, 2^backoff_shifts) times before retry
+      size_delta(0)
   {
     txn_obj_buf.reserve(str_arena::MinStrReserveLength);
     txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
@@ -185,6 +188,7 @@ private:
   size_t ntxn_commits;
   size_t ntxn_aborts;
   uint64_t latency_numer_us;
+  unsigned backoff_shifts;
 
 protected:
 

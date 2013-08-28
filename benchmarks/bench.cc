@@ -42,6 +42,7 @@ int pin_cpus = 0;
 int slow_exit = 0;
 int retry_aborted_transaction = 0;
 int no_reset_counters = 0;
+int backoff_aborted_transaction = 0;
 
 template <typename T>
 static void
@@ -101,6 +102,8 @@ write_cb(void *p, const char *s)
   ofs.close();
 }
 
+static event_avg_counter evt_avg_abort_spins("avg_abort_spins");
+
 void
 bench_worker::run()
 {
@@ -123,14 +126,29 @@ bench_worker::run()
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
       retry:
         timer t;
+        // XXX: reset random seeds
         const auto ret = workload[i].fn(this);
         if (likely(ret.first)) {
           ++ntxn_commits;
           latency_numer_us += t.lap();
+          backoff_shifts >>= 1;
         } else {
           ++ntxn_aborts;
-          if (retry_aborted_transaction && running)
+          if (retry_aborted_transaction && running) {
+            if (backoff_aborted_transaction) {
+              if (backoff_shifts < 63)
+                backoff_shifts++;
+              const uint64_t factor = 100000;
+              uint64_t spins = r.next_uniform() * ((1UL << backoff_shifts) - 1);
+              spins *= factor;
+              evt_avg_abort_spins.offer(spins);
+              while (spins) {
+                nop_pause();
+                spins--;
+              }
+            }
             goto retry;
+          }
         }
         size_delta += ret.second; // should be zero on abort
         txn_counts[i]++; // txn_counts aren't used to compute throughput (is

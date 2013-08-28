@@ -82,6 +82,7 @@ main(int argc, char **argv)
       {"pin-cpus"                   , no_argument       , &pin_cpus                  , 1}   ,
       {"slow-exit"                  , no_argument       , &slow_exit                 , 1}   ,
       {"retry-aborted-transactions" , no_argument       , &retry_aborted_transaction , 1}   ,
+      {"backoff-aborted-transactions" , no_argument     , &backoff_aborted_transaction , 1}   ,
       {"bench"                      , required_argument , 0                          , 'b'} ,
       {"scale-factor"               , required_argument , 0                          , 's'} ,
       {"num-threads"                , required_argument , 0                          , 't'} ,
@@ -327,6 +328,7 @@ main(int argc, char **argv)
     cerr << "  pin-cpus    : " << pin_cpus                  << endl;
     cerr << "  slow-exit   : " << slow_exit                 << endl;
     cerr << "  retry-txns  : " << retry_aborted_transaction << endl;
+    cerr << "  backoff-txns: " << backoff_aborted_transaction << endl;
     cerr << "  bench       : " << bench_type                << endl;
     cerr << "  scale       : " << scale_factor              << endl;
     cerr << "  num-cpus    : " << ncpus                     << endl;
