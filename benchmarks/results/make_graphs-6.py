@@ -62,13 +62,30 @@ def longest_line(ls):
 def mean(x):   return sum(x)/len(x)
 def median(x): return sorted(x)[len(x)/2]
 
+def dicttokey(d):
+    return tuple(sorted(d.items(), key=lambda x: x[0]))
+
+def keytodict(k):
+    return dict(k)
+
+def merge(results):
+    def combine(ylist):
+        return list(it.chain.from_iterable(ylist))
+    d = {}
+    for r in results:
+        k = dicttokey(r[0])
+        l = d.get(k, [])
+        l.append(r[1])
+        d[k] = l
+    return [(keytodict(x), combine(ys)) for x, ys in d.iteritems()]
+
 def mkplot(results, desc, outfilename):
     fig = plt.figure()
     ax = plt.subplot(111)
     lines = []
     for line_desc in desc['lines']:
         predfn = line_desc['extractor']
-        line_results = [d for d in results if predfn(d)]
+        line_results = merge([d for d in results if predfn(d)])
         xpts = map(desc['x-axis'], line_results)
         ypts = map(desc['y-axis'], line_results)
         lines.append({ 'xpts' : xpts, 'ypts' : ypts })
@@ -79,6 +96,11 @@ def mkplot(results, desc, outfilename):
             assert len(lines[idx]['xpts']) == 1
             lines[idx]['xpts'] = longest
             lines[idx]['ypts'] = [lines[idx]['ypts'][0] for _ in longest]
+    # order lines
+    for i in xrange(len(lines)):
+        l = lines[i]
+        l = sorted(zip(l['xpts'], l['ypts']), key=lambda x: x[0])
+        lines[i] = { 'xpts' : [x[0] for x in l], 'ypts' : [y[1] for y in l] }
     if not desc['show-error-bars']:
         for l in lines:
             ax.plot(l['xpts'], [median(y) for y in l['ypts']])
@@ -108,7 +130,7 @@ def mkbar(results, desc, outfilename):
     bars = []
     for bar_desc in desc['bars']:
         predfn = bar_desc['extractor']
-        bar_results = [d for d in results if predfn(d)]
+        bar_results = merge([d for d in results if predfn(d)])
         if len(bar_results) != 1:
             print "bar_results:", bar_results
         assert len(bar_results) == 1, 'bad predicate'
@@ -162,13 +184,11 @@ TPCC_REALISTIC_MIX=[39, 37, 4, 10, 10]
 if __name__ == '__main__':
     matplotlib.rcParams.update({'figure.autolayout' : True})
 
-    #def maflingo_fast_id_gen_extractor(x):
-    #    if x[0]['db'] != 'ndb-proto2':
-    #        return False
-    #    has_sep_tree = x[0]['bench_opts'].find('--enable-separate-tree-per-partition') != -1
-    #    has_snapshots = 'disable_snapshots' not in x[0] or not x[0]['disable_snapshots']
-    #    has_fast_id_gen = x[0]['bench_opts'].find('--new-order-fast-id-gen') != -1
-    #    return not has_sep_tree and has_snapshots and has_fast_id_gen
+    def tpcc_fast_id_extractor(enabled):
+      if enabled:
+        return lambda x: x[0]['bench_opts'].find('--new-order-fast-id-gen') != -1
+      else:
+        return lambda x: x[0]['bench_opts'].find('--new-order-fast-id-gen') == -1
 
     def db_extractor(db):
       return lambda x: x[0]['db'] == db
@@ -228,36 +248,6 @@ if __name__ == '__main__':
             return True
         return False
       return fn
-
-    #configs = [
-    #  {
-    #    'file'    : 'istc3-8-16-13_multipart_skew.py',
-    #    'outfile' : 'istc3-8-16-13_multipart_skew.pdf',
-    #    'x-axis' : extract_nthreads,
-    #    'y-axis' : deal_with_posK_res(0),
-    #    'lines' : [
-    #        {
-    #            'label' : 'Partition-Store',
-    #            'extractor' : lambda x: x[0]['db'] == 'kvdb-st',
-    #            'extend' : True,
-    #        },
-    #        {
-    #            'label' : 'Maflingo',
-    #            'extractor' : maflingo_regular_extractor,
-    #        },
-    #        {
-    #            'label' : 'Maflingo+FastIds',
-    #            'extractor' : maflingo_fast_id_gen_extractor,
-    #        },
-    #    ],
-    #    'x-label' : 'nthreads',
-    #    'y-label' : 'throughput (txns/sec)',
-    #    'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(MFormatter),
-    #    'x-axis-set-major-locator' : False,
-    #    'show-error-bars' : True,
-    #    'legend' : 'upper right',
-    #  },
-    #]
 
     configs = [
       {
@@ -500,6 +490,41 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'legend' : 'upper right',
+        'title'  : 'TPC-C new order multi-partition',
+      },
+      {
+        'file'    : 'istc11-8-28-13_cameraready.py',
+        'outfile' : 'istc11-8-28-13_cameraready.pdf',
+        'x-axis' : extract_nthreads,
+        'y-axis' : deal_with_posK_res(0),
+        'lines' : [
+            {
+                'label' : 'Partition-Store',
+                'extractor' : AND(name_extractor('multipart:skew'), db_extractor('kvdb-st')),
+                'extend' : True,
+            },
+            {
+                'label' : 'Silo',
+                'extractor' : AND(
+                    name_extractor('multipart:skew'),
+                    db_extractor('ndb-proto2'),
+                    tpcc_fast_id_extractor(False)),
+            },
+            {
+                'label' : 'Silo+FastIds',
+                'extractor' : AND(
+                    name_extractor('multipart:skew'),
+                    db_extractor('ndb-proto2'),
+                    tpcc_fast_id_extractor(True)),
+            },
+        ],
+        'x-label' : 'nthreads',
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'lower right',
+        'title'  : 'TPC-C new order skew',
       },
       {
         'file'    : 'istc3-8-23-13_cameraready.py',
@@ -613,7 +638,7 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'subplots-adjust' : {'bottom' : 0.2},
-      }
+      },
     ]
 
     def extract_from_files(f):
