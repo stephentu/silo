@@ -241,8 +241,7 @@ allocator::AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs)
       ALWAYS_ASSERT(false);
     }
     INVARIANT(x == mypx);
-    //if (madvise(x, hugepgsize, MADV_HUGEPAGE | MADV_WILLNEED)) {
-    if (madvise(x, hugepgsize, MADV_HUGEPAGE)) {
+    if (madvise(x, hugepgsize, MADV_HUGEPAGE | MADV_WILLNEED)) {
       perror("madvise");
       ALWAYS_ASSERT(false);
     }
