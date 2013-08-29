@@ -332,9 +332,7 @@ allocator::FaultRegion(size_t cpu)
     ALWAYS_ASSERT(false);
   }
   ALWAYS_ASSERT(x == pc.region_begin);
-  static const bool s_use_madv_willneed = getenv("USE_MADV_WILLNEED");
-  const int advice =
-    s_use_madv_willneed ? (MADV_HUGEPAGE | MADV_WILLNEED) : MADV_HUGEPAGE;
+  const int advice = MADV_HUGEPAGE | MADV_WILLNEED;
   if (madvise(x, sz, advice)) {
     perror("madvise");
     ALWAYS_ASSERT(false);
@@ -343,12 +341,18 @@ allocator::FaultRegion(size_t cpu)
       pc.region_begin,
       (uintptr_t)pc.region_end - (uintptr_t)pc.region_begin,
       numa_node_of_cpu(cpu));
+  const size_t nfaults =
+    ((uintptr_t)pc.region_end - (uintptr_t)pc.region_begin) / hugepgsize;
   std::cerr << "cpu" << cpu << " starting faulting region ("
-            << intptr_t(pc.region_end) - intptr_t(pc.region_begin) << " bytes)"
-            << std::endl;
-  for (char *px = (char *) pc.region_begin; px < (char *) pc.region_end; px += hugepgsize)
-    *px = 0;
-  std::cerr << "cpu" << cpu << " finished faulting region" << std::endl;
+            << intptr_t(pc.region_end) - intptr_t(pc.region_begin)
+            << " bytes / " << nfaults << " hugepgs)" << std::endl;
+  timer t;
+  for (char *px = (char *) pc.region_begin;
+       px < (char *) pc.region_end;
+       px += CACHELINE_SIZE)
+    *px = 0xDE;
+  std::cerr << "cpu" << cpu << " finished faulting region in "
+            << t.lap_ms() << " ms" << std::endl;
   pc.region_faulted = true;
 }
 
