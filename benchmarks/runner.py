@@ -277,8 +277,8 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
       'scale_factors': [4],
       'benchmarks' : ['tpcc'],
       'bench_opts' : [
-        '--workload-mix 100,0,0,0,0', '--workload-mix 100,0,0,0,0',
-        '--workload-mix 100,0,0,0,0', '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'
+        '--workload-mix 100,0,0,0,0',
+        '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'
       ],
       'par_load' : [False],
       'retry' : [True],
