@@ -8,7 +8,7 @@ import sys
 import multiprocessing as mp
 import os
 
-DRYRUN = False
+DRYRUN = True
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -50,8 +50,9 @@ TPCC_REALISTIC_MIX='39,37,4,10,10'
 KNOB_ENABLE_YCSB_SCALE=False
 KNOB_ENABLE_TPCC_SCALE=False
 KNOB_ENABLE_TPCC_MULTIPART=False
-KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
+KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1=True
 KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=False
 
 ## debugging runs
@@ -355,6 +356,58 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'numa_memory' : ['%dG' % (4 * 28)],
       'disable_snapshots' : [True],
       'disable_gc' : [True],
+    },
+  ]
+
+if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1:
+  # order is:
+  # baseline (jemalloc, no-overwrites, gc, no-snapshots)
+  # +allocator
+  # +insert
+  # +snapshots
+  # -gc
+  grids += [
+    {
+      'binary' : ['../out-factor-gc-nowriteinplace/benchmarks/dbtest'],
+      'name' : 'factoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s --disable-read-only-snapshots' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'numa_memory' : [None, '%dG' % (4 * 28)],
+      'disable_snapshots': [True],
+    },
+    {
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'name' : 'factoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s --disable-read-only-snapshots' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'numa_memory' : ['%dG' % (4 * 28)],
+      'disable_snapshots' : [True],
+    },
+    {
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'name' : 'factoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'numa_memory' : ['%dG' % (4 * 28)],
+      'disable_gc' : [False, True],
     },
   ]
 
