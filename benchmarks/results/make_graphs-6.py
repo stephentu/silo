@@ -624,14 +624,6 @@ if __name__ == '__main__':
                     log_compress_extractor(True),
                     numa_extractor(True)),
             },
-            {
-                'label' : 'DeltaEncode',
-                'extractor' : AND(
-                    name_extractor('persistfactoranalysis'),
-                    binary_extractor('../out-perf/new-benchmarks/dbtest'),
-                    persist_extractor('persist-real'),
-                    numa_extractor(True)),
-            },
         ],
         'y-label' : 'throughput (txns/sec)',
         'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),

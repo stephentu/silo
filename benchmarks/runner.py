@@ -413,13 +413,11 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1:
 
 if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
   # write zero length log records (perfect/fake compression)
-  # write delta encoded log records
   # lz4-compress buffers
   grids += [
     {
       'binary' : [
           '../out-factor-fake-compression/benchmarks/dbtest',
-          '../out-perf/new-benchmarks/dbtest',
       ],
       'name' : 'persistfactoranalysis',
       'dbs' : ['ndb-proto2'],
