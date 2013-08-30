@@ -299,7 +299,6 @@ struct typed_txn_btree_ {
   static inline size_t
   tuple_writer(dbtuple::TupleWriterMode mode, const void *v, uint8_t *p, size_t sz)
   {
-    INVARIANT(v);
     const value_type *vx = reinterpret_cast<const value_type *>(v);
     switch (mode) {
     case dbtuple::TUPLE_WRITER_NEEDS_OLD_VALUE:
