@@ -12,6 +12,7 @@
 #include <sys/sysinfo.h>
 
 #include "../allocator.h"
+#include "../stats_server.h"
 #include "../btree.h"
 #include "bench.h"
 
@@ -60,6 +61,7 @@ main(int argc, char **argv)
   free(curdir);
   int saw_run_spec = 0;
   persistconfig cfg;
+  string stats_server_sockfile;
   while (1) {
     static struct option long_options[] =
     {
@@ -68,6 +70,7 @@ main(int argc, char **argv)
       {"pin-cpus"                   , no_argument       , &pin_cpus                  , 1}   ,
       {"slow-exit"                  , no_argument       , &slow_exit                 , 1}   ,
       {"retry-aborted-transactions" , no_argument       , &retry_aborted_transaction , 1}   ,
+      {"backoff-aborted-transactions" , no_argument     , &backoff_aborted_transaction , 1}   ,
       {"bench"                      , required_argument , 0                          , 'b'} ,
       {"scale-factor"               , required_argument , 0                          , 's'} ,
       {"num-threads"                , required_argument , 0                          , 't'} ,
@@ -83,10 +86,14 @@ main(int argc, char **argv)
       {"log-nofsync"                , no_argument       , &cfg.nofsync_              , 1}   ,
       {"log-compress"               , no_argument       , &cfg.do_compress_          , 1}   ,
       {"log-fake-writes"            , no_argument       , &cfg.fake_writes_          , 1}   ,
+      {"disable-gc"                 , no_argument       , &cfg.disable_gc_           , 1}   ,
+      {"disable-snapshots"          , no_argument       , &cfg.disable_snapshots_    , 1}   ,
+      {"stats-server-sockfile"      , required_argument , 0                          , 'x'} ,
+      {"no-reset-counters"          , no_argument       , &no_reset_counters         , 1}   ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:l:a:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:s:t:d:B:f:r:n:o:m:l:a:x:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -160,6 +167,10 @@ main(int argc, char **argv)
           ParseCSVString<unsigned, RangeAwareParser<unsigned>>(optarg));
       break;
 
+    case 'x':
+      stats_server_sockfile = optarg;
+      break;
+
     case '?':
       /* getopt_long already printed an error message. */
       exit(1);
@@ -193,6 +204,12 @@ main(int argc, char **argv)
     cerr << "[WARNING] --log-nofsync has no effect with --log-fake-writes enabled" << endl;
   }
 
+#ifndef ENABLE_EVENT_COUNTERS
+  if (!stats_server_sockfile.empty()) {
+    cerr << "[WARNING] --stats-server-sockfile with no event counters enabled is useless" << endl;
+  }
+#endif
+
   // initialize the numa allocator
   if (numa_memory > 0) {
     const size_t maxpercpu = iceil(
@@ -208,25 +225,33 @@ main(int argc, char **argv)
     return 1;
   }
 
-  //if (db_type == "bdb") {
-  //  string cmd = "rm -rf " + basedir + "/db/*";
-  //  // XXX(stephentu): laziness
-  //  int ret UNUSED = system(cmd.c_str());
-  //  db = new bdb_wrapper("db", bench_type + ".db");
-  //} else if (db_type == "ndb-proto1") {
-  //  db = new ndb_wrapper<transaction_proto1>;
-  //} else if (db_type == "ndb-proto2") {
-  //  db = new ndb_wrapper<transaction_proto2>;
-  //} else if (db_type == "kvdb") {
-  //  db = new kvdb_wrapper<true>;
-  //} else if (db_type == "kvdb-st") {
-  //  db = new kvdb_wrapper<false>;
-  //} else if (db_type == "mysql") {
-  //  string dbdir = basedir + "/mysql-db";
-  //  db = new mysql_wrapper(dbdir, bench_type);
-  //} else
-  //  ALWAYS_ASSERT(false);
+#ifdef PROTO2_CAN_DISABLE_GC
+  const set<string> has_gc({"ndb-proto1", "ndb-proto2"});
+  if (cfg.disable_gc_ && !has_gc.count(db_type)) {
+    cerr << "[ERROR] benchmark " << db_type
+         << " does not have gc to disable" << endl;
+    return 1;
+  }
+#else
+  if (cfg.disable_gc_) {
+    cerr << "[ERROR] macro PROTO2_CAN_DISABLE_GC was not set, cannot disable gc" << endl;
+    return 1;
+  }
+#endif
 
+#ifdef PROTO2_CAN_DISABLE_SNAPSHOTS
+  const set<string> has_snapshots({"ndb-proto2"});
+  if (cfg.disable_snapshots_ && !has_snapshots.count(db_type)) {
+    cerr << "[ERROR] benchmark " << db_type
+         << " does not have snapshots to disable" << endl;
+    return 1;
+  }
+#else
+  if (cfg.disable_snapshots_) {
+    cerr << "[ERROR] macro PROTO2_CAN_DISABLE_SNAPSHOTS was not set, cannot disable snapshots" << endl;
+    return 1;
+  }
+#endif
 #ifdef CHECK_INVARIANTS
   cerr << "WARNING: invariant checking is enabled - should disable for benchmark" << endl;
 #ifdef PARANOID_CHECKING
@@ -243,6 +268,7 @@ main(int argc, char **argv)
     cerr << "  pin-cpus    : " << pin_cpus                  << endl;
     cerr << "  slow-exit   : " << slow_exit                 << endl;
     cerr << "  retry-txns  : " << retry_aborted_transaction << endl;
+    cerr << "  backoff-txns: " << backoff_aborted_transaction << endl;
     cerr << "  bench       : " << bench_type                << endl;
     cerr << "  scale       : " << scale_factor              << endl;
     cerr << "  num-cpus    : " << ncpus                     << endl;
@@ -276,6 +302,9 @@ main(int argc, char **argv)
     }
     cerr << "  logfiles : " << cfg.logfiles_                << endl;
     cerr << "  assignments : " << cfg.assignments_          << endl;
+    cerr << "  disable-gc : " << cfg.disable_gc_            << endl;
+    cerr << "  disable-snapshots : " << cfg.disable_snapshots_ << endl;
+    cerr << "  stats-server-sockfile: " << stats_server_sockfile << endl;
 
     cerr << "system properties:" << endl;
     cerr << "  btree_internal_node_size: " << concurrent_btree::InternalNodeSize() << endl;
@@ -293,6 +322,11 @@ main(int argc, char **argv)
     cerr << "  btree_node_prefetch     : no" << endl;
 #endif
 
+  }
+
+  if (!stats_server_sockfile.empty()) {
+    stats_server *srvr = new stats_server(stats_server_sockfile);
+    thread(&stats_server::serve_forever, srvr).detach();
   }
 
   vector<string> bench_toks = split_ws(bench_opts);

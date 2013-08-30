@@ -41,6 +41,8 @@ int enable_parallel_loading = false;
 int pin_cpus = 0;
 int slow_exit = 0;
 int retry_aborted_transaction = 0;
+int no_reset_counters = 0;
+int backoff_aborted_transaction = 0;
 
 template <typename T>
 static vector<T>
@@ -92,6 +94,8 @@ write_cb(void *p, const char *s)
   ofs.close();
 }
 
+static event_avg_counter evt_avg_abort_spins("avg_abort_spins");
+
 void
 bench_worker::run()
 {
@@ -114,14 +118,29 @@ bench_worker::run()
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
       retry:
         timer t;
+        const unsigned long old_seed = r.get_seed();
         const auto ret = workload[i].fn(this);
         if (likely(ret.first)) {
           ++ntxn_commits;
           latency_numer_us += t.lap();
+          backoff_shifts >>= 1;
         } else {
           ++ntxn_aborts;
-          if (retry_aborted_transaction && running)
+          if (retry_aborted_transaction && running) {
+            if (backoff_aborted_transaction) {
+              if (backoff_shifts < 63)
+                backoff_shifts++;
+              uint64_t spins = 1UL << backoff_shifts;
+              spins *= 100000; // XXX: tuned pretty arbitrarily
+              evt_avg_abort_spins.offer(spins);
+              while (spins) {
+                nop_pause();
+                spins--;
+              }
+            }
+            r.set_seed(old_seed);
             goto retry;
+          }
         }
         size_delta += ret.second; // should be zero on abort
         txn_counts[i]++; // txn_counts aren't used to compute throughput (is
@@ -162,15 +181,17 @@ bench_runner::run()
   {
     const auto persisted_info = db->get_ntxn_persisted();
     if (get<0>(persisted_info) != get<1>(persisted_info))
-      cerr << "error: " << persisted_info << endl;
+      cerr << "ERROR: " << persisted_info << endl;
     //ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
     if (verbose)
       cerr << persisted_info << " txns persisted in loading phase" << endl;
   }
   db->reset_ntxn_persisted();
 
-  event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
-  PERF_EXPR(scopedperf::perfsum_base::resetall());
+  if (!no_reset_counters) {
+    event_counter::reset_all_counters(); // XXX: for now - we really should have a before/after loading
+    PERF_EXPR(scopedperf::perfsum_base::resetall());
+  }
   {
     const auto persisted_info = db->get_ntxn_persisted();
     if (get<0>(persisted_info) != 0 ||
@@ -184,6 +205,7 @@ bench_runner::run()
   map<string, size_t> table_sizes_before;
   if (verbose) {
     for (auto &p : open_tables) {
+      scoped_rcu_region guard;
       const size_t s = p.second->size();
       cerr << "table " << p.first << " size " << s << endl;
       table_sizes_before[p.first] = s;
@@ -268,6 +290,7 @@ bench_runner::run()
 
     cerr << "--- table statistics ---" << endl;
     for (auto &p : open_tables) {
+      scoped_rcu_region guard;
       const size_t s = p.second->size();
       const ssize_t delta = ssize_t(s) - ssize_t(table_sizes_before[p.first]);
       cerr << "table " << p.first << " size " << p.second->size();
@@ -332,6 +355,7 @@ bench_runner::run()
        << avg_latency_ms << " "
        << avg_persist_latency_ms << " "
        << agg_abort_rate << endl;
+  cout.flush();
 
   if (!slow_exit)
     exit(0); // exit() instead of returning, so we don't call a bunch of dtors

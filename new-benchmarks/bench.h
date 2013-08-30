@@ -18,10 +18,13 @@
 
 struct persistconfig {
   persistconfig()
-    : nofsync_(0), do_compress_(0), fake_writes_(0) {}
+    : nofsync_(0), do_compress_(0), fake_writes_(0),
+      disable_gc_(0), disable_snapshots_(0) {}
   int nofsync_;
   int do_compress_;
   int fake_writes_;
+  int disable_gc_;
+  int disable_snapshots_;
   std::vector<std::string> logfiles_;
   std::vector<std::vector<unsigned>> assignments_;
 };
@@ -47,6 +50,8 @@ extern int enable_parallel_loading;
 extern int pin_cpus;
 extern int slow_exit;
 extern int retry_aborted_transaction;
+extern int no_reset_counters;
+extern int backoff_aborted_transaction;
 
 // NOTE: the typed_* versions of classes exist so we don't have to convert all
 // classes to templatetized [for sanity in compliation times]; we trade off
@@ -134,7 +139,9 @@ public:
       barrier_a(barrier_a), barrier_b(barrier_b),
       // the ntxn_* numbers are per worker
       ntxn_commits(0), ntxn_aborts(0),
-      latency_numer_us(0),  size_delta(0)
+      latency_numer_us(0),
+      backoff_shifts(0), // spin between [0, 2^backoff_shifts) times before retry
+      size_delta(0)
   {
   }
 
@@ -191,8 +198,6 @@ protected:
 
   virtual void on_run_setup() {}
 
-  inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
-
   unsigned int worker_id;
   bool set_core_id;
   util::fast_random r;
@@ -204,6 +209,7 @@ private:
   size_t ntxn_commits;
   size_t ntxn_aborts;
   uint64_t latency_numer_us;
+  unsigned backoff_shifts;
 
 protected:
 
@@ -217,7 +223,6 @@ protected:
   std::vector<size_t> txn_counts; // breakdown of txns
   ssize_t size_delta; // how many logical bytes (of values) did the worker add to the DB
 
-  std::string txn_obj_buf;
   str_arena arena;
 };
 

@@ -1379,10 +1379,13 @@ template <typename Database>
 class new_order_scan_callback : public
   Database::template IndexType<schema<new_order>>::type::search_range_callback {
 public:
+  new_order_scan_callback() : invoked(false) {}
   virtual bool
   invoke(const new_order::key &key, const new_order::value &value) OVERRIDE
   {
+    INVARIANT(!invoked);
     k_no = key;
+    invoked = true;
 #ifdef CHECK_INVARIANTS
     checker::SanityCheckNewOrder(&key, &value);
 #endif
@@ -1393,8 +1396,10 @@ public:
   {
     return k_no;
   }
+  inline bool was_invoked() const { return invoked; }
 private:
   new_order::key k_no;
+  bool invoked;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, delivery_probe0_tod, delivery_probe0_cg)
@@ -1442,6 +1447,8 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_delivery()
       }
 
       const new_order::key &k_no = new_order_c.get_key();
+      if (unlikely(!new_order_c.was_invoked()))
+          continue;
       last_no_o_ids[d - 1] = k_no.no_o_id + 1; // XXX: update last seen
 
       const oorder::key k_oo(warehouse_id, d, k_no.no_o_id);
@@ -1906,12 +1913,15 @@ tpcc_worker<Database, AllowReadOnlyScans>::txn_stock_level()
     district::value v_d;
     ALWAYS_ASSERT(tables.tbl_district(warehouse_id)->search(txn, k_d, v_d));
     checker::SanityCheckDistrict(&k_d, &v_d);
+    const uint64_t cur_next_o_id = g_new_order_fast_id_gen ?
+      NewOrderIdHolder(warehouse_id, districtID).load(memory_order_acquire) :
+      v_d.d_next_o_id;
 
     // manual joins are fun!
     order_line_scan_callback<Database> c;
-    const int32_t lower = v_d.d_next_o_id >= 20 ? (v_d.d_next_o_id - 20) : 0;
+    const int32_t lower = cur_next_o_id >= 20 ? (cur_next_o_id - 20) : 0;
     const order_line::key k_ol_0(warehouse_id, districtID, lower, 0);
-    const order_line::key k_ol_1(warehouse_id, districtID, v_d.d_next_o_id, 0);
+    const order_line::key k_ol_1(warehouse_id, districtID, cur_next_o_id, 0);
     {
       // mask must be kept in sync w/ order_line_scan_callback
 #ifdef DISABLE_FIELD_SELECTION
@@ -2216,8 +2226,11 @@ tpcc_do_test(const string &dbtype,
     cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
     cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
     cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
-    cerr << "  workload_mix                 : " << format_list(g_txn_workload_mix,
-                                                               g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
+    cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
+    cerr << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
+    cerr << "  workload_mix                 : " <<
+      format_list(g_txn_workload_mix,
+                  g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
   }
 
   unique_ptr<abstract_db> db;
@@ -2239,6 +2252,14 @@ tpcc_do_test(const string &dbtype,
         cerr << "  fake_writes: " << cfg.fake_writes_  << endl;
       }
     }
+#ifdef PROTO2_CAN_DISABLE_GC
+    if (!cfg.disable_gc_)
+      transaction_proto2_static::InitGC();
+#endif
+#ifdef PROTO2_CAN_DISABLE_SNAPSHOTS
+    if (cfg.disable_snapshots_)
+      transaction_proto2_static::DisableSnapshots();
+#endif
     typedef ndb_database<transaction_proto2> Database;
     Database *raw = new Database;
     db.reset(raw);
