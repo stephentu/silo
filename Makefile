@@ -36,9 +36,9 @@ ifeq ($(CHECK_INVARIANTS_S),1)
 	OSUFFIX_S=.check
 endif
 ifeq ($(EVENT_COUNTERS_S),1)
-	OSUFFIX_S=.ectrs
+	OSUFFIX_E=.ectrs
 endif
-OSUFFIX=$(OSUFFIX_D)$(OSUFFIX_S)$(EVENT_COUNTERS_S)
+OSUFFIX=$(OSUFFIX_D)$(OSUFFIX_S)$(OSUFFIX_E)
 
 ifeq ($(MODE_S),perf)
 	O = out-perf$(OSUFFIX)
