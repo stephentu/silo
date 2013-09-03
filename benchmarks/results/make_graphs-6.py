@@ -208,6 +208,12 @@ if __name__ == '__main__':
       else:
         return lambda x: 'disable_snapshots' in x[0] and x[0]['disable_snapshots']
 
+    def ro_txns_extractor(enabled):
+      if enabled:
+        return lambda x: x[0]['bench_opts'].find('--disable-read-only-snapshots') == -1
+      else:
+        return lambda x: x[0]['bench_opts'].find('--disable-read-only-snapshots') != -1
+
     def gc_extractor(enabled):
       if enabled:
         return lambda x: 'disable_gc' not in x[0] or not x[0]['disable_gc']
@@ -630,6 +636,67 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'subplots-adjust' : {'bottom' : 0.2},
+      },
+      {
+        'file'    : 'istc12-8-30-13_cameraready.py',
+        'outfile' : 'istc12-8-30-13_cameraready-factor-analysis.pdf',
+        'y-axis' : deal_with_posK_res(0),
+        'bars' : [
+            {
+                'label' : 'Baseline',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc-nowriteinplace/benchmarks/dbtest'),
+                    snapshots_extractor(False),
+                    numa_extractor(False)),
+            },
+            {
+                'label' : '+NumaAllocator',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc-nowriteinplace/benchmarks/dbtest'),
+                    snapshots_extractor(False),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : '+Overwrites',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
+                    snapshots_extractor(False),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : '+Snapshots',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
+                    snapshots_extractor(True),
+                    ro_txns_extractor(True),
+                    gc_extractor(True),
+                    numa_extractor(True)),
+            },
+            {
+                'label' : '-GC',
+                'extractor' : AND(
+                    name_extractor('factoranalysis'),
+                    db_extractor('ndb-proto2'),
+                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
+                    snapshots_extractor(True),
+                    ro_txns_extractor(True),
+                    gc_extractor(False),
+                    numa_extractor(True)),
+            },
+        ],
+        'y-label' : 'throughput (txns/sec)',
+        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'subplots-adjust' : {'bottom' : 0.25},
       },
     ]
 
