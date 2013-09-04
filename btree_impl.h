@@ -146,7 +146,7 @@ btree<P>::leaf_node::invariant_checker_impl(const key_slice *min_key,
 template <typename P>
 btree<P>::internal_node::internal_node()
 {
-  M::Store(this->hdr_, 1);
+  VersionManip::Store(this->hdr_, 1);
   //++evt_btree_internal_node_creates;
 }
 
@@ -263,7 +263,7 @@ retry:
 
 process:
     uint64_t version = cur->stable_version();
-    if (unlikely(M0::IsDeleting(version)))
+    if (unlikely(RawVersionManip::IsDeleting(version)))
       // XXX: maybe we can only retry at the parent of this node, not the
       // root node of the b-tree *layer*
       goto retry;
@@ -271,7 +271,7 @@ process:
       leaf->prefetch();
       if (search_info) {
         search_info->first = leaf;
-        search_info->second = M0::Version(version);
+        search_info->second = RawVersionManip::Version(version);
       }
       key_search_ret kret = leaf->key_search(kslice, kslicelen);
       ssize_t ret = kret.first;
@@ -445,7 +445,7 @@ btree<P>::search_range_at_layer(
     if (unlikely(!leaf->check_version(version)))
       continue;
 
-    callback.on_resp_node(leaf, M0::Version(version));
+    callback.on_resp_node(leaf, RawVersionManip::Version(version));
 
     for (size_t i = 0; i < buf.size(); i++) {
       // check to see if we already omitted a key <= buf[i]: if so, don't omit it
@@ -496,7 +496,7 @@ btree<P>::search_range_at_layer(
           prefix.append((const char *) buf[i].suffix_.data(), buf[i].suffix_.size());
         // we give the actual version # minus all the other bits, b/c they are not
         // important here and make comparison easier at higher layers
-        if (!callback.invoke(prefix, buf[i].vn_.v_, leaf, M0::Version(version)))
+        if (!callback.invoke(prefix, buf[i].vn_.v_, leaf, RawVersionManip::Version(version)))
           return false;
       }
       last_keyslice = buf[i].key_;
@@ -917,7 +917,7 @@ btree<P>::insert0(node *np,
 //#endif
       if (insert_info) {
         insert_info->first = leaf;
-        insert_info->second = M0::Version(leaf->unstable_version()); // we hold lock on leaf
+        insert_info->second = RawVersionManip::Version(leaf->unstable_version()); // we hold lock on leaf
       }
       return UnlockAndReturn(locked_nodes, I_NONE_MOD);
     } else {
@@ -1130,7 +1130,7 @@ btree<P>::insert0(node *np,
 
       if (insert_info) {
         insert_info->first = leaf;
-        insert_info->second = M0::Version(leaf->unstable_version()); // we hold lock on leaf
+        insert_info->second = RawVersionManip::Version(leaf->unstable_version()); // we hold lock on leaf
       }
 
       return I_SPLIT;
@@ -1138,7 +1138,7 @@ btree<P>::insert0(node *np,
   } else {
     internal_node *internal = AsInternal(np);
     uint64_t version = internal->stable_version();
-    if (unlikely(M0::IsDeleting(version)))
+    if (unlikely(RawVersionManip::IsDeleting(version)))
       return UnlockAndReturn(locked_nodes, I_RETRY);
     key_search_ret kret = internal->key_lower_bound_search(kslice);
     ssize_t ret = kret.first;
@@ -1593,7 +1593,7 @@ btree<P>::remove0(node *np,
   } else {
     internal_node *internal = AsInternal(np);
     uint64_t version = internal->stable_version();
-    if (unlikely(M0::IsDeleting(version)))
+    if (unlikely(RawVersionManip::IsDeleting(version)))
       return UnlockAndReturn(locked_nodes, R_RETRY);
     key_search_ret kret = internal->key_lower_bound_search(kslice);
     ssize_t ret = kret.first;

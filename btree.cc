@@ -1007,7 +1007,8 @@ namespace mp_test_pinning_ns {
   static atomic<bool> running(true);
   class worker : public btree_worker {
   public:
-    worker(unsigned int thread, testing_concurrent_btree &btr) : btree_worker(btr), thread(thread) {}
+    worker(unsigned int thread, testing_concurrent_btree &btr)
+      : btree_worker(btr), thread(thread) {}
     virtual void
     run()
     {
@@ -1036,7 +1037,7 @@ mp_test_pinning()
 {
   using namespace mp_test_pinning_ns;
   testing_concurrent_btree btr;
-  vector<shared_ptr<worker>> workers;
+  vector<unique_ptr<worker>> workers;
   for (size_t i = 0; i < nthreads; i++)
     workers.emplace_back(new worker(i, btr));
   for (auto &p : workers)
@@ -1046,6 +1047,61 @@ mp_test_pinning()
   for (auto &p : workers)
     p->join();
   btr.invariant_checker();
+}
+
+namespace mp_test_inserts_removes_ns {
+  static const size_t keys_per_thread = 10000;
+  static const size_t nthreads = 4;
+  class worker : public btree_worker {
+  public:
+    worker(bool inserts, unsigned int thread,
+           testing_concurrent_btree &btr)
+      : btree_worker(btr), inserts(inserts), thread(thread) {}
+    virtual void
+    run()
+    {
+      for (size_t i = thread * keys_per_thread;
+           i < (thread + 1) * keys_per_thread;
+           i++) {
+        if (inserts)
+          // insert
+          btr->insert(u64_varkey(i), (typename testing_concurrent_btree::value_type) i);
+        else
+          btr->remove(u64_varkey(i));
+      }
+    }
+  private:
+    bool inserts;
+    unsigned int thread;
+  };
+}
+
+static void
+mp_test_inserts_removes()
+{
+  using namespace mp_test_inserts_removes_ns;
+  for (size_t iter = 0; iter < 3; iter++) {
+    testing_concurrent_btree btr;
+    vector<unique_ptr<worker>> workers;
+
+    for (size_t i = 0; i < nthreads; i++)
+      workers.emplace_back(new worker(true, i, btr));
+    for (auto &p : workers)
+      p->start();
+    for (auto &p : workers)
+      p->join();
+    btr.invariant_checker();
+    workers.clear();
+
+    for (size_t i = 0; i < nthreads; i++)
+      workers.emplace_back(new worker(false, i, btr));
+    for (auto &p : workers)
+      p->start();
+    for (auto &p : workers)
+      p->join();
+    btr.invariant_checker();
+    workers.clear();
+  }
 }
 
 namespace mp_test5_ns {
@@ -1816,6 +1872,7 @@ TestConcurrentBtreeFast()
   test_random_keys();
   test_insert_remove_mix();
   mp_test_pinning();
+  mp_test_inserts_removes();
   cout << "testing_concurrent_btree::TestFast passed" << endl;
 }
 

@@ -30,19 +30,22 @@ namespace private_ {
   struct u64manip<uint64_t, P> {
     static inline uint64_t Load(uint64_t t) { return t; }
     static inline void Store(uint64_t &t, uint64_t v) { t = v; }
-    static inline void
+    static inline uint64_t
     Lock(uint64_t &t)
     {
 #ifdef CHECK_INVARIANTS
       INVARIANT(!P::IsLocked(t));
       t |= P::HDR_LOCKED_MASK;
+      return t;
 #endif
-    }
-    static inline unsigned
-    LockWithSpinCount(uint64_t &t)
-    {
-      Lock(t);
       return 0;
+    }
+    static inline uint64_t
+    LockWithSpinCount(uint64_t &t, unsigned &spins)
+    {
+      const uint64_t ret = Lock(t);
+      spins = 0;
+      return ret;
     }
     static inline void
     Unlock(uint64_t &t)
@@ -78,7 +81,7 @@ namespace private_ {
     {
       t.store(v, std::memory_order_release);
     }
-    static inline void
+    static inline uint64_t
     Lock(std::atomic<uint64_t> &t)
     {
 #ifdef SPINLOCK_BACKOFF
@@ -101,14 +104,15 @@ namespace private_ {
         v = Load(t);
       }
       COMPILER_MEMORY_FENCE;
+      return v;
     }
-    static inline unsigned
-    LockWithSpinCount(std::atomic<uint64_t> &t)
+    static inline uint64_t
+    LockWithSpinCount(std::atomic<uint64_t> &t, unsigned &spins)
     {
 #ifdef SPINLOCK_BACKOFF
       uint64_t backoff_shift = 0;
 #endif
-      unsigned spins = 0;
+      spins = 0;
       uint64_t v = Load(t);
       while ((v & P::HDR_LOCKED_MASK) ||
              !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
@@ -127,13 +131,14 @@ namespace private_ {
         spins++;
       }
       COMPILER_MEMORY_FENCE;
-      return spins;
+      return v;
     }
     static inline void
     Unlock(std::atomic<uint64_t> &v)
     {
       INVARIANT(P::IsLocked(v));
-      uint64_t h = Load(v);
+      const uint64_t oldh = Load(v);
+      uint64_t h = oldh;
       bool newv = false;
       if ((h & P::HDR_MODIFYING_MASK) ||
           (h & P::HDR_DELETING_MASK)) {
@@ -144,7 +149,8 @@ namespace private_ {
       }
       // clear locked + modifying bits
       h &= ~(P::HDR_LOCKED_MASK | P::HDR_MODIFYING_MASK);
-      if (newv) INVARIANT(!CheckVersion(v, h));
+      if (newv)
+        INVARIANT(!CheckVersion(oldh, h));
       INVARIANT(!(h & P::HDR_LOCKED_MASK));
       INVARIANT(!(h & P::HDR_MODIFYING_MASK));
       COMPILER_MEMORY_FENCE;
@@ -166,7 +172,7 @@ namespace private_ {
     {
       INVARIANT(!(stablev & P::HDR_MODIFYING_MASK));
       COMPILER_MEMORY_FENCE;
-      return (Load(t) & ~P::HDR_LOCKED_MASK) ==
+      return (t & ~P::HDR_LOCKED_MASK) ==
              (stablev & ~P::HDR_LOCKED_MASK);
     }
   };
@@ -200,7 +206,7 @@ class btree_version_manip {
     private_::u64manip<
       VersionType,
       btree_version_manip<VersionType, NKeysPerNode>>
-    M;
+    U64Manip;
 
   static inline constexpr uint64_t
   LowMask(uint64_t nbits)
@@ -261,13 +267,13 @@ public:
   static inline uint64_t
   Load(LoadVersionType v)
   {
-    return M::Load(v);
+    return U64Manip::Load(v);
   }
 
   static inline void
   Store(VersionType &t, uint64_t v)
   {
-    M::Store(t, v);
+    U64Manip::Store(t, v);
   }
 
   // accessors
@@ -435,7 +441,7 @@ public:
   static inline uint64_t
   StableVersion(LoadVersionType v)
   {
-    return M::StableVersion(v);
+    return U64Manip::StableVersion(v);
   }
 
   static inline uint64_t
@@ -447,25 +453,25 @@ public:
   static inline bool
   CheckVersion(LoadVersionType v, uint64_t stablev)
   {
-    return M::CheckVersion(v, stablev);
+    return U64Manip::CheckVersion(Load(v), stablev);
   }
 
-  static inline void
+  static inline uint64_t
   Lock(VersionType &v)
   {
-    M::Lock(v);
+    return U64Manip::Lock(v);
   }
 
-  static inline unsigned
-  LockWithSpinCount(VersionType &v)
+  static inline uint64_t
+  LockWithSpinCount(VersionType &v, unsigned &spins)
   {
-    return M::LockWithSpinCount(v);
+    return U64Manip::LockWithSpinCount(v);
   }
 
   static inline void
   Unlock(VersionType &v)
   {
-    M::Unlock(v);
+    U64Manip::Unlock(v);
   }
 };
 
@@ -516,8 +522,13 @@ public:
 private:
 
   typedef std::pair<ssize_t, size_t> key_search_ret;
-  typedef btree_version_manip<typename P::VersionType, NKeysPerNode> M;
-  typedef btree_version_manip<uint64_t, NKeysPerNode> M0;
+
+  typedef
+    btree_version_manip<typename P::VersionType, NKeysPerNode>
+    VersionManip;
+  typedef
+    btree_version_manip<uint64_t, NKeysPerNode>
+    RawVersionManip;
 
   struct node {
 
@@ -541,11 +552,16 @@ private:
       , lock_owner_(0)
 #endif
     {}
+    ~node()
+    {
+      INVARIANT(!is_locked());
+      INVARIANT(is_deleting());
+    }
 
     inline bool
     is_leaf_node() const
     {
-      return M::IsLeafNode(hdr_);
+      return VersionManip::IsLeafNode(hdr_);
     }
 
     inline bool
@@ -557,31 +573,31 @@ private:
     inline size_t
     key_slots_used() const
     {
-      return M::KeySlotsUsed(hdr_);
+      return VersionManip::KeySlotsUsed(hdr_);
     }
 
     inline void
     set_key_slots_used(size_t n)
     {
-      M::SetKeySlotsUsed(hdr_, n);
+      VersionManip::SetKeySlotsUsed(hdr_, n);
     }
 
     inline void
     inc_key_slots_used()
     {
-      M::IncKeySlotsUsed(hdr_);
+      VersionManip::IncKeySlotsUsed(hdr_);
     }
 
     inline void
     dec_key_slots_used()
     {
-      M::DecKeySlotsUsed(hdr_);
+      VersionManip::DecKeySlotsUsed(hdr_);
     }
 
     inline bool
     is_locked() const
     {
-      return M::IsLocked(hdr_);
+      return VersionManip::IsLocked(hdr_);
     }
 
 #ifdef LOCK_OWNERSHIP_CHECKING
@@ -598,7 +614,7 @@ private:
     }
 #endif /* LOCK_OWNERSHIP_CHECKING */
 
-    inline void
+    inline uint64_t
     lock()
     {
 #ifdef ENABLE_EVENT_COUNTERS
@@ -610,71 +626,73 @@ private:
         evt_avg_btree_internal_node_lock_acquire_spins(
             util::cxx_typename<btree<P>>::value() +
             std::string("_avg_btree_internal_node_lock_acquire_spins"));
-      const unsigned spins = M::LockWithSpinCount(hdr_);
+      unsigned spins;
+      const uint64_t ret = VersionManip::LockWithSpinCount(hdr_, spins);
       if (is_leaf_node())
         evt_avg_btree_leaf_node_lock_acquire_spins.offer(spins);
       else
         evt_avg_btree_internal_node_lock_acquire_spins.offer(spins);
 #else
-      M::Lock(hdr_);
+      const uint64_t ret = VersionManip::Lock(hdr_);
 #endif
 #ifdef LOCK_OWNERSHIP_CHECKING
       lock_owner_ = pthread_self();
 #endif
+      return ret;
     }
 
     inline void
     unlock()
     {
-      M::Unlock(hdr_);
+      VersionManip::Unlock(hdr_);
     }
 
     inline bool
     is_root() const
     {
-      return M::IsRoot(hdr_);
+      return VersionManip::IsRoot(hdr_);
     }
 
     inline void
     set_root()
     {
-      M::SetRoot(hdr_);
+      VersionManip::SetRoot(hdr_);
     }
 
     inline void
     clear_root()
     {
-      M::ClearRoot(hdr_);
+      VersionManip::ClearRoot(hdr_);
     }
 
     inline bool
     is_modifying() const
     {
-      return M::IsModifying(hdr_);
+      return VersionManip::IsModifying(hdr_);
     }
 
     inline void
     mark_modifying()
     {
-      M::MarkModifying(hdr_);
+      VersionManip::MarkModifying(hdr_);
     }
 
     inline bool
     is_deleting() const
     {
-      return M::IsDeleting(hdr_);
+      return VersionManip::IsDeleting(hdr_);
     }
 
     inline void
     mark_deleting()
     {
-      M::MarkDeleting(hdr_);
+      VersionManip::MarkDeleting(hdr_);
     }
 
     inline uint64_t
     unstable_version() const
     {
-      return M::UnstableVersion(hdr_);
+      return VersionManip::UnstableVersion(hdr_);
     }
 
     /**
@@ -683,19 +701,19 @@ private:
     inline uint64_t
     stable_version() const
     {
-      return M::StableVersion(hdr_);
+      return VersionManip::StableVersion(hdr_);
     }
 
     inline bool
     check_version(uint64_t version) const
     {
-      return M::CheckVersion(hdr_, version);
+      return VersionManip::CheckVersion(hdr_, version);
     }
 
     inline std::string
     version_info_str() const
     {
-      return M::VersionInfoStr(hdr_);
+      return VersionManip::VersionInfoStr(hdr_);
     }
 
     void base_invariant_unique_keys_check() const;
@@ -1049,13 +1067,15 @@ private:
   static inline leaf_node *
   AsLeafCheck(node *n, uint64_t v)
   {
-    return likely(n) && M0::IsLeafNode(v) ? static_cast<leaf_node *>(n) : NULL;
+    return likely(n) && RawVersionManip::IsLeafNode(v) ?
+      static_cast<leaf_node *>(n) : NULL;
   }
 
   static inline leaf_node*
   AsLeafCheck(node *n)
   {
-    return likely(n) && n->is_leaf_node() ? static_cast<leaf_node *>(n) : NULL;
+    return likely(n) && n->is_leaf_node() ?
+      static_cast<leaf_node *>(n) : NULL;
   }
 
   static inline const leaf_node*
@@ -1083,19 +1103,25 @@ private:
   }
 
   static inline void
-  UnlockNodes(const typename util::vec<node *>::type &locked_nodes)
+  UnlockNodes(typename util::vec<node *>::type &locked_nodes)
   {
-    for (typename util::vec<node *>::type::const_iterator it = locked_nodes.begin();
-         it != locked_nodes.end(); ++it)
+    for (auto it = locked_nodes.begin(); it != locked_nodes.end(); ++it)
       (*it)->unlock();
+    locked_nodes.clear();
   }
 
   template <typename T>
   static inline T
-  UnlockAndReturn(const typename util::vec<node *>::type &locked_nodes, T t)
+  UnlockAndReturn(typename util::vec<node *>::type &locked_nodes, T t)
   {
     UnlockNodes(locked_nodes);
     return t;
+  }
+
+  static bool
+  CheckVersion(uint64_t a, uint64_t b)
+  {
+    return VersionManip::CheckVersion(a, b);
   }
 
   /**
@@ -1116,8 +1142,11 @@ public:
 
   btree() : root_(leaf_node::alloc())
   {
-    static_assert(NKeysPerNode > (sizeof(key_slice) + 2), "XX"); // so we can always do a split
-    static_assert(NKeysPerNode <= (M::HDR_KEY_SLOTS_MASK >> M::HDR_KEY_SLOTS_SHIFT), "XX");
+    static_assert(
+        NKeysPerNode > (sizeof(key_slice) + 2), "XX"); // so we can always do a split
+    static_assert(
+        NKeysPerNode <=
+        (VersionManip::HDR_KEY_SLOTS_MASK >> VersionManip::HDR_KEY_SLOTS_SHIFT), "XX");
 
 #ifdef CHECK_INVARIANTS
     root_->lock();
@@ -1428,7 +1457,7 @@ public:
     // XXX(stephentu): I think we must use stable_version() for
     // correctness, but I am not 100% sure. It's definitely correct to use it,
     // but maybe we can get away with unstable_version()?
-    return M0::Version(n->stable_version());
+    return RawVersionManip::Version(n->stable_version());
   }
 
   // [value, has_suffix]
@@ -1543,10 +1572,10 @@ private:
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
   enum insert_status {
-    I_NONE_NOMOD,
-    I_NONE_MOD,
+    I_NONE_NOMOD, // no nodes split nor modified
+    I_NONE_MOD, // no nodes split, but modified
     I_RETRY,
-    I_SPLIT,
+    I_SPLIT, // node(s) split
   };
 
   /**
