@@ -320,15 +320,17 @@ private:
   // logger mapping is static, taking:
   //   min_{core} max_{logger} per_thread_sync_epochs_[logger].epochs_[core]
   // yields the entire system's persistent epoch
-  static epoch_array per_thread_sync_epochs_[g_nmax_loggers] CACHE_ALIGNED;
+  static epoch_array
+    per_thread_sync_epochs_[g_nmax_loggers] CACHE_ALIGNED;
 
   // conservative estimate (<=) for:
   //   min_{core} max_{logger} per_thread_sync_epochs_[logger].epochs_[core]
-  static util::aligned_padded_elem<std::atomic<uint64_t>> system_sync_epoch_;
+  static util::aligned_padded_elem<std::atomic<uint64_t>>
+    system_sync_epoch_ CACHE_ALIGNED;
 
-  static percore<persist_ctx> g_persist_ctxs;
+  static percore<persist_ctx> g_persist_ctxs CACHE_ALIGNED;
 
-  static percore<persist_stats> g_persist_stats;
+  static percore<persist_stats> g_persist_stats CACHE_ALIGNED;
 
   // counters
 
@@ -568,7 +570,7 @@ protected:
       , last_reaped_timestamp_us_(0)
 #endif
     {
-      INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+      ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
       queue_.alloc_freelist(rcu::NQueueGroups);
       scratch_.alloc_freelist(rcu::NQueueGroups);
     }

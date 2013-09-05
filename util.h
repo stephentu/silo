@@ -31,7 +31,7 @@ public:
   aligned_padded_elem(Args &&... args)
     : elem(std::forward<Args>(args)...)
   {
-    INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+    ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
   }
 
   T elem;

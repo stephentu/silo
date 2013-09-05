@@ -91,7 +91,7 @@ public:
       , impl_(impl)
       , pin_cpu_(-1)
     {
-      INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+      ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
       queue_.alloc_freelist(NQueueGroups);
       scratch_.alloc_freelist(NQueueGroups);
       NDB_MEMSET(&arenas_[0], 0, sizeof(arenas_));

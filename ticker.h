@@ -227,7 +227,7 @@ private:
     tickinfo()
       : current_tick_(1), depth_(0), start_us_(0)
     {
-      INVARIANT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+      ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
     }
   };
 
