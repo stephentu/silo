@@ -566,60 +566,7 @@ btree<P>::search_range_call(const key_type &lower,
   }
 }
 
-// XXX: requires that root_location is a stable memory location
-template <typename P>
-bool
-btree<P>::insert_impl(node **root_location, const key_type &k, value_type v,
-                      bool only_if_absent, value_type *old_v,
-                      versioned_node_t *insert_info)
-{
-  INVARIANT(rcu::s_instance.in_rcu_region());
-retry:
-  key_slice mk;
-  node *ret;
-  typename util::vec<insert_parent_entry>::type parents;
-  typename util::vec<node *>::type locked_nodes;
-  node *local_root = *root_location;
-  insert_status status =
-    insert0(local_root, k, v, only_if_absent, old_v, insert_info,
-            mk, ret, parents, locked_nodes);
-  switch (status) {
-  case I_NONE_NOMOD:
-    return false;
-  case I_NONE_MOD:
-    return true;
-  case I_RETRY:
-    goto retry;
-  case I_SPLIT:
-    INVARIANT(ret);
-    INVARIANT(ret->key_slots_used() > 0);
-    INVARIANT(local_root->is_modifying());
-    INVARIANT(local_root->is_lock_owner());
-    INVARIANT(local_root->is_root());
-    INVARIANT(local_root == *root_location);
-    internal_node *new_root = internal_node::alloc();
-#ifdef CHECK_INVARIANTS
-    new_root->lock();
-    new_root->mark_modifying();
-    locked_nodes.push_back(new_root);
-#endif /* CHECK_INVARIANTS */
-    new_root->children_[0] = local_root;
-    new_root->children_[1] = ret;
-    new_root->keys_[0] = mk;
-    new_root->set_key_slots_used(1);
-    new_root->set_root();
-    local_root->clear_root();
-    COMPILER_MEMORY_FENCE;
-    *root_location = new_root;
-    // locks are still held here
-    UnlockNodes(locked_nodes);
-    return true;
-  }
-  ALWAYS_ASSERT(false);
-  return false;
-}
-
-// XXX: like insert(), requires a stable memory location
+// XXX: requires a stable memory location
 template <typename P>
 bool
 btree<P>::remove_impl(node **root_location, const key_type &k, value_type *old_v)
@@ -659,8 +606,7 @@ retry:
     COMPILER_MEMORY_FENCE;
     *root_location = replace_node;
     // locks are still held here
-    UnlockNodes(locked_nodes);
-    return true;
+    return UnlockAndReturn(locked_nodes, true);
   default:
     ALWAYS_ASSERT(false);
     return false;
@@ -894,22 +840,70 @@ retry_cur_leaf:
       }
       INVARIANT(kslicelen == 9);
       if (resp_leaf->value_is_layer(lenmatch)) {
-#ifdef ENABLE_EVENT_COUNTERS
-        static event_counter evt_btree_lock_held_on_leaf_layer(
-            util::cxx_typename<btree<P>>::value() +
-            std::string("_btree_lock_held_on_leaf_layer"));
-        ++evt_btree_lock_held_on_leaf_layer;
-#endif
-        const uint64_t locked_version = resp_leaf->lock();
-        if (unlikely(!btree::CheckVersion(version, locked_version))) {
-          resp_leaf->unlock();
+        node *subroot = resp_leaf->values_[lenmatch].n_;
+        INVARIANT(subroot);
+        if (unlikely(!resp_leaf->check_version(version)))
           goto retry_cur_leaf;
+        key_slice mk;
+        node *ret;
+        typename util::vec<insert_parent_entry>::type subparents;
+        typename util::vec<node *>::type sub_locked_nodes;
+        const insert_status status =
+          insert0(subroot, k.shift(), v, only_if_absent, old_v, insert_info,
+              mk, ret, subparents, sub_locked_nodes);
+
+        switch (status) {
+        case I_NONE_NOMOD:
+        case I_NONE_MOD:
+        case I_RETRY:
+          INVARIANT(sub_locked_nodes.empty());
+          return status;
+
+        case I_SPLIT:
+          // the subroot split, so we need to find the leaf again, lock the
+          // node, and create a new internal node
+
+          INVARIANT(ret);
+          INVARIANT(ret->key_slots_used() > 0);
+
+          for (;;) {
+            resp_leaf = FindRespLeaf(
+                resp_leaf, kslice, kslicelen, version, n, lenmatch, lenlowerbound);
+            const uint64_t locked_version = resp_leaf->lock();
+            if (likely(btree::CheckVersion(version, locked_version))) {
+              locked_nodes.push_back(resp_leaf);
+              break;
+            }
+            resp_leaf->unlock();
+          }
+
+          INVARIANT(lenmatch != -1);
+          INVARIANT(resp_leaf->value_is_layer(lenmatch));
+          subroot = resp_leaf->values_[lenmatch].n_;
+          INVARIANT(subroot->is_modifying());
+          INVARIANT(subroot->is_lock_owner());
+          INVARIANT(subroot->is_root());
+
+          internal_node *new_root = internal_node::alloc();
+#ifdef CHECK_INVARIANTS
+          new_root->lock();
+          new_root->mark_modifying();
+          locked_nodes.push_back(new_root);
+#endif /* CHECK_INVARIANTS */
+          new_root->children_[0] = subroot;
+          new_root->children_[1] = ret;
+          new_root->keys_[0] = mk;
+          new_root->set_key_slots_used(1);
+          new_root->set_root();
+          subroot->clear_root();
+          resp_leaf->values_[lenmatch].n_ = new_root;
+
+          // locks are still held here
+          UnlockNodes(sub_locked_nodes);
+          return UnlockAndReturn(locked_nodes, I_NONE_MOD);
         }
-        locked_nodes.push_back(resp_leaf);
-        // need to insert in next level btree (using insert_impl())
-        node **root_location = &resp_leaf->values_[lenmatch].n_;
-        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v, insert_info);
-        return UnlockAndReturn(locked_nodes, ret ? I_NONE_MOD : I_NONE_NOMOD);
+        ALWAYS_ASSERT(false);
+
       } else {
         const uint64_t locked_version = resp_leaf->lock();
         if (unlikely(!btree::CheckVersion(version, locked_version))) {
@@ -948,13 +942,20 @@ retry_cur_leaf:
           resp_leaf->suffixes_[lenmatch].swap(i);
         }
         resp_leaf->value_set_layer(lenmatch);
-        node **root_location = &resp_leaf->values_[lenmatch].n_;
 #ifdef CHECK_INVARIANTS
         new_root->unlock();
 #endif /* CHECK_INVARIANTS */
-        bool ret = insert_impl(root_location, k.shift(), v, only_if_absent, old_v, insert_info);
-        if (!ret)
+
+        key_slice mk;
+        node *ret;
+        typename util::vec<insert_parent_entry>::type subparents;
+        typename util::vec<node *>::type sub_locked_nodes;
+        const insert_status status =
+          insert0(new_root, k.shift(), v, only_if_absent, old_v, insert_info,
+              mk, ret, subparents, sub_locked_nodes);
+        if (status != I_NONE_MOD)
           INVARIANT(false);
+        INVARIANT(sub_locked_nodes.empty());
         return UnlockAndReturn(locked_nodes, I_NONE_MOD);
       }
     }
@@ -1241,8 +1242,10 @@ retry_cur_leaf:
     insert_status status =
       insert0(child_ptr, k, v, only_if_absent, old_v, insert_info,
               mk, new_child, parents, locked_nodes);
-    if (status != I_SPLIT)
+    if (status != I_SPLIT) {
+      INVARIANT(locked_nodes.empty());
       return status;
+    }
     INVARIANT(new_child);
     INVARIANT(internal->is_locked()); // previous call to insert0() must lock internal node for insertion
     INVARIANT(internal->is_lock_owner());
@@ -1317,14 +1320,70 @@ retry_cur_leaf:
         internal->set_key_slots_used(NMinKeysPerNode);
       }
 
+      INVARIANT(internal->keys_[internal->key_slots_used() - 1] < new_internal->keys_[0]);
       new_node = new_internal;
       return I_SPLIT;
     }
   }
 }
 
+template <typename P>
+bool
+btree<P>::insert_stable_location(
+    node **root_location, const key_type &k, value_type v,
+    bool only_if_absent, value_type *old_v,
+    versioned_node_t *insert_info)
+{
+  INVARIANT(rcu::s_instance.in_rcu_region());
+retry:
+  key_slice mk;
+  node *ret;
+  typename util::vec<insert_parent_entry>::type parents;
+  typename util::vec<node *>::type locked_nodes;
+  node *local_root = *root_location;
+  const insert_status status =
+    insert0(local_root, k, v, only_if_absent, old_v, insert_info,
+            mk, ret, parents, locked_nodes);
+  INVARIANT(status == I_SPLIT || locked_nodes.empty());
+  switch (status) {
+  case I_NONE_NOMOD:
+    return false;
+  case I_NONE_MOD:
+    return true;
+  case I_RETRY:
+    goto retry;
+  case I_SPLIT:
+    INVARIANT(ret);
+    INVARIANT(ret->key_slots_used() > 0);
+    INVARIANT(local_root->is_modifying());
+    INVARIANT(local_root->is_lock_owner());
+    INVARIANT(local_root->is_root());
+    INVARIANT(local_root == *root_location);
+    internal_node *new_root = internal_node::alloc();
+#ifdef CHECK_INVARIANTS
+    new_root->lock();
+    new_root->mark_modifying();
+    locked_nodes.push_back(new_root);
+#endif /* CHECK_INVARIANTS */
+    new_root->children_[0] = local_root;
+    new_root->children_[1] = ret;
+    new_root->keys_[0] = mk;
+    new_root->set_key_slots_used(1);
+    new_root->set_root();
+    local_root->clear_root();
+    COMPILER_MEMORY_FENCE;
+    *root_location = new_root;
+    // locks are still held here
+    return UnlockAndReturn(locked_nodes, true);
+  }
+  ALWAYS_ASSERT(false);
+  return false;
+}
+
 /**
  * remove is very tricky to get right!
+ *
+ * XXX: optimize remove so it holds less locks
  */
 template <typename P>
 typename btree<P>::remove_status
@@ -1380,11 +1439,11 @@ btree<P>::remove0(node *np,
         node **root_location = &leaf->values_[ret].n_;
         bool ret = remove_impl(root_location, k.shift(), old_v);
         node *layer_n = *root_location;
-        bool layer_leaf = layer_n->is_leaf_node();
-        // XXX: could also re-merge back when layer size becomes 1, but
-        // no need for now
-        if (!layer_leaf || layer_n)
-          return UnlockAndReturn(locked_nodes, ret ? R_NONE_MOD : R_NONE_NOMOD);
+        if (!layer_n)
+          INVARIANT(false);
+        // XXX: need to re-merge back when layer size becomes 1, but skip this
+        // for now
+        return UnlockAndReturn(locked_nodes, ret ? R_NONE_MOD : R_NONE_NOMOD);
       } else {
         // suffix check
         if (leaf->suffix(ret) != k.shift())

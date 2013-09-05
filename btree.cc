@@ -1101,6 +1101,17 @@ mp_test_inserts_removes()
       p->join();
     btr.invariant_checker();
     workers.clear();
+
+    for (size_t i = 0; i < nthreads; i++) {
+      workers.emplace_back(new worker(true, i, btr));
+      workers.emplace_back(new worker(false, i, btr));
+    }
+    for (auto &p : workers)
+      p->start();
+    for (auto &p : workers)
+      p->join();
+    btr.invariant_checker();
+    workers.clear();
   }
 }
 

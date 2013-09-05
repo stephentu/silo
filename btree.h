@@ -1373,7 +1373,7 @@ public:
          versioned_node_t *insert_info = NULL)
   {
     scoped_rcu_region guard(!P::RcuRespCaller);
-    return insert_impl((node **) &root_, k, v, false, old_v, insert_info);
+    return insert_stable_location((node **) &root_, k, v, false, old_v, insert_info);
   }
 
   /**
@@ -1385,8 +1385,16 @@ public:
                    versioned_node_t *insert_info = NULL)
   {
     scoped_rcu_region guard(!P::RcuRespCaller);
-    return insert_impl((node **) &root_, k, v, true, NULL, insert_info);
+    return insert_stable_location((node **) &root_, k, v, true, NULL, insert_info);
   }
+
+private:
+  bool
+  insert_stable_location(node **root_location, const key_type &k, value_type v,
+                         bool only_if_absent, value_type *old_v,
+                         versioned_node_t *insert_info);
+
+public:
 
   /**
    * return true if a value was removed, false otherwise.
@@ -1563,9 +1571,6 @@ private:
   bool search_impl(const key_type &k, value_type &v,
                    typename util::vec<leaf_node *>::type &leaf_nodes,
                    versioned_node_t *search_info = nullptr) const;
-
-  bool insert_impl(node **root_location, const key_type &k, value_type v, bool only_if_absent,
-                   value_type *old_v, versioned_node_t *insert_info);
 
   bool remove_impl(node **root_location, const key_type &k, value_type *old_v);
 
