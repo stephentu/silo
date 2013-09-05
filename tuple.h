@@ -78,20 +78,6 @@ public:
     tl_locked_nodes->clear();
   }
 
-  struct scoped_tuple_lock_region {
-    scoped_tuple_lock_region()
-    {
-      TupleLockRegionBegin();
-    }
-    ~scoped_tuple_lock_region()
-    {
-      AssertAllTupleLocksReleased();
-    }
-    scoped_tuple_lock_region(const scoped_tuple_lock_region &) = delete;
-    scoped_tuple_lock_region(scoped_tuple_lock_region &&) = delete;
-    scoped_tuple_lock_region &operator=(const scoped_tuple_lock_region &) = delete;
-  };
-
 private:
 
   static void
