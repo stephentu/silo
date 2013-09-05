@@ -987,8 +987,8 @@ public:
     //small_map_ns::Test();
     //recordtest::Test();
     //rcu::Test();
-    //TestConcurrentBtreeFast();
-    //TestConcurrentBtreeSlow();
+    TestConcurrentBtreeFast();
+    TestConcurrentBtreeSlow();
     txn_btree_test();
     ret = 0;
   }

@@ -1569,6 +1569,22 @@ private:
 
   bool remove_impl(node **root_location, const key_type &k, value_type *old_v);
 
+  /**
+   * traverses the lower leaf levels for a leaf node resp for kslice such that
+   * version is stable and not deleting. resp info is given via idxmatch +
+   * idxlowerbound
+   *
+   * if idxmatch != -1, then ignore idxlowerbound
+   *
+   * note to actually use the info, you still need to validate it (the info is
+   * tentative as of the version)
+   */
+  static leaf_node *
+  FindRespLeaf(
+      leaf_node *leaf, uint64_t kslice,
+      size_t kslicelen, uint64_t &version,
+      size_t &n, ssize_t &idxmatch, ssize_t &idxlowerbound);
+
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
   enum insert_status {
