@@ -257,8 +257,8 @@ if __name__ == '__main__':
 
     configs = [
       {
-        'file'    : 'istc3-8-21-13_cameraready-1.py',
-        'outfile' : 'istc3-8-21-13_cameraready-1-scale_rmw.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-scale_rmw.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -284,8 +284,8 @@ if __name__ == '__main__':
         'title' : 'YCSB scale',
       },
       {
-        'file'    : 'istc3-8-21-13_cameraready-1.py',
-        'outfile' : 'istc3-8-21-13_cameraready-1-scale_rmw-percore.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-scale_rmw-percore.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res_percore(0),
         'lines' : [
@@ -311,8 +311,8 @@ if __name__ == '__main__':
         'title' : 'YCSB scale per-core',
       },
       {
-        'file'    : 'istc3-8-22-13_cameraready.py',
-        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-reg.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-scale_tpcc.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -320,22 +320,19 @@ if __name__ == '__main__':
                 'label' : 'Silo',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
-                    persist_extractor('persist-none'),
-                    workload_mix_extractor(TPCC_REGULAR_MIX)),
+                    persist_extractor('persist-none')),
             },
             {
                 'label' : 'Silo+PersistTemp',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
-                    persist_extractor('persist-temp'),
-                    workload_mix_extractor(TPCC_REGULAR_MIX)),
+                    persist_extractor('persist-temp')),
             },
             {
                 'label' : 'Silo+Persist',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
-                    persist_extractor('persist-real'),
-                    workload_mix_extractor(TPCC_REGULAR_MIX)),
+                    persist_extractor('persist-real')),
             },
         ],
         'x-label' : 'nthreads',
@@ -347,8 +344,8 @@ if __name__ == '__main__':
         'title' : 'TPC-C scale (standard mix)',
       },
       {
-        'file'    : 'istc3-8-22-13_cameraready.py',
-        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-reg-percore.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-scale_tpcc-percore.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res_percore(0),
         'lines' : [
@@ -356,22 +353,19 @@ if __name__ == '__main__':
                 'label' : 'Silo',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
-                    persist_extractor('persist-none'),
-                    workload_mix_extractor(TPCC_REGULAR_MIX)),
+                    persist_extractor('persist-none')),
             },
             {
                 'label' : 'Silo+PersistTemp',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
-                    persist_extractor('persist-temp'),
-                    workload_mix_extractor(TPCC_REGULAR_MIX)),
+                    persist_extractor('persist-temp')),
             },
             {
                 'label' : 'Silo+Persist',
                 'extractor' : AND(
                     name_extractor('scale_tpcc'),
-                    persist_extractor('persist-real'),
-                    workload_mix_extractor(TPCC_REGULAR_MIX)),
+                    persist_extractor('persist-real')),
             },
         ],
         'x-label' : 'nthreads',
@@ -383,80 +377,8 @@ if __name__ == '__main__':
         'title' : 'TPC-C scale per-core (standard mix)',
       },
       {
-        'file'    : 'istc3-8-22-13_cameraready.py',
-        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-realistic.pdf',
-        'x-axis' : extract_nthreads,
-        'y-axis' : deal_with_posK_res(0),
-        'lines' : [
-            {
-                'label' : 'Silo',
-                'extractor' : AND(
-                    name_extractor('scale_tpcc'),
-                    persist_extractor('persist-none'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
-            },
-            {
-                'label' : 'Silo+PersistTemp',
-                'extractor' : AND(
-                    name_extractor('scale_tpcc'),
-                    persist_extractor('persist-temp'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
-            },
-            {
-                'label' : 'Silo+Persist',
-                'extractor' : AND(
-                    name_extractor('scale_tpcc'),
-                    persist_extractor('persist-real'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
-            },
-        ],
-        'x-label' : 'nthreads',
-        'y-label' : 'throughput (txns/sec)',
-        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
-        'x-axis-set-major-locator' : False,
-        'show-error-bars' : True,
-        'legend' : 'upper left',
-        'title' : 'TPC-C scale (realistic mix)',
-      },
-      {
-        'file'    : 'istc3-8-22-13_cameraready.py',
-        'outfile' : 'istc3-8-22-13_cameraready-scale_tpcc-realistic-percore.pdf',
-        'x-axis' : extract_nthreads,
-        'y-axis' : deal_with_posK_res_percore(0),
-        'lines' : [
-            {
-                'label' : 'Silo',
-                'extractor' : AND(
-                    name_extractor('scale_tpcc'),
-                    persist_extractor('persist-none'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
-            },
-            {
-                'label' : 'Silo+PersistTemp',
-                'extractor' : AND(
-                    name_extractor('scale_tpcc'),
-                    persist_extractor('persist-temp'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
-            },
-            {
-                'label' : 'Silo+Persist',
-                'extractor' : AND(
-                    name_extractor('scale_tpcc'),
-                    persist_extractor('persist-real'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX)),
-            },
-        ],
-        'x-label' : 'nthreads',
-        'y-label' : 'throughput/core (txns/sec/core)',
-        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
-        'x-axis-set-major-locator' : False,
-        'show-error-bars' : True,
-        'legend' : 'lower left',
-        'title' : 'TPC-C scale per-core (realistic mix)',
-      },
-      {
-        'file'    : 'istc3-8-22-13_cameraready_2.py',
-        'outfile' : 'istc3-8-22-13_cameraready_2-multipart_pct.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-multipart_pct.pdf',
         'x-axis' : extract_pct,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
