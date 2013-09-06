@@ -455,8 +455,8 @@ if __name__ == '__main__':
         'title'  : 'TPC-C new order skew',
       },
       {
-        'file'    : 'istc3-8-23-13_cameraready.py',
-        'outfile' : 'istc3-8-23-13_cameraready-factor-analysis.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-factor-analysis.pdf',
         'y-axis' : deal_with_posK_res(0),
         'bars' : [
             {
@@ -514,8 +514,8 @@ if __name__ == '__main__':
         'subplots-adjust' : {'bottom' : 0.25},
       },
       {
-        'file'    : ['istc3-8-24-13_cameraready.py', 'istc3-8-22-13_cameraready.py'],
-        'outfile' : 'istc3-8-24-13_cameraready-persist-factor-analysis.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-persist-factor-analysis.pdf',
         'y-axis' : deal_with_posK_res(0),
         'bars' : [
             {
@@ -524,7 +524,6 @@ if __name__ == '__main__':
                     name_extractor('scale_tpcc'),
                     nthreads_extractor(28),
                     persist_extractor('persist-none'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX),
                     db_extractor('ndb-proto2')),
             },
             {
@@ -541,7 +540,6 @@ if __name__ == '__main__':
                     name_extractor('scale_tpcc'),
                     nthreads_extractor(28),
                     persist_extractor('persist-real'),
-                    workload_mix_extractor(TPCC_REALISTIC_MIX),
                     db_extractor('ndb-proto2')),
             },
             {
@@ -558,67 +556,6 @@ if __name__ == '__main__':
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
         'subplots-adjust' : {'bottom' : 0.2},
-      },
-      {
-        'file'    : 'istc12-8-30-13_cameraready.py',
-        'outfile' : 'istc12-8-30-13_cameraready-factor-analysis.pdf',
-        'y-axis' : deal_with_posK_res(0),
-        'bars' : [
-            {
-                'label' : 'Baseline',
-                'extractor' : AND(
-                    name_extractor('factoranalysis'),
-                    db_extractor('ndb-proto2'),
-                    binary_extractor('../out-factor-gc-nowriteinplace/benchmarks/dbtest'),
-                    snapshots_extractor(False),
-                    numa_extractor(False)),
-            },
-            {
-                'label' : '+NumaAllocator',
-                'extractor' : AND(
-                    name_extractor('factoranalysis'),
-                    db_extractor('ndb-proto2'),
-                    binary_extractor('../out-factor-gc-nowriteinplace/benchmarks/dbtest'),
-                    snapshots_extractor(False),
-                    numa_extractor(True)),
-            },
-            {
-                'label' : '+Overwrites',
-                'extractor' : AND(
-                    name_extractor('factoranalysis'),
-                    db_extractor('ndb-proto2'),
-                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
-                    snapshots_extractor(False),
-                    numa_extractor(True)),
-            },
-            {
-                'label' : '+Snapshots',
-                'extractor' : AND(
-                    name_extractor('factoranalysis'),
-                    db_extractor('ndb-proto2'),
-                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
-                    snapshots_extractor(True),
-                    ro_txns_extractor(True),
-                    gc_extractor(True),
-                    numa_extractor(True)),
-            },
-            {
-                'label' : '-GC',
-                'extractor' : AND(
-                    name_extractor('factoranalysis'),
-                    db_extractor('ndb-proto2'),
-                    binary_extractor('../out-factor-gc/benchmarks/dbtest'),
-                    snapshots_extractor(True),
-                    ro_txns_extractor(True),
-                    gc_extractor(False),
-                    numa_extractor(True)),
-            },
-        ],
-        'y-label' : 'throughput (txns/sec)',
-        'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
-        'x-axis-set-major-locator' : False,
-        'show-error-bars' : True,
-        'subplots-adjust' : {'bottom' : 0.25},
       },
     ]
 
@@ -642,5 +579,6 @@ if __name__ == '__main__':
         assert False, "bad config"
       inp = PdfFileReader(open(config['outfile'], 'rb'))
       output.addPage(inp.getPage(0))
+      print >>sys.stderr, '[INFO] finished', config['outfile']
 
     output.write(file(FINAL_OUTPUT_FILENAME, 'wb'))
