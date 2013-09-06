@@ -729,7 +729,6 @@ retry:
   }
   leaf_node *right = leaf->next_;
 
-  /*
   // NB(stephentu): the only way for right->min_key_ to decrease, is for the
   // current leaf node to split. therefore, it is un-necessary to ensure stable
   // version on the next node (we only need to ensure it on the current node)
@@ -737,18 +736,17 @@ retry:
     leaf = right;
     goto retry;
   }
-  */
 
-  if (likely(right)) {
-    const uint64_t right_version = right->stable_version();
-    const uint64_t right_min_key = right->min_key_;
-    if (unlikely(!right->check_version(right_version)))
-      goto retry;
-    if (unlikely(kslice >= right_min_key)) {
-      leaf = right;
-      goto retry;
-    }
-  }
+  //if (likely(right)) {
+  //  const uint64_t right_version = right->stable_version();
+  //  const uint64_t right_min_key = right->min_key_;
+  //  if (unlikely(!right->check_version(right_version)))
+  //    goto retry;
+  //  if (unlikely(kslice >= right_min_key)) {
+  //    leaf = right;
+  //    goto retry;
+  //  }
+  //}
 
   return leaf;
 }
