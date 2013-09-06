@@ -47,13 +47,13 @@ NCPUS = mp.cpu_count()
 TPCC_STANDARD_MIX='45,43,4,4,4'
 TPCC_REALISTIC_MIX='39,37,4,10,10'
 
-KNOB_ENABLE_YCSB_SCALE=False
-KNOB_ENABLE_TPCC_SCALE=False
-KNOB_ENABLE_TPCC_MULTIPART=False
-KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
-KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
-KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1=True
-KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=False
+KNOB_ENABLE_YCSB_SCALE=True
+KNOB_ENABLE_TPCC_SCALE=True
+KNOB_ENABLE_TPCC_MULTIPART=True
+KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1=False
+KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=True
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
@@ -61,7 +61,7 @@ KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=False
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
 KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
 KNOB_ENABLE_TPCC_SCALE_GC=False
-KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
+KNOB_ENABLE_TPCC_RO_SNAPSHOTS=True
 
 grids = []
 
@@ -192,10 +192,6 @@ if KNOB_ENABLE_TPCC_SCALE:
       'threads' : [nthds],
       'scale_factors' : [nthds],
       'benchmarks' : [bench],
-      'bench_opts' : [
-        '--workload-mix %s' % TPCC_STANDARD_MIX,
-        '--workload-mix %s' % TPCC_REALISTIC_MIX,
-      ],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_REAL, PERSIST_TEMP, PERSIST_NONE],
@@ -269,25 +265,38 @@ if KNOB_ENABLE_TPCC_MULTIPART:
   ]
 
 if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
-  def mk_grid(nthds):
-    return {
-      'binary' : ['../out-backoff/benchmarks/dbtest'],
-      'name' : 'multipart:skew',
-      'dbs' : ['ndb-proto2'],
-      'threads' : [nthds],
-      'scale_factors': [4],
-      'benchmarks' : ['tpcc'],
-      'bench_opts' : [
-        '--workload-mix 100,0,0,0,0',
-        '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'
-      ],
-      'par_load' : [False],
-      'retry' : [True],
-      'backoff' : [True],
-      'persist' : [PERSIST_NONE],
-      #'numa_memory' : ['%dG' % (4 * nthds)],
-      'numa_memory' : [None],
-    }
+  def mk_grids(nthds):
+    return [
+      {
+        'name' : 'multipart:skew',
+        'dbs' : ['ndb-proto2'],
+        'threads' : [nthds],
+        'scale_factors': [4],
+        'benchmarks' : ['tpcc'],
+        'bench_opts' : [
+          '--workload-mix 100,0,0,0,0',
+        ],
+        'par_load' : [False],
+        'retry' : [True],
+        'backoff' : [True],
+        'persist' : [PERSIST_NONE],
+        'numa_memory' : [None],
+      },
+      {
+        'name' : 'multipart:skew',
+        'dbs' : ['ndb-proto2'],
+        'threads' : [nthds],
+        'scale_factors': [4],
+        'benchmarks' : ['tpcc'],
+        'bench_opts' : [
+          '--workload-mix 100,0,0,0,0 --new-order-fast-id-gen'
+        ],
+        'par_load' : [False],
+        'retry' : [True],
+        'persist' : [PERSIST_NONE],
+        'numa_memory' : [None],
+      },
+    ]
   grids += [
     {
       'name' : 'multipart:skew',
@@ -305,7 +314,7 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
     },
   ]
   thds = [1,2,4,6,8,10,12,16,20,24,28,32]
-  grids += [mk_grid(t) for t in thds]
+  grids += list(it.chain.from_iterable([mk_grids(t) for t in thds]))
 
 if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
   # order is:
@@ -322,7 +331,6 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'threads' : [28],
       'scale_factors': [28],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_NONE],
@@ -335,7 +343,6 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'threads' : [28],
       'scale_factors': [28],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_NONE],
@@ -349,7 +356,6 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'threads' : [28],
       'scale_factors': [28],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_NONE],
@@ -424,7 +430,6 @@ if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
       'threads' : [28],
       'scale_factors': [28],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_REAL],
@@ -437,7 +442,6 @@ if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
       'threads' : [28],
       'scale_factors': [28],
       'benchmarks' : ['tpcc'],
-      'bench_opts' : ['--workload-mix %s' % TPCC_REALISTIC_MIX],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_REAL],
@@ -468,6 +472,7 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
     },
     {
       'name' : 'readonly',
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
       'dbs' : ['ndb-proto2'],
       'threads' : [16],
       'scale_factors': [8],
@@ -642,7 +647,7 @@ if __name__ == '__main__':
          disable_gc, disable_snapshots) in it.product(
         grid.get('binary', ['../out-perf/benchmarks/dbtest']),
         grid['dbs'], grid['benchmarks'], grid['scale_factors'],
-        grid['threads'], grid['bench_opts'], grid['par_load'],
+        grid['threads'], grid.get('bench_opts', ['']), grid['par_load'],
         grid['retry'], grid.get('backoff', [False]),
         grid['numa_memory'], grid['persist'],
         grid.get('log_fake_writes', [False]),
