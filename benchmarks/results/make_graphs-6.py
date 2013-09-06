@@ -18,12 +18,16 @@ def predicate(fn):
     return pred
 
 NEW_ORDER_RGX = re.compile(r'--new-order-remote-item-pct (\d+)')
-def extract_pct(x):
+def extract_raw_pct(x):
   x = x[0]['bench_opts']
   m = NEW_ORDER_RGX.search(x)
   assert m
   p = int(m.group(1))
   assert p >= 0 and p <= 100
+  return p
+
+def extract_pct(x):
+  p = extract_raw_pct(x)
   def pn(n, p):
     return 1.0 - (1.0 - p)**n
   def ex(p):
@@ -82,17 +86,28 @@ def merge(results):
 def mkplot(results, desc, outfilename):
     fig = plt.figure()
     ax = plt.subplot(111)
+    double_axis = type(desc['y-axis']) == list
+    assert not double_axis or len(desc['y-axis']) == 2
+    if double_axis:
+        ax1 = ax.twinx()
+
     lines = []
     for line_desc in desc['lines']:
         predfn = line_desc['extractor']
         line_results = merge([d for d in results if predfn(d)])
         xpts = map(desc['x-axis'], line_results)
-        ypts = map(desc['y-axis'], line_results)
+        if not double_axis:
+            ypts = map(desc['y-axis'], line_results)
+        else:
+            ypts = (map(desc['y-axis'][0], line_results),
+                    map(desc['y-axis'][1], line_results))
+            ypts = [(desc['y-axis'][0](x), desc['y-axis'][1](x)) for x in line_results]
         lines.append({ 'xpts' : xpts, 'ypts' : ypts })
     longest = longest_line([x['xpts'] for x in lines])
     for idx in xrange(len(desc['lines'])):
         line_desc = desc['lines'][idx]
         if 'extend' in line_desc and line_desc['extend']:
+            assert not double_axis
             assert len(lines[idx]['xpts']) == 1
             lines[idx]['xpts'] = longest
             lines[idx]['ypts'] = [lines[idx]['ypts'][0] for _ in longest]
@@ -103,21 +118,50 @@ def mkplot(results, desc, outfilename):
         lines[i] = { 'xpts' : [x[0] for x in l], 'ypts' : [y[1] for y in l] }
     if not desc['show-error-bars']:
         for l in lines:
-            ax.plot(l['xpts'], [median(y) for y in l['ypts']])
+            if not double_axis:
+                ax.plot(l['xpts'], [median(y) for y in l['ypts']])
+            else:
+                ax.plot(l['xpts'], [median(y[0]) for y in l['ypts']])
+                ax1.plot(l['xpts'], [median(y[1]) for y in l['ypts']])
     else:
         for l in lines:
-            ymins = np.array([min(y) for y in l['ypts']])
-            ymaxs = np.array([max(y) for y in l['ypts']])
-            ymid = np.array([median(y) for y in l['ypts']])
-            yerr = np.array([ymid - ymins, ymaxs - ymid])
-            ax.errorbar(l['xpts'], ymid, yerr=yerr)
+            if not double_axis:
+                ymins = np.array([min(y) for y in l['ypts']])
+                ymaxs = np.array([max(y) for y in l['ypts']])
+                ymid = np.array([median(y) for y in l['ypts']])
+                yerr = np.array([ymid - ymins, ymaxs - ymid])
+                ax.errorbar(l['xpts'], ymid, yerr=yerr)
+            else:
+                ymins = np.array([min(y[0]) for y in l['ypts']])
+                ymaxs = np.array([max(y[0]) for y in l['ypts']])
+                ymid = np.array([median(y[0]) for y in l['ypts']])
+                yerr = np.array([ymid - ymins, ymaxs - ymid])
+                ax.errorbar(l['xpts'], ymid, yerr=yerr)
+
+                ymins = np.array([min(y[1]) for y in l['ypts']])
+                ymaxs = np.array([max(y[1]) for y in l['ypts']])
+                ymid = np.array([median(y[1]) for y in l['ypts']])
+                yerr = np.array([ymid - ymins, ymaxs - ymid])
+                ax1.errorbar(l['xpts'], ymid, yerr=yerr)
 
     ax.set_xlabel(desc['x-label'])
-    ax.set_ylabel(desc['y-label'])
+    ax.set_ylabel(desc['y-label'] if not double_axis else desc['y-label'][0])
+    ax.set_xlim(xmin = min(longest), xmax = max(longest))
     ax.set_ylim(ymin = 0)
     ax.legend([l['label'] for l in desc['lines']], loc=desc['legend'])
     if 'y-axis-major-formatter' in desc:
-        ax.yaxis.set_major_formatter(desc['y-axis-major-formatter'])
+        ax.yaxis.set_major_formatter(
+            desc['y-axis-major-formatter'] if not double_axis \
+                else desc['y-axis-major-formatter'][0])
+
+    if double_axis:
+        _, axmax = ax.get_ylim()
+        ax1.set_ylabel(desc['y-label'][1])
+        ax1.set_ylim(ymin = 0, ymax = axmax)
+        if 'y-axis-major-formatter' in desc:
+            ax1.yaxis.set_major_formatter(
+                desc['y-axis-major-formatter'][1])
+
     if 'title' in desc:
         ax.set_title(desc['title'])
     if 'subplots-adjust' in desc:
@@ -557,6 +601,35 @@ if __name__ == '__main__':
         'show-error-bars' : True,
         'subplots-adjust' : {'bottom' : 0.2},
       },
+      {
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-readonly.pdf',
+        'x-axis' : extract_raw_pct,
+        'y-axis' : [deal_with_posK_res(0), deal_with_posK_res(4)],
+        'lines' : [
+            {
+                'label' : '+Snapshots',
+                'extractor' : AND(
+                    name_extractor('readonly'),
+                    snapshots_extractor(True)),
+            },
+            {
+                'label' : '-Snapshots',
+                'extractor' : AND(
+                    name_extractor('readonly'),
+                    snapshots_extractor(False)),
+            },
+        ],
+        'x-label' : '% remote warehouse',
+        'y-label' : ['throughput (txns/sec)', 'aborts/sec'],
+        'y-axis-major-formatter' : [
+            matplotlib.ticker.FuncFormatter(KFormatter),
+            matplotlib.ticker.FuncFormatter(KFormatter)
+        ],
+        'legend' : 'right',
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+      }
     ]
 
     def extract_from_files(f):
@@ -570,6 +643,7 @@ if __name__ == '__main__':
     from PyPDF2 import PdfFileWriter, PdfFileReader
     output = PdfFileWriter()
     for config in configs:
+    #for config in [configs[-1]]:
       res = extract_from_files(config['file'])
       if 'lines' in config:
         mkplot(res, config, config['outfile'])
