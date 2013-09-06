@@ -566,10 +566,9 @@ btree<P>::search_range_call(const key_type &lower,
   }
 }
 
-// XXX: requires a stable memory location
 template <typename P>
 bool
-btree<P>::remove_impl(node **root_location, const key_type &k, value_type *old_v)
+btree<P>::remove_stable_location(node **root_location, const key_type &k, value_type *old_v)
 {
   INVARIANT(rcu::s_instance.in_rcu_region());
 retry:
@@ -699,14 +698,10 @@ btree<P>::size_walk_callback::on_node_failure()
 
 template <typename P>
 typename btree<P>::leaf_node *
-btree<P>::FindRespLeaf(
+btree<P>::FindRespLeafNode(
       leaf_node *leaf,
       uint64_t kslice,
-      size_t kslicelen,
-      uint64_t &version,
-      size_t &n,
-      ssize_t &idxmatch,
-      ssize_t &idxlowerbound)
+      uint64_t &version)
 {
 retry:
   version = leaf->stable_version();
@@ -755,9 +750,21 @@ retry:
     }
   }
 
+  return leaf;
+}
 
-  // we know now that leaf is responsible for kslice, so we can proceed
-  // (tentatively)
+template <typename P>
+typename btree<P>::leaf_node *
+btree<P>::FindRespLeafLowerBound(
+      leaf_node *leaf,
+      uint64_t kslice,
+      size_t kslicelen,
+      uint64_t &version,
+      size_t &n,
+      ssize_t &idxmatch,
+      ssize_t &idxlowerbound)
+{
+  leaf = FindRespLeafNode(leaf, kslice, version);
 
   // use 0 for slice length, so we can a pointer <= all elements
   // with the same slice
@@ -790,6 +797,23 @@ retry:
 }
 
 template <typename P>
+typename btree<P>::leaf_node *
+btree<P>::FindRespLeafExact(
+      leaf_node *leaf,
+      uint64_t kslice,
+      size_t kslicelen,
+      uint64_t &version,
+      size_t &n,
+      ssize_t &idxmatch)
+{
+  leaf = FindRespLeafNode(leaf, kslice, version);
+  key_search_ret kret = leaf->key_search(kslice, kslicelen);
+  idxmatch = kret.first;
+  n = kret.second;
+  return leaf;
+}
+
+template <typename P>
 typename btree<P>::insert_status
 btree<P>::insert0(node *np,
                   const key_type &k,
@@ -814,7 +838,7 @@ retry_cur_leaf:
     uint64_t version;
     size_t n;
     ssize_t lenmatch, lenlowerbound;
-    leaf_node *resp_leaf = FindRespLeaf(
+    leaf_node *resp_leaf = FindRespLeafLowerBound(
         leaf, kslice, kslicelen, version, n, lenmatch, lenlowerbound);
 
     // len match case
@@ -867,7 +891,7 @@ retry_cur_leaf:
           INVARIANT(ret->key_slots_used() > 0);
 
           for (;;) {
-            resp_leaf = FindRespLeaf(
+            resp_leaf = FindRespLeafLowerBound(
                 resp_leaf, kslice, kslicelen, version, n, lenmatch, lenlowerbound);
             const uint64_t locked_version = resp_leaf->lock();
             if (likely(btree::CheckVersion(version, locked_version))) {
@@ -1404,62 +1428,119 @@ btree<P>::remove0(node *np,
 
   np->prefetch();
   if (leaf_node *leaf = AsLeafCheck(np)) {
-
     INVARIANT(locked_nodes.empty());
-    leaf->lock();
-    locked_nodes.push_back(leaf);
 
     SINGLE_THREADED_INVARIANT(!left_node || (leaf->prev_ == left_node && AsLeaf(left_node)->next == leaf));
     SINGLE_THREADED_INVARIANT(!right_node || (leaf->next_ == right_node && AsLeaf(right_node)->prev == leaf));
 
-    // now we need to ensure that this leaf node still has
-    // responsibility for k, before we proceed - note this check
-    // is duplicated from insert0()
-    if (unlikely(leaf->is_deleting()))
-      return UnlockAndReturn(locked_nodes, R_RETRY);
-    if (unlikely(kslice < leaf->min_key_))
-      return UnlockAndReturn(locked_nodes, R_RETRY);
-    if (likely(leaf->next_)) {
-      uint64_t right_version = leaf->next_->stable_version();
-      key_slice right_min_key = leaf->next_->min_key_;
-      if (unlikely(!leaf->next_->check_version(right_version)))
-        return UnlockAndReturn(locked_nodes, R_RETRY);
-      if (unlikely(kslice >= right_min_key))
-        return UnlockAndReturn(locked_nodes, R_RETRY);
-    }
+retry_cur_leaf:
+    uint64_t version;
+    size_t n;
+    ssize_t ret;
+    leaf_node *resp_leaf = FindRespLeafExact(
+        leaf, kslice, kslicelen, version, n, ret);
 
-    // we know now that leaf is responsible for k, so we can proceed
-
-    key_search_ret kret = leaf->key_search(kslice, kslicelen);
-    ssize_t ret = kret.first;
-    if (ret == -1)
+    if (ret == -1) {
+      if (unlikely(!resp_leaf->check_version(version)))
+        goto retry_cur_leaf;
       return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
+    }
     if (kslicelen == 9) {
-      if (leaf->value_is_layer(ret)) {
-        node **root_location = &leaf->values_[ret].n_;
-        bool ret = remove_impl(root_location, k.shift(), old_v);
-        node *layer_n = *root_location;
-        if (!layer_n)
-          INVARIANT(false);
-        // XXX: need to re-merge back when layer size becomes 1, but skip this
-        // for now
-        return UnlockAndReturn(locked_nodes, ret ? R_NONE_MOD : R_NONE_NOMOD);
+      if (resp_leaf->value_is_layer(ret)) {
+        node *subroot = resp_leaf->values_[ret].n_;
+        INVARIANT(subroot);
+        if (unlikely(!resp_leaf->check_version(version)))
+          goto retry_cur_leaf;
+
+        key_slice new_key;
+        node *replace_node = NULL;
+        typename util::vec<remove_parent_entry>::type sub_parents;
+        typename util::vec<node *>::type sub_locked_nodes;
+        remove_status status = remove0(subroot,
+            NULL, /* min_key */
+            NULL, /* max_key */
+            k.shift(),
+            old_v,
+            NULL, /* left_node */
+            NULL, /* right_node */
+            new_key,
+            replace_node,
+            sub_parents,
+            sub_locked_nodes);
+        switch (status) {
+        case R_NONE_NOMOD:
+        case R_NONE_MOD:
+        case R_RETRY:
+          INVARIANT(sub_locked_nodes.empty());
+          return status;
+
+        case R_REPLACE_NODE:
+          INVARIANT(replace_node);
+          for (;;) {
+            resp_leaf = FindRespLeafExact(
+                resp_leaf, kslice, kslicelen, version, n, ret);
+            const uint64_t locked_version = resp_leaf->lock();
+            if (likely(btree::CheckVersion(version, locked_version))) {
+              locked_nodes.push_back(resp_leaf);
+              break;
+            }
+            resp_leaf->unlock();
+          }
+
+          INVARIANT(subroot->is_deleting());
+          INVARIANT(subroot->is_lock_owner());
+          INVARIANT(subroot->is_root());
+          replace_node->set_root();
+          subroot->clear_root();
+          resp_leaf->values_[ret].n_ = replace_node;
+
+          // XXX: need to re-merge back when layer size becomes 1, but skip this
+          // for now
+
+          // locks are still held here
+          UnlockNodes(sub_locked_nodes);
+          return UnlockAndReturn(locked_nodes, R_NONE_MOD);
+
+        default:
+          break;
+        }
+        ALWAYS_ASSERT(false);
+
       } else {
         // suffix check
-        if (leaf->suffix(ret) != k.shift())
+        if (resp_leaf->suffix(ret) != k.shift()) {
+          if (unlikely(!resp_leaf->check_version(version)))
+            goto retry_cur_leaf;
           return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
+        }
       }
     }
 
-    INVARIANT(!leaf->value_is_layer(ret));
-    if (old_v)
-      *old_v = leaf->values_[ret].v_;
-    size_t n = kret.second;
+    //INVARIANT(!resp_leaf->value_is_layer(ret));
     if (n > NMinKeysPerNode) {
-      leaf->mark_modifying();
-      remove_pos_from_leaf_node(leaf, ret, n);
+      const uint64_t locked_version = resp_leaf->lock();
+      if (unlikely(!btree::CheckVersion(version, locked_version))) {
+        resp_leaf->unlock();
+        goto retry_cur_leaf;
+      }
+      locked_nodes.push_back(resp_leaf);
+      if (old_v)
+        *old_v = resp_leaf->values_[ret].v_;
+      resp_leaf->mark_modifying();
+      remove_pos_from_leaf_node(resp_leaf, ret, n);
       return UnlockAndReturn(locked_nodes, R_NONE_MOD);
     } else {
+
+      if (unlikely(resp_leaf != leaf))
+        return UnlockAndReturn(locked_nodes, R_RETRY);
+      const uint64_t locked_version = leaf->lock();
+      if (unlikely(!btree::CheckVersion(version, locked_version))) {
+        leaf->unlock();
+        goto retry_cur_leaf;
+      }
+      locked_nodes.push_back(leaf);
+      if (old_v)
+        *old_v = leaf->values_[ret].v_;
 
       uint64_t leaf_version = leaf->unstable_version();
 

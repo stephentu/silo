@@ -1436,14 +1436,6 @@ public:
     return insert_stable_location((node **) &root_, k, v, true, NULL, insert_info);
   }
 
-private:
-  bool
-  insert_stable_location(node **root_location, const key_type &k, value_type v,
-                         bool only_if_absent, value_type *old_v,
-                         versioned_node_t *insert_info);
-
-public:
-
   /**
    * return true if a value was removed, false otherwise.
    *
@@ -1454,8 +1446,19 @@ public:
   remove(const key_type &k, value_type *old_v = NULL)
   {
     scoped_rcu_region guard(!P::RcuRespCaller);
-    return remove_impl((node **) &root_, k, old_v);
+    return remove_stable_location((node **) &root_, k, old_v);
   }
+
+private:
+  bool
+  insert_stable_location(node **root_location, const key_type &k, value_type v,
+                         bool only_if_absent, value_type *old_v,
+                         versioned_node_t *insert_info);
+
+  bool
+  remove_stable_location(node **root_location, const key_type &k, value_type *old_v);
+
+public:
 
   /**
    * The tree walk API is a bit strange, due to the optimistic nature of the
@@ -1620,7 +1623,9 @@ private:
                    typename util::vec<leaf_node *>::type &leaf_nodes,
                    versioned_node_t *search_info = nullptr) const;
 
-  bool remove_impl(node **root_location, const key_type &k, value_type *old_v);
+  static leaf_node *
+  FindRespLeafNode(
+      leaf_node *leaf, uint64_t kslice, uint64_t &version);
 
   /**
    * traverses the lower leaf levels for a leaf node resp for kslice such that
@@ -1633,10 +1638,16 @@ private:
    * tentative as of the version)
    */
   static leaf_node *
-  FindRespLeaf(
+  FindRespLeafLowerBound(
       leaf_node *leaf, uint64_t kslice,
       size_t kslicelen, uint64_t &version,
       size_t &n, ssize_t &idxmatch, ssize_t &idxlowerbound);
+
+  static leaf_node *
+  FindRespLeafExact(
+      leaf_node *leaf, uint64_t kslice,
+      size_t kslicelen, uint64_t &version,
+      size_t &n, ssize_t &idxmatch);
 
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
