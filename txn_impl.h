@@ -12,6 +12,9 @@ transaction<Protocol, Traits>::transaction(uint64_t flags, string_allocator_type
 {
   new (rcu_guard()) scoped_rcu_region();
   INVARIANT(rcu::s_instance.in_rcu_region());
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
+  concurrent_btree::NodeLockRegionBegin();
+#endif
 }
 
 template <template <typename> class Protocol, typename Traits>
@@ -27,6 +30,9 @@ transaction<Protocol, Traits>::~transaction()
     INVARIANT(!rcu::s_instance.in_rcu_region());
     cast()->on_post_rcu_region_completion();
   }
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
+  concurrent_btree::AssertAllNodeLocksReleased();
+#endif
 }
 
 template <template <typename> class Protocol, typename Traits>

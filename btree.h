@@ -534,9 +534,9 @@ private:
 
     typename P::VersionType hdr_;
 
-#ifdef LOCK_OWNERSHIP_CHECKING
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
     pthread_t lock_owner_;
-#endif /* LOCK_OWNERSHIP_CHECKING */
+#endif /* BTREE_LOCK_OWNERSHIP_CHECKING */
 
     /**
      * Keys are assumed to be stored in contiguous sorted order, so that all
@@ -548,7 +548,7 @@ private:
 
     node() :
       hdr_()
-#ifdef LOCK_OWNERSHIP_CHECKING
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
       , lock_owner_(0)
 #endif
     {}
@@ -600,7 +600,7 @@ private:
       return VersionManip::IsLocked(hdr_);
     }
 
-#ifdef LOCK_OWNERSHIP_CHECKING
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
     inline bool
     is_lock_owner() const
     {
@@ -612,7 +612,7 @@ private:
     {
       return true;
     }
-#endif /* LOCK_OWNERSHIP_CHECKING */
+#endif /* BTREE_LOCK_OWNERSHIP_CHECKING */
 
     inline uint64_t
     lock()
@@ -635,8 +635,10 @@ private:
 #else
       const uint64_t ret = VersionManip::Lock(hdr_);
 #endif
-#ifdef LOCK_OWNERSHIP_CHECKING
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
       lock_owner_ = pthread_self();
+      AddNodeToLockRegion(this);
+      INVARIANT(is_lock_owner());
 #endif
       return ret;
     }
@@ -644,6 +646,11 @@ private:
     inline void
     unlock()
     {
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
+      // XXX: not portable, but whatever
+      lock_owner_ = 0;
+      INVARIANT(!is_lock_owner());
+#endif
       VersionManip::Unlock(hdr_);
     }
 
@@ -1029,6 +1036,47 @@ private:
     }
 
   } PACKED;
+
+  // very similar to owernship checking for tuples
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
+public:
+  static void
+  NodeLockRegionBegin()
+  {
+    MyLockedNodes(true)->clear();
+  }
+
+  // is used to signal the end of a tuple lock region
+  static void
+  AssertAllNodeLocksReleased()
+  {
+    std::vector<const node *> *nodes = MyLockedNodes(false);
+    ALWAYS_ASSERT(nodes);
+    for (auto p : *nodes)
+      ALWAYS_ASSERT(!p->is_lock_owner());
+    nodes->clear();
+  }
+
+private:
+  static void
+  AddNodeToLockRegion(const node *n)
+  {
+    ALWAYS_ASSERT(n->is_locked());
+    ALWAYS_ASSERT(n->is_lock_owner());
+    std::vector<const node *> *nodes = MyLockedNodes(false);
+    if (nodes)
+      nodes->push_back(n);
+  }
+
+  static std::vector<const node *> *
+  MyLockedNodes(bool create)
+  {
+    static __thread std::vector<const node *> *tl_locked_nodes = nullptr;
+    if (unlikely(!tl_locked_nodes) && create)
+      tl_locked_nodes = new std::vector<const node *>;
+    return tl_locked_nodes;
+  }
+#endif
 
 #ifdef BTREE_NODE_ALLOC_CACHE_ALIGNED
   static const size_t LeafNodeAllocSize = util::round_up<size_t, LG_CACHELINE_SIZE>(sizeof(leaf_node));

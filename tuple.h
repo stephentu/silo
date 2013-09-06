@@ -54,11 +54,11 @@ public:
   static const tid_t MIN_TID = 0;
   static const tid_t MAX_TID = (tid_t) -1;
 
-// lock ownership helpers- works by recording all tuple
-// locks obtained in each transaction, and then when the txn
-// finishes, calling AssertAllTupleLocksReleased(), which makes
-// sure the current thread is no longer the owner of any locks
-// acquired during the txn
+  // lock ownership helpers- works by recording all tuple
+  // locks obtained in each transaction, and then when the txn
+  // finishes, calling AssertAllTupleLocksReleased(), which makes
+  // sure the current thread is no longer the owner of any locks
+  // acquired during the txn
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
   static void
   TupleLockRegionBegin()
