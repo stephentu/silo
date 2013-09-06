@@ -421,8 +421,8 @@ if __name__ == '__main__':
         'title'  : 'TPC-C new order multi-partition',
       },
       {
-        'file'    : 'istc11-8-28-13_cameraready.py',
-        'outfile' : 'istc11-8-28-13_cameraready.pdf',
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-multipart_skew.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -451,7 +451,7 @@ if __name__ == '__main__':
         'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
-        'legend' : 'lower right',
+        'legend' : 'upper left',
         'title'  : 'TPC-C new order skew',
       },
       {
