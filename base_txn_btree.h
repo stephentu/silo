@@ -1,8 +1,7 @@
 #ifndef _NDB_BASE_TXN_BTREE_H_
 #define _NDB_BASE_TXN_BTREE_H_
 
-#include "btree.h"
-#include "btree_impl.h"
+#include "btree_choice.h"
 #include "txn.h"
 #include "lockguard.h"
 #include "util.h"
@@ -213,7 +212,7 @@ base_txn_btree<Transaction, P>::do_search(
     key_writer.fully_materialize(true, t.string_allocator());
 
   // search the underlying btree to map k=>(btree_node|tuple)
-  typename concurrent_btree::value_type underlying_v;
+  typename concurrent_btree::value_type underlying_v{};
   concurrent_btree::versioned_node_t search_info;
   const bool found = this->underlying_btree.search(varkey(*key_str), underlying_v, &search_info);
   if (found) {

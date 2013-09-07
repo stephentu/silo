@@ -1780,5 +1780,7 @@ btree<P>::node::prefetch() const
 extern void TestConcurrentBtreeFast();
 extern void TestConcurrentBtreeSlow();
 
+#if !NDB_MASSTREE
 typedef btree<concurrent_btree_traits> concurrent_btree;
 typedef btree<single_threaded_btree_traits> single_threaded_btree;
+#endif
