@@ -14,6 +14,12 @@
 #include "macros.h"
 #include "util.h"
 
+#if NDB_MASSTREE
+#include "prefetch.h"
+#include "masstree/config.h"
+#include "masstree/string_slice.hh"
+#endif
+
 class varkey {
   friend std::ostream &operator<<(std::ostream &o, const varkey &k);
 public:
@@ -91,6 +97,12 @@ public:
       rp[i] = p[i];
     return util::host_endian_trfm<uint64_t>()(ret);
   }
+
+#if NDB_MASSTREE
+  inline uint64_t slice_at(int pos) const {
+    return string_slice<uint64_t>::make_comparable((const char*) p + pos, std::min(int(l - pos), 8));
+  }
+#endif
 
   inline varkey
   shift() const

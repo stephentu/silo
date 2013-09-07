@@ -19,7 +19,7 @@
 #include <unordered_map>
 
 #include "amd64.h"
-#include "btree.h"
+#include "btree_choice.h"
 #include "core.h"
 #include "counter.h"
 #include "macros.h"

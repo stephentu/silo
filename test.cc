@@ -10,7 +10,6 @@
 #include "core.h"
 #include "thread.h"
 #include "txn.h"
-#include "btree.h"
 #include "txn_btree.h"
 #include "varint.h"
 #include "small_vector.h"
@@ -987,8 +986,10 @@ public:
     //small_map_ns::Test();
     //recordtest::Test();
     //rcu::Test();
+#if !NDB_MASSTREE
     TestConcurrentBtreeFast();
     TestConcurrentBtreeSlow();
+#endif
     txn_btree_test();
     ret = 0;
   }

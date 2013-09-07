@@ -35,6 +35,16 @@ struct typed_txn_btree_ {
         key_encoder.read(s, &k);
       return k;
     }
+#if NDB_MASSTREE
+    inline const key_type &
+    operator()(lcdf::Str s)
+    {
+      const typename Schema::key_encoder_type key_encoder;
+      if (!no_key_results)
+        key_encoder.read(s, &k);
+      return k;
+    }
+#endif
   private:
     key_type k;
     bool no_key_results;
