@@ -74,14 +74,6 @@ public:
    */
   std::map<std::string, uint64_t> unsafe_purge(bool dump_stats = false);
 
-  // XXX: only exists because can't declare friend of template parameter
-  // Transaction
-  inline concurrent_btree *
-  get_underlying_btree()
-  {
-    return &underlying_btree;
-  }
-
 private:
 
   struct purge_tree_walker : public concurrent_btree::tree_walk_callback {
