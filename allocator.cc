@@ -65,6 +65,15 @@ allocator::GetPageSizeImpl()
   return sysconf(_SC_PAGESIZE);
 }
 
+bool
+allocator::UseMAdvWillNeed()
+{
+  static const char *px = getenv("DISABLE_MADV_WILLNEED");
+  static const std::string s = px ? to_lower(px) : "";
+  static const bool use_madv = !(s == "1" || s == "true");
+  return use_madv;
+}
+
 void
 allocator::Initialize(size_t ncpus, size_t maxpercore)
 {
@@ -102,6 +111,8 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
 
   void * const endpx = (void *) ((uintptr_t)x + g_ncpus * g_maxpercore + hugepgsize);
   std::cerr << "allocator::Initialize()" << std::endl
+            << "  hugepgsize: " << hugepgsize << std::endl
+            << "  use MADV_WILLNEED: " << UseMAdvWillNeed() << std::endl
             << "  mmap() region [" << x << ", " << endpx << ")" << std::endl;
 
   g_memstart = reinterpret_cast<void *>(iceil(uintptr_t(x), hugepgsize));
@@ -241,7 +252,9 @@ allocator::AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs)
       ALWAYS_ASSERT(false);
     }
     INVARIANT(x == mypx);
-    if (madvise(x, hugepgsize, MADV_HUGEPAGE | MADV_WILLNEED)) {
+    const int advice =
+      UseMAdvWillNeed() ? MADV_HUGEPAGE | MADV_WILLNEED : MADV_HUGEPAGE;
+    if (madvise(x, hugepgsize, advice)) {
       perror("madvise");
       ALWAYS_ASSERT(false);
     }
@@ -331,7 +344,8 @@ allocator::FaultRegion(size_t cpu)
     ALWAYS_ASSERT(false);
   }
   ALWAYS_ASSERT(x == pc.region_begin);
-  const int advice = MADV_HUGEPAGE | MADV_WILLNEED;
+  const int advice =
+    UseMAdvWillNeed() ? MADV_HUGEPAGE | MADV_WILLNEED : MADV_HUGEPAGE;
   if (madvise(x, sz, advice)) {
     perror("madvise");
     ALWAYS_ASSERT(false);

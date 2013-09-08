@@ -578,6 +578,14 @@ non_atomic_fetch_sub(std::atomic<T> &data, T arg)
   return ret;
 }
 
+static inline std::string
+to_lower(const std::string &s)
+{
+  std::string ret(s);
+  std::transform(ret.begin(), ret.end(), ret.begin(), ::tolower);
+  return ret;
+}
+
 } // namespace util
 
 // pretty printer for std::pair<A, B>

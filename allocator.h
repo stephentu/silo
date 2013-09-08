@@ -103,6 +103,7 @@ public:
 private:
   static size_t GetPageSizeImpl();
   static size_t GetHugepageSizeImpl();
+  static bool UseMAdvWillNeed();
 
   struct regionctx {
     regionctx()
