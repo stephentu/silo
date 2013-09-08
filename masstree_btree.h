@@ -34,8 +34,22 @@
 
 class simple_threadinfo {
  public:
+    class rcu_callback {
+    public:
+      virtual void operator()(simple_threadinfo& ti) = 0;
+    };
+
+ private:
+    static inline void rcu_callback_function(void* p) {
+      simple_threadinfo ti;
+      static_cast<rcu_callback*>(p)->operator()(ti);
+    }
+
+ public:
+    // XXX Correct node timstamps are needed for recovery, but for no other
+    // reason.
     kvtimestamp_t operation_timestamp() const {
-        return 0;
+      return 0;
     }
     kvtimestamp_t update_timestamp() const {
 	return ts_;
@@ -103,84 +117,38 @@ class simple_threadinfo {
 
     // memory allocation
     void* allocate(size_t sz, memtag) {
-        return malloc(sz);
+        return rcu::s_instance.alloc(sz);
     }
-    void deallocate(void* p, size_t, memtag) {
+    void deallocate(void* p, size_t sz, memtag) {
 	// in C++ allocators, 'p' must be nonnull
-        free(p);
+        rcu::s_instance.dealloc(p, sz);
     }
     void deallocate_rcu(void *p, size_t sz, memtag) {
-        // XXX FART
 	assert(p);
-	record_rcu(p, 0);
+        rcu::s_instance.dealloc_rcu(p, sz);
     }
 
     void* pool_allocate(size_t sz, memtag) {
 	int nl = (sz + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
-        return malloc(nl * CACHE_LINE_SIZE);
+        return rcu::s_instance.alloc(nl * CACHE_LINE_SIZE);
     }
-    void pool_deallocate(void* p, size_t, memtag) {
-        free(p);
+    void pool_deallocate(void* p, size_t sz, memtag) {
+	int nl = (sz + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
+        rcu::s_instance.dealloc(p, nl * CACHE_LINE_SIZE);
     }
     void pool_deallocate_rcu(void* p, size_t sz, memtag) {
-        // XXX FART
 	assert(p);
 	int nl = (sz + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
-	record_rcu(p, nl);
+        rcu::s_instance.dealloc_rcu(p, nl * CACHE_LINE_SIZE);
     }
 
     // RCU
-    class rcu_callback {
-    public:
-      virtual void operator()(simple_threadinfo& ti) = 0;
-    };
-    void rcu_start() {
-      //if (gc_epoch != globalepoch)
-      //gc_epoch = globalepoch;
-    }
-    void rcu_stop() {
-      //if (limbo_epoch_ && (gc_epoch - limbo_epoch_) > 1)
-      //hard_rcu_quiesce();
-      //gc_epoch = 0;
-    }
-    void rcu_quiesce() {
-      //rcu_start();
-      //if (limbo_epoch_ && (gc_epoch - limbo_epoch_) > 2)
-      //hard_rcu_quiesce();
-    }
     void rcu_register(rcu_callback *cb) {
-      //record_rcu(cb, -1);
+      rcu::s_instance.free_with_fn(cb, rcu_callback_function);
     }
 
   private:
     mutable kvtimestamp_t ts_;
-
-    void refill_aligned_arena(int nl);
-    void refill_rcu();
-
-    void free_rcu(void *p, int freetype) {
-	if ((freetype & 255) == 0)
-	    ::free(p);
-        else if (freetype == -1)
-	    (*static_cast<rcu_callback*>(p))(*this);
-	else {
-          //int nl = freetype & 255;
-          //*reinterpret_cast<void **>(p) = arena[nl - 1];
-          //arena[nl - 1] = p;
-          ::free(p);
-	}
-    }
-
-    void record_rcu(void *ptr, int freetype) {
-      /*if (limbo_tail_->tail_ == limbo_tail_->capacity)
-	    refill_rcu();
-	uint64_t epoch = globalepoch;
-	limbo_tail_->push_back(ptr, freetype, epoch);
-	if (!limbo_epoch_)
-        limbo_epoch_ = epoch;*/
-    }
-
-    void hard_rcu_quiesce();
 };
 
 struct masstree_params : public Masstree::nodeparams<> {
