@@ -85,7 +85,7 @@ namespace pxqueuetest {
     operator()(const rcu::delete_entry &a,
                const rcu::delete_entry &b) const
     {
-      return (a.first < b.first) || (a.first == b.first && a.second < b.second);
+      return (a.ptr < b.ptr) || (a.ptr == b.ptr && a.action < b.action);
     }
   };
 
@@ -103,8 +103,8 @@ namespace pxqueuetest {
 
       uint64_t i = 0;
       for (auto &p : q0) {
-        ALWAYS_ASSERT(p.first == N2P(i));
-        ALWAYS_ASSERT(p.second == N2D(i));
+        ALWAYS_ASSERT(p.ptr == N2P(i));
+        ALWAYS_ASSERT((rcu::deleter_t) p.action == N2D(i));
         i++;
       }
       ALWAYS_ASSERT(i == 14);
@@ -115,12 +115,12 @@ namespace pxqueuetest {
       q1.sanity_check();
       auto q1_it = q1.begin();
       ALWAYS_ASSERT(q1_it != q1.end());
-      ALWAYS_ASSERT(q1_it->first == N2P(123));
-      ALWAYS_ASSERT(q1_it->second == N2D(543));
+      ALWAYS_ASSERT(q1_it->ptr == N2P(123));
+      ALWAYS_ASSERT((rcu::deleter_t) q1_it->action == N2D(543));
       ++q1_it;
       ALWAYS_ASSERT(q1_it != q1.end());
-      ALWAYS_ASSERT(q1_it->first == N2P(12345));
-      ALWAYS_ASSERT(q1_it->second == N2D(54321));
+      ALWAYS_ASSERT(q1_it->ptr == N2P(12345));
+      ALWAYS_ASSERT((rcu::deleter_t) q1_it->action == N2D(54321));
       ++q1_it;
       ALWAYS_ASSERT(q1_it == q1.end());
     }
