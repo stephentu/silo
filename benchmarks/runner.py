@@ -16,7 +16,7 @@ PERSIST_REAL='persist-real'
 PERSIST_TEMP='persist-temp'
 PERSIST_NONE='persist-none'
 
-MACHINE_LOG_CONFIG = {
+MACHINE_CONFIG = {
   'modis2' : {
       'logfiles' : (
           ('data.log', 1.),
@@ -24,6 +24,7 @@ MACHINE_LOG_CONFIG = {
           ('/data/scidb/001/3/stephentu/data.log', 1.),
       ),
       'tempprefix' : '/tmp',
+      'disable_madv_willneed' : False,
   },
   'istc3' : {
       'logfiles' : (
@@ -33,12 +34,14 @@ MACHINE_LOG_CONFIG = {
           ('/f2/stephentu/data.log', 7./24.),
       ),
       'tempprefix' : '/run/shm',
+      'disable_madv_willneed' : True,
   },
   'istc4' : {
       'logfiles' : (
           ('data.log', 1.),
       ),
       'tempprefix' : '/run/shm',
+      'disable_madv_willneed' : False,
   },
 }
 
@@ -52,8 +55,8 @@ KNOB_ENABLE_TPCC_SCALE=True
 KNOB_ENABLE_TPCC_MULTIPART=True
 KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
-KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1=False
 KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=True
+KNOB_ENABLE_TPCC_RO_SNAPSHOTS=True
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
@@ -61,7 +64,7 @@ KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_COMPRESS=False
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
 KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
 KNOB_ENABLE_TPCC_SCALE_GC=False
-KNOB_ENABLE_TPCC_RO_SNAPSHOTS=True
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1=False
 
 grids = []
 
@@ -280,7 +283,7 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
         'retry' : [True],
         'backoff' : [True],
         'persist' : [PERSIST_NONE],
-        'numa_memory' : [None],
+        'numa_memory' : ['%dG' % (4 * nthds)],
       },
       {
         'name' : 'multipart:skew',
@@ -294,7 +297,7 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
         'par_load' : [False],
         'retry' : [True],
         'persist' : [PERSIST_NONE],
-        'numa_memory' : [None],
+        'numa_memory' : ['%dG' % (4 * nthds)],
       },
     ]
   grids += [
@@ -309,8 +312,7 @@ if KNOB_ENABLE_TPCC_MULTIPART_SKEW:
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_NONE],
-      #'numa_memory' : ['%dG' % (4 * 4)],
-      'numa_memory' : [None],
+      'numa_memory' : ['%dG' % (4 * 4)],
     },
   ]
   thds = [1,2,4,6,8,10,12,16,20,24,28,32]
@@ -576,7 +578,7 @@ if KNOB_ENABLE_TPCC_SCALE_GC:
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
 def run_configuration(
-    binary,
+    binary, disable_madv_willneed,
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
     par_load, retry_aborted_txn, backoff_aborted_txn, numa_memory, logfiles,
     assignments, log_fake_writes, log_nofsync, log_compress,
@@ -608,10 +610,13 @@ def run_configuration(
     + ([] if not disable_gc else ['--disable-gc']) \
     + ([] if not disable_snapshots else ['--disable-snapshots'])
   print >>sys.stderr, '[INFO] running command:'
-  print >>sys.stderr, ' '.join([x.replace(' ', r'\ ') for x in args])
+  print >>sys.stderr, ('DISABLE_MADV_WILLNEED=1' if disable_madv_willneed else ''), ' '.join([x.replace(' ', r'\ ') for x in args])
   if not DRYRUN:
     with open('stderr.log', 'w') as err:
-      p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE, stderr=err)
+      env = dict(os.environ)
+      if disable_madv_willneed:
+        env['DISABLE_MADV_WILLNEED'] = '1'
+      p = subprocess.Popen(args, stdin=open('/dev/null', 'r'), stdout=subprocess.PIPE, stderr=err, env=env)
       print >>sys.stderr, 'pid=', p.pid
       r = p.stdout.read()
       retcode = p.wait()
@@ -625,7 +630,7 @@ def run_configuration(
     shutil.copyfile('stderr.log', 'stderr.%d.log' % p.pid)
     if ntries:
       return run_configuration(
-          binary,
+          binary, disable_madv_willneed,
           basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
           par_load, retry_aborted_txn, backoff_aborted_txn, numa_memory, logfiles,
           assignments, log_fake_writes, log_nofsync, log_compress,
@@ -655,30 +660,32 @@ if __name__ == '__main__':
         grid.get('log_compress', [False]),
         grid.get('disable_gc', [False]),
         grid.get('disable_snapshots', [False])):
+      node = platform.node()
+      disable_madv_willneed = MACHINE_CONFIG[node]['disable_madv_willneed']
       config = {
-        'binary'          : binary,
-        'name'            : grid['name'],
-        'db'              : db,
-        'bench'           : bench,
-        'scale_factor'    : scale_factor,
-        'threads'         : threads,
-        'bench_opts'      : bench_opts,
-        'par_load'        : par_load,
-        'retry'           : retry,
-        'backoff'         : backoff,
-        'persist'         : persist,
-        'numa_memory'     : numa_memory,
-        'log_fake_writes' : log_fake_writes,
-        'log_nofsync'     : log_nofsync,
-        'log_compress'    : log_compress,
-        'disable_gc'      : disable_gc,
-        'disable_snapshots' : disable_snapshots,
+        'binary'                : binary,
+        'disable_madv_willneed' : disable_madv_willneed,
+        'name'                  : grid['name'],
+        'db'                    : db,
+        'bench'                 : bench,
+        'scale_factor'          : scale_factor,
+        'threads'               : threads,
+        'bench_opts'            : bench_opts,
+        'par_load'              : par_load,
+        'retry'                 : retry,
+        'backoff'               : backoff,
+        'persist'               : persist,
+        'numa_memory'           : numa_memory,
+        'log_fake_writes'       : log_fake_writes,
+        'log_nofsync'           : log_nofsync,
+        'log_compress'          : log_compress,
+        'disable_gc'            : disable_gc,
+        'disable_snapshots'     : disable_snapshots,
       }
       print >>sys.stderr, '[INFO] running config %s' % (str(config))
       if persist != PERSIST_NONE:
-        node = platform.node()
-        info = MACHINE_LOG_CONFIG[node]['logfiles']
-        tempprefix = MACHINE_LOG_CONFIG[node]['tempprefix']
+        info = MACHINE_CONFIG[node]['logfiles']
+        tempprefix = MACHINE_CONFIG[node]['tempprefix']
         logfiles = \
             [x[0] for x in info] if persist == PERSIST_REAL \
               else [os.path.join(tempprefix, 'data%d.log' % (idx)) for idx in xrange(len(info))]
@@ -691,7 +698,7 @@ if __name__ == '__main__':
       values = []
       for _ in range(NTRIALS):
         value = run_configuration(
-            binary,
+            binary, disable_madv_willneed,
             basedir, db, bench, scale_factor, threads,
             bench_opts, par_load, retry, backoff, numa_memory,
             logfiles, assignments, log_fake_writes,

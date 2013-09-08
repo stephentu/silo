@@ -139,7 +139,7 @@ bench_worker::run()
               if (backoff_shifts < 63)
                 backoff_shifts++;
               uint64_t spins = 1UL << backoff_shifts;
-              spins *= 100000; // XXX: tuned pretty arbitrarily
+              spins *= 100; // XXX: tuned pretty arbitrarily
               evt_avg_abort_spins.offer(spins);
               while (spins) {
                 nop_pause();
