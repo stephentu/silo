@@ -303,4 +303,7 @@ private:
 
 typedef scoped_rcu_base<true> scoped_rcu_region;
 
+class disabled_rcu_region {
+};
+
 #endif /* _RCU_H_ */
