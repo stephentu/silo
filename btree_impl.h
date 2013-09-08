@@ -522,7 +522,7 @@ btree<P>::search_range_call(const key_type &lower,
                             low_level_search_range_callback &callback,
                             string_type *buf) const
 {
-  scoped_rcu_region guard(!P::RcuRespCaller);
+  rcu_region guard;
   INVARIANT(rcu::s_instance.in_rcu_region());
   if (unlikely(upper && *upper <= lower))
     return;
@@ -635,7 +635,7 @@ template <typename P>
 void
 btree<P>::tree_walk(tree_walk_callback &callback) const
 {
-  scoped_rcu_region guard(!P::RcuRespCaller);
+  rcu_region guard;
   INVARIANT(rcu::s_instance.in_rcu_region());
   std::vector<node *> q;
   // XXX: not sure if cast is safe

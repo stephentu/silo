@@ -17,8 +17,7 @@
 // behavior- the default implementation is just nops
 template <template <typename> class Transaction>
 struct base_txn_btree_handler {
-  inline void on_construct(const std::string &name, concurrent_btree *underlying) {} // get a handle to the underying btree
-  inline void on_destruct() {} // called at the beginning of the txn_btree's dtor
+  static inline void on_construct() {} // called when initializing
   static const bool has_background_task = false;
 };
 
@@ -37,7 +36,7 @@ public:
       name(name),
       been_destructed(false)
   {
-    handler.on_construct(name, &underlying_btree);
+    base_txn_btree_handler<Transaction>::on_construct();
   }
 
   ~base_txn_btree()
@@ -199,7 +198,6 @@ protected:
   size_type value_size_hint;
   std::string name;
   bool been_destructed;
-  base_txn_btree_handler<Transaction> handler;
 };
 
 namespace private_ {
@@ -241,7 +239,6 @@ base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
 {
   ALWAYS_ASSERT(!been_destructed);
   been_destructed = true;
-  handler.on_destruct(); // stop background tasks
   purge_tree_walker w;
   scoped_rcu_region guard;
   underlying_btree.tree_walk(w);
