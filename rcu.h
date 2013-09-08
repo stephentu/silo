@@ -19,10 +19,38 @@
 class rcu {
   template <bool> friend class scoped_rcu_base;
 public:
+  class sync;
   typedef uint64_t epoch_t;
 
   typedef void (*deleter_t)(void *);
-  typedef std::pair<void *, deleter_t> delete_entry;
+  struct delete_entry {
+      void* ptr;
+      intptr_t action;
+
+      inline delete_entry(void* ptr, size_t sz)
+          : ptr(ptr), action(-sz) {
+          INVARIANT(action < 0);
+      }
+      inline delete_entry(void* ptr, deleter_t fn)
+          : ptr(ptr), action(reinterpret_cast<uintptr_t>(fn)) {
+          INVARIANT(action > 0);
+      }
+      void run(rcu::sync& s) {
+          if (action < 0)
+              s.dealloc(ptr, -action);
+          else
+              (*reinterpret_cast<deleter_t>(action))(ptr);
+      }
+      bool operator==(const delete_entry& x) const {
+          return ptr == x.ptr && action == x.action;
+      }
+      bool operator!=(const delete_entry& x) const {
+          return !(*this == x);
+      }
+      bool operator<(const delete_entry& x) const {
+          return ptr < x.ptr || (ptr == x.ptr && action < x.action);
+      }
+  };
   typedef basic_px_queue<delete_entry, 4096> px_queue;
 
   template <typename T>
@@ -119,6 +147,7 @@ public:
     void *alloc_static(size_t sz);
 
     void dealloc(void *p, size_t sz);
+    void dealloc_rcu(void *p, size_t sz);
 
     // try to release local arenas back to the allocator based on some simple
     // thresholding heuristics-- is relative expensive operation.  returns true
@@ -163,6 +192,8 @@ public:
   {
     return mysync().dealloc(p, sz);
   }
+
+  void dealloc_rcu(void *p, size_t sz);
 
   inline bool
   try_release()
