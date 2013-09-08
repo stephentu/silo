@@ -577,6 +577,9 @@ if KNOB_ENABLE_TPCC_SCALE_GC:
   THREADS = get_scale_threads(4)
   grids += [mk_grid('scale_tpcc', 'tpcc', t) for t in THREADS]
 
+def check_binary_executable(binary):
+  return os.path.isfile(binary) and os.access(binary, os.X_OK)
+
 def run_configuration(
     binary, disable_madv_willneed,
     basedir, dbtype, bench, scale_factor, nthreads, bench_opts,
@@ -622,7 +625,7 @@ def run_configuration(
       retcode = p.wait()
       toks = r.strip().split(' ')
   else:
-    assert os.path.isfile(binary) and os.access(binary, os.X_OK)
+    assert check_binary_executable(binary)
     toks = [0,0,0,0,0]
   if len(toks) != 5:
     print 'Failure: retcode=', retcode, ', stdout=', r
@@ -643,6 +646,17 @@ def run_configuration(
 if __name__ == '__main__':
   (_, basedir, outfile) = sys.argv
 
+  DEFAULT_BINARY='../out-perf/benchmarks/dbtest'
+  # list all the binaries needed
+  binaries = set(it.chain.from_iterable([grid.get('binary', [DEFAULT_BINARY]) for grid in grids]))
+  fail = False
+  for binary in binaries:
+    if not check_binary_executable(binary):
+      print >>sys.stderr, '[ERROR] cannot find binary %s' % binary
+      fail = True
+  if fail:
+    sys.exit(1)
+
   # iterate over all configs
   results = []
   for grid in grids:
@@ -650,7 +664,7 @@ if __name__ == '__main__':
          par_load, retry, backoff, numa_memory, persist,
          log_fake_writes, log_nofsync, log_compress,
          disable_gc, disable_snapshots) in it.product(
-        grid.get('binary', ['../out-perf/benchmarks/dbtest']),
+        grid.get('binary', [DEFAULT_BINARY]),
         grid['dbs'], grid['benchmarks'], grid['scale_factors'],
         grid['threads'], grid.get('bench_opts', ['']), grid['par_load'],
         grid['retry'], grid.get('backoff', [False]),
