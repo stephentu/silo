@@ -514,6 +514,9 @@ public:
   typedef std::string string_type;
   typedef uint64_t key_slice;
   typedef uint8_t* value_type;
+  typedef typename std::conditional<!P::RcuRespCaller,
+      scoped_rcu_region,
+      disabled_rcu_region>::type rcu_region;
 
   // public to assist in testing
   static const unsigned int NKeysPerNode    = P::NKeysPerNode;
@@ -1245,7 +1248,7 @@ public:
   search(const key_type &k, value_type &v,
          versioned_node_t *search_info = nullptr) const
   {
-    scoped_rcu_region guard(!P::RcuRespCaller);
+    rcu_region guard;
     typename util::vec<leaf_node *>::type ns;
     return search_impl(k, v, ns, search_info);
   }
@@ -1420,7 +1423,7 @@ public:
          value_type *old_v = NULL,
          versioned_node_t *insert_info = NULL)
   {
-    scoped_rcu_region guard(!P::RcuRespCaller);
+    rcu_region guard;
     return insert_stable_location((node **) &root_, k, v, false, old_v, insert_info);
   }
 
@@ -1432,7 +1435,7 @@ public:
   insert_if_absent(const key_type &k, value_type v,
                    versioned_node_t *insert_info = NULL)
   {
-    scoped_rcu_region guard(!P::RcuRespCaller);
+    rcu_region guard;
     return insert_stable_location((node **) &root_, k, v, true, NULL, insert_info);
   }
 
@@ -1445,7 +1448,7 @@ public:
   inline bool
   remove(const key_type &k, value_type *old_v = NULL)
   {
-    scoped_rcu_region guard(!P::RcuRespCaller);
+    rcu_region guard;
     return remove_stable_location((node **) &root_, k, old_v);
   }
 

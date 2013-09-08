@@ -62,10 +62,12 @@ else
 	$(error invalid mode)
 endif
 
+CXXFLAGS := -g -Wall -Werror -std=c++0x
+CXXFLAGS += -MD -Ithird-party/lz4 -DCONFIG_H=\"$(CONFIG_H)\"
 ifeq ($(DEBUG_S),1)
-        CXXFLAGS := -MD -Ithird-party/lz4 -Wall -g -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\" -DDEBUG
+        CXXFLAGS += -fno-omit-frame-pointer -DDEBUG
 else
-        CXXFLAGS := -MD -Ithird-party/lz4 -Wall -g -Werror -O2 -funroll-loops -fno-omit-frame-pointer --std=c++0x -DCONFIG_H=\"$(CONFIG_H)\"
+        CXXFLAGS += -O2 -funroll-loops -fno-omit-frame-pointer
 endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	CXXFLAGS += -DCHECK_INVARIANTS
@@ -111,7 +113,6 @@ SRCFILES = allocator.cc \
 	varint.cc
 
 OBJFILES := $(patsubst %.cc, $(O)/%.o, $(SRCFILES))
-DEPFILES := $(patsubst %.cc, $(O)/%.d, $(SRCFILES))
 
 BENCH_CXXFLAGS := $(CXXFLAGS) -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
 BENCH_LDFLAGS := $(LDFLAGS) -L/usr/lib/mysql -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
@@ -126,13 +127,11 @@ BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/ycsb.cc
 
 BENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(BENCH_SRCFILES))
-BENCH_DEPFILES := $(patsubst %.cc, $(O)/%.d, $(BENCH_SRCFILES))
 
 NEWBENCH_SRCFILES = new-benchmarks/bench.cc \
 	new-benchmarks/tpcc.cc
 
 NEWBENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(NEWBENCH_SRCFILES))
-NEWBENCH_DEPFILES := $(patsubst %.cc, $(O)/%.d, $(NEWBENCH_SRCFILES))
 
 all: $(O)/test
 
@@ -182,17 +181,10 @@ newdbtest: $(O)/new-benchmarks/dbtest
 $(O)/new-benchmarks/dbtest: $(O)/new-benchmarks/dbtest.o $(OBJFILES) $(NEWBENCH_OBJFILES) third-party/lz4/liblz4.so
 	$(CXX) -o $(O)/new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS)
 
+DEPFILES := $(wildcard $(O)/*.d $(O)/*/*.d $(O)/*/*/*.d)
+ifneq ($(DEPFILES),)
 -include $(DEPFILES)
--include $(BENCH_DEPFILES)
--include $(NEWBENCH_DEPFILES)
-
-# executables
--include $(O)/test.d
--include $(O)/persist_test.d
--include $(O)/stats_client.d
--include $(O)/benchmarks/dbtest.d
--include $(O)/benchmarks/masstress/kvtest.d
--include $(O)/new-benchmarks/dbtest.d
+endif
 
 .PHONY: clean
 clean:
