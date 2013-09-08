@@ -1185,19 +1185,13 @@ private:
 // txn_btree_handler specialization
 template <>
 struct base_txn_btree_handler<transaction_proto2> {
-  void
-  on_construct(const std::string &name, concurrent_btree *btr)
+  static inline void
+  on_construct()
   {
 #ifndef PROTO2_CAN_DISABLE_GC
     transaction_proto2_static::InitGC();
 #endif
   }
-
-  void
-  on_destruct()
-  {
-  }
-
   static const bool has_background_task = true;
 };
 
