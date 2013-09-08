@@ -112,6 +112,10 @@ public:
     return l;
   }
 
+  inline int length() const {
+    return l;
+  }
+
   inline const uint8_t *
   data() const
   {

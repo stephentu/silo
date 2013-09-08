@@ -1004,7 +1004,7 @@ namespace mp_test2_ns {
     invoke(const typename txn_btree<Protocol>::keystring_type &k,
            const string &v)
     {
-      ALWAYS_ASSERT(k.size() == 8);
+      ALWAYS_ASSERT(k.length() == 8);
       const uint64_t u64k =
         host_endian_trfm<uint64_t>()(*reinterpret_cast<const uint64_t *>(k.data()));
       if (v.size() != sizeof(rec)) {
