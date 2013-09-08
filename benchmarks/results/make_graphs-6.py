@@ -10,12 +10,10 @@ import sys
 import math
 import itertools as it
 
-def predicate(fn):
-    def pred(x):
-        if 'persist' not in x[0]:
-            return not persist
-        return x[0]['persist'] if persist else not x[0]['persist']
-    return pred
+# XXX: import from runner.py
+PERSIST_REAL='persist-real'
+PERSIST_TEMP='persist-temp'
+PERSIST_NONE='persist-none'
 
 NEW_ORDER_RGX = re.compile(r'--new-order-remote-item-pct (\d+)')
 def extract_raw_pct(x):
@@ -35,6 +33,9 @@ def extract_pct(x):
     return math.fsum([(1.0/11.0)*pn(float(n), p) for n in range(5, 16)])
   return ex(p/100.0) * 100.0
 
+def mean(x):   return sum(x)/len(x)
+def median(x): return sorted(x)[len(x)/2]
+
 def extract_nthreads(x):
   x = x[0]['threads']
   return x
@@ -46,6 +47,18 @@ def deal_with_posK_res(k):
             return [e[k] for e in x]
         return x[k]
     return fn
+
+def deal_with_posK_res_median(k):
+    def fn(x):
+        x = x[1]
+        if type(x) == list:
+            return median([e[k] for e in x])
+        return x[k]
+    return fn
+
+def extract_latency(x):
+  return deal_with_posK_res(2)(x) if x[0]['persist'] == PERSIST_NONE else \
+         deal_with_posK_res(3)(x)
 
 def deal_with_posK_res_percore(k):
     def fn(x):
@@ -62,9 +75,6 @@ def longest_line(ls):
         if len(ls[i]) > bestlen:
             best, bestline = ls[i], len(ls[i])
     return best
-
-def mean(x):   return sum(x)/len(x)
-def median(x): return sorted(x)[len(x)/2]
 
 def dicttokey(d):
     return tuple(sorted(d.items(), key=lambda x: x[0]))
@@ -629,6 +639,39 @@ if __name__ == '__main__':
         'legend' : 'right',
         'x-axis-set-major-locator' : False,
         'show-error-bars' : True,
+      },
+      {
+        'file'    : 'istc3-9-6-13.py',
+        'outfile' : 'istc3-9-6-13-scale_tpcc-latency.pdf',
+        'x-axis' : deal_with_posK_res_median(0),
+        'y-axis' : extract_latency,
+        'lines' : [
+            {
+                'label' : 'Silo',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-none')),
+            },
+            {
+                'label' : 'Silo+PersistTemp',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-temp')),
+            },
+            {
+                'label' : 'Silo+Persist',
+                'extractor' : AND(
+                    name_extractor('scale_tpcc'),
+                    persist_extractor('persist-real')),
+            },
+        ],
+        'x-label' : 'throughput (txns/sec)',
+        'y-label' : 'latency (ms)',
+        #'y-axis-major-formatter' : matplotlib.ticker.FuncFormatter(KFormatter),
+        'x-axis-set-major-locator' : False,
+        'show-error-bars' : True,
+        'legend' : 'upper left',
+        'title' : 'TPC-C scale (standard mix)',
       }
     ]
 
