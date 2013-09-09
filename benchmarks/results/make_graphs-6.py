@@ -311,8 +311,8 @@ if __name__ == '__main__':
 
     configs = [
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-scale_rmw.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-scale_rmw.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -338,8 +338,8 @@ if __name__ == '__main__':
         'title' : 'YCSB scale',
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-scale_rmw-percore.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-scale_rmw-percore.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res_percore(0),
         'lines' : [
@@ -365,8 +365,8 @@ if __name__ == '__main__':
         'title' : 'YCSB scale per-core',
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-scale_tpcc.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-scale_tpcc.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -398,8 +398,8 @@ if __name__ == '__main__':
         'title' : 'TPC-C scale (standard mix)',
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-scale_tpcc-percore.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-scale_tpcc-percore.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res_percore(0),
         'lines' : [
@@ -431,8 +431,8 @@ if __name__ == '__main__':
         'title' : 'TPC-C scale per-core (standard mix)',
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-multipart_pct.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-multipart_pct.pdf',
         'x-axis' : extract_pct,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -475,8 +475,8 @@ if __name__ == '__main__':
         'title'  : 'TPC-C new order multi-partition',
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-multipart_skew.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-multipart_skew.pdf',
         'x-axis' : extract_nthreads,
         'y-axis' : deal_with_posK_res(0),
         'lines' : [
@@ -509,8 +509,8 @@ if __name__ == '__main__':
         'title'  : 'TPC-C new order skew',
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-factor-analysis.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-factor-analysis.pdf',
         'y-axis' : deal_with_posK_res(0),
         'bars' : [
             {
@@ -568,8 +568,8 @@ if __name__ == '__main__':
         'subplots-adjust' : {'bottom' : 0.25},
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-persist-factor-analysis.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-persist-factor-analysis.pdf',
         'y-axis' : deal_with_posK_res(0),
         'bars' : [
             {
@@ -612,8 +612,8 @@ if __name__ == '__main__':
         'subplots-adjust' : {'bottom' : 0.2},
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-readonly.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-readonly.pdf',
         'x-axis' : extract_raw_pct,
         'y-axis' : [deal_with_posK_res(0), deal_with_posK_res(4)],
         'lines' : [
@@ -641,8 +641,8 @@ if __name__ == '__main__':
         'show-error-bars' : True,
       },
       {
-        'file'    : 'istc3-9-6-13.py',
-        'outfile' : 'istc3-9-6-13-scale_tpcc-latency.pdf',
+        'file'    : 'istc3-9-8-13.py',
+        'outfile' : 'istc3-9-8-13-scale_tpcc-latency.pdf',
         'x-axis' : deal_with_posK_res_median(0),
         'y-axis' : extract_latency,
         'lines' : [
