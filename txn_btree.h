@@ -207,6 +207,7 @@ public:
   //  using transaction = Transaction<txn_btree_, Traits>;
 
   typedef typename super_type::string_type string_type;
+  typedef typename super_type::keystring_type keystring_type;
   typedef typename super_type::size_type size_type;
 
   typedef txn_btree_::Key key_type;
@@ -220,7 +221,7 @@ public:
   struct search_range_callback {
   public:
     virtual ~search_range_callback() {}
-    virtual bool invoke(const string_type &k, const string_type &v) = 0;
+    virtual bool invoke(const keystring_type &k, const string_type &v) = 0;
   };
 
 private:
@@ -231,7 +232,7 @@ private:
     constexpr type_callback_wrapper(T *callback)
       : callback(callback) {}
     virtual bool
-    invoke(const string_type &k, const string_type &v)
+    invoke(const keystring_type &k, const string_type &v)
     {
       return callback->operator()(k, v);
     }

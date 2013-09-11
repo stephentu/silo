@@ -23,7 +23,7 @@ using namespace util;
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
   inline bool
-  operator()(const string &k, const string &v) const
+  operator()(const concurrent_btree::string_type &k, const string &v) const
   {
     (*ctr)++;
     return true;
@@ -405,7 +405,7 @@ public:
   counting_scan_callback(uint64_t expect) : ctr(0), expect(expect) {}
 
   virtual bool
-  invoke(const string &k, const string &v)
+  invoke(const typename txn_btree<Protocol>::keystring_type &k, const string &v)
   {
     AssertByteEquality(rec(expect), v);
     ctr++;
@@ -1001,9 +1001,10 @@ namespace mp_test2_ns {
   class counting_scan_callback : public txn_btree<Protocol>::search_range_callback {
   public:
     virtual bool
-    invoke(const string &k, const string &v)
+    invoke(const typename txn_btree<Protocol>::keystring_type &k,
+           const string &v)
     {
-      ALWAYS_ASSERT(k.size() == 8);
+      ALWAYS_ASSERT(k.length() == 8);
       const uint64_t u64k =
         host_endian_trfm<uint64_t>()(*reinterpret_cast<const uint64_t *>(k.data()));
       if (v.size() != sizeof(rec)) {
@@ -1290,7 +1291,8 @@ namespace mp_test3_ns {
         }
       }
     }
-    virtual bool invoke(const string &k, const string &v)
+    virtual bool invoke(const typename txn_btree<TxnType>::keystring_type &k,
+                        const string &v)
     {
       sum += ((rec *) v.data())->v;
       return true;
@@ -1461,7 +1463,8 @@ namespace mp_test_simple_write_skew_ns {
         }
       }
     }
-    virtual bool invoke(const string &k, const string &v)
+    virtual bool invoke(const typename txn_btree<TxnType>::keystring_type &k,
+                        const string &v)
     {
       INVARIANT(v.size() == sizeof(rec));
       const rec *r = (const rec *) v.data();
@@ -1583,7 +1586,8 @@ namespace mp_test_batch_processing_ns {
         }
       }
     }
-    virtual bool invoke(const string &k, const string &v)
+    virtual bool invoke(const typename txn_btree<TxnType>::keystring_type &k,
+                        const string &v)
     {
       INVARIANT(v.size() == sizeof(rec));
       const rec * const r = (const rec *) v.data();
