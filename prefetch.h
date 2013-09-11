@@ -48,4 +48,5 @@ prefetch_bytes(const void *p, size_t n)
     prefetch(ptr);
 }
 
+#define PREFETCH_DEFINED 1
 #endif /* _PREFETCH_H_ */

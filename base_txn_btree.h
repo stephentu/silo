@@ -28,6 +28,7 @@ public:
   typedef transaction_base::tid_t tid_t;
   typedef transaction_base::size_type size_type;
   typedef transaction_base::string_type string_type;
+  typedef concurrent_btree::string_type keystring_type;
 
   base_txn_btree(size_type value_size_hint = 128,
             bool mostly_append = false,
@@ -72,14 +73,6 @@ public:
    * (other than calling the destructor) are undefined
    */
   std::map<std::string, uint64_t> unsafe_purge(bool dump_stats = false);
-
-  // XXX: only exists because can't declare friend of template parameter
-  // Transaction
-  inline concurrent_btree *
-  get_underlying_btree()
-  {
-    return &underlying_btree;
-  }
 
 private:
 

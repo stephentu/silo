@@ -464,14 +464,6 @@ public:
     return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
   }
 
-  // can clean <= ro_epoch_clean (note this is in RO epochs, not ticker epochs)
-  static void
-  do_dbtuple_chain_cleanup(dbtuple *ln, uint64_t ro_epoch_clean);
-
-  static bool
-  try_dbtuple_cleanup(concurrent_btree *btr, const std::string &key,
-                      dbtuple *tuple, uint64_t ro_epoch_clean);
-
   static inline void
   set_hack_status(bool hack_status)
   {
