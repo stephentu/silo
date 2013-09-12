@@ -465,7 +465,7 @@ public:
   static inline uint64_t
   LockWithSpinCount(VersionType &v, unsigned &spins)
   {
-    return U64Manip::LockWithSpinCount(v);
+    return U64Manip::LockWithSpinCount(v, spins);
   }
 
   static inline void
