@@ -552,6 +552,8 @@ inline bool mbtree<P>::search(const key_type &k, value_type &v,
   threadinfo ti;
   Masstree::unlocked_tcursor<P> lp(table_, k.data(), k.length());
   bool found = lp.find_unlocked(ti);
+  if (found)
+    v = lp.value();
   if (search_info)
     *search_info = versioned_node_t(lp.node(), lp.full_version_value());
   return found;
@@ -624,7 +626,7 @@ template <typename P>
 class mbtree<P>::search_range_scanner_base {
  public:
   search_range_scanner_base(const key_type* upper)
-    : upper_(upper), n_(0) {
+    : upper_(upper), n_(0), upper_compar_(false) {
   }
   int check(const Masstree::key<uint64_t>& key,
             const Masstree::scanstackelt<P>& iter) {
