@@ -68,7 +68,7 @@ private:
 };
 
 // requires T to have no-arg ctor
-template <typename T, bool CallDtor = false>
+template <typename T, bool CallDtor = false, bool Pedantic = true>
 class percore {
 public:
 
@@ -76,7 +76,7 @@ public:
   {
     for (size_t i = 0; i < size(); i++) {
       using namespace util;
-      new (&(elems()[i])) aligned_padded_elem<T>();
+      new (&(elems()[i])) aligned_padded_elem<T, Pedantic>();
     }
   }
 
@@ -86,7 +86,7 @@ public:
       return;
     for (size_t i = 0; i < size(); i++) {
       using namespace util;
-      elems()[i].~aligned_padded_elem<T>();
+      elems()[i].~aligned_padded_elem<T, Pedantic>();
     }
   }
 
@@ -126,19 +126,19 @@ public:
 
 protected:
 
-  inline util::aligned_padded_elem<T> *
+  inline util::aligned_padded_elem<T, Pedantic> *
   elems()
   {
-    return (util::aligned_padded_elem<T> *) &bytes_[0];
+    return (util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
   }
 
-  inline const util::aligned_padded_elem<T> *
+  inline const util::aligned_padded_elem<T, Pedantic> *
   elems() const
   {
-    return (const util::aligned_padded_elem<T> *) &bytes_[0];
+    return (const util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
   }
 
-  char bytes_[sizeof(util::aligned_padded_elem<T>) * NMAXCORES];
+  char bytes_[sizeof(util::aligned_padded_elem<T, Pedantic>) * NMAXCORES];
 };
 
 namespace private_ {

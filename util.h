@@ -23,7 +23,7 @@
 namespace util {
 
 // padded, aligned primitives
-template <typename T>
+template <typename T, bool Pedantic = true>
 class aligned_padded_elem {
 public:
 
@@ -31,7 +31,8 @@ public:
   aligned_padded_elem(Args &&... args)
     : elem(std::forward<Args>(args)...)
   {
-    ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+    if (Pedantic)
+      ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
   }
 
   T elem;
@@ -648,5 +649,33 @@ operator<<(std::ostream &o, const std::tuple<Types...> &t)
   o << "]";
   return o;
 }
+
+// XXX: so nasty, but some things we want to explictly call their dtors we do
+// this anti-pattern all over the code base, might as well centralize it here
+template <typename T>
+class unmanaged {
+public:
+  template <class... Args>
+  unmanaged(Args &&... args)
+  {
+    new (&obj_[0]) T(std::forward<Args>(args)...);
+  }
+
+  // up to you to call this at most once
+  inline void destroy() { obj()->~T(); }
+
+  inline T * obj() { return (T *) &obj_[0]; }
+  inline const T * obj() const { return (const T *) &obj_[0]; }
+
+  // syntatic sugar
+
+  inline T & operator*() { return *obj(); }
+  inline const T & operator*() const { return *obj(); }
+  inline T * operator->() { return obj(); }
+  inline const T * operator->() const { return obj(); }
+
+private:
+  char obj_[sizeof(T)];
+} PACKED;
 
 #endif /* _UTIL_H_ */

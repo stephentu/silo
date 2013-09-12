@@ -71,14 +71,14 @@ namespace private_ {
     const bool avg_tag_;
 
     // per-thread counts
-    percore<uint64_t> counts_;
+    percore<uint64_t, false, false> counts_;
   };
 
   // more expensive
   struct event_ctx_avg : public event_ctx {
     event_ctx_avg(const std::string &name) : event_ctx(name, true) {}
-    percore<uint64_t> sums_;
-    percore<uint64_t> highs_;
+    percore<uint64_t, false, false> sums_;
+    percore<uint64_t, false, false> highs_;
   };
 }
 
@@ -122,7 +122,7 @@ public:
 
 private:
 #ifdef ENABLE_EVENT_COUNTERS
-  private_::event_ctx *const ctx_;
+  unmanaged<private_::event_ctx> ctx_;
 #endif
 };
 
@@ -146,7 +146,7 @@ public:
 
 private:
 #ifdef ENABLE_EVENT_COUNTERS
-  private_::event_ctx_avg *const ctx_;
+  unmanaged<private_::event_ctx_avg> ctx_;
 #endif
 };
 

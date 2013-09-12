@@ -92,21 +92,21 @@ event_counter::stat(const string &name, counter_data &d)
 
 #ifdef ENABLE_EVENT_COUNTERS
 event_counter::event_counter(const string &name)
-  : ctx_(new event_ctx(name, false))
+  : ctx_(name, false)
 {
   spinlock &l = event_ctx::event_counters_lock();
   map<string, event_ctx *> &evts = event_ctx::event_counters();
   lock_guard<spinlock> sl(l);
-  evts[name] = ctx_;
+  evts[name] = ctx_.obj();
 }
 
 event_avg_counter::event_avg_counter(const string &name)
-  : ctx_(new event_ctx_avg(name))
+  : ctx_(name)
 {
   spinlock &l = event_ctx::event_counters_lock();
   map<string, event_ctx *> &evts = event_ctx::event_counters();
   lock_guard<spinlock> sl(l);
-  evts[name] = ctx_;
+  evts[name] = ctx_.obj();
 }
 #else
 event_counter::event_counter(const string &name)
