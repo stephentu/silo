@@ -1531,6 +1531,9 @@ public:
   static std::vector< std::pair<value_type, bool> >
   ExtractValues(const node_opaque_t *n);
 
+  void print() {
+  }
+
   /**
    * Not well defined if n is being concurrently modified, just for debugging
    */
