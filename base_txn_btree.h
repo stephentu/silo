@@ -63,6 +63,10 @@ public:
     this->value_size_hint = value_size_hint;
   }
 
+  inline void print() {
+    underlying_btree.print();
+  }
+
   /**
    * only call when you are sure there are no concurrent modifications on the
    * tree. is neither threadsafe nor transactional

@@ -28,6 +28,7 @@
 #include "masstree/masstree_scan.hh"
 #include "masstree/masstree_insert.hh"
 #include "masstree/masstree_remove.hh"
+#include "masstree/masstree_print.hh"
 #include "masstree/timestamp.hh"
 #include "masstree/mtcounters.hh"
 #include "masstree/circular_int.hh"
@@ -153,6 +154,7 @@ class simple_threadinfo {
 
 struct masstree_params : public Masstree::nodeparams<> {
   typedef uint8_t* value_type;
+  typedef Masstree::value_print<value_type> value_print_type;
   typedef simple_threadinfo threadinfo_type;
   enum { RcuRespCaller = true };
 };
@@ -401,6 +403,8 @@ class mbtree {
    */
   static std::string
   NodeStringify(const node_opaque_t *n);
+
+  void print();
 
   static inline size_t InternalNodeSize() {
     return sizeof(internode_type);
@@ -739,6 +743,11 @@ mbtree<P>::ExtractValues(const node_opaque_t *n)
       ret.emplace_back(n->lv_[i].value(), n->keylenx_has_ksuf(keylenx));
   }
   return ret;
+}
+
+template <typename P>
+void mbtree<P>::print() {
+  table_.print();
 }
 
 typedef mbtree<masstree_params> concurrent_btree;
