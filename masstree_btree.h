@@ -186,6 +186,11 @@ class mbtree {
   // XXX(stephentu): trying out a very opaque node API for now
   typedef node_type node_opaque_t;
   typedef std::pair< const node_opaque_t *, uint64_t > versioned_node_t;
+  struct insert_info_t {
+    const node_opaque_t* node;
+    uint64_t old_version;
+    uint64_t new_version;
+  };
 
   mbtree() {
     threadinfo ti;
@@ -330,7 +335,7 @@ class mbtree {
   inline bool
   insert(const key_type &k, value_type v,
          value_type *old_v = NULL,
-         versioned_node_t *insert_info = NULL);
+         insert_info_t *insert_info = NULL);
 
   /**
    * Only puts k=>v if k does not exist in map. returns true
@@ -338,7 +343,7 @@ class mbtree {
    */
   inline bool
   insert_if_absent(const key_type &k, value_type v,
-                   versioned_node_t *insert_info = NULL);
+                   insert_info_t *insert_info = NULL);
 
   /**
    * return true if a value was removed, false otherwise.
@@ -551,7 +556,7 @@ inline bool mbtree<P>::search(const key_type &k, value_type &v,
 template <typename P>
 inline bool mbtree<P>::insert(const key_type &k, value_type v,
                               value_type *old_v,
-                              versioned_node_t *insert_info)
+                              insert_info_t *insert_info)
 {
   rcu_region guard;
   threadinfo ti;
@@ -562,15 +567,18 @@ inline bool mbtree<P>::insert(const key_type &k, value_type v,
   if (found && old_v)
     *old_v = lp.value();
   lp.value() = v;
-  if (insert_info)
-    *insert_info = versioned_node_t(lp.node(), lp.node()->full_version_value());
+  if (insert_info) {
+    insert_info->node = lp.node();
+    insert_info->old_version = lp.previous_full_version_value();
+    insert_info->new_version = lp.next_full_version_value(1);
+  }
   lp.finish(1, ti);
   return !found;
 }
 
 template <typename P>
 inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
-                                        versioned_node_t *insert_info)
+                                        insert_info_t *insert_info)
 {
   rcu_region guard;
   threadinfo ti;
@@ -579,8 +587,11 @@ inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
   if (!found) {
     ti.advance_timestamp(lp.node_timestamp());
     lp.value() = v;
-    if (insert_info)
-      *insert_info = versioned_node_t(lp.node(), lp.node()->full_version_value());
+    if (insert_info) {
+      insert_info->node = lp.node();
+      insert_info->old_version = lp.previous_full_version_value();
+      insert_info->new_version = lp.next_full_version_value(1);
+    }
   }
   lp.finish(!found, ti);
   return !found;

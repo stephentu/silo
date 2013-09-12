@@ -818,7 +818,7 @@ btree<P>::insert0(node *np,
                   value_type v,
                   bool only_if_absent,
                   value_type *old_v,
-                  versioned_node_t *insert_info,
+                  insert_info_t *insert_info,
                   key_slice &min_key,
                   node *&new_node,
                   typename util::vec<insert_parent_entry>::type &parents,
@@ -857,7 +857,7 @@ retry_cur_leaf:
         if (!only_if_absent)
           resp_leaf->values_[lenmatch].v_ = v;
         if (insert_info)
-          insert_info->first = 0;
+          insert_info->node = 0;
         return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
       }
       INVARIANT(kslicelen == 9);
@@ -1017,8 +1017,9 @@ retry_cur_leaf:
 //      resp_leaf->base_invariant_unique_keys_check();
 //#endif
       if (insert_info) {
-        insert_info->first = resp_leaf;
-        insert_info->second = RawVersionManip::Version(resp_leaf->unstable_version()); // we hold lock on leaf
+        insert_info->node = resp_leaf;
+        insert_info->old_version = RawVersionManip::Version(resp_leaf->unstable_version()); // we hold lock on leaf
+        insert_info->new_version = insert_info->old_version + 1;
       }
       return UnlockAndReturn(locked_nodes, I_NONE_MOD);
     } else {
@@ -1240,8 +1241,9 @@ retry_cur_leaf:
       new_node = new_leaf;
 
       if (insert_info) {
-        insert_info->first = resp_leaf;
-        insert_info->second = RawVersionManip::Version(resp_leaf->unstable_version()); // we hold lock on leaf
+        insert_info->node = resp_leaf;
+        insert_info->old_version = RawVersionManip::Version(resp_leaf->unstable_version()); // we hold lock on leaf
+        insert_info->new_version = insert_info->old_version + 1;
       }
 
       return I_SPLIT;
@@ -1354,7 +1356,7 @@ bool
 btree<P>::insert_stable_location(
     node **root_location, const key_type &k, value_type v,
     bool only_if_absent, value_type *old_v,
-    versioned_node_t *insert_info)
+    insert_info_t *insert_info)
 {
   INVARIANT(rcu::s_instance.in_rcu_region());
 retry:

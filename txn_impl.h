@@ -527,7 +527,7 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
 
   // XXX: underlying btree api should return the existing value if insert
   // fails- this would allow us to avoid having to do another search
-  std::pair<const typename concurrent_btree::node_opaque_t *, uint64_t> insert_info;
+  typename concurrent_btree::insert_info_t insert_info;
   if (unlikely(!btr.insert_if_absent(
           varkey(*key), (typename concurrent_btree::value_type) tuple, &insert_info))) {
     VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(key) << std::endl);
@@ -545,19 +545,18 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
   write_set.emplace_back(tuple, key, value, writer, &btr, true);
 
   // update node #s
-  INVARIANT(insert_info.first);
+  INVARIANT(insert_info.node);
   if (!absent_set.empty()) {
-    auto it = absent_set.find(insert_info.first);
+    auto it = absent_set.find(insert_info.node);
     if (it != absent_set.end()) {
-      if (unlikely(it->second.version != insert_info.second)) {
+      if (unlikely(it->second.version != insert_info.old_version)) {
         abort_trap((reason = ABORT_REASON_WRITE_NODE_INTERFERENCE));
         return std::make_pair(tuple, true);
       }
-      VERBOSE(std::cerr << "bump node=" << util::hexify(it->first) << " from v=" << (it->second.version)
-                        << " -> v=" << (it->second.version + 1) << std::endl);
-      // otherwise, bump the version by 1
-      it->second.version++; // XXX(stephentu): this doesn't properly handle wrap-around
-      // but we're probably F-ed on a wrap around anyways for now
+      VERBOSE(std::cerr << "bump node=" << util::hexify(it->first) << " from v=" << insert_info.old_version
+                        << " -> v=" << insert_info.new_version << std::endl);
+      // otherwise, bump the version
+      it->second.version = insert_info.new_version;
       SINGLE_THREADED_INVARIANT(concurrent_btree::ExtractVersionNumber(it->first) == it->second);
     }
   }
