@@ -86,7 +86,7 @@ ifeq ($(EVENT_COUNTERS_S),1)
 endif
 ifeq ($(MASSTREE_S),1)
 	CXXFLAGS += -DNDB_MASSTREE -include masstree/config.h
-	O := $(O)-masstree
+	O := $(O).masstree
 	OBJDEP += masstree/config.h
 endif
 

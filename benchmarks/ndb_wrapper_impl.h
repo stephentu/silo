@@ -458,7 +458,7 @@ public:
     : upcall(&upcall) {}
 
   virtual bool
-  invoke(const typename txn_btree<Transaction>::string_type &k,
+  invoke(const typename txn_btree<Transaction>::keystring_type &k,
          const typename txn_btree<Transaction>::string_type &v)
   {
     return upcall->invoke(k, v);

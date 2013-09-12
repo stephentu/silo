@@ -157,6 +157,10 @@ struct masstree_params : public Masstree::nodeparams<> {
   enum { RcuRespCaller = true };
 };
 
+struct masstree_single_threaded_params : public masstree_params {
+  static constexpr bool concurrent = false;
+};
+
 template <typename P>
 class mbtree {
  public:
@@ -169,15 +173,15 @@ class mbtree {
   typedef varkey key_type;
   typedef lcdf::Str string_type;
   typedef uint64_t key_slice;
-  typedef typename masstree_params::value_type value_type;
+  typedef typename P::value_type value_type;
   typedef typename P::threadinfo_type threadinfo;
   typedef typename std::conditional<!P::RcuRespCaller,
       scoped_rcu_region,
       disabled_rcu_region>::type rcu_region;
 
   // public to assist in testing
-  static const unsigned int NKeysPerNode    = masstree_params::leaf_width;
-  static const unsigned int NMinKeysPerNode = masstree_params::leaf_width / 2;
+  static const unsigned int NKeysPerNode    = P::leaf_width;
+  static const unsigned int NMinKeysPerNode = P::leaf_width / 2;
 
   // XXX(stephentu): trying out a very opaque node API for now
   typedef node_type node_opaque_t;
@@ -286,6 +290,23 @@ class mbtree {
                     const key_type *upper,
                     low_level_search_range_callback &callback,
                     std::string *buf = nullptr) const;
+
+  class search_range_callback : public low_level_search_range_callback {
+  public:
+    virtual void
+    on_resp_node(const node_opaque_t *n, uint64_t version)
+    {
+    }
+
+    virtual bool
+    invoke(const string_type &k, value_type v,
+           const node_opaque_t *n, uint64_t version)
+    {
+      return invoke(k, v);
+    }
+
+    virtual bool invoke(const string_type &k, value_type v) = 0;
+  };
 
   /**
    * Callback is expected to implement bool operator()(key_slice k, value_type v),
@@ -470,7 +491,7 @@ void mbtree<P>::tree_walk(tree_walk_callback &callback) const {
 }
 
 template <typename P>
-class mbtree<P>::size_walk_callback {
+class mbtree<P>::size_walk_callback : public tree_walk_callback {
  public:
   size_walk_callback()
     : size_(0) {
@@ -504,6 +525,14 @@ template <typename P>
 void
 mbtree<P>::size_walk_callback::on_node_failure()
 {
+}
+
+template <typename P>
+inline size_t mbtree<P>::size() const
+{
+  size_walk_callback c;
+  tree_walk(c);
+  return c.size_;
 }
 
 template <typename P>
@@ -702,3 +731,4 @@ mbtree<P>::ExtractValues(const node_opaque_t *n)
 }
 
 typedef mbtree<masstree_params> concurrent_btree;
+typedef mbtree<masstree_single_threaded_params> single_threaded_btree;
