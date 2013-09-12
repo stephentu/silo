@@ -147,6 +147,12 @@ public:
     return buf;
   }
 
+#if NDB_MASSTREE
+  inline operator lcdf::Str() const {
+    return lcdf::Str(p, l);
+  }
+#endif
+
 private:
   const uint8_t *p;
   size_t l;
