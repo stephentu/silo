@@ -151,17 +151,26 @@ $(O)/%.o: %.cc
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(O)/test: $(O)/test.o $(OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/test $^ $(LDFLAGS) $(LZ4LDFLAGS)
-
 third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
-$(O)/persist_test: persist_test.o third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/persist_test persist_test.o $(LDFLAGS) $(LZ4LDFLAGS)
+.PHONY: test
+test: $(O)/test
 
-$(O)/stats_client: stats_client.o
-	$(CXX) -o $(O)/stats_client stats_client.o $(LDFLAGS)
+$(O)/test: $(O)/test.o $(OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/test $^ $(LDFLAGS) $(LZ4LDFLAGS)
+
+.PHONY: persist_test
+persist_test: $(O)/persist_test
+
+$(O)/persist_test: $(O)/persist_test.o third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/persist_test $(O)/persist_test.o $(LDFLAGS) $(LZ4LDFLAGS)
+
+.PHONY: stats_client
+stats_client: $(O)/stats_client
+
+$(O)/stats_client: $(O)/stats_client.o
+	$(CXX) -o $(O)/stats_client $(O)/stats_client.o $(LDFLAGS)
 
 .PHONY: dbtest
 dbtest: $(O)/benchmarks/dbtest
