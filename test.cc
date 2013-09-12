@@ -986,7 +986,7 @@ public:
     //small_map_ns::Test();
     //recordtest::Test();
     //rcu::Test();
-#if !NDB_MASSTREE
+#if !NDB_MASSTREE && 0
     TestConcurrentBtreeFast();
     TestConcurrentBtreeSlow();
 #endif
