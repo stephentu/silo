@@ -456,7 +456,7 @@ mbtree<P>::leftmost_descend_layer(node_base_type *n)
     internode_type *in = static_cast<internode_type*>(cur);
     nodeversion_type version = cur->stable();
     node_base_type *child = in->child_[0];
-    if (unlikely(!in->has_changed(version)))
+    if (unlikely(in->has_changed(version)))
       continue;
     cur = child;
   }
