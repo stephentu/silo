@@ -628,31 +628,16 @@ class mbtree<P>::search_range_scanner_base {
   search_range_scanner_base(const key_type* upper)
     : upper_(upper), n_(0), upper_compar_(false) {
   }
-  int check(const Masstree::key<uint64_t>& key,
-            const Masstree::scanstackelt<P>& iter) {
-    int ret = 0;
-    if (n_ != iter.node() || v_ != iter.full_version_value()) {
-      n_ = iter.node();
-      v_ = iter.full_version_value();
-      if (upper_) {
-        int min = std::min(upper_->length(), key.prefix_length());
-        int cmp = memcmp(upper_->data(), key.full_string().data(), min);
-        if (cmp < 0 || (cmp == 0 && upper_->length() == key.prefix_length()))
-          return -1;
-        upper_compar_ = cmp == 0 && upper_->length() >= key.prefix_length();
-        if (upper_compar_) {
-          uint64_t last_ikey = iter.node()->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
-          upper_compar_ = upper_->slice_at(key.prefix_length()) <= last_ikey;
-        }
-      }
-      ret = 1;
+  void check(const Masstree::scanstackelt<P>& iter,
+             const Masstree::key<uint64_t>& key) {
+    int min = std::min(upper_->length(), key.prefix_length());
+    int cmp = memcmp(upper_->data(), key.full_string().data(), min);
+    if (cmp < 0 || (cmp == 0 && upper_->length() <= key.prefix_length()))
+      upper_compar_ = true;
+    else if (cmp == 0) {
+      uint64_t last_ikey = n_->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
+      upper_compar_ = upper_->slice_at(key.prefix_length()) <= last_ikey;
     }
-
-    if (upper_compar_
-        && lcdf::Str(upper_->data(), upper_->size()) <= key.full_string())
-      ret = -1;
-
-    return ret;
   }
  protected:
   const key_type* upper_;
@@ -669,15 +654,19 @@ class mbtree<P>::low_level_search_range_scanner
                                  low_level_search_range_callback& callback)
     : search_range_scanner_base(upper), callback_(callback) {
   }
-  bool operator()(const Masstree::key<uint64_t>& key,
-                  value_type value,
-                  const Masstree::scanstackelt<P>& iter,
-                  threadinfo& ti) {
-    int r = this->check(key, iter);
-    if (r < 0)
+  void visit_leaf(const Masstree::scanstackelt<P>& iter,
+                  const Masstree::key<uint64_t>& key, threadinfo&) {
+    this->n_ = iter.node();
+    this->v_ = iter.full_version_value();
+    callback_.on_resp_node(this->n_, this->v_);
+    if (this->upper_)
+      this->check(iter, key);
+  }
+  bool visit_value(const Masstree::key<uint64_t>& key,
+                   value_type value, threadinfo&) {
+    if (this->upper_compar_
+        && lcdf::Str(this->upper_->data(), this->upper_->size()) <= key.full_string())
       return false;
-    if (r > 0)
-      callback_.on_resp_node(this->n_, this->v_);
     callback_.invoke(key.full_string(), value, this->n_, this->v_);
     return true;
   }
