@@ -50,13 +50,13 @@ NCPUS = mp.cpu_count()
 TPCC_STANDARD_MIX='45,43,4,4,4'
 TPCC_REALISTIC_MIX='39,37,4,10,10'
 
-KNOB_ENABLE_YCSB_SCALE=True
-KNOB_ENABLE_TPCC_SCALE=True
-KNOB_ENABLE_TPCC_MULTIPART=True
-KNOB_ENABLE_TPCC_MULTIPART_SKEW=True
+KNOB_ENABLE_YCSB_SCALE=False
+KNOB_ENABLE_TPCC_SCALE=False
+KNOB_ENABLE_TPCC_MULTIPART=False
+KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
-KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=True
-KNOB_ENABLE_TPCC_RO_SNAPSHOTS=True
+KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=False
+KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
 ## debugging runs
 KNOB_ENABLE_TPCC_SCALE_ALLPERSIST=False
@@ -349,7 +349,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'retry' : [False],
       'persist' : [PERSIST_NONE],
       'numa_memory' : ['%dG' % (4 * 28)],
-      'disable_snapshots' : [False, True],
+      'disable_snapshots' : [False],
     },
     {
       'binary' : ['../out-factor-gc/benchmarks/dbtest'],
@@ -358,6 +358,21 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'threads' : [28],
       'scale_factors': [28],
       'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--disable-read-only-snapshots'],
+      'par_load' : [False],
+      'retry' : [False],
+      'persist' : [PERSIST_NONE],
+      'numa_memory' : ['%dG' % (4 * 28)],
+      'disable_snapshots' : [True],
+    },
+    {
+      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'name' : 'factoranalysis',
+      'dbs' : ['ndb-proto2'],
+      'threads' : [28],
+      'scale_factors': [28],
+      'benchmarks' : ['tpcc'],
+      'bench_opts' : ['--disable-read-only-snapshots'],
       'par_load' : [False],
       'retry' : [False],
       'persist' : [PERSIST_NONE],
