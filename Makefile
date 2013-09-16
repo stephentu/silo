@@ -11,6 +11,7 @@ CHECK_INVARIANTS ?= 0
 # 3 = flow
 USE_MALLOC_MODE ?= 1
 
+MYSQL ?= 1
 MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 
 # Available modes
@@ -28,6 +29,7 @@ CHECK_INVARIANTS_S=$(strip $(CHECK_INVARIANTS))
 EVENT_COUNTERS_S=$(strip $(EVENT_COUNTERS))
 USE_MALLOC_MODE_S=$(strip $(USE_MALLOC_MODE))
 MODE_S=$(strip $(MODE))
+MYSQL_S=$(strip $(MYSQL))
 
 ifeq ($(DEBUG_S),1)
 	OSUFFIX_D=.debug
@@ -41,22 +43,22 @@ endif
 OSUFFIX=$(OSUFFIX_D)$(OSUFFIX_S)$(OSUFFIX_E)
 
 ifeq ($(MODE_S),perf)
-	O = out-perf$(OSUFFIX)
+	O := out-perf$(OSUFFIX)
 	CONFIG_H = config/config-perf.h
 else ifeq ($(MODE_S),backoff)
-	O = out-backoff$(OSUFFIX)
+	O := out-backoff$(OSUFFIX)
 	CONFIG_H = config/config-backoff.h
 else ifeq ($(MODE_S),factor-gc)
-	O = out-factor-gc$(OSUFFIX)
+	O := out-factor-gc$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc.h
 else ifeq ($(MODE_S),factor-gc-nowriteinplace)
-	O = out-factor-gc-nowriteinplace$(OSUFFIX)
+	O := out-factor-gc-nowriteinplace$(OSUFFIX)
 	CONFIG_H = config/config-factor-gc-nowriteinplace.h
 else ifeq ($(MODE_S),factor-fake-compression)
-	O = out-factor-fake-compression$(OSUFFIX)
+	O := out-factor-fake-compression$(OSUFFIX)
 	CONFIG_H = config/config-factor-fake-compression.h
 else ifeq ($(MODE_S),sandbox)
-	O = out-sandbox$(OSUFFIX)
+	O := out-sandbox$(OSUFFIX)
 	CONFIG_H = config/config-sandbox.h
 else
 	$(error invalid mode)
@@ -114,17 +116,24 @@ SRCFILES = allocator.cc \
 
 OBJFILES := $(patsubst %.cc, $(O)/%.o, $(SRCFILES))
 
-BENCH_CXXFLAGS := $(CXXFLAGS) -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
-BENCH_LDFLAGS := $(LDFLAGS) -L/usr/lib/mysql -ldb_cxx -lmysqld -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
+BENCH_CXXFLAGS := $(CXXFLAGS)
+BENCH_LDFLAGS := $(LDFLAGS) -ldb_cxx -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
 
 BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/bench.cc \
 	benchmarks/encstress.cc \
 	benchmarks/masstree/kvrandom.cc \
-	benchmarks/mysql_wrapper.cc \
 	benchmarks/queue.cc \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc
+
+ifeq ($(MYSQL_S),1)
+BENCH_CXXFLAGS += -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
+BENCH_LDFLAGS := -L/usr/lib/mysql -lmysqld $(BENCH_LDFLAGS)
+BENCH_SRCFILES += benchmarks/mysql_wrapper.cc
+else
+BENCH_CXXFLAGS += -DNO_MYSQL
+endif
 
 BENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(BENCH_SRCFILES))
 
@@ -135,19 +144,19 @@ NEWBENCH_OBJFILES := $(patsubst %.cc, $(O)/%.o, $(NEWBENCH_SRCFILES))
 
 all: $(O)/test
 
-$(O)/benchmarks/%.o: benchmarks/%.cc
+$(O)/benchmarks/%.o: benchmarks/%.cc $(O)/buildstamp $(O)/buildstamp.bench $(OBJDEP)
 	@mkdir -p $(@D)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
-$(O)/benchmarks/masstree/%.o: benchmarks/masstree/%.cc
+$(O)/benchmarks/masstree/%.o: benchmarks/masstree/%.cc $(O)/buildstamp $(O)/buildstamp.bench $(OBJDEP)
 	@mkdir -p $(@D)
 	$(CXX) $(BENCH_CXXFLAGS) -c $< -o $@
 
-$(O)/new-benchmarks/%.o: new-benchmarks/%.cc
+$(O)/new-benchmarks/%.o: new-benchmarks/%.cc $(O)/buildstamp $(O)/buildstamp.bench $(OBJDEP)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(O)/%.o: %.cc
+$(O)/%.o: %.cc $(O)/buildstamp $(OBJDEP)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -194,6 +203,18 @@ DEPFILES := $(wildcard $(O)/*.d $(O)/*/*.d $(O)/*/*/*.d)
 ifneq ($(DEPFILES),)
 -include $(DEPFILES)
 endif
+
+ifneq ($(strip $(DEBUG_S).$(CHECK_INVARIANTS_S).$(EVENT_COUNTERS_S)),$(strip $(DEP_MAIN_CONFIG)))
+DEP_MAIN_CONFIG := $(shell mkdir -p $(O); echo >$(O)/buildstamp; echo "DEP_MAIN_CONFIG:=$(DEBUG_S).$(CHECK_INVARIANTS_S).$(EVENT_COUNTERS_S)" >$(O)/_main_config.d)
+endif
+
+ifneq ($(strip $(MYSQL_S)),$(strip $(DEP_BENCH_CONFIG)))
+DEP_BENCH_CONFIG := $(shell mkdir -p $(O); echo >$(O)/buildstamp.bench; echo "DEP_BENCH_CONFIG:=$(MYSQL_S)" >$(O)/_bench_config.d)
+endif
+
+$(O)/buildstamp $(O)/buildstamp.bench:
+	@mkdir -p $(@D)
+	@echo >$@
 
 .PHONY: clean
 clean:

@@ -19,7 +19,9 @@
 #include "ndb_wrapper_impl.h"
 #include "kvdb_wrapper.h"
 #include "kvdb_wrapper_impl.h"
+#if !NO_MYSQL
 #include "mysql_wrapper.h"
+#endif
 
 using namespace std;
 using namespace util;
@@ -302,9 +304,11 @@ main(int argc, char **argv)
     db = new kvdb_wrapper<true>;
   } else if (db_type == "kvdb-st") {
     db = new kvdb_wrapper<false>;
+#if !NO_MYSQL
   } else if (db_type == "mysql") {
     string dbdir = basedir + "/mysql-db";
     db = new mysql_wrapper(dbdir, bench_type);
+#endif
   } else
     ALWAYS_ASSERT(false);
 
