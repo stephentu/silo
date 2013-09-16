@@ -731,7 +731,7 @@ mbtree<P>::ExtractValues(const node_opaque_t *n)
   for (int i = 0; i != perm.size(); ++i) {
     int keylenx = n->keylenx_[perm[i]];
     if (!n->keylenx_is_layer(keylenx))
-      ret.emplace_back(n->lv_[i].value(), n->keylenx_has_ksuf(keylenx));
+      ret.emplace_back(n->lv_[perm[i]].value(), n->keylenx_has_ksuf(keylenx));
   }
   return ret;
 }
