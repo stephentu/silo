@@ -330,9 +330,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             std::string(__PRETTY_FUNCTION__) + std::string(":gen_commit_tid:")));
       ANON_REGION(probe5_name.c_str(), &transaction_base::g_txn_commit_probe5_cg);
       commit_tid.second = cast()->gen_commit_tid(write_dbtuples);
-      VERBOSE(cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << endl);
+      VERBOSE(std::cerr << "commit tid: " << g_proto_version_str(commit_tid.second) << std::endl);
     } else {
-      VERBOSE(cerr << "commit tid: <read-only>" << endl);
+      VERBOSE(std::cerr << "commit tid: <read-only>" << std::endl);
     }
 
     // do read validation
@@ -347,7 +347,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         typename read_set_map::iterator it     = read_set.begin();
         typename read_set_map::iterator it_end = read_set.end();
         for (; it != it_end; ++it) {
-          VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->first)
+          VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->get_tuple())
                             << " at snapshot_tid "
                             << g_proto_version_str(snapshot_tid_t.second)
                             << std::endl);
@@ -358,10 +358,10 @@ transaction<Protocol, Traits>::commit(bool doThrow)
                 it->get_tuple()->stable_is_latest_version(it->get_tid())))
             continue;
 
-          VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->first) << " at snapshot_tid "
+          VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->get_tuple()) << " at snapshot_tid "
                             << g_proto_version_str(snapshot_tid_t.second) << " FAILED" << std::endl
-                            << "  txn read version: " << g_proto_version_str(it->second.get_tid()) << std::endl
-                            << "  tuple=" << *it->first << std::endl);
+                            << "  txn read version: " << g_proto_version_str(it->get_tid()) << std::endl
+                            << "  tuple=" << *it->get_tuple() << std::endl);
 
           //std::cerr << "failed tuple: " << *it->get_tuple() << std::endl;
 
@@ -378,7 +378,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
           const uint64_t v = concurrent_btree::ExtractVersionNumber(it->first);
           if (unlikely(v != it->second.version)) {
             VERBOSE(std::cerr << "expected node " << util::hexify(it->first) << " at v="
-                              << it->second.verison << ", got v=" << v << std::endl);
+                              << it->second.version << ", got v=" << v << std::endl);
             abort_trap((reason = ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED));
             goto do_abort;
           }
@@ -462,9 +462,9 @@ transaction<Protocol, Traits>::commit(bool doThrow)
 do_abort:
   // XXX: these values are possibly un-initialized
   if (snapshot_tid_t.first)
-    VERBOSE(cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << endl);
+    VERBOSE(std::cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << std::endl);
   else
-    VERBOSE(cerr << "aborting txn" << endl);
+    VERBOSE(std::cerr << "aborting txn" << std::endl);
 
   for (typename dbtuple_write_info_vec::iterator it = write_dbtuples.begin();
        it != write_dbtuples.end(); ++it) {
