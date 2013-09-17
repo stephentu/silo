@@ -386,7 +386,7 @@ btree<P>::search_range_at_layer(
     const key_type *upper,
     low_level_search_range_callback &callback) const
 {
-  VERBOSE(cerr << "search_range_at_layer: prefix.size()=" << prefix.size() << endl);
+  VERBOSE(std::cerr << "search_range_at_layer: prefix.size()=" << prefix.size() << std::endl);
 
   key_slice last_keyslice = 0;
   size_t last_keyslice_len = 0;
