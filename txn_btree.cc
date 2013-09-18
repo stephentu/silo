@@ -19,6 +19,7 @@
 
 using namespace std;
 using namespace util;
+uint64_t initial_timestamp;
 
 struct test_callback_ctr {
   test_callback_ctr(size_t *ctr) : ctr(ctr) {}
