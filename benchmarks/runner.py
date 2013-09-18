@@ -9,6 +9,7 @@ import multiprocessing as mp
 import os
 
 DRYRUN = True
+USE_MASSTREE = True
 
 NTRIALS = 1 if DRYRUN else 3
 
@@ -50,11 +51,11 @@ NCPUS = mp.cpu_count()
 TPCC_STANDARD_MIX='45,43,4,4,4'
 TPCC_REALISTIC_MIX='39,37,4,10,10'
 
-KNOB_ENABLE_YCSB_SCALE=False
-KNOB_ENABLE_TPCC_SCALE=False
+KNOB_ENABLE_YCSB_SCALE=True
+KNOB_ENABLE_TPCC_SCALE=True
 KNOB_ENABLE_TPCC_MULTIPART=False
 KNOB_ENABLE_TPCC_MULTIPART_SKEW=False
-KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=True
+KNOB_ENABLE_TPCC_FACTOR_ANALYSIS=False
 KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS=False
 KNOB_ENABLE_TPCC_RO_SNAPSHOTS=False
 
@@ -65,6 +66,10 @@ KNOB_ENABLE_TPCC_SCALE_ALLPERSIST_NOFSYNC=False
 KNOB_ENABLE_TPCC_SCALE_FAKEWRITES=False
 KNOB_ENABLE_TPCC_SCALE_GC=False
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1=False
+
+def binary_path(tpe):
+  prog_suffix= '.masstree' if USE_MASSTREE else ''
+  return '../%s%s/benchmarks/dbtest' % (tpe, prog_suffix)
 
 grids = []
 
@@ -223,7 +228,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'numa_memory' : ['%dG' % (4 * 28)],
     },
     {
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'name' : 'multipart:pct',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -238,7 +243,7 @@ if KNOB_ENABLE_TPCC_MULTIPART:
       'numa_memory' : ['%dG' % (4 * 28)],
     },
     {
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'name' : 'multipart:pct',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -327,7 +332,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
   # -gc
   grids += [
     {
-      'binary' : ['../out-factor-gc-nowriteinplace/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc-nowriteinplace')],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -339,7 +344,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'numa_memory' : [None, '%dG' % (4 * 28)],
     },
     {
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -352,7 +357,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'disable_snapshots' : [False],
     },
     {
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -366,7 +371,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS:
       'disable_snapshots' : [True],
     },
     {
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -391,7 +396,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1:
   # -gc
   grids += [
     {
-      'binary' : ['../out-factor-gc-nowriteinplace/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc-nowriteinplace')],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -405,7 +410,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1:
       'disable_snapshots': [True],
     },
     {
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -419,7 +424,7 @@ if KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1:
       'disable_snapshots' : [True],
     },
     {
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'name' : 'factoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -439,9 +444,7 @@ if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
   # lz4-compress buffers
   grids += [
     {
-      'binary' : [
-          '../out-factor-fake-compression/benchmarks/dbtest',
-      ],
+      'binary' : [binary_path('out-factor-fake-compression')],
       'name' : 'persistfactoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -453,7 +456,7 @@ if KNOB_ENABLE_TPCC_PERSIST_FACTOR_ANALYSIS:
       'numa_memory' : ['%dG' % (4 * 28)],
     },
     {
-      'binary' : ['../out-perf/benchmarks/dbtest'],
+      'binary' : [binary_path('out-perf')],
       'name' : 'persistfactoranalysis',
       'dbs' : ['ndb-proto2'],
       'threads' : [28],
@@ -489,7 +492,7 @@ if KNOB_ENABLE_TPCC_RO_SNAPSHOTS:
     },
     {
       'name' : 'readonly',
-      'binary' : ['../out-factor-gc/benchmarks/dbtest'],
+      'binary' : [binary_path('out-factor-gc')],
       'dbs' : ['ndb-proto2'],
       'threads' : [16],
       'scale_factors': [8],
@@ -661,7 +664,7 @@ def run_configuration(
 if __name__ == '__main__':
   (_, basedir, outfile) = sys.argv
 
-  DEFAULT_BINARY='../out-perf/benchmarks/dbtest'
+  DEFAULT_BINARY=binary_path('out-perf')
   # list all the binaries needed
   binaries = set(it.chain.from_iterable([grid.get('binary', [DEFAULT_BINARY]) for grid in grids]))
   fail = False
