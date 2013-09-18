@@ -657,12 +657,23 @@ class unmanaged {
 public:
   template <class... Args>
   unmanaged(Args &&... args)
+#ifdef CHECK_INVARIANTS
+    : destroyed_(false)
+#endif
   {
     new (&obj_[0]) T(std::forward<Args>(args)...);
   }
 
   // up to you to call this at most once
-  inline void destroy() { obj()->~T(); }
+  inline void
+  destroy()
+  {
+#ifdef CHECK_INVARIANTS
+    ALWAYS_ASSERT(!destroyed_);
+    destroyed_ = true;
+#endif
+    obj()->~T();
+  }
 
   inline T * obj() { return (T *) &obj_[0]; }
   inline const T * obj() const { return (const T *) &obj_[0]; }
@@ -676,6 +687,9 @@ public:
 
 private:
   char obj_[sizeof(T)];
+#ifdef CHECK_INVARIANTS
+  bool destroyed_;
+#endif
 } PACKED;
 
 #endif /* _UTIL_H_ */

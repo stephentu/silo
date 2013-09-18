@@ -818,12 +818,6 @@ protected:
     return const_cast<transaction *>(this)->find_write_set(tuple);
   }
 
-  inline scoped_rcu_region *
-  rcu_guard()
-  {
-    return (scoped_rcu_region *) &rcu_guard_[0];
-  }
-
   inline bool
   handle_last_tuple_in_group(
       dbtuple_write_info &info, bool did_group_insert);
@@ -834,7 +828,7 @@ protected:
 
   string_allocator_type *sa;
 
-  char rcu_guard_[sizeof(scoped_rcu_region)];
+  unmanaged<scoped_rcu_region> rcu_guard_;
 };
 
 class transaction_abort_exception : public std::exception {

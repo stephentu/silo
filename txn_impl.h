@@ -10,7 +10,6 @@ template <template <typename> class Protocol, typename Traits>
 transaction<Protocol, Traits>::transaction(uint64_t flags, string_allocator_type &sa)
   : transaction_base(flags), sa(&sa)
 {
-  new (rcu_guard()) scoped_rcu_region();
   INVARIANT(rcu::s_instance.in_rcu_region());
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
   concurrent_btree::NodeLockRegionBegin();
@@ -24,8 +23,8 @@ transaction<Protocol, Traits>::~transaction()
   // resolution means TXN_EMBRYO, TXN_COMMITED, and TXN_ABRT
   INVARIANT(state != TXN_ACTIVE);
   INVARIANT(rcu::s_instance.in_rcu_region());
-  const unsigned cur_depth = rcu_guard()->sync()->depth();
-  rcu_guard()->~scoped_rcu_region();
+  const unsigned cur_depth = rcu_guard_->sync()->depth();
+  rcu_guard_.destroy();
   if (cur_depth == 1) {
     INVARIANT(!rcu::s_instance.in_rcu_region());
     cast()->on_post_rcu_region_completion();

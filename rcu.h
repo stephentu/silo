@@ -260,33 +260,28 @@ public:
   scoped_rcu_base(const scoped_rcu_base &) = delete;
   scoped_rcu_base &operator=(const scoped_rcu_base &) = delete;
 
-  scoped_rcu_base(bool enable = true)
-    : enable_(enable), sync_(&rcu::s_instance.mysync())
+  scoped_rcu_base()
+    : sync_(&rcu::s_instance.mysync()),
+      guard_(ticker::s_instance)
   {
-    if (enable_) {
-      new (&guard_[0]) ticker::guard(ticker::s_instance);
-      sync_->depth_++;
-    }
+    sync_->depth_++;
   }
 
   ~scoped_rcu_base()
   {
-    if (enable_) {
-      INVARIANT(sync_->depth_);
-      const unsigned new_depth = --sync_->depth_;
-      guard()->ticker::guard::~guard();
-      if (new_depth)
-        return;
-      // out of RCU region now, check if we need to run cleaner
-      sync_->do_cleanup();
-    }
+    INVARIANT(sync_->depth_);
+    const unsigned new_depth = --sync_->depth_;
+    guard_.destroy();
+    if (new_depth || !DoCleanup)
+      return;
+    // out of RCU region now, check if we need to run cleaner
+    sync_->do_cleanup();
   }
 
   inline ticker::guard *
   guard()
   {
-    INVARIANT(enable_);
-    return (ticker::guard *) &guard_[0];
+    return guard_.obj();
   }
 
   inline rcu::sync *
@@ -296,14 +291,12 @@ public:
   }
 
 private:
-  bool enable_;
-  char guard_[sizeof(ticker::guard)];
   rcu::sync *sync_;
+  unmanaged<ticker::guard> guard_;
 };
 
 typedef scoped_rcu_base<true> scoped_rcu_region;
 
-class disabled_rcu_region {
-};
+class disabled_rcu_region {};
 
 #endif /* _RCU_H_ */
