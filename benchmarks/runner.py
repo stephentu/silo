@@ -68,7 +68,7 @@ KNOB_ENABLE_TPCC_SCALE_GC=False
 KNOB_ENABLE_TPCC_FACTOR_ANALYSIS_1=False
 
 def binary_path(tpe):
-  prog_suffix= '.masstree' if USE_MASSTREE else ''
+  prog_suffix= '.masstree' if USE_MASSTREE else '.silotree'
   return '../%s%s/benchmarks/dbtest' % (tpe, prog_suffix)
 
 grids = []

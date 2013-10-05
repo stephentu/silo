@@ -91,6 +91,8 @@ ifeq ($(MASSTREE_S),1)
 	CXXFLAGS += -DNDB_MASSTREE -include masstree/config.h
 	OBJDEP += masstree/config.h
 	O := $(O).masstree
+else
+	O := $(O).silotree
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
