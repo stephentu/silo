@@ -22,6 +22,9 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 #   * sandbox
 MODE ?= perf
 
+# run with 'MASSTREE=0' to turn off masstree
+MASSTREE ?= 1
+
 ###############
 
 DEBUG_S=$(strip $(DEBUG))
@@ -29,7 +32,7 @@ CHECK_INVARIANTS_S=$(strip $(CHECK_INVARIANTS))
 EVENT_COUNTERS_S=$(strip $(EVENT_COUNTERS))
 USE_MALLOC_MODE_S=$(strip $(USE_MALLOC_MODE))
 MODE_S=$(strip $(MODE))
-MASSTREE_S=$(strip $(MASSTREE)$(MT)$(M))
+MASSTREE_S=$(strip $(MASSTREE))
 MASSTREE_CONFIG:=
 
 ifeq ($(DEBUG_S),1)
@@ -86,8 +89,8 @@ ifeq ($(EVENT_COUNTERS_S),1)
 endif
 ifeq ($(MASSTREE_S),1)
 	CXXFLAGS += -DNDB_MASSTREE -include masstree/config.h
-	O := $(O).masstree
 	OBJDEP += masstree/config.h
+	O := $(O).masstree
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
