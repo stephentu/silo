@@ -657,8 +657,8 @@ public:
 
   std::map<std::string, uint64_t> get_txn_counters() const;
 
-  inline bool
-  is_read_only() const
+  inline ALWAYS_INLINE bool
+  is_snapshot() const
   {
     return get_flags() & TXN_FLAG_READ_ONLY;
   }

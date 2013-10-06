@@ -263,7 +263,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         static std::string probe1_name(
           std::string(__PRETTY_FUNCTION__) + std::string(":lock_write_nodes:")));
     ANON_REGION(probe1_name.c_str(), &transaction_base::g_txn_commit_probe1_cg);
-    INVARIANT(!is_read_only());
+    INVARIANT(!is_snapshot());
     typename write_set_map::iterator it     = write_set.begin();
     typename write_set_map::iterator it_end = write_set.end();
     for (size_t pos = 0; it != it_end; ++it, ++pos) {
@@ -273,10 +273,10 @@ transaction<Protocol, Traits>::commit(bool doThrow)
   }
 
   // read_only txns require consistent snapshots
-  INVARIANT(!is_read_only() || snapshot_tid_t.first);
-  INVARIANT(!is_read_only() || read_set.empty());
-  INVARIANT(!is_read_only() || write_set.empty());
-  INVARIANT(!is_read_only() || absent_set.empty());
+  INVARIANT(!is_snapshot() || snapshot_tid_t.first);
+  INVARIANT(!is_snapshot() || read_set.empty());
+  INVARIANT(!is_snapshot() || write_set.empty());
+  INVARIANT(!is_snapshot() || absent_set.empty());
   if (!snapshot_tid_t.first || !write_dbtuples.empty()) {
     // we don't have consistent tids, or not a read-only txn
 
@@ -576,7 +576,7 @@ transaction<Protocol, Traits>::do_tuple_read(
     cast()->consistent_snapshot_tid();
   const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
     snapshot_tid_t.second : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
-  const bool is_read_only_txn = is_read_only();
+  const bool is_snapshot_txn = is_snapshot();
   transaction_base::tid_t start_t = 0;
 
   if (Traits::read_own_writes) {
@@ -601,7 +601,7 @@ transaction<Protocol, Traits>::do_tuple_read(
     PERF_DECL(static std::string probe0_name(std::string(__PRETTY_FUNCTION__) + std::string(":do_read:")));
     ANON_REGION(probe0_name.c_str(), &private_::txn_btree_search_probe0_cg);
     tuple->prefetch();
-    stat = tuple->stable_read(snapshot_tid, start_t, value_reader, this->string_allocator(), is_read_only_txn);
+    stat = tuple->stable_read(snapshot_tid, start_t, value_reader, this->string_allocator(), is_snapshot_txn);
     if (unlikely(stat == dbtuple::READ_FAILED)) {
       const transaction_base::abort_reason r = transaction_base::ABORT_REASON_UNSTABLE_READ;
       abort_impl(r);
@@ -618,7 +618,7 @@ transaction<Protocol, Traits>::do_tuple_read(
   const bool v_empty = (stat == dbtuple::READ_EMPTY);
   if (v_empty)
     ++transaction_base::g_evt_read_logical_deleted_node_search;
-  if (!is_read_only_txn)
+  if (!is_snapshot_txn)
     // read-only txns do not need read-set tracking
     // (b/c we know the values are consistent)
     read_set.emplace_back(tuple, start_t);
@@ -631,7 +631,7 @@ transaction<Protocol, Traits>::do_node_read(
     const typename concurrent_btree::node_opaque_t *n, uint64_t v)
 {
   INVARIANT(n);
-  if (is_read_only())
+  if (is_snapshot())
     return;
   auto it = absent_set.find(n);
   if (it == absent_set.end()) {

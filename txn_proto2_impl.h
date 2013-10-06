@@ -945,10 +945,14 @@ private:
 
 public:
 
+  inline ALWAYS_INLINE bool is_snapshot() const {
+    return this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY;
+  }
+
   inline std::pair<bool, transaction_base::tid_t>
   consistent_snapshot_tid() const
   {
-    if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY) {
+    if (this->is_snapshot()) {
 #ifdef PROTO2_CAN_DISABLE_SNAPSHOTS
       if (!IsSnapshotsEnabled())
         // when snapshots are disabled, but we have a RO txn, we simply allow
@@ -981,7 +985,7 @@ public:
     const tid_t l_last_commit_tid = ctx.last_commit_tid_;
     INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
               CoreId(l_last_commit_tid) == my_core_id);
-    INVARIANT(!this->is_read_only());
+    INVARIANT(!this->is_snapshot());
 
     // XXX(stephentu): wrap-around messes this up
     INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);

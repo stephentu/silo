@@ -143,7 +143,7 @@ test1()
       ALWAYS_ASSERT_COND_IN_TXN(t1, btr.search(t1, u64_varkey(0), v1));
       ALWAYS_ASSERT_COND_IN_TXN(t1, !v1.empty());
 
-      if (t1.consistent_snapshot_tid().first)
+      if (t1.is_snapshot())
         // we don't read-uncommitted for consistent snapshot
         AssertByteEquality(rec(0), v1);
 
@@ -151,10 +151,10 @@ test1()
       try {
         t1.commit(true);
         // if we have a consistent snapshot, then this txn should not abort
-        ALWAYS_ASSERT_COND_IN_TXN(t1, t1.consistent_snapshot_tid().first);
+        ALWAYS_ASSERT_COND_IN_TXN(t1, t1.is_snapshot());
       } catch (transaction_abort_exception &e) {
         // if we dont have a snapshot, then we expect an abort
-        ALWAYS_ASSERT_COND_IN_TXN(t1, !t1.consistent_snapshot_tid().first);
+        ALWAYS_ASSERT_COND_IN_TXN(t1, !t1.is_snapshot());
       }
       VERBOSE(cerr << "------" << endl);
     }
