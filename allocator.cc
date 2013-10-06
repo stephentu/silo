@@ -115,7 +115,7 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
             << "  use MADV_WILLNEED: " << UseMAdvWillNeed() << std::endl
             << "  mmap() region [" << x << ", " << endpx << ")" << std::endl;
 
-  g_memstart = reinterpret_cast<void *>(iceil(uintptr_t(x), hugepgsize));
+  g_memstart = reinterpret_cast<void *>(util::iceil(uintptr_t(x), hugepgsize));
   g_memend = reinterpret_cast<char *>(g_memstart) + (g_ncpus * g_maxpercore);
 
   ALWAYS_ASSERT(!(reinterpret_cast<uintptr_t>(g_memstart) % hugepgsize));

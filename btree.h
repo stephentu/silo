@@ -1190,6 +1190,11 @@ public:
   // XXX(stephentu): trying out a very opaque node API for now
   typedef struct node node_opaque_t;
   typedef std::pair< const node_opaque_t *, uint64_t > versioned_node_t;
+  struct insert_info_t {
+    const node_opaque_t* node;
+    uint64_t old_version;
+    uint64_t new_version;
+  };
 
   btree() : root_(leaf_node::alloc())
   {
@@ -1421,7 +1426,7 @@ public:
   inline bool
   insert(const key_type &k, value_type v,
          value_type *old_v = NULL,
-         versioned_node_t *insert_info = NULL)
+         insert_info_t *insert_info = NULL)
   {
     rcu_region guard;
     return insert_stable_location((node **) &root_, k, v, false, old_v, insert_info);
@@ -1433,7 +1438,7 @@ public:
    */
   inline bool
   insert_if_absent(const key_type &k, value_type v,
-                   versioned_node_t *insert_info = NULL)
+                   insert_info_t *insert_info = NULL)
   {
     rcu_region guard;
     return insert_stable_location((node **) &root_, k, v, true, NULL, insert_info);
@@ -1456,7 +1461,7 @@ private:
   bool
   insert_stable_location(node **root_location, const key_type &k, value_type v,
                          bool only_if_absent, value_type *old_v,
-                         versioned_node_t *insert_info);
+                         insert_info_t *insert_info);
 
   bool
   remove_stable_location(node **root_location, const key_type &k, value_type *old_v);
@@ -1525,6 +1530,9 @@ public:
   // [value, has_suffix]
   static std::vector< std::pair<value_type, bool> >
   ExtractValues(const node_opaque_t *n);
+
+  void print() {
+  }
 
   /**
    * Not well defined if n is being concurrently modified, just for debugging
@@ -1676,7 +1684,7 @@ private:
           value_type v,
           bool only_if_absent,
           value_type *old_v,
-          versioned_node_t *insert_info,
+          insert_info_t *insert_info,
           key_slice &min_key,
           node *&new_node,
           typename util::vec<insert_parent_entry>::type &parents,
@@ -1780,5 +1788,7 @@ btree<P>::node::prefetch() const
 extern void TestConcurrentBtreeFast();
 extern void TestConcurrentBtreeSlow();
 
+#if !NDB_MASSTREE
 typedef btree<concurrent_btree_traits> concurrent_btree;
 typedef btree<single_threaded_btree_traits> single_threaded_btree;
+#endif

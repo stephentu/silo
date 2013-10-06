@@ -2,8 +2,7 @@
 #define _KVDB_WRAPPER_H_
 
 #include "abstract_db.h"
-#include "../btree.h"
-#include "../btree_impl.h"
+#include "../btree_choice.h"
 #include "../rcu.h"
 
 template <bool UseConcurrencyControl>
@@ -86,7 +85,8 @@ private:
       concurrent_btree,
       single_threaded_btree>::type
     my_btree;
-   my_btree btr;
+  typedef typename my_btree::key_type key_type;
+  my_btree btr;
 };
 
 #endif /* _KVDB_WRAPPER_H_ */

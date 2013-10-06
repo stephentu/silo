@@ -229,7 +229,7 @@ rcu::sync::do_cleanup()
   size_t n = 0;
   for (auto it = q.begin(); it != q.end(); ++it, ++n) {
     try {
-      it->second(it->first);
+      it->run(*this);
     } catch (...) {
       cerr << "rcu::region_end: uncaught exception in free routine" << endl;
     }
@@ -263,6 +263,21 @@ rcu::free_with_fn(void *p, deleter_t fn)
   // all threads are either at cur_tick or cur_tick + 1, so we must wait for
   // the system to move beyond cur_tick + 1
   s.queue_.enqueue(delete_entry(p, fn), to_rcu_ticks(cur_tick + 1));
+  ++evt_rcu_frees;
+}
+
+void
+rcu::dealloc_rcu(void *p, size_t sz)
+{
+  sync &s = mysync();
+  uint64_t cur_tick = 0; // ticker units
+  const bool is_guarded = ticker::s_instance.is_locally_guarded(cur_tick);
+  if (!is_guarded)
+    INVARIANT(false);
+  INVARIANT(s.depth());
+  // all threads are either at cur_tick or cur_tick + 1, so we must wait for
+  // the system to move beyond cur_tick + 1
+  s.queue_.enqueue(delete_entry(p, sz), to_rcu_ticks(cur_tick + 1));
   ++evt_rcu_frees;
 }
 
