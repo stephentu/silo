@@ -254,7 +254,6 @@ transaction<Protocol, Traits>::commit(bool doThrow)
   }
 
   dbtuple_write_info_vec write_dbtuples;
-  const std::pair<bool, tid_t> snapshot_tid_t = cast()->consistent_snapshot_tid();
   std::pair<bool, tid_t> commit_tid(false, 0);
 
   // copy write tuples to vector for sorting
@@ -273,11 +272,10 @@ transaction<Protocol, Traits>::commit(bool doThrow)
   }
 
   // read_only txns require consistent snapshots
-  INVARIANT(!is_snapshot() || snapshot_tid_t.first);
   INVARIANT(!is_snapshot() || read_set.empty());
   INVARIANT(!is_snapshot() || write_set.empty());
   INVARIANT(!is_snapshot() || absent_set.empty());
-  if (!snapshot_tid_t.first || !write_dbtuples.empty()) {
+  if (!is_snapshot()) {
     // we don't have consistent tids, or not a read-only txn
 
     // lock write nodes
@@ -348,7 +346,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
         for (; it != it_end; ++it) {
           VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->get_tuple())
                             << " at snapshot_tid "
-                            << g_proto_version_str(snapshot_tid_t.second)
+                            << g_proto_version_str(cast()->snapshot_tid())
                             << std::endl);
           const bool found = sorted_dbtuples_contains(
               write_dbtuples, it->get_tuple());
@@ -358,7 +356,7 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             continue;
 
           VERBOSE(std::cerr << "validating dbtuple " << util::hexify(it->get_tuple()) << " at snapshot_tid "
-                            << g_proto_version_str(snapshot_tid_t.second) << " FAILED" << std::endl
+                            << g_proto_version_str(cast()->snapshot_tid()) << " FAILED" << std::endl
                             << "  txn read version: " << g_proto_version_str(it->get_tid()) << std::endl
                             << "  tuple=" << *it->get_tuple() << std::endl);
 
@@ -460,8 +458,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
 
 do_abort:
   // XXX: these values are possibly un-initialized
-  if (snapshot_tid_t.first)
-    VERBOSE(std::cerr << "aborting txn @ snapshot_tid " << snapshot_tid_t.second << std::endl);
+  if (this->is_snapshot())
+    VERBOSE(std::cerr << "aborting txn @ snapshot_tid " << cast()->snapshot_tid() << std::endl);
   else
     VERBOSE(std::cerr << "aborting txn" << std::endl);
 
@@ -572,11 +570,9 @@ transaction<Protocol, Traits>::do_tuple_read(
   INVARIANT(tuple);
   ++evt_local_search_lookups;
 
-  const std::pair<bool, transaction_base::tid_t> snapshot_tid_t =
-    cast()->consistent_snapshot_tid();
-  const transaction_base::tid_t snapshot_tid = snapshot_tid_t.first ?
-    snapshot_tid_t.second : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
   const bool is_snapshot_txn = is_snapshot();
+  const transaction_base::tid_t snapshot_tid = is_snapshot_txn ?
+    cast()->snapshot_tid() : static_cast<transaction_base::tid_t>(dbtuple::MAX_TID);
   transaction_base::tid_t start_t = 0;
 
   if (Traits::read_own_writes) {

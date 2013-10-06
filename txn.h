@@ -734,11 +734,6 @@ public:
    */
   bool can_overwrite_record_tid(tid_t prev, tid_t cur) const;
 
-  /**
-   * XXX: document
-   */
-  std::pair<bool, tid_t> consistent_snapshot_tid() const;
-
   inline string_allocator_type &
   string_allocator()
   {
