@@ -728,15 +728,12 @@ public:
 
   transaction_proto2(uint64_t flags,
                      typename Traits::StringAllocator &sa)
-    : transaction<transaction_proto2, Traits>(flags, sa),
-      current_epoch(0),
-      last_consistent_tid(0)
+    : transaction<transaction_proto2, Traits>(flags, sa)
   {
-    current_epoch = this->rcu_guard_->guard()->tick();
     if (this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY) {
       const uint64_t global_tick_ex =
         this->rcu_guard_->guard()->impl().global_last_tick_exclusive();
-      last_consistent_tid = ComputeReadOnlyTid(global_tick_ex);
+      u_.last_consistent_tid = ComputeReadOnlyTid(global_tick_ex);
     }
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
     dbtuple::TupleLockRegionBegin();
@@ -776,7 +773,7 @@ public:
   inline bool
   can_read_tid(tid_t t) const
   {
-    return EpochId(t) <= current_epoch;
+    return true;
   }
 
   inline void
@@ -960,17 +957,16 @@ public:
       // it's not correct, but its for the factor analysis
       return dbtuple::MAX_TID;
 #endif
-    return last_consistent_tid;
+    return u_.last_consistent_tid;
   }
 
   void
   dump_debug_info() const
   {
     transaction<transaction_proto2, Traits>::dump_debug_info();
-    std::cerr << "  current_epoch: "
-      << current_epoch << std::endl;
-    std::cerr << "  last_consistent_tid: "
-      << g_proto_version_str(last_consistent_tid) << std::endl;
+    if (this->is_snapshot())
+      std::cerr << "  last_consistent_tid: "
+        << g_proto_version_str(u_.last_consistent_tid) << std::endl;
   }
 
   transaction_base::tid_t
@@ -978,18 +974,20 @@ public:
   {
     const size_t my_core_id = this->rcu_guard_->guard()->core();
     threadctx &ctx = g_threadctxs.get(my_core_id);
-    const tid_t l_last_commit_tid = ctx.last_commit_tid_;
-    INVARIANT(l_last_commit_tid == dbtuple::MIN_TID ||
-              CoreId(l_last_commit_tid) == my_core_id);
     INVARIANT(!this->is_snapshot());
 
-    // XXX(stephentu): wrap-around messes this up
-    INVARIANT(EpochId(l_last_commit_tid) <= current_epoch);
+    COMPILER_MEMORY_FENCE;
+    u_.commit_epoch = this->rcu_guard_->guard()->tick();
+    COMPILER_MEMORY_FENCE;
 
+    tid_t ret = ctx.last_commit_tid_;
+    INVARIANT(ret == dbtuple::MIN_TID || CoreId(ret) == my_core_id);
+    if (u_.commit_epoch != EpochId(ret))
+      ret = MakeTid(0, 0, u_.commit_epoch);
+
+    // What is this? Is txn_proto1_impl used?
     if (g_hack->status_.load(std::memory_order_acquire))
       g_hack->global_tid_.fetch_add(1, std::memory_order_acq_rel);
-
-    tid_t ret = l_last_commit_tid;
 
     // XXX(stephentu): I believe this is correct, but not 100% sure
     //const size_t my_core_id = 0;
@@ -998,8 +996,6 @@ public:
       typename read_set_map::const_iterator it     = this->read_set.begin();
       typename read_set_map::const_iterator it_end = this->read_set.end();
       for (; it != it_end; ++it) {
-        // NB: we don't allow ourselves to do reads in future epochs
-        INVARIANT(EpochId(it->get_tid()) <= current_epoch);
         if (it->get_tid() > ret)
           ret = it->get_tid();
       }
@@ -1022,23 +1018,22 @@ public:
         // XXX(stephentu): we are overly conservative for now- technically this
         // abort isn't necessary (we really should just write the value in the correct
         // position)
-        //if (EpochId(t) > current_epoch) {
+        //if (EpochId(t) > u_.commit_epoch) {
         //  std::cerr << "t: " << g_proto_version_str(t) << std::endl;
-        //  std::cerr << "current_epoch: " << current_epoch << std::endl;
+        //  std::cerr << "epoch: " << u_.commit_epoch << std::endl;
         //  this->dump_debug_info();
         //}
 
         // t == dbtuple::MAX_TID when a txn does an insert of a new tuple
         // followed by 1+ writes to the same tuple.
-        INVARIANT(EpochId(t) <= current_epoch ||
-                  t == dbtuple::MAX_TID);
+        INVARIANT(EpochId(t) <= u_.commit_epoch || t == dbtuple::MAX_TID);
         if (t != dbtuple::MAX_TID && t > ret)
           ret = t;
       }
-      ret = MakeTid(my_core_id, NumId(ret) + 1, current_epoch);
-    }
 
-    COMPILER_MEMORY_FENCE;
+      INVARIANT(EpochId(ret) == u_.commit_epoch);
+      ret = MakeTid(my_core_id, NumId(ret) + 1, u_.commit_epoch);
+    }
 
     // XXX(stephentu): this txn hasn't actually been commited yet,
     // and could potentially be aborted - but it's ok to increase this #, since
@@ -1069,7 +1064,7 @@ public:
       return;
     }
 
-    const uint64_t ro_tick = to_read_only_tick(this->current_epoch);
+    const uint64_t ro_tick = to_read_only_tick(this->u_.commit_epoch);
     INVARIANT(to_read_only_tick(EpochId(tuple->version)) <= ro_tick);
 
 #ifdef CHECK_INVARIANTS
@@ -1099,11 +1094,10 @@ public:
     INVARIANT(tuple->is_write_intent());
     INVARIANT(tuple->is_latest());
     INVARIANT(tuple->is_deleting());
-    INVARIANT(EpochId(tuple->version) == this->current_epoch);
     INVARIANT(!tuple->size);
     INVARIANT(rcu::s_instance.in_rcu_region());
 
-    const uint64_t ro_tick = to_read_only_tick(this->current_epoch);
+    const uint64_t ro_tick = to_read_only_tick(this->u_.commit_epoch);
     threadctx &ctx = g_threadctxs.my();
 
 #ifdef CHECK_INVARIANTS
@@ -1169,9 +1163,13 @@ public:
 
 private:
 
-  // the global epoch this txn is running in (this # is read when it starts)
-  uint64_t current_epoch;
-  uint64_t last_consistent_tid;
+  union {
+    // the global epoch this txn is running in (this # is read when it starts)
+    // -- snapshot txns only
+    uint64_t last_consistent_tid;
+    // the epoch for this txn -- committing non-snapshot txns only
+    uint64_t commit_epoch;
+  } u_;
 };
 
 // txn_btree_handler specialization
