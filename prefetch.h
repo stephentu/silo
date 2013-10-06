@@ -6,6 +6,7 @@
 #include "util.h"
 #include "macros.h"
 
+#if !MASSTREE_COMPILER_HH
 // assumes cache-aligned
 static inline ALWAYS_INLINE void
 prefetch(const void *ptr)
@@ -13,6 +14,8 @@ prefetch(const void *ptr)
   typedef struct { char x[CACHELINE_SIZE]; } cacheline_t;
   asm volatile("prefetcht0 %0" : : "m" (*(const cacheline_t *) ptr));
 }
+#define PREFETCH_DEFINED 1
+#endif
 
 // assumes cache-aligned
 template <typename T>
@@ -48,5 +51,4 @@ prefetch_bytes(const void *p, size_t n)
     prefetch(ptr);
 }
 
-#define PREFETCH_DEFINED 1
 #endif /* _PREFETCH_H_ */
