@@ -26,6 +26,9 @@ Each different combination of `MODE`, `DEBUG`, and `CHECK_INVARIANTS` triggers
 a unique output directory; for example, the first command above builds to
 `out-perf.debug.check`. 
 
+Silo now uses [Masstree](https://github.com/kohler/masstree-beta) by default as
+the default index tree. To use the old tree, set `MASSTREE=0`.
+
 Running
 -------
 
