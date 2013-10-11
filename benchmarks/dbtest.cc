@@ -232,7 +232,7 @@ main(int argc, char **argv)
 
   // initialize the numa allocator
   if (numa_memory > 0) {
-    const size_t maxpercpu = iceil(
+    const size_t maxpercpu = util::iceil(
         numa_memory / nthreads, ::allocator::GetHugepageSize());
     numa_memory = maxpercpu * nthreads;
     ::allocator::Initialize(nthreads, maxpercpu);

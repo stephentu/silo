@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <type_traits>
 #include "macros.h"
+#include "ndb_type_traits.h"
 
 template <typename T, size_t StaticSize = SMALL_SIZE_VEC>
 class static_vector {

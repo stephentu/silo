@@ -10,6 +10,7 @@
 #include <memory>
 #include <atomic>
 #include <tuple>
+#include <algorithm>
 
 #include <stdint.h>
 #include <pthread.h>

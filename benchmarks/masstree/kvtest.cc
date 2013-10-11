@@ -3,7 +3,7 @@
 
 #include <unistd.h>
 
-#include "../../btree.h"
+#include "../../btree_choice.h"
 #include "../../thread.h"
 #include "../../spinbarrier.h"
 #include "../../varkey.h"

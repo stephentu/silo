@@ -13,7 +13,7 @@
 
 #include "../allocator.h"
 #include "../stats_server.h"
-#include "../btree.h"
+#include "../btree_choice.h"
 #include "bench.h"
 
 using namespace std;

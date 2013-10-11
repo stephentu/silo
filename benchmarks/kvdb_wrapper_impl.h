@@ -415,8 +415,8 @@ kvdb_ordered_index<UseConcurrencyControl>::scan(
 {
   ANON_REGION("kvdb_ordered_index::scan:", &private_::kvdb_scan_probe0_cg);
   kvdb_wrapper_search_range_callback<my_btree, UseConcurrencyControl> c(callback, arena);
-  const varkey end(end_key ? varkey(*end_key) : varkey());
-  btr.search_range_call(varkey(start_key), end_key ? &end : 0, c, arena->next());
+  key_type end(end_key ? key_type(*end_key) : key_type());
+  btr.search_range_call(key_type(start_key), end_key ? &end : 0, c, arena->next());
 }
 
 template <bool UseConcurrencyControl>
