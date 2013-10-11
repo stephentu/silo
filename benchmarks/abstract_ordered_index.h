@@ -37,10 +37,22 @@ public:
   };
 
   /**
-   * Search [start_key, end_key) if has_end_key is true, otherwise
+   * Search [start_key, *end_key) if end_key is not null, otherwise
    * search [start_key, +infty)
    */
   virtual void scan(
+      void *txn,
+      const std::string &start_key,
+      const std::string *end_key,
+      scan_callback &callback,
+      str_arena *arena = nullptr) = 0;
+
+  /**
+   * Search (*end_key, start_key] if end_key is not null, otherwise
+   * search (-infty, start_key] (starting at start_key and traversing
+   * backwards)
+   */
+  virtual void rscan(
       void *txn,
       const std::string &start_key,
       const std::string *end_key,

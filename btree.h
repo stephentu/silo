@@ -1389,7 +1389,7 @@ public:
   inline void
   search_range(const key_type &lower,
                const key_type *upper,
-               T callback,
+               T &callback,
                string_type *buf = nullptr) const
   {
     type_callback_wrapper<T> w(&callback);

@@ -17,13 +17,21 @@
 #include "util.h"
 #include "scopedperf.hh"
 
-using namespace std;
-using namespace util;
-
+#if defined(NDB_MASSTREE)
+#include "masstree_btree.h"
+struct testing_concurrent_btree_traits : public masstree_params {
+  static const bool RcuRespCaller = false;
+};
+typedef mbtree<testing_concurrent_btree_traits> testing_concurrent_btree;
+#else
 struct testing_concurrent_btree_traits : public concurrent_btree_traits {
   static const bool RcuRespCaller = false;
 };
 typedef btree<testing_concurrent_btree_traits> testing_concurrent_btree;
+#endif
+
+using namespace std;
+using namespace util;
 
 class scoped_rate_timer {
 private:
@@ -309,8 +317,9 @@ test6()
   using namespace test6_ns;
 
   scan_callback::kv_vec data;
+  scan_callback cb(&data);
   u64_varkey max_key(600);
-  btr.search_range(u64_varkey(500), &max_key, scan_callback(&data));
+  btr.search_range(u64_varkey(500), &max_key, cb);
   ALWAYS_ASSERT(data.size() == 100);
   for (size_t i = 0; i < 100; i++) {
     ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
@@ -318,7 +327,7 @@ test6()
   }
 
   data.clear();
-  btr.search_range(u64_varkey(500), NULL, scan_callback(&data));
+  btr.search_range(u64_varkey(500), NULL, cb);
   ALWAYS_ASSERT(data.size() == 500);
   for (size_t i = 0; i < 500; i++) {
     ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
@@ -643,9 +652,10 @@ test_null_keys_2()
        it != prefixes.end(); ++it) {
     const typename testing_concurrent_btree::string_type k = *it;
     for (size_t i = 1; i <= 12; i++) {
-      typename testing_concurrent_btree::string_type x = k;
+      // masstree's string_type doesn't have resize()
+      std::string x = k;
       x.resize(x.size() + i);
-      keys.insert(x);
+      keys.insert(typename testing_concurrent_btree::string_type(x));
     }
   }
 
@@ -1350,7 +1360,8 @@ namespace mp_test7_ns {
     {
       while (running) {
         scan_callback::kv_vec data;
-        btr->search_range(u64_varkey(nkeys / 2), NULL, scan_callback(&data));
+        scan_callback cb(&data);
+        btr->search_range(u64_varkey(nkeys / 2), NULL, cb);
         set<typename testing_concurrent_btree::string_type> scan_keys;
         typename testing_concurrent_btree::string_type prev;
         for (size_t i = 0; i < data.size(); i++) {

@@ -195,6 +195,8 @@ class mbtree {
     uint64_t new_version;
   };
 
+  void invariant_checker() {} // stub for now
+
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
 public:
   static inline void
@@ -326,6 +328,13 @@ public:
                     low_level_search_range_callback &callback,
                     std::string *buf = nullptr) const;
 
+  // (lower, upper]
+  void
+  rsearch_range_call(const key_type &upper,
+                     const key_type *lower,
+                     low_level_search_range_callback &callback,
+                     std::string *buf = nullptr) const;
+
   class search_range_callback : public low_level_search_range_callback {
   public:
     virtual void
@@ -344,16 +353,30 @@ public:
   };
 
   /**
+   * [lower, *upper)
+   *
    * Callback is expected to implement bool operator()(key_slice k, value_type v),
    * where the callback returns true if it wants to keep going, false otherwise
-   *
    */
   template <typename F>
   inline void
   search_range(const key_type &lower,
                const key_type *upper,
-               const F& callback,
+               F& callback,
                std::string *buf = nullptr) const;
+
+  /**
+   * (*lower, upper]
+   *
+   * Callback is expected to implement bool operator()(key_slice k, value_type v),
+   * where the callback returns true if it wants to keep going, false otherwise
+   */
+  template <typename F>
+  inline void
+  rsearch_range(const key_type &upper,
+                const key_type *lower,
+                F& callback,
+                std::string *buf = nullptr) const;
 
   /**
    * returns true if key k did not already exist, false otherwise
@@ -448,9 +471,9 @@ public:
   void recursive_delete(node_base_type* n, threadinfo& ti);
   static leaf_type* leftmost_descend_layer(node_base_type* n);
   class size_walk_callback;
-  class search_range_scanner_base;
-  class low_level_search_range_scanner;
-  template <typename F> class search_range_scanner;
+  template <bool Reverse> class search_range_scanner_base;
+  template <bool Reverse> class low_level_search_range_scanner;
+  template <typename F> class low_level_search_range_callback_wrapper;
 };
 
 template <typename P>
@@ -651,50 +674,61 @@ inline bool mbtree<P>::remove(const key_type &k, value_type *old_v)
 }
 
 template <typename P>
+template <bool Reverse>
 class mbtree<P>::search_range_scanner_base {
  public:
-  search_range_scanner_base(const key_type* upper)
-    : upper_(upper), n_(0), upper_compar_(false) {
+  search_range_scanner_base(const key_type* boundary)
+    : boundary_(boundary), n_(nullptr), boundary_compar_(false) {
   }
   void check(const Masstree::scanstackelt<P>& iter,
              const Masstree::key<uint64_t>& key) {
-    int min = std::min(upper_->length(), key.prefix_length());
-    int cmp = memcmp(upper_->data(), key.full_string().data(), min);
-    if (cmp < 0 || (cmp == 0 && upper_->length() <= key.prefix_length()))
-      upper_compar_ = true;
-    else if (cmp == 0) {
-      uint64_t last_ikey = n_->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
-      upper_compar_ = upper_->slice_at(key.prefix_length()) <= last_ikey;
+    int min = std::min(boundary_->length(), key.prefix_length());
+    int cmp = memcmp(boundary_->data(), key.full_string().data(), min);
+    if (!Reverse) {
+      if (cmp < 0 || (cmp == 0 && boundary_->length() <= key.prefix_length()))
+        boundary_compar_ = true;
+      else if (cmp == 0) {
+        //uint64_t last_ikey = n_->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
+        //boundary_compar_ = boundary_->slice_at(key.prefix_length()) <= last_ikey;
+        boundary_compar_ = true;
+      }
+    } else {
+      if (cmp >= 0)
+        boundary_compar_ = true;
     }
   }
  protected:
-  const key_type* upper_;
+  const key_type* boundary_;
   Masstree::leaf<P>* n_;
   uint64_t v_;
-  bool upper_compar_;
+  bool boundary_compar_;
 };
 
 template <typename P>
+template <bool Reverse>
 class mbtree<P>::low_level_search_range_scanner
-  : public search_range_scanner_base {
+  : public search_range_scanner_base<Reverse> {
  public:
-  low_level_search_range_scanner(const key_type* upper,
+  low_level_search_range_scanner(const key_type* boundary,
                                  low_level_search_range_callback& callback)
-    : search_range_scanner_base(upper), callback_(callback) {
+    : search_range_scanner_base<Reverse>(boundary), callback_(callback) {
   }
   void visit_leaf(const Masstree::scanstackelt<P>& iter,
                   const Masstree::key<uint64_t>& key, threadinfo&) {
     this->n_ = iter.node();
     this->v_ = iter.full_version_value();
     callback_.on_resp_node(this->n_, this->v_);
-    if (this->upper_)
+    if (this->boundary_)
       this->check(iter, key);
   }
   bool visit_value(const Masstree::key<uint64_t>& key,
                    value_type value, threadinfo&) {
-    if (this->upper_compar_
-        && lcdf::Str(this->upper_->data(), this->upper_->size()) <= key.full_string())
-      return false;
+    if (this->boundary_compar_) {
+      lcdf::Str bs(this->boundary_->data(), this->boundary_->size());
+      if ((!Reverse && bs <= key.full_string()) ||
+          ( Reverse && bs >= key.full_string()))
+        return false;
+    }
     callback_.invoke(key.full_string(), value, this->n_, this->v_);
     return true;
   }
@@ -702,22 +736,22 @@ class mbtree<P>::low_level_search_range_scanner
   low_level_search_range_callback& callback_;
 };
 
-template <typename P> template <typename F>
-class mbtree<P>::search_range_scanner : public search_range_scanner_base {
- public:
-  search_range_scanner(const key_type* upper,
-                       F& callback)
-    : search_range_scanner_base(upper), callback_(callback) {
+template <typename P>
+template <typename F>
+class mbtree<P>::low_level_search_range_callback_wrapper :
+  public mbtree<P>::low_level_search_range_callback {
+public:
+  low_level_search_range_callback_wrapper(F& callback) : callback_(callback) {}
+
+  void on_resp_node(const node_opaque_t *n, uint64_t version) OVERRIDE {}
+
+  bool
+  invoke(const string_type &k, value_type v,
+         const node_opaque_t *n, uint64_t version) OVERRIDE
+  {
+    return callback_(k, v);
   }
-  bool operator()(const Masstree::key<uint64_t>& key,
-                  value_type value,
-                  const Masstree::scanstackelt<P>& iter,
-                  threadinfo& ti) {
-    if (this->check(key, iter) < 0)
-      return false;
-    callback_.invoke(key.full_string(), value);
-    return true;
-  }
+
  private:
   F& callback_;
 };
@@ -727,19 +761,41 @@ inline void mbtree<P>::search_range_call(const key_type &lower,
                                          const key_type *upper,
                                          low_level_search_range_callback &callback,
                                          std::string*) const {
-  low_level_search_range_scanner scanner(upper, callback);
+  low_level_search_range_scanner<false> scanner(upper, callback);
   threadinfo ti;
   table_.scan(lcdf::Str(lower.data(), lower.length()), true, scanner, ti);
+}
+
+template <typename P>
+inline void mbtree<P>::rsearch_range_call(const key_type &upper,
+                                          const key_type *lower,
+                                          low_level_search_range_callback &callback,
+                                          std::string*) const {
+  low_level_search_range_scanner<true> scanner(lower, callback);
+  threadinfo ti;
+  table_.rscan(lcdf::Str(upper.data(), upper.length()), true, scanner, ti);
 }
 
 template <typename P> template <typename F>
 inline void mbtree<P>::search_range(const key_type &lower,
                                     const key_type *upper,
-                                    const F& callback,
+                                    F& callback,
                                     std::string*) const {
-  search_range_scanner<F> scanner(upper, callback);
+  low_level_search_range_callback_wrapper<F> wrapper(callback);
+  low_level_search_range_scanner<false> scanner(upper, wrapper);
   threadinfo ti;
   table_.scan(lcdf::Str(lower.data(), lower.length()), true, scanner, ti);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::rsearch_range(const key_type &upper,
+                                     const key_type *lower,
+                                     F& callback,
+                                     std::string*) const {
+  low_level_search_range_callback_wrapper<F> wrapper(callback);
+  low_level_search_range_scanner<true> scanner(lower, wrapper);
+  threadinfo ti;
+  table_.rscan(lcdf::Str(upper.data(), upper.length()), true, scanner, ti);
 }
 
 template <typename P>
