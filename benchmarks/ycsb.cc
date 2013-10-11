@@ -52,7 +52,8 @@ public:
     void * const txn = db->new_txn(txn_flags, arena, txn_buf(), abstract_db::HINT_KV_GET_PUT);
     scoped_str_arena s_arena(arena);
     try {
-      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(r.next() % nkeys).str(obj_key0), obj_v));
+      const uint64_t k = r.next() % nkeys;
+      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(k).str(obj_key0), obj_v));
       computation_n += obj_v.size();
       measure_txn_counters(txn, "txn_read");
       if (likely(db->commit_txn(txn)))
@@ -352,12 +353,14 @@ protected:
       // divide the key space amongst all the loaders
       const size_t nkeysperloader = nkeys / ncpus;
       if (nthreads > ncpus) {
-        for (size_t i = 0; i < ncpus; i++)
+        for (size_t i = 0; i < ncpus; i++) {
+          const uint64_t kend = (i + 1 == ncpus) ?
+            nkeys : (i + 1) * nkeysperloader;
           ret.push_back(
               new ycsb_parallel_usertable_loader(
                 0, db, open_tables, i,
-                i * nkeysperloader,
-                min((i + 1) * nkeysperloader, nkeys)));
+                i * nkeysperloader, kend));
+        }
       } else {
         // load balance the loaders amongst numa nodes in RR fashion
         //
@@ -381,12 +384,14 @@ protected:
           const vector<unsigned> cpus = numa_node_to_cpus(numa_nodes_used[i]);
           const vector<unsigned> cpus_avail = exclude(cpus, nthreads);
           const unsigned nloaders = node_allocations[i];
-          for (size_t j = 0; j < nloaders; j++, loader_i++)
+          for (size_t j = 0; j < nloaders; j++, loader_i++) {
+            const uint64_t kend = (loader_i + 1 == ncpus) ?
+              nkeys : (loader_i + 1) * nkeysperloader;
             ret.push_back(
                 new ycsb_parallel_usertable_loader(
                   0, db, open_tables, cpus_avail[j % cpus_avail.size()],
-                  loader_i * nkeysperloader,
-                  min((loader_i + 1) * nkeysperloader, nkeys)));
+                  loader_i * nkeysperloader, kend));
+          }
         }
       }
     } else {
