@@ -21,12 +21,7 @@ event_counter dbtuple::g_evt_dbtuple_inplace_buf_insufficient("dbtuple_inplace_b
 event_counter dbtuple::g_evt_dbtuple_inplace_buf_insufficient_on_spill("dbtuple_inplace_buf_insufficient_on_spill");
 
 event_avg_counter dbtuple::g_evt_avg_record_spill_len("avg_record_spill_len");
-
 static event_avg_counter evt_avg_dbtuple_chain_length("avg_dbtuple_chain_len");
-
-#ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-__thread vector<const dbtuple *> *dbtuple::tl_locked_nodes(nullptr);
-#endif
 
 dbtuple::~dbtuple()
 {

@@ -2,6 +2,7 @@
 #include <limits>
 #include <memory>
 #include <atomic>
+#include <mutex>
 
 #include "txn.h"
 #include "txn_proto1_impl.h"
@@ -44,15 +45,14 @@ always_assert_cond_in_txn(
 {
   if (likely(cond))
     return;
-  static pthread_mutex_t g_report_lock = PTHREAD_MUTEX_INITIALIZER;
-  ALWAYS_ASSERT(pthread_mutex_lock(&g_report_lock) == 0);
+  static mutex g_report_lock;
+  std::lock_guard<mutex> guard(g_report_lock);
   cerr << func << " (" << filename << ":" << lineno << ") - Condition `"
        << condstr << "' failed!" << endl;
   t.dump_debug_info();
   sleep(1); // XXX(stephentu): give time for debug dump to reach console
             // why doesn't flushing solve this?
   abort();
-  ALWAYS_ASSERT(pthread_mutex_unlock(&g_report_lock) == 0);
 }
 
 #define ALWAYS_ASSERT_COND_IN_TXN(t, cond) \

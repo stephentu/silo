@@ -8,6 +8,7 @@
 #include <limits>
 #include <unordered_map>
 #include <ostream>
+#include <thread>
 
 #include "amd64.h"
 #include "core.h"
@@ -20,7 +21,7 @@
 #include "spinlock.h"
 #include "small_unordered_map.h"
 #include "prefetch.h"
-#include "pthread.h"
+#include "ownership_checker.h"
 
 // debugging tool
 //#define TUPLE_LOCK_OWNERSHIP_CHECKING
@@ -60,36 +61,24 @@ public:
   // sure the current thread is no longer the owner of any locks
   // acquired during the txn
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-  static void
+  static inline void
   TupleLockRegionBegin()
   {
-    if (!tl_locked_nodes)
-      tl_locked_nodes = new std::vector<const dbtuple *>;
-    tl_locked_nodes->clear();
+    ownership_checker<dbtuple, dbtuple>::NodeLockRegionBegin();
   }
 
   // is used to signal the end of a tuple lock region
-  static void
+  static inline void
   AssertAllTupleLocksReleased()
   {
-    ALWAYS_ASSERT(tl_locked_nodes);
-    for (auto p : *tl_locked_nodes)
-      ALWAYS_ASSERT(!p->is_lock_owner());
-    tl_locked_nodes->clear();
+    ownership_checker<dbtuple, dbtuple>::AssertAllNodeLocksReleased();
   }
-
 private:
-
-  static void
-  AddTupleToLockRegion(const dbtuple *tuple)
+  static inline void
+  AddTupleToLockRegion(const dbtuple *n)
   {
-    ALWAYS_ASSERT(tuple->is_locked());
-    ALWAYS_ASSERT(tuple->is_lock_owner());
-    if (tl_locked_nodes)
-      tl_locked_nodes->emplace_back(tuple);
+    ownership_checker<dbtuple, dbtuple>::AddNodeToLockRegion(n);
   }
-
-  static __thread std::vector<const dbtuple *> *tl_locked_nodes;
 #endif
 
 private:
@@ -138,7 +127,7 @@ public:
   volatile version_t hdr;
 
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-  pthread_t lock_owner;
+  std::thread::id lock_owner;
 #endif
 
   // uninterpreted TID
@@ -195,7 +184,7 @@ private:
           (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0) |
           (!size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-      , lock_owner(0) // not portable
+      , lock_owner()
 #endif
       , version(MAX_TID)
       , size(CheckBounds(size))
@@ -216,7 +205,7 @@ private:
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
     if (acquire_lock) {
-      lock_owner = pthread_self();
+      lock_owner = std::this_thread::get_id();
       AddTupleToLockRegion(this);
       INVARIANT(is_lock_owner());
     }
@@ -236,7 +225,7 @@ private:
 #endif
       hdr(set_latest ? HDR_LATEST_MASK : 0)
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-      , lock_owner(0) // not portable
+      , lock_owner()
 #endif
       , version(version)
       , size(base->size)
@@ -275,7 +264,7 @@ private:
 #endif
       hdr((set_latest ? HDR_LATEST_MASK : 0) | (!new_size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-      , lock_owner(0) // not portable
+      , lock_owner()
 #endif
       , version(version)
       , size(CheckBounds(new_size))
@@ -341,7 +330,7 @@ public:
   inline bool
   is_lock_owner() const
   {
-    return pthread_equal(pthread_self(), lock_owner);
+    return std::this_thread::get_id() == lock_owner;
   }
 #else
   inline bool
@@ -372,7 +361,7 @@ public:
 #endif
     }
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-    lock_owner = pthread_self();
+    lock_owner = std::this_thread::get_id();
     AddTupleToLockRegion(this);
     INVARIANT(is_lock_owner());
 #endif
@@ -410,8 +399,7 @@ public:
     INVARIANT(!IsModifying(v));
     INVARIANT(!IsWriteIntent(v));
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-    // XXX: not portable, but whatever
-    lock_owner = 0;
+    lock_owner = std::thread::id();
     INVARIANT(!is_lock_owner());
 #endif
     COMPILER_MEMORY_FENCE;
@@ -1101,7 +1089,9 @@ public:
   VersionInfoStr(version_t v);
 
 }
-#if !defined(TUPLE_CHECK_KEY) && !defined(CHECK_INVARIANTS)
+#if !defined(TUPLE_CHECK_KEY) && \
+    !defined(CHECK_INVARIANTS) && \
+    !defined(TUPLE_LOCK_OWNERSHIP_CHECKING)
 PACKED
 #endif
 ;

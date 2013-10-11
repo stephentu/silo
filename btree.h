@@ -12,6 +12,7 @@
 #include <vector>
 #include <utility>
 #include <atomic>
+#include <thread>
 
 #include "log2.hh"
 #include "ndb_type_traits.h"
@@ -23,6 +24,7 @@
 #include "rcu.h"
 #include "util.h"
 #include "small_vector.h"
+#include "ownership_checker.h"
 
 namespace private_ {
   template <typename T, typename P> struct u64manip;
@@ -538,7 +540,7 @@ private:
     typename P::VersionType hdr_;
 
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
-    pthread_t lock_owner_;
+    std::thread::id lock_owner_;
 #endif /* BTREE_LOCK_OWNERSHIP_CHECKING */
 
     /**
@@ -552,7 +554,7 @@ private:
     node() :
       hdr_()
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
-      , lock_owner_(0)
+      , lock_owner_()
 #endif
     {}
     ~node()
@@ -607,7 +609,7 @@ private:
     inline bool
     is_lock_owner() const
     {
-      return pthread_equal(pthread_self(), lock_owner_);
+      return std::this_thread::get_id() == lock_owner_;
     }
 #else
     inline bool
@@ -639,7 +641,7 @@ private:
       const uint64_t ret = VersionManip::Lock(hdr_);
 #endif
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
-      lock_owner_ = pthread_self();
+      lock_owner_ = std::this_thread::get_id();
       AddNodeToLockRegion(this);
       INVARIANT(is_lock_owner());
 #endif
@@ -650,8 +652,7 @@ private:
     unlock()
     {
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
-      // XXX: not portable, but whatever
-      lock_owner_ = 0;
+      lock_owner_ = std::thread::id();
       INVARIANT(!is_lock_owner());
 #endif
       VersionManip::Unlock(hdr_);
@@ -1040,44 +1041,23 @@ private:
 
   } PACKED;
 
-  // very similar to owernship checking for tuples
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
 public:
-  static void
+  static inline void
   NodeLockRegionBegin()
   {
-    MyLockedNodes(true)->clear();
+    ownership_checker<btree<P>, typename btree<P>::node>::NodeLockRegionBegin();
   }
-
-  // is used to signal the end of a tuple lock region
-  static void
+  static inline void
   AssertAllNodeLocksReleased()
   {
-    std::vector<const node *> *nodes = MyLockedNodes(false);
-    ALWAYS_ASSERT(nodes);
-    for (auto p : *nodes)
-      ALWAYS_ASSERT(!p->is_lock_owner());
-    nodes->clear();
+    ownership_checker<btree<P>, typename btree<P>::node>::AssertAllNodeLocksReleased();
   }
-
 private:
-  static void
+  static inline void
   AddNodeToLockRegion(const node *n)
   {
-    ALWAYS_ASSERT(n->is_locked());
-    ALWAYS_ASSERT(n->is_lock_owner());
-    std::vector<const node *> *nodes = MyLockedNodes(false);
-    if (nodes)
-      nodes->push_back(n);
-  }
-
-  static std::vector<const node *> *
-  MyLockedNodes(bool create)
-  {
-    static __thread std::vector<const node *> *tl_locked_nodes = nullptr;
-    if (unlikely(!tl_locked_nodes) && create)
-      tl_locked_nodes = new std::vector<const node *>;
-    return tl_locked_nodes;
+    ownership_checker<btree<P>, typename btree<P>::node>::AddNodeToLockRegion(n);
   }
 #endif
 

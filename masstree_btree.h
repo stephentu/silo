@@ -24,6 +24,7 @@
 #include "rcu.h"
 #include "util.h"
 #include "small_vector.h"
+#include "ownership_checker.h"
 
 #include "masstree/masstree_scan.hh"
 #include "masstree/masstree_insert.hh"
@@ -193,6 +194,33 @@ class mbtree {
     uint64_t old_version;
     uint64_t new_version;
   };
+
+#ifdef BTREE_LOCK_OWNERSHIP_CHECKING
+public:
+  static inline void
+  NodeLockRegionBegin()
+  {
+    // XXX: implement me
+    ALWAYS_ASSERT(false);
+    //ownership_checker<mbtree<P>, node_base_type>::NodeLockRegionBegin();
+  }
+  static inline void
+  AssertAllNodeLocksReleased()
+  {
+    // XXX: implement me
+    ALWAYS_ASSERT(false);
+    //ownership_checker<mbtree<P>, node_base_type>::AssertAllNodeLocksReleased();
+  }
+private:
+  static inline void
+  AddNodeToLockRegion(const node_base_type *n)
+  {
+    // XXX: implement me
+    ALWAYS_ASSERT(false);
+    //ownership_checker<mbtree<P>, node_base_type>::AddNodeToLockRegion(n);
+  }
+public:
+#endif
 
   mbtree() {
     threadinfo ti;

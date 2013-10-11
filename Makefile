@@ -74,12 +74,12 @@ else
 	$(error invalid mode)
 endif
 
-CXXFLAGS := -g -Wall -Werror -std=c++0x
+CXXFLAGS := -g -Wall -std=c++0x
 CXXFLAGS += -MD -Ithird-party/lz4 -DCONFIG_H=\"$(CONFIG_H)\"
 ifeq ($(DEBUG_S),1)
         CXXFLAGS += -fno-omit-frame-pointer -DDEBUG
 else
-        CXXFLAGS += -O2 -funroll-loops -fno-omit-frame-pointer
+        CXXFLAGS += -Werror -O2 -funroll-loops -fno-omit-frame-pointer
 endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	CXXFLAGS += -DCHECK_INVARIANTS
