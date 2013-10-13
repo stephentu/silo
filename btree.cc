@@ -17,13 +17,21 @@
 #include "util.h"
 #include "scopedperf.hh"
 
-using namespace std;
-using namespace util;
-
+#if defined(NDB_MASSTREE)
+#include "masstree_btree.h"
+struct testing_concurrent_btree_traits : public masstree_params {
+  static const bool RcuRespCaller = false;
+};
+typedef mbtree<testing_concurrent_btree_traits> testing_concurrent_btree;
+#else
 struct testing_concurrent_btree_traits : public concurrent_btree_traits {
   static const bool RcuRespCaller = false;
 };
 typedef btree<testing_concurrent_btree_traits> testing_concurrent_btree;
+#endif
+
+using namespace std;
+using namespace util;
 
 class scoped_rate_timer {
 private:
