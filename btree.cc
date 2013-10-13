@@ -713,7 +713,7 @@ test_random_keys()
   keys.resize(nkeys);
   for (size_t i = 0; i < nkeys; i++) {
   retry:
-    string k = r.next_string(r.next() % (maxkeylen + 1));
+    string k = r.next_readable_string(r.next() % (maxkeylen + 1));
     if (keyset.count(k) == 1)
       goto retry;
     keyset.insert(k);
