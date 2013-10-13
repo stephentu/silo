@@ -284,11 +284,20 @@ test5()
 namespace test6_ns {
   struct scan_callback {
     typedef vector<
-      pair< typename testing_concurrent_btree::string_type, typename testing_concurrent_btree::value_type > > kv_vec;
+      pair< std::string, // we want to make copies of keys
+            typename testing_concurrent_btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
-    operator()(const typename testing_concurrent_btree::string_type &k, typename testing_concurrent_btree::value_type v) const
+    operator()(const typename testing_concurrent_btree::string_type &k,
+                     typename testing_concurrent_btree::value_type v) const
     {
+      if (!data->empty() &&
+          typename testing_concurrent_btree::string_type(data->back().first) >= k) {
+        cerr << "data->size(): " << data->size() << endl;
+        cerr << "prev: " << varkey(data->back().first) << endl;
+        cerr << "cur : " << varkey(k) << endl;
+        ALWAYS_ASSERT(false);
+      }
       data->push_back(make_pair(k, v));
       return true;
     }
@@ -309,16 +318,18 @@ test6()
   using namespace test6_ns;
 
   scan_callback::kv_vec data;
+  scan_callback cb(&data);
   u64_varkey max_key(600);
-  btr.search_range(u64_varkey(500), &max_key, scan_callback(&data));
+  btr.search_range(u64_varkey(500), &max_key, cb);
   ALWAYS_ASSERT(data.size() == 100);
   for (size_t i = 0; i < 100; i++) {
-    ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
+    const varkey lhs(data[i].first), rhs(u64_varkey(500 + i));
+    ALWAYS_ASSERT(lhs == rhs);
     ALWAYS_ASSERT(data[i].second == (typename testing_concurrent_btree::value_type) (500 + i));
   }
 
   data.clear();
-  btr.search_range(u64_varkey(500), NULL, scan_callback(&data));
+  btr.search_range(u64_varkey(500), NULL, cb);
   ALWAYS_ASSERT(data.size() == 500);
   for (size_t i = 0; i < 500; i++) {
     ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
@@ -427,11 +438,11 @@ public:
     expect() : tag(), expected_size() {}
     expect(size_t expected_size)
       : tag(0), expected_size(expected_size) {}
-    expect(const set<typename testing_concurrent_btree::string_type> &expected_keys)
+    expect(const set<string> &expected_keys)
       : tag(1), expected_keys(expected_keys) {}
     uint8_t tag;
     size_t expected_size;
-    set<typename testing_concurrent_btree::string_type> expected_keys;
+    set<string> expected_keys;
   };
 
   enum ExpectType {
@@ -457,12 +468,13 @@ public:
   }
 
   virtual bool
-  invoke(const typename testing_concurrent_btree::string_type &k, typename testing_concurrent_btree::value_type v)
+  invoke(const typename testing_concurrent_btree::string_type &k,
+         typename testing_concurrent_btree::value_type v)
   {
     VERBOSE(cerr << "test_range_scan_helper::invoke(): received key(size="
                  << k.size() << "): " << hexify(k) << endl);
     if (!keys.empty())
-      ALWAYS_ASSERT(keys.back() < k);
+      ALWAYS_ASSERT(typename testing_concurrent_btree::string_type(keys.back()) < k);
     keys.push_back(k);
     return true;
   }
@@ -484,7 +496,7 @@ public:
       switch (ex_type) {
       case EXPECT_EXACT: {
         ALWAYS_ASSERT(keys.size() == expectation.expected_keys.size());
-        vector<typename testing_concurrent_btree::string_type> cmp(
+        vector<string> cmp(
             expectation.expected_keys.begin(), expectation.expected_keys.end());
         for (size_t i = 0; i < keys.size(); i++) {
           if (keys[i] != cmp[i]) {
@@ -498,8 +510,8 @@ public:
       case EXPECT_ATLEAST: {
         ALWAYS_ASSERT(keys.size() >= expectation.expected_keys.size());
         // every key in the expected set must be present
-        set<typename testing_concurrent_btree::string_type> keyset(keys.begin(), keys.end());
-        for (set<typename testing_concurrent_btree::string_type>::iterator it = expectation.expected_keys.begin();
+        set<string> keyset(keys.begin(), keys.end());
+        for (auto it = expectation.expected_keys.begin();
              it != expectation.expected_keys.end(); ++it)
           ALWAYS_ASSERT(keyset.count(*it) == 1);
         break;
@@ -515,7 +527,7 @@ private:
   expect expectation;
   ExpectType ex_type;
 
-  vector<typename testing_concurrent_btree::string_type> keys;
+  vector<string> keys;
 };
 
 static void
@@ -537,7 +549,7 @@ test_two_layer_range_scan()
     btr.invariant_checker();
   }
 
-  test_range_scan_helper::expect ex(set<typename testing_concurrent_btree::string_type>(keys, keys + ARRAY_NELEMS(keys)));
+  test_range_scan_helper::expect ex(set<string>(keys, keys + ARRAY_NELEMS(keys)));
   test_range_scan_helper tester(btr, varkey(""), NULL, ex);
   tester.test();
 }
@@ -629,37 +641,33 @@ test_null_keys_2()
 
   fast_random r(9084398309893);
 
-  set<typename testing_concurrent_btree::string_type> prefixes;
+  set<string> prefixes;
   for (size_t i = 0; i < nprefixes; i++) {
   retry:
-    const typename testing_concurrent_btree::string_type k = r.next_string(r.next() % 30);
+    const string k(r.next_string(r.next() % 30));
     if (prefixes.count(k) == 1)
       goto retry;
     prefixes.insert(k);
   }
 
-  set<typename testing_concurrent_btree::string_type> keys;
-  for (set<typename testing_concurrent_btree::string_type>::iterator it = prefixes.begin();
-       it != prefixes.end(); ++it) {
-    const typename testing_concurrent_btree::string_type k = *it;
+  set<string> keys;
+  for (auto &prefix : prefixes) {
     for (size_t i = 1; i <= 12; i++) {
-      typename testing_concurrent_btree::string_type x = k;
+      std::string x(prefix);
       x.resize(x.size() + i);
       keys.insert(x);
     }
   }
 
   size_t ctr = 1;
-  for (set<typename testing_concurrent_btree::string_type>::iterator it = keys.begin();
-       it != keys.end(); ++it, ++ctr) {
+  for (auto it = keys.begin(); it != keys.end(); ++it, ++ctr) {
     ALWAYS_ASSERT(btr.insert(varkey(*it), (typename testing_concurrent_btree::value_type) it->data()));
     btr.invariant_checker();
     ALWAYS_ASSERT(btr.size() == ctr);
   }
   ALWAYS_ASSERT(btr.size() == keys.size());
 
-  for (set<typename testing_concurrent_btree::string_type>::iterator it = keys.begin();
-       it != keys.end(); ++it) {
+  for (auto it = keys.begin(); it != keys.end(); ++it) {
     typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(*it), v));
     ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) it->data());
@@ -670,8 +678,7 @@ test_null_keys_2()
   tester.test();
 
   ctr = keys.size() - 1;
-  for (set<typename testing_concurrent_btree::string_type>::iterator it = keys.begin();
-       it != keys.end(); ++it, --ctr) {
+  for (auto it = keys.begin(); it != keys.end(); ++it, --ctr) {
     ALWAYS_ASSERT(btr.remove(varkey(*it)));
     btr.invariant_checker();
     ALWAYS_ASSERT(btr.size() == ctr);
@@ -688,12 +695,12 @@ test_random_keys()
   const size_t nkeys = 10000;
   const unsigned int maxkeylen = 1000;
 
-  set<typename testing_concurrent_btree::string_type> keyset;
-  vector<typename testing_concurrent_btree::string_type> keys;
+  set<string> keyset;
+  vector<string> keys;
   keys.resize(nkeys);
   for (size_t i = 0; i < nkeys; i++) {
   retry:
-    typename testing_concurrent_btree::string_type k = r.next_string(r.next() % (maxkeylen + 1));
+    string k = r.next_string(r.next() % (maxkeylen + 1));
     if (keyset.count(k) == 1)
       goto retry;
     keyset.insert(k);
@@ -1350,7 +1357,8 @@ namespace mp_test7_ns {
     {
       while (running) {
         scan_callback::kv_vec data;
-        btr->search_range(u64_varkey(nkeys / 2), NULL, scan_callback(&data));
+        scan_callback cb(&data);
+        btr->search_range(u64_varkey(nkeys / 2), NULL, cb);
         set<typename testing_concurrent_btree::string_type> scan_keys;
         typename testing_concurrent_btree::string_type prev;
         for (size_t i = 0; i < data.size(); i++) {
@@ -1532,11 +1540,11 @@ namespace mp_test_long_keys_ns {
   static const size_t ninsertkeys_perthread = 500000;
   static const size_t nremovekeys_perthread = 500000;
 
-  typedef vector<typename testing_concurrent_btree::string_type> key_vec;
+  typedef vector<string> key_vec;
 
   class insert_worker : public btree_worker {
   public:
-    insert_worker(const vector<typename testing_concurrent_btree::string_type> &keys, testing_concurrent_btree &btr)
+    insert_worker(const vector<string> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -1544,12 +1552,12 @@ namespace mp_test_long_keys_ns {
         ALWAYS_ASSERT(btr->insert(varkey(keys[i]), (typename testing_concurrent_btree::value_type) keys[i].data()));
     }
   private:
-    vector<typename testing_concurrent_btree::string_type> keys;
+    vector<string> keys;
   };
 
   class remove_worker : public btree_worker {
   public:
-    remove_worker(const vector<typename testing_concurrent_btree::string_type> &keys, testing_concurrent_btree &btr)
+    remove_worker(const vector<string> &keys, testing_concurrent_btree &btr)
       : btree_worker(btr), keys(keys) {}
     virtual void run()
     {
@@ -1557,14 +1565,14 @@ namespace mp_test_long_keys_ns {
         ALWAYS_ASSERT(btr->remove(varkey(keys[i])));
     }
   private:
-    vector<typename testing_concurrent_btree::string_type> keys;
+    vector<string> keys;
   };
 
   static volatile bool running = false;
 
   class scan_worker : public btree_worker {
   public:
-    scan_worker(const set<typename testing_concurrent_btree::string_type> &ex, testing_concurrent_btree &btr)
+    scan_worker(const set<string> &ex, testing_concurrent_btree &btr)
       : btree_worker(btr), ex(ex) {}
     virtual void run()
     {
@@ -1586,12 +1594,12 @@ mp_test_long_keys()
 
   testing_concurrent_btree btr;
   vector<key_vec> inps;
-  set<typename testing_concurrent_btree::string_type> existing_keys, insert_keys, remove_keys;
+  set<string> existing_keys, insert_keys, remove_keys;
 
   fast_random r(189230589352);
   for (size_t i = 0; i < 10000; i++) {
   retry0:
-    typename testing_concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
+    string k = r.next_string((r.next() % 200) + 9);
     if (existing_keys.count(k) == 1)
       goto retry0;
     existing_keys.insert(k);
@@ -1603,7 +1611,7 @@ mp_test_long_keys()
     key_vec inp;
     for (size_t j = 0; j < ninsertkeys_perthread; j++) {
     retry:
-      typename testing_concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
+      string k = r.next_string((r.next() % 200) + 9);
       if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1)
         goto retry;
       insert_keys.insert(k);
@@ -1615,7 +1623,7 @@ mp_test_long_keys()
   for (size_t i = nthreads / 2; i < nthreads; i++) {
     key_vec inp;
     for (size_t j = 0; j < nremovekeys_perthread;) {
-      typename testing_concurrent_btree::string_type k = r.next_string((r.next() % 200) + 9);
+      string k = r.next_string((r.next() % 200) + 9);
       if (insert_keys.count(k) == 1 || existing_keys.count(k) == 1 || remove_keys.count(k) == 1)
         continue;
       ALWAYS_ASSERT(btr.insert(varkey(k), (typename testing_concurrent_btree::value_type) k.data()));
@@ -1650,12 +1658,12 @@ mp_test_long_keys()
   btr.invariant_checker();
 
   ALWAYS_ASSERT(btr.size() == (insert_keys.size() + existing_keys.size()));
-  for (set<typename testing_concurrent_btree::string_type>::iterator it = insert_keys.begin();
+  for (set<string>::iterator it = insert_keys.begin();
        it != insert_keys.end(); ++it) {
     typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(btr.search(varkey(*it), v));
   }
-  for (set<typename testing_concurrent_btree::string_type>::iterator it = remove_keys.begin();
+  for (set<string>::iterator it = remove_keys.begin();
        it != remove_keys.end(); ++it) {
     typename testing_concurrent_btree::value_type v = 0;
     ALWAYS_ASSERT(!btr.search(varkey(*it), v));
