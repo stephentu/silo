@@ -439,6 +439,11 @@ test_two_layer()
   ALWAYS_ASSERT(btr.size() == 2);
 }
 
+static __attribute__((used)) void test_ensure_printable() {
+    testing_concurrent_btree btr;
+    btr.print();
+}
+
 class test_range_scan_helper : public testing_concurrent_btree::search_range_callback {
 public:
 
