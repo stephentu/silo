@@ -36,6 +36,9 @@
 
 class simple_threadinfo {
  public:
+    simple_threadinfo()
+        : ts_(0) { // XXX?
+    }
     class rcu_callback {
     public:
       virtual void operator()(simple_threadinfo& ti) = 0;
