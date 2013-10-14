@@ -234,7 +234,7 @@ public:
 
   ~mbtree() {
     threadinfo ti;
-    recursive_delete(table_.root(), ti);
+    table_.destroy(ti);
   }
 
   /**
@@ -242,8 +242,8 @@ public:
    */
   inline void clear() {
     threadinfo ti;
-    recursive_delete(table_.root(), ti);
-    table_.reinitialize(ti);
+    table_.destroy(ti);
+    table_.initialize(ti);
   }
 
   /** Note: invariant checking is not thread safe */
@@ -451,33 +451,12 @@ public:
  private:
   Masstree::basic_table<P> table_;
 
-  void recursive_delete(node_base_type* n, threadinfo& ti);
   static leaf_type* leftmost_descend_layer(node_base_type* n);
   class size_walk_callback;
   class search_range_scanner_base;
   class low_level_search_range_scanner;
   template <typename F> class search_range_scanner;
 };
-
-template <typename P>
-void mbtree<P>::recursive_delete(node_base_type* n, threadinfo& ti) {
-  if (n->isleaf()) {
-    node_type* l = static_cast<node_type*>(n);
-    typename node_type::permuter_type perm = l->permutation();
-    for (int i = 0; i != l->size(); ++i) {
-      int p = perm[i];
-      if (l->value_is_layer(p))
-        recursive_delete(l->lv_[p].layer(), ti);
-    }
-    l->deallocate(ti);
-  } else {
-    internode_type* in = static_cast<internode_type*>(n);
-    for (int i = 0; i != in->size() + 1; ++i)
-      if (in->child_[i])
-        recursive_delete(in->child_[i], ti);
-    in->deallocate(ti);
-  }
-}
 
 template <typename P>
 typename mbtree<P>::leaf_type *
