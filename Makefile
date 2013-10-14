@@ -33,7 +33,7 @@ EVENT_COUNTERS_S=$(strip $(EVENT_COUNTERS))
 USE_MALLOC_MODE_S=$(strip $(USE_MALLOC_MODE))
 MODE_S=$(strip $(MODE))
 MASSTREE_S=$(strip $(MASSTREE))
-MASSTREE_CONFIG:=
+MASSTREE_CONFIG:=--enable-max-key-len=1024
 
 ifeq ($(DEBUG_S),1)
 	OSUFFIX_D=.debug
@@ -43,9 +43,9 @@ else
 endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	OSUFFIX_S=.check
-	MASSTREE_CONFIG+=--enable-invariants
+	MASSTREE_CONFIG+=--enable-invariants --enable-preconditions
 else
-	MASSTREE_CONFIG+=--disable-invariants
+	MASSTREE_CONFIG+=--disable-invariants --disable-preconditions
 endif
 ifeq ($(EVENT_COUNTERS_S),1)
 	OSUFFIX_E=.ectrs

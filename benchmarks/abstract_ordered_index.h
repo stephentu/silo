@@ -37,7 +37,7 @@ public:
   };
 
   /**
-   * Search [start_key, end_key) if has_end_key is true, otherwise
+   * Search [start_key, *end_key) if end_key is not null, otherwise
    * search [start_key, +infty)
    */
   virtual void scan(

@@ -36,6 +36,9 @@
 
 class simple_threadinfo {
  public:
+    simple_threadinfo()
+        : ts_(0) { // XXX?
+    }
     class rcu_callback {
     public:
       virtual void operator()(simple_threadinfo& ti) = 0;
@@ -195,6 +198,8 @@ class mbtree {
     uint64_t new_version;
   };
 
+  void invariant_checker() {} // stub for now
+
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
 public:
   static inline void
@@ -229,7 +234,7 @@ public:
 
   ~mbtree() {
     threadinfo ti;
-    recursive_delete(table_.root(), ti);
+    table_.destroy(ti);
   }
 
   /**
@@ -237,8 +242,8 @@ public:
    */
   inline void clear() {
     threadinfo ti;
-    recursive_delete(table_.root(), ti);
-    table_.reinitialize(ti);
+    table_.destroy(ti);
+    table_.initialize(ti);
   }
 
   /** Note: invariant checking is not thread safe */
@@ -344,15 +349,16 @@ public:
   };
 
   /**
+   * [lower, *upper)
+   *
    * Callback is expected to implement bool operator()(key_slice k, value_type v),
    * where the callback returns true if it wants to keep going, false otherwise
-   *
    */
   template <typename F>
   inline void
   search_range(const key_type &lower,
                const key_type *upper,
-               const F& callback,
+               F& callback,
                std::string *buf = nullptr) const;
 
   /**
@@ -445,33 +451,12 @@ public:
  private:
   Masstree::basic_table<P> table_;
 
-  void recursive_delete(node_base_type* n, threadinfo& ti);
   static leaf_type* leftmost_descend_layer(node_base_type* n);
   class size_walk_callback;
   class search_range_scanner_base;
   class low_level_search_range_scanner;
   template <typename F> class search_range_scanner;
 };
-
-template <typename P>
-void mbtree<P>::recursive_delete(node_base_type* n, threadinfo& ti) {
-  if (n->isleaf()) {
-    node_type* l = static_cast<node_type*>(n);
-    typename node_type::permuter_type perm = l->permutation();
-    for (int i = 0; i != l->size(); ++i) {
-      int p = perm[i];
-      if (l->value_is_layer(p))
-        recursive_delete(l->lv_[p].layer(), ti);
-    }
-    l->deallocate(ti);
-  } else {
-    internode_type* in = static_cast<internode_type*>(n);
-    for (int i = 0; i != in->size() + 1; ++i)
-      if (in->child_[i])
-        recursive_delete(in->child_[i], ti);
-    in->deallocate(ti);
-  }
-}
 
 template <typename P>
 typename mbtree<P>::leaf_type *
@@ -654,7 +639,7 @@ template <typename P>
 class mbtree<P>::search_range_scanner_base {
  public:
   search_range_scanner_base(const key_type* upper)
-    : upper_(upper), n_(0), upper_compar_(false) {
+    : upper_(upper), upper_compar_(false) {
   }
   void check(const Masstree::scanstackelt<P>& iter,
              const Masstree::key<uint64_t>& key) {
@@ -663,14 +648,12 @@ class mbtree<P>::search_range_scanner_base {
     if (cmp < 0 || (cmp == 0 && upper_->length() <= key.prefix_length()))
       upper_compar_ = true;
     else if (cmp == 0) {
-      uint64_t last_ikey = n_->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
+      uint64_t last_ikey = iter.node()->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
       upper_compar_ = upper_->slice_at(key.prefix_length()) <= last_ikey;
     }
   }
  protected:
   const key_type* upper_;
-  Masstree::leaf<P>* n_;
-  uint64_t v_;
   bool upper_compar_;
 };
 
@@ -699,6 +682,8 @@ class mbtree<P>::low_level_search_range_scanner
     return true;
   }
  private:
+  Masstree::leaf<P>* n_;
+  uint64_t v_;
   low_level_search_range_callback& callback_;
 };
 
@@ -709,13 +694,17 @@ class mbtree<P>::search_range_scanner : public search_range_scanner_base {
                        F& callback)
     : search_range_scanner_base(upper), callback_(callback) {
   }
-  bool operator()(const Masstree::key<uint64_t>& key,
-                  value_type value,
-                  const Masstree::scanstackelt<P>& iter,
-                  threadinfo& ti) {
-    if (this->check(key, iter) < 0)
+  void visit_leaf(const Masstree::scanstackelt<P>& iter,
+                  const Masstree::key<uint64_t>& key, threadinfo&) {
+    if (this->upper_)
+      this->check(iter, key);
+  }
+  bool visit_value(const Masstree::key<uint64_t>& key,
+                   value_type value, threadinfo&) {
+    if (this->upper_compar_
+        && lcdf::Str(this->upper_->data(), this->upper_->size()) <= key.full_string())
       return false;
-    callback_.invoke(key.full_string(), value);
+    callback_(key.full_string(), value);
     return true;
   }
  private:
@@ -735,7 +724,7 @@ inline void mbtree<P>::search_range_call(const key_type &lower,
 template <typename P> template <typename F>
 inline void mbtree<P>::search_range(const key_type &lower,
                                     const key_type *upper,
-                                    const F& callback,
+                                    F& callback,
                                     std::string*) const {
   search_range_scanner<F> scanner(upper, callback);
   threadinfo ti;
