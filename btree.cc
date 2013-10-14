@@ -754,7 +754,7 @@ test_insert_remove_mix()
   set<string> start_keys;
   for (size_t i = 0; i < nkeys_start; i++) {
   retry:
-    string k = r.next_string(r.next() % 200);
+    string k = r.next_readable_string(r.next() % 200);
     if (start_keys.count(k) == 1)
       goto retry;
     start_keys_v.push_back(k);
@@ -768,7 +768,7 @@ test_insert_remove_mix()
   set<string> insert_keys;
   for (size_t i = 0; i < nkeys_start; i++) {
   retry1:
-    string k = r.next_string(r.next() % 200);
+    string k = r.next_readable_string(r.next() % 200);
     if (start_keys.count(k) == 1 || insert_keys.count(k) == 1)
       goto retry1;
     insert_keys_v.push_back(k);
