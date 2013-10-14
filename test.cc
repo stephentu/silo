@@ -986,10 +986,11 @@ public:
     //small_map_ns::Test();
     //recordtest::Test();
     //rcu::Test();
-#if !NDB_MASSTREE && 0
+    extern void TestConcurrentBtreeFast();
+    extern void TestConcurrentBtreeSlow();
+    // either tests Masstree or Silotree, depending on NDB_MASSTREE
     TestConcurrentBtreeFast();
     TestConcurrentBtreeSlow();
-#endif
     txn_btree_test();
     ret = 0;
   }

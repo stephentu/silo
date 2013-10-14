@@ -251,12 +251,28 @@ public:
     return next(8) % 256;
   }
 
+  inline char
+  next_readable_char()
+  {
+    static const char readables[] = "0123456789@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+    return readables[next(6)];
+  }
+
   inline std::string
   next_string(size_t len)
   {
     std::string s(len, 0);
     for (size_t i = 0; i < len; i++)
       s[i] = next_char();
+    return s;
+  }
+
+  inline std::string
+  next_readable_string(size_t len)
+  {
+    std::string s(len, 0);
+    for (size_t i = 0; i < len; i++)
+      s[i] = next_readable_char();
     return s;
   }
 
