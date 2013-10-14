@@ -43,9 +43,9 @@ else
 endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	OSUFFIX_S=.check
-	MASSTREE_CONFIG+=--enable-invariants
+	MASSTREE_CONFIG+=--enable-invariants --enable-preconditions
 else
-	MASSTREE_CONFIG+=--disable-invariants
+	MASSTREE_CONFIG+=--disable-invariants --disable-preconditions
 endif
 ifeq ($(EVENT_COUNTERS_S),1)
 	OSUFFIX_E=.ectrs
