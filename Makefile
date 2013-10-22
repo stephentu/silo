@@ -19,6 +19,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 #   * backoff
 #   * factor-gc
 #   * factor-gc-nowriteinplace
+#   * factor-fake-compression
 #   * sandbox
 MODE ?= perf
 
