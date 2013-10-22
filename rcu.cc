@@ -226,6 +226,7 @@ rcu::sync::do_cleanup()
   rcu::px_queue &q = scratch_;
   if (q.empty())
     return;
+  scoped_rcu_region guard;
   size_t n = 0;
   for (auto it = q.begin(); it != q.end(); ++it, ++n) {
     try {
