@@ -91,6 +91,8 @@ ifeq ($(MASSTREE_S),1)
 	CXXFLAGS += -DNDB_MASSTREE -include masstree/config.h
 	OBJDEP += masstree/config.h
 	O := $(O).masstree
+else
+	O := $(O).silotree
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
@@ -130,7 +132,6 @@ SRCFILES = allocator.cc \
 	tuple.cc \
 	txn_btree.cc \
 	txn.cc \
-	txn_proto1_impl.cc \
 	txn_proto2_impl.cc \
 	varint.cc
 
