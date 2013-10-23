@@ -977,7 +977,7 @@ public:
     INVARIANT(!this->is_snapshot());
 
     COMPILER_MEMORY_FENCE;
-    u_.commit_epoch = this->rcu_guard_->guard()->tick();
+    u_.commit_epoch = ticker::s_instance.global_current_tick();
     COMPILER_MEMORY_FENCE;
 
     tid_t ret = ctx.last_commit_tid_;
