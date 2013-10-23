@@ -1846,22 +1846,6 @@ read_only_perf()
 
 void txn_btree_test()
 {
-  // XXX(stephentu): proto1 is bit-rotting for now
-  //cerr << "Test proto1" << endl;
-  //test1<transaction_proto1>();
-  //test2<transaction_proto1>();
-  //test_absent_key_race<transaction_proto1>();
-  //test_inc_value_size<transaction_proto1>();
-  //test_multi_btree<transaction_proto1>();
-  //test_read_only_snapshot<transaction_proto1>();
-  //test_long_keys<transaction_proto1>();
-  //test_long_keys2<transaction_proto1>();
-  //mp_test1<transaction_proto1>();
-  //mp_test2<transaction_proto1>();
-  //mp_test3<transaction_proto1>();
-  //mp_test_simple_write_skew<transaction_proto1>();
-  //mp_test_batch_processing<transaction_proto1>();
-
   cerr << "Test proto2" << endl;
   test_typed_btree<transaction_proto2, default_stable_transaction_traits>();
   test1<transaction_proto2, default_transaction_traits>();
