@@ -149,6 +149,7 @@ class simple_threadinfo {
 
     // RCU
     void rcu_register(rcu_callback *cb) {
+      scoped_rcu_base<false> guard;
       rcu::s_instance.free_with_fn(cb, rcu_callback_function);
     }
 
@@ -233,6 +234,7 @@ public:
   }
 
   ~mbtree() {
+    rcu_region guard;
     threadinfo ti;
     table_.destroy(ti);
   }
@@ -241,6 +243,7 @@ public:
    * NOT THREAD SAFE
    */
   inline void clear() {
+    rcu_region guard;
     threadinfo ti;
     table_.destroy(ti);
     table_.initialize(ti);
