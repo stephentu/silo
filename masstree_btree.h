@@ -683,7 +683,6 @@ class mbtree<P>::search_range_scanner_base {
   }
  protected:
   const key_type* boundary_;
-  Masstree::leaf<P>* n_;
   bool boundary_compar_;
 };
 

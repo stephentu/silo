@@ -1380,6 +1380,16 @@ public:
                     low_level_search_range_callback &callback,
                     string_type *buf = nullptr) const;
 
+  // (lower, upper]
+  void
+  rsearch_range_call(const key_type &upper,
+                     const key_type *lower,
+                     low_level_search_range_callback &callback,
+                     std::string *buf = nullptr) const
+  {
+    NDB_UNIMPLEMENTED("rsearch_range_call");
+  }
+
   /**
    * Callback is expected to implement bool operator()(key_slice k, value_type v),
    * where the callback returns true if it wants to keep going, false otherwise
@@ -1394,6 +1404,16 @@ public:
   {
     type_callback_wrapper<T> w(&callback);
     search_range_call(lower, upper, w, buf);
+  }
+
+  template <typename F>
+  inline void
+  rsearch_range(const key_type &upper,
+                const key_type *lower,
+                F& callback,
+                std::string *buf = nullptr) const
+  {
+    NDB_UNIMPLEMENTED("rsearch_range");
   }
 
   /**

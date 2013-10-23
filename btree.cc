@@ -23,6 +23,7 @@ struct testing_concurrent_btree_traits : public masstree_params {
   static const bool RcuRespCaller = false;
 };
 typedef mbtree<testing_concurrent_btree_traits> testing_concurrent_btree;
+#define HAVE_REVERSE_RANGE_SCANS
 #else
 struct testing_concurrent_btree_traits : public concurrent_btree_traits {
   static const bool RcuRespCaller = false;
@@ -294,22 +295,29 @@ namespace test6_ns {
     typedef vector<
       pair< std::string, // we want to make copies of keys
             typename testing_concurrent_btree::value_type > > kv_vec;
-    scan_callback(kv_vec *data) : data(data) {}
+    scan_callback(kv_vec *data, bool reverse = false)
+      : data(data), reverse_(reverse) {}
     inline bool
     operator()(const typename testing_concurrent_btree::string_type &k,
                      typename testing_concurrent_btree::value_type v) const
     {
-      if (!data->empty() &&
-          typename testing_concurrent_btree::string_type(data->back().first) >= k) {
-        cerr << "data->size(): " << data->size() << endl;
-        cerr << "prev: " << varkey(data->back().first) << endl;
-        cerr << "cur : " << varkey(k) << endl;
-        ALWAYS_ASSERT(false);
+      if (!data->empty()) {
+        const bool geq =
+          typename testing_concurrent_btree::string_type(data->back().first) >= k;
+        const bool leq =
+          typename testing_concurrent_btree::string_type(data->back().first) <= k;
+        if ((!reverse_ && geq) || (reverse_ && leq)) {
+          cerr << "data->size(): " << data->size() << endl;
+          cerr << "prev: " << varkey(data->back().first) << endl;
+          cerr << "cur : " << varkey(k) << endl;
+          ALWAYS_ASSERT(false);
+        }
       }
       data->push_back(make_pair(k, v));
       return true;
     }
     kv_vec *data;
+    bool reverse_;
   };
 }
 
@@ -343,6 +351,26 @@ test6()
     ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
     ALWAYS_ASSERT(data[i].second == (typename testing_concurrent_btree::value_type) (500 + i));
   }
+
+#ifdef HAVE_REVERSE_RANGE_SCANS
+  data.clear();
+  scan_callback cb_rev(&data, true);
+  btr.rsearch_range(u64_varkey(499), NULL, cb_rev);
+  ALWAYS_ASSERT(data.size() == 500);
+  for (ssize_t i = 499; i >= 0; i--) {
+    ALWAYS_ASSERT(varkey(data[499 - i].first) == u64_varkey(i));
+    ALWAYS_ASSERT(data[499 - i].second == (typename testing_concurrent_btree::value_type) (i));
+  }
+
+  data.clear();
+  u64_varkey min_key(499);
+  btr.rsearch_range(u64_varkey(999), &min_key, cb_rev);
+  ALWAYS_ASSERT(data.size() == 500);
+  for (ssize_t i = 999; i >= 500; i--) {
+    ALWAYS_ASSERT(varkey(data[999 - i].first) == u64_varkey(i));
+    ALWAYS_ASSERT(data[999 - i].second == (typename testing_concurrent_btree::value_type) (i));
+  }
+#endif
 }
 
 static void
@@ -467,10 +495,15 @@ public:
     testing_concurrent_btree &btr,
     const testing_concurrent_btree::key_type &begin,
     const testing_concurrent_btree::key_type *end,
+    bool reverse,
     const expect &expectation,
     ExpectType ex_type = EXPECT_EXACT)
-    : btr(&btr), begin(begin), end(end ? new testing_concurrent_btree::key_type(*end) : NULL),
-      expectation(expectation), ex_type(ex_type)
+    : btr(&btr),
+      begin(begin),
+      end(end ? new testing_concurrent_btree::key_type(*end) : NULL),
+      reverse_(reverse),
+      expectation(expectation),
+      ex_type(ex_type)
   {
   }
 
@@ -486,8 +519,12 @@ public:
   {
     VERBOSE(cerr << "test_range_scan_helper::invoke(): received key(size="
                  << k.size() << "): " << hexify(k) << endl);
-    if (!keys.empty())
-      ALWAYS_ASSERT(typename testing_concurrent_btree::string_type(keys.back()) < k);
+    if (!keys.empty()) {
+      if (!reverse_)
+        ALWAYS_ASSERT(typename testing_concurrent_btree::string_type(keys.back()) < k);
+      else
+        ALWAYS_ASSERT(typename testing_concurrent_btree::string_type(keys.back()) > k);
+    }
     keys.push_back(k);
     return true;
   }
@@ -495,7 +532,10 @@ public:
   void test()
   {
     keys.clear();
-    btr->search_range_call(begin, end, *this);
+    if (!reverse_)
+      btr->search_range_call(begin, end, *this);
+    else
+      btr->rsearch_range_call(begin, end, *this);
     if (expectation.tag == 0) {
       switch (ex_type) {
       case EXPECT_EXACT:
@@ -509,8 +549,11 @@ public:
       switch (ex_type) {
       case EXPECT_EXACT: {
         ALWAYS_ASSERT(keys.size() == expectation.expected_keys.size());
-        vector<string> cmp(
-            expectation.expected_keys.begin(), expectation.expected_keys.end());
+        vector<string> cmp;
+        if (!reverse_)
+          cmp.assign(expectation.expected_keys.begin(), expectation.expected_keys.end());
+        else
+          cmp.assign(expectation.expected_keys.rbegin(), expectation.expected_keys.rend());
         for (size_t i = 0; i < keys.size(); i++) {
           if (keys[i] != cmp[i]) {
             cerr << "A: " << hexify(keys[i]) << endl;
@@ -537,6 +580,7 @@ private:
   testing_concurrent_btree *const btr;
   testing_concurrent_btree::key_type begin;
   testing_concurrent_btree::key_type *end;
+  bool reverse_;
   expect expectation;
   ExpectType ex_type;
 
@@ -563,8 +607,13 @@ test_two_layer_range_scan()
   }
 
   test_range_scan_helper::expect ex(set<string>(keys, keys + ARRAY_NELEMS(keys)));
-  test_range_scan_helper tester(btr, varkey(""), NULL, ex);
+  test_range_scan_helper tester(btr, varkey(""), NULL, false, ex);
   tester.test();
+
+#ifdef HAVE_REVERSE_RANGE_SCANS
+  test_range_scan_helper tester_rev(btr, varkey("zzzzzzzzzzzzzzzzzzzzzz"), NULL, true, ex);
+  tester_rev.test();
+#endif
 }
 
 static void
@@ -594,8 +643,14 @@ test_multi_layer_scan()
   ALWAYS_ASSERT(btr.insert(varkey(lokey_s), (typename testing_concurrent_btree::value_type) 0x123));
 
   test_range_scan_helper::expect ex(0);
-  test_range_scan_helper tester(btr, varkey(lokey_s_next), &hikey, ex);
+  test_range_scan_helper tester(btr, varkey(lokey_s_next), &hikey, false, ex);
   tester.test();
+
+#ifdef HAVE_REVERSE_RANGE_SCANS
+  const varkey lokey(lokey_s);
+  test_range_scan_helper tester_rev(btr, varkey(hikey_s), &lokey, true, ex);
+  tester_rev.test();
+#endif
 }
 
 static void
@@ -687,8 +742,13 @@ test_null_keys_2()
   }
 
   test_range_scan_helper::expect ex(keys);
-  test_range_scan_helper tester(btr, varkey(*keys.begin()), NULL, ex);
+  test_range_scan_helper tester(btr, varkey(*keys.begin()), NULL, false, ex);
   tester.test();
+
+#ifdef HAVE_REVERSE_RANGE_SCANS
+  test_range_scan_helper tester_rev(btr, varkey(*keys.rbegin()), NULL, true, ex);
+  tester_rev.test();
+#endif
 
   ctr = keys.size() - 1;
   for (auto it = keys.begin(); it != keys.end(); ++it, --ctr) {
@@ -697,6 +757,12 @@ test_null_keys_2()
     ALWAYS_ASSERT(btr.size() == ctr);
   }
   ALWAYS_ASSERT(btr.size() == 0);
+}
+
+static inline string
+maxkey(unsigned size)
+{
+  return string(size, 255);
 }
 
 static void
@@ -731,8 +797,14 @@ test_random_keys()
   }
 
   test_range_scan_helper::expect ex(keyset);
-  test_range_scan_helper tester(btr, varkey(""), NULL, ex);
+  test_range_scan_helper tester(btr, varkey(""), NULL, false, ex);
   tester.test();
+
+#ifdef HAVE_REVERSE_RANGE_SCANS
+  const string mkey = maxkey(maxkeylen);
+  test_range_scan_helper tester_rev(btr, varkey(mkey), NULL, true, ex);
+  tester_rev.test();
+#endif
 
   for (size_t i = 0; i < nkeys; i++) {
     btr.remove(varkey(keys[i]));
@@ -1586,17 +1658,26 @@ namespace mp_test_long_keys_ns {
 
   class scan_worker : public btree_worker {
   public:
-    scan_worker(const set<string> &ex, testing_concurrent_btree &btr)
-      : btree_worker(btr), ex(ex) {}
+    scan_worker(const set<string> &ex, testing_concurrent_btree &btr, bool reverse)
+      : btree_worker(btr), ex(ex), reverse_(reverse) {}
     virtual void run()
     {
+      const string mkey = maxkey(200+9);
       while (running) {
-        test_range_scan_helper tester(*btr, varkey(""), NULL, ex, test_range_scan_helper::EXPECT_ATLEAST);
-        tester.test();
+        if (!reverse_) {
+          test_range_scan_helper tester(*btr, varkey(""), NULL, false,
+              ex, test_range_scan_helper::EXPECT_ATLEAST);
+          tester.test();
+        } else {
+          test_range_scan_helper tester(*btr, varkey(mkey), NULL, true,
+              ex, test_range_scan_helper::EXPECT_ATLEAST);
+          tester.test();
+        }
       }
     }
   private:
     test_range_scan_helper::expect ex;
+    bool reverse_;
   };
 }
 
@@ -1658,7 +1739,7 @@ mp_test_long_keys()
   for (size_t i = nthreads / 2; i < nthreads; i++)
     workers.push_back(new remove_worker(inps[i], btr));
   for (size_t i = 0; i < 4; i++)
-    running_workers.push_back(new scan_worker(existing_keys, btr));
+    running_workers.push_back(new scan_worker(existing_keys, btr, (i % 2)));
   for (size_t i = 0; i < nthreads; i++)
     workers[i]->start();
   for (size_t i = 0; i < running_workers.size(); i++)
