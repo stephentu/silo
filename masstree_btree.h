@@ -36,6 +36,9 @@
 
 class simple_threadinfo {
  public:
+    simple_threadinfo()
+        : ts_(0) { // XXX?
+    }
     class rcu_callback {
     public:
       virtual void operator()(simple_threadinfo& ti) = 0;
@@ -146,6 +149,7 @@ class simple_threadinfo {
 
     // RCU
     void rcu_register(rcu_callback *cb) {
+      scoped_rcu_base<false> guard;
       rcu::s_instance.free_with_fn(cb, rcu_callback_function);
     }
 
@@ -230,17 +234,19 @@ public:
   }
 
   ~mbtree() {
+    rcu_region guard;
     threadinfo ti;
-    recursive_delete(table_.root(), ti);
+    table_.destroy(ti);
   }
 
   /**
    * NOT THREAD SAFE
    */
   inline void clear() {
+    rcu_region guard;
     threadinfo ti;
-    recursive_delete(table_.root(), ti);
-    table_.reinitialize(ti);
+    table_.destroy(ti);
+    table_.initialize(ti);
   }
 
   /** Note: invariant checking is not thread safe */
@@ -468,33 +474,12 @@ public:
  private:
   Masstree::basic_table<P> table_;
 
-  void recursive_delete(node_base_type* n, threadinfo& ti);
   static leaf_type* leftmost_descend_layer(node_base_type* n);
   class size_walk_callback;
   template <bool Reverse> class search_range_scanner_base;
   template <bool Reverse> class low_level_search_range_scanner;
   template <typename F> class low_level_search_range_callback_wrapper;
 };
-
-template <typename P>
-void mbtree<P>::recursive_delete(node_base_type* n, threadinfo& ti) {
-  if (n->isleaf()) {
-    node_type* l = static_cast<node_type*>(n);
-    typename node_type::permuter_type perm = l->permutation();
-    for (int i = 0; i != l->size(); ++i) {
-      int p = perm[i];
-      if (l->value_is_layer(p))
-        recursive_delete(l->lv_[p].layer(), ti);
-    }
-    l->deallocate(ti);
-  } else {
-    internode_type* in = static_cast<internode_type*>(n);
-    for (int i = 0; i != in->size() + 1; ++i)
-      if (in->child_[i])
-        recursive_delete(in->child_[i], ti);
-    in->deallocate(ti);
-  }
-}
 
 template <typename P>
 typename mbtree<P>::leaf_type *
@@ -678,7 +663,7 @@ template <bool Reverse>
 class mbtree<P>::search_range_scanner_base {
  public:
   search_range_scanner_base(const key_type* boundary)
-    : boundary_(boundary), n_(nullptr), boundary_compar_(false) {
+    : boundary_(boundary), boundary_compar_(false) {
   }
   void check(const Masstree::scanstackelt<P>& iter,
              const Masstree::key<uint64_t>& key) {
@@ -688,9 +673,8 @@ class mbtree<P>::search_range_scanner_base {
       if (cmp < 0 || (cmp == 0 && boundary_->length() <= key.prefix_length()))
         boundary_compar_ = true;
       else if (cmp == 0) {
-        //uint64_t last_ikey = n_->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
-        //boundary_compar_ = boundary_->slice_at(key.prefix_length()) <= last_ikey;
-        boundary_compar_ = true;
+        uint64_t last_ikey = iter.node()->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
+        boundary_compar_ = boundary_->slice_at(key.prefix_length()) <= last_ikey;
       }
     } else {
       if (cmp >= 0)
@@ -700,7 +684,6 @@ class mbtree<P>::search_range_scanner_base {
  protected:
   const key_type* boundary_;
   Masstree::leaf<P>* n_;
-  uint64_t v_;
   bool boundary_compar_;
 };
 
@@ -733,6 +716,8 @@ class mbtree<P>::low_level_search_range_scanner
     return true;
   }
  private:
+  Masstree::leaf<P>* n_;
+  uint64_t v_;
   low_level_search_range_callback& callback_;
 };
 

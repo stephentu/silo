@@ -657,8 +657,8 @@ public:
 
   std::map<std::string, uint64_t> get_txn_counters() const;
 
-  inline bool
-  is_read_only() const
+  inline ALWAYS_INLINE bool
+  is_snapshot() const
   {
     return get_flags() & TXN_FLAG_READ_ONLY;
   }
@@ -733,11 +733,6 @@ public:
    * Can we overwrite prev with cur?
    */
   bool can_overwrite_record_tid(tid_t prev, tid_t cur) const;
-
-  /**
-   * XXX: document
-   */
-  std::pair<bool, tid_t> consistent_snapshot_tid() const;
 
   inline string_allocator_type &
   string_allocator()

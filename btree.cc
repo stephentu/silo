@@ -439,6 +439,11 @@ test_two_layer()
   ALWAYS_ASSERT(btr.size() == 2);
 }
 
+static __attribute__((used)) void test_ensure_printable() {
+    testing_concurrent_btree btr;
+    btr.print();
+}
+
 class test_range_scan_helper : public testing_concurrent_btree::search_range_callback {
 public:
 
@@ -708,7 +713,7 @@ test_random_keys()
   keys.resize(nkeys);
   for (size_t i = 0; i < nkeys; i++) {
   retry:
-    string k = r.next_string(r.next() % (maxkeylen + 1));
+    string k = r.next_readable_string(r.next() % (maxkeylen + 1));
     if (keyset.count(k) == 1)
       goto retry;
     keyset.insert(k);
@@ -749,7 +754,7 @@ test_insert_remove_mix()
   set<string> start_keys;
   for (size_t i = 0; i < nkeys_start; i++) {
   retry:
-    string k = r.next_string(r.next() % 200);
+    string k = r.next_readable_string(r.next() % 200);
     if (start_keys.count(k) == 1)
       goto retry;
     start_keys_v.push_back(k);
@@ -763,7 +768,7 @@ test_insert_remove_mix()
   set<string> insert_keys;
   for (size_t i = 0; i < nkeys_start; i++) {
   retry1:
-    string k = r.next_string(r.next() % 200);
+    string k = r.next_readable_string(r.next() % 200);
     if (start_keys.count(k) == 1 || insert_keys.count(k) == 1)
       goto retry1;
     insert_keys_v.push_back(k);
@@ -1320,18 +1325,19 @@ namespace mp_test7_ns {
 
   struct scan_callback {
     typedef vector<
-      pair< typename testing_concurrent_btree::string_type, typename testing_concurrent_btree::value_type > > kv_vec;
+      pair< std::string, typename testing_concurrent_btree::value_type > > kv_vec;
     scan_callback(kv_vec *data) : data(data) {}
     inline bool
     operator()(const typename testing_concurrent_btree::string_type &k, typename testing_concurrent_btree::value_type v) const
     {
       //ALWAYS_ASSERT(data->empty() || data->back().first < k.str());
-      if (!data->empty() && data->back().first >= k) {
-        cerr << "prev: " << hexify(data->back().first) << endl;
-        cerr << "cur : " << hexify(k) << endl;
+      std::string k_str(k);
+      if (!data->empty() && data->back().first >= k_str) {
+        cerr << "prev: <" << hexify(data->back().first) << ">" << endl;
+        cerr << "cur : <" << hexify(k_str) << ">" << endl;
         ALWAYS_ASSERT(false);
       }
-      data->push_back(make_pair(k, v));
+      data->push_back(make_pair(std::move(k_str), v));
       return true;
     }
     kv_vec *data;
@@ -1368,7 +1374,7 @@ namespace mp_test7_ns {
         scan_callback cb(&data);
         btr->search_range(u64_varkey(nkeys / 2), NULL, cb);
         set<typename testing_concurrent_btree::string_type> scan_keys;
-        typename testing_concurrent_btree::string_type prev;
+        std::string prev;
         for (size_t i = 0; i < data.size(); i++) {
           if (i != 0) {
             ALWAYS_ASSERT(data[i].first != prev);

@@ -19,6 +19,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 #   * backoff
 #   * factor-gc
 #   * factor-gc-nowriteinplace
+#   * factor-fake-compression
 #   * sandbox
 MODE ?= perf
 
@@ -33,7 +34,7 @@ EVENT_COUNTERS_S=$(strip $(EVENT_COUNTERS))
 USE_MALLOC_MODE_S=$(strip $(USE_MALLOC_MODE))
 MODE_S=$(strip $(MODE))
 MASSTREE_S=$(strip $(MASSTREE))
-MASSTREE_CONFIG:=
+MASSTREE_CONFIG:=--enable-max-key-len=1024
 
 ifeq ($(DEBUG_S),1)
 	OSUFFIX_D=.debug
@@ -43,9 +44,9 @@ else
 endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	OSUFFIX_S=.check
-	MASSTREE_CONFIG+=--enable-invariants
+	MASSTREE_CONFIG+=--enable-invariants --enable-preconditions
 else
-	MASSTREE_CONFIG+=--disable-invariants
+	MASSTREE_CONFIG+=--disable-invariants --disable-preconditions
 endif
 ifeq ($(EVENT_COUNTERS_S),1)
 	OSUFFIX_E=.ectrs
@@ -91,6 +92,8 @@ ifeq ($(MASSTREE_S),1)
 	CXXFLAGS += -DNDB_MASSTREE -include masstree/config.h
 	OBJDEP += masstree/config.h
 	O := $(O).masstree
+else
+	O := $(O).silotree
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
@@ -130,7 +133,6 @@ SRCFILES = allocator.cc \
 	tuple.cc \
 	txn_btree.cc \
 	txn.cc \
-	txn_proto1_impl.cc \
 	txn_proto2_impl.cc \
 	varint.cc
 

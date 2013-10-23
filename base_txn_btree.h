@@ -320,7 +320,7 @@ void base_txn_btree<Transaction, P>::do_tree_put(
                                // for now [since this would indicate a suboptimality]
   t.ensure_active();
 
-  if (unlikely(t.is_read_only())) {
+  if (unlikely(t.is_snapshot())) {
     const transaction_base::abort_reason r = transaction_base::ABORT_REASON_USER;
     t.abort_impl(r);
     throw transaction_abort_exception(r);
