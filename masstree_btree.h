@@ -711,8 +711,7 @@ class mbtree<P>::low_level_search_range_scanner
           ( Reverse && bs >= key.full_string()))
         return false;
     }
-    callback_.invoke(key.full_string(), value, this->n_, this->v_);
-    return true;
+    return callback_.invoke(key.full_string(), value, this->n_, this->v_);
   }
  private:
   Masstree::leaf<P>* n_;
