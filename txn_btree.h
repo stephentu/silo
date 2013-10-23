@@ -352,6 +352,21 @@ public:
         upper ? &u : nullptr, callback, max_bytes_read);
   }
 
+  template <typename Traits>
+  inline void
+  rsearch_range_call(Transaction<Traits> &t,
+                     const varkey &upper,
+                     const varkey *lower,
+                     search_range_callback &callback,
+                     size_type max_bytes_read = string_type::npos)
+  {
+    key_type l;
+    if (lower)
+      l = to_string_type(*lower);
+    rsearch_range_call(t, to_string_type(upper),
+        lower ? &l : nullptr, callback, max_bytes_read);
+  }
+
   template <typename Traits, typename T>
   inline void
   search_range(Transaction<Traits> &t,

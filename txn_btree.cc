@@ -17,6 +17,10 @@
 
 #include "scopedperf.hh"
 
+#if defined(NDB_MASSTREE)
+#define HAVE_REVERSE_RANGE_SCANS
+#endif
+
 using namespace std;
 using namespace util;
 uint64_t initial_timestamp;
@@ -463,9 +467,26 @@ test_long_keys()
       ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == N);
     }
 
+#ifdef HAVE_REVERSE_RANGE_SCANS
+    {
+      TxnType<Traits> t(txn_flags, arena);
+      const string lowkey_s = make_long_key(4, 5, 3, 0);
+      const string highkey_s = make_long_key(4, 5, 3, N);
+      const varkey lowkey(lowkey_s);
+      counting_scan_callback<TxnType> c(1);
+      btr.rsearch_range_call(t, varkey(highkey_s), &lowkey, c);
+      AssertSuccessfulCommit(t);
+      if (c.ctr != (N-1))
+        cerr << "c.ctr: " << c.ctr << ", N: " << N << endl;
+      ALWAYS_ASSERT_COND_IN_TXN(t, c.ctr == (N-1));
+    }
+#endif
+
     txn_epoch_sync<TxnType>::sync();
     txn_epoch_sync<TxnType>::finish();
   }
+
+  cerr << "test_long_keys passed" << endl;
 }
 
 template <template <typename> class TxnType, typename Traits>
