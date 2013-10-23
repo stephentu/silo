@@ -1115,8 +1115,9 @@ namespace mp_test2_ns {
   template <template <typename> class TxnType, typename Traits>
   class reader_worker : public txn_btree_worker<TxnType> {
   public:
-    reader_worker(txn_btree<TxnType> &btr, uint64_t flags)
-      : txn_btree_worker<TxnType>(btr, flags), validations(0), naborts(0) {}
+    reader_worker(txn_btree<TxnType> &btr, uint64_t flags, bool reverse)
+      : txn_btree_worker<TxnType>(btr, flags),
+        reverse_(reverse), validations(0), naborts(0) {}
     virtual void run()
     {
       while (running) {
@@ -1127,8 +1128,15 @@ namespace mp_test2_ns {
           ALWAYS_ASSERT_COND_IN_TXN(t, this->btr->search(t, u64_varkey(ctr_key), v_ctr));
           ALWAYS_ASSERT_COND_IN_TXN(t, v_ctr.size() == sizeof(control_rec));
           counting_scan_callback<TxnType> c;
-          const u64_varkey kend(range_end);
-          this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
+          if (!reverse_) {
+            const u64_varkey kend(range_end);
+            this->btr->search_range_call(t, u64_varkey(range_begin), &kend, c);
+          } else {
+            const u64_varkey mkey(range_begin - 1);
+            this->btr->rsearch_range_call(t, u64_varkey(range_end), &mkey, c);
+            // reverse values
+            c.values_ = vector<uint32_t>(c.values_.rbegin(), c.values_.rend());
+          }
           t.commit(true);
 
           const control_rec *crec = (const control_rec *) v_ctr.data();
@@ -1149,6 +1157,7 @@ namespace mp_test2_ns {
         }
       }
     }
+    bool reverse_;
     size_t validations;
     size_t naborts;
   };
@@ -1209,9 +1218,13 @@ mp_test2()
 
     mutate_worker<TxnType, Traits> w0(btr, txn_flags);
     //reader_worker<TxnType, Traits> w1(btr, txn_flags);
-    reader_worker<TxnType, Traits> w2(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
-    reader_worker<TxnType, Traits> w3(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
-    reader_worker<TxnType, Traits> w4(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY);
+    reader_worker<TxnType, Traits> w2(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY, false);
+    reader_worker<TxnType, Traits> w3(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY, false);
+#ifdef HAVE_REVERSE_RANGE_SCANS
+    reader_worker<TxnType, Traits> w4(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY, true);
+#else
+    reader_worker<TxnType, Traits> w4(btr, txn_flags | transaction_base::TXN_FLAG_READ_ONLY, false);
+#endif
 
     running = true;
     __sync_synchronize();
@@ -1220,6 +1233,7 @@ mp_test2()
     w2.start();
     w3.start();
     w4.start();
+
     sleep(30);
     running = false;
     __sync_synchronize();
