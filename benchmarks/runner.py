@@ -7,6 +7,7 @@ import subprocess
 import sys
 import multiprocessing as mp
 import os
+import re
 
 DRYRUN = True
 USE_MASSTREE = True
@@ -667,12 +668,22 @@ if __name__ == '__main__':
   DEFAULT_BINARY=binary_path('out-perf')
   # list all the binaries needed
   binaries = set(it.chain.from_iterable([grid.get('binary', [DEFAULT_BINARY]) for grid in grids]))
-  fail = False
+  failed = []
   for binary in binaries:
     if not check_binary_executable(binary):
       print >>sys.stderr, '[ERROR] cannot find binary %s' % binary
-      fail = True
-  if fail:
+      failed.append(binary)
+  if failed:
+    r = re.compile(r'out-(.*)\.(masstree|silotree)')
+    print >>sys.stderr, \
+        '[INFO] Try running the following commands in the root source directory:'
+    for binary in failed:
+      folder = binary.split(os.sep)[1]
+      m = r.match(folder)
+      if not m:
+        print >>sys.stderr, '[ERROR] bad binary name %s' % binary
+      else:
+        print >>sys.stderr, 'MASSTREE=%d MODE=%s make -j dbtest' % (1 if m.group(2) == 'masstree' else 0, m.group(1))
     sys.exit(1)
 
   # iterate over all configs
