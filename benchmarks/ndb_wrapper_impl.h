@@ -461,7 +461,7 @@ public:
   invoke(const typename txn_btree<Transaction>::keystring_type &k,
          const typename txn_btree<Transaction>::string_type &v)
   {
-    return upcall->invoke(k, v);
+    return upcall->invoke(k.data(), k.length(), v);
   }
 
 private:

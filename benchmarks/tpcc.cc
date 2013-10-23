@@ -147,6 +147,7 @@ static int g_enable_separate_tree_per_partition = 0;
 static int g_new_order_remote_item_pct = 1;
 static int g_new_order_fast_id_gen = 0;
 static int g_uniform_item_dist = 0;
+static int g_order_status_scan_hack = 0;
 static unsigned g_txn_workload_mix[] = { 45, 43, 4, 4, 4 }; // default TPC-C workload mix
 
 static aligned_padded_elem<spinlock> *g_partition_locks = nullptr;
@@ -1401,12 +1402,12 @@ class new_order_scan_callback : public abstract_ordered_index::scan_callback {
 public:
   new_order_scan_callback() : k_no(0) {}
   virtual bool invoke(
-      const string &key,
+      const char *keyp, size_t keylen,
       const string &value)
   {
-    INVARIANT(key.size() == sizeof(new_order::key));
+    INVARIANT(keylen == sizeof(new_order::key));
     INVARIANT(value.size() == sizeof(new_order::value));
-    k_no = Decode(key, k_no_temp);
+    k_no = Decode(keyp, k_no_temp);
 #ifdef CHECK_INVARIANTS
     new_order::value v_no_temp;
     const new_order::value *v_no = Decode(value, v_no_temp);
@@ -1703,15 +1704,15 @@ class order_line_nop_callback : public abstract_ordered_index::scan_callback {
 public:
   order_line_nop_callback() : n(0) {}
   virtual bool invoke(
-      const string &key,
+      const char *keyp, size_t keylen,
       const string &value)
   {
-    INVARIANT(key.size() == sizeof(order_line::key));
+    INVARIANT(keylen == sizeof(order_line::key));
     order_line::value v_ol_temp;
     const order_line::value *v_ol UNUSED = Decode(value, v_ol_temp);
 #ifdef CHECK_INVARIANTS
     order_line::key k_ol_temp;
-    const order_line::key *k_ol = Decode(key, k_ol_temp);
+    const order_line::key *k_ol = Decode(keyp, k_ol_temp);
     checker::SanityCheckOrderLine(k_ol, v_ol);
 #endif
     ++n;
@@ -1800,26 +1801,34 @@ tpcc_worker::txn_order_status()
     }
     checker::SanityCheckCustomer(&k_c, &v_c);
 
-    // XXX(stephentu): HACK- we bound the # of elems returned by this scan to
-    // 15- this is because we don't have reverse scans. In an ideal system, a
-    // reverse scan would only need to read 1 btree node. We could simulate a
-    // lookup by only reading the first element- but then we would *always*
-    // read the first order by any customer.  To make this more interesting, we
-    // randomly select which elem to pick within the 1st or 2nd btree nodes.
-    // This is obviously a deviation from TPC-C, but it shouldn't make that
-    // much of a difference in terms of performance numbers (in fact we are
-    // making it worse for us)
-    latest_key_callback c_oorder(str(), (r.next() % 15) + 1);
-    const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
-    const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
-    {
-      ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
-      tbl_oorder_c_id_idx(warehouse_id)->scan(txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder, s_arena.get());
+    string *newest_o_c_id = s_arena.get()->next();
+    if (g_order_status_scan_hack) {
+      // XXX(stephentu): HACK- we bound the # of elems returned by this scan to
+      // 15- this is because we don't have reverse scans. In an ideal system, a
+      // reverse scan would only need to read 1 btree node. We could simulate a
+      // lookup by only reading the first element- but then we would *always*
+      // read the first order by any customer.  To make this more interesting, we
+      // randomly select which elem to pick within the 1st or 2nd btree nodes.
+      // This is obviously a deviation from TPC-C, but it shouldn't make that
+      // much of a difference in terms of performance numbers (in fact we are
+      // making it worse for us)
+      latest_key_callback c_oorder(*newest_o_c_id, (r.next() % 15) + 1);
+      const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
+      const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
+      {
+        ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
+        tbl_oorder_c_id_idx(warehouse_id)->scan(txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder, s_arena.get());
+      }
+      ALWAYS_ASSERT(c_oorder.size());
+    } else {
+      latest_key_callback c_oorder(*newest_o_c_id, 1);
+      const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
+      tbl_oorder_c_id_idx(warehouse_id)->rscan(txn, Encode(obj_key0, k_oo_idx_hi), nullptr, c_oorder, s_arena.get());
+      ALWAYS_ASSERT(c_oorder.size() == 1);
     }
-    ALWAYS_ASSERT(c_oorder.size());
 
     oorder_c_id_idx::key k_oo_idx_temp;
-    const oorder_c_id_idx::key *k_oo_idx = Decode(c_oorder.kstr(), k_oo_idx_temp);
+    const oorder_c_id_idx::key *k_oo_idx = Decode(*newest_o_c_id, k_oo_idx_temp);
     const uint o_id = k_oo_idx->o_o_id;
 
     order_line_nop_callback c_order_line;
@@ -1841,16 +1850,16 @@ class order_line_scan_callback : public abstract_ordered_index::scan_callback {
 public:
   order_line_scan_callback() : n(0) {}
   virtual bool invoke(
-      const string &key,
+      const char *keyp, size_t keylen,
       const string &value)
   {
-    INVARIANT(key.size() == sizeof(order_line::key));
+    INVARIANT(keylen == sizeof(order_line::key));
     order_line::value v_ol_temp;
     const order_line::value *v_ol = Decode(value, v_ol_temp);
 
 #ifdef CHECK_INVARIANTS
     order_line::key k_ol_temp;
-    const order_line::key *k_ol = Decode(key, k_ol_temp);
+    const order_line::key *k_ol = Decode(keyp, k_ol_temp);
     checker::SanityCheckOrderLine(k_ol, v_ol);
 #endif
 
@@ -2135,6 +2144,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
       {"new-order-remote-item-pct"            , required_argument , 0                                     , 'r'} ,
       {"new-order-fast-id-gen"                , no_argument       , &g_new_order_fast_id_gen              , 1}   ,
       {"uniform-item-dist"                    , no_argument       , &g_uniform_item_dist                  , 1}   ,
+      {"order-status-scan-hack"               , no_argument       , &g_order_status_scan_hack             , 1}   ,
       {"workload-mix"                         , required_argument , 0                                     , 'w'} ,
       {0, 0, 0, 0}
     };
@@ -2193,6 +2203,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv)
     cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
     cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
     cerr << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
+    cerr << "  order_status_scan_hack       : " << g_order_status_scan_hack << endl;
     cerr << "  workload_mix                 : " <<
       format_list(g_txn_workload_mix,
                   g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;

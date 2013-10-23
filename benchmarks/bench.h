@@ -231,6 +231,8 @@ protected:
   spin_barrier barrier_b;
 };
 
+// XXX(stephentu): limit_callback is not optimal, should use
+// static_limit_callback if possible
 class limit_callback : public abstract_ordered_index::scan_callback {
 public:
   limit_callback(ssize_t limit = -1)
@@ -240,11 +242,11 @@ public:
   }
 
   virtual bool invoke(
-      const std::string &key,
+      const char *keyp, size_t keylen,
       const std::string &value)
   {
     INVARIANT(limit == -1 || n < size_t(limit));
-    values.emplace_back(key, value);
+    values.emplace_back(std::string(keyp, keylen), value);
     return (limit == -1) || (++n < size_t(limit));
   }
 
@@ -266,13 +268,11 @@ public:
   }
 
   virtual bool invoke(
-      const std::string &key,
+      const char *keyp, size_t keylen,
       const std::string &value)
   {
     INVARIANT(limit == -1 || n < size_t(limit));
-    // see the note in static_limit_callback for why we explicitly
-    // copy over regular (ref-counting) assignment
-    k->assign(key.data(), key.size());
+    k->assign(keyp, keylen);
     ++n;
     return (limit == -1) || (n < size_t(limit));
   }
@@ -303,19 +303,17 @@ public:
   }
 
   virtual bool invoke(
-      const std::string &key,
+      const char *keyp, size_t keylen,
       const std::string &value)
   {
     INVARIANT(n < N);
-    INVARIANT(arena->manages(&key));
     INVARIANT(arena->manages(&value));
     if (ignore_key) {
       values.emplace_back(nullptr, &value);
     } else {
-      // see note above
-      std::string * const s_px = likely(arena) ? arena->next() : nullptr;
+      std::string * const s_px = arena->next();
       INVARIANT(s_px && s_px->empty());
-      s_px->assign(key.data(), key.size());
+      s_px->assign(keyp, keylen);
       values.emplace_back(s_px, &value);
     }
     return ++n < N;

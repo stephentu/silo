@@ -396,7 +396,7 @@ public:
     INVARIANT(s_px && s_px->empty());
     r->prefetch();
     r->do_read(*s_px, std::numeric_limits<size_t>::max());
-    return upcall->invoke(k, *s_px);
+    return upcall->invoke(k.data(), k.length(), *s_px);
   }
 
 private:

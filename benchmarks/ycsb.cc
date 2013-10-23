@@ -121,7 +121,7 @@ public:
   public:
     worker_scan_callback() : n(0) {}
     virtual bool
-    invoke(const string &key, const string &value)
+    invoke(const char *, size_t, const string &value)
     {
       n += value.size();
       return true;
