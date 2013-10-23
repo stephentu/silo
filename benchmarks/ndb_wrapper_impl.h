@@ -502,6 +502,36 @@ ndb_ordered_index<Transaction>::scan(
 
 template <template <typename> class Transaction>
 void
+ndb_ordered_index<Transaction>::rscan(
+    void *txn,
+    const std::string &start_key,
+    const std::string *end_key,
+    scan_callback &callback,
+    str_arena *arena)
+{
+  ndbtxn * const p = reinterpret_cast<ndbtxn *>(txn);
+  ndb_wrapper_search_range_callback<Transaction> c(callback);
+  try {
+#define MY_OP_X(a, b) \
+  case a: \
+    { \
+      auto t = cast< b >()(p); \
+      btr.rsearch_range_call(*t, start_key, end_key, c); \
+      return; \
+    }
+    switch (p->hint) {
+      TXN_PROFILE_HINT_OP(MY_OP_X)
+    default:
+      ALWAYS_ASSERT(false);
+    }
+#undef MY_OP_X
+  } catch (transaction_abort_exception &ex) {
+    throw abstract_db::abstract_abort_exception();
+  }
+}
+
+template <template <typename> class Transaction>
+void
 ndb_ordered_index<Transaction>::remove(void *txn, const std::string &key)
 {
   PERF_DECL(static std::string probe1_name(std::string(__PRETTY_FUNCTION__) + std::string(":total:")));

@@ -326,6 +326,19 @@ public:
 
   template <typename Traits>
   inline void
+  rsearch_range_call(Transaction<Traits> &t,
+                     const key_type &upper,
+                     const key_type *lower,
+                     search_range_callback &callback,
+                     size_type max_bytes_read = string_type::npos)
+  {
+    key_reader_type kr;
+    value_reader_type vr(max_bytes_read);
+    this->do_rsearch_range_call(t, upper, lower, callback, kr, vr);
+  }
+
+  template <typename Traits>
+  inline void
   search_range_call(Transaction<Traits> &t,
                     const varkey &lower,
                     const varkey *upper,

@@ -72,6 +72,12 @@ public:
       const std::string *end_key,
       scan_callback &callback,
       str_arena *arena);
+  virtual void rscan(
+      void *txn,
+      const std::string &start_key,
+      const std::string *end_key,
+      scan_callback &callback,
+      str_arena *arena);
   virtual void remove(
       void *txn,
       const std::string &key);

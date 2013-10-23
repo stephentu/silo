@@ -178,6 +178,16 @@ protected:
                        KeyReader &key_reader,
                        ValueReader &value_reader);
 
+  template <typename Traits, typename Callback,
+            typename KeyReader, typename ValueReader>
+  inline void
+  do_rsearch_range_call(Transaction<Traits> &t,
+                        const typename P::Key &upper,
+                        const typename P::Key *lower,
+                        Callback &callback,
+                        KeyReader &key_reader,
+                        ValueReader &value_reader);
+
   // expect_new indicates if we expect the record to not exist in the tree-
   // is just a hint that affects perf, not correctness. remove is put with nullptr
   // as value.
@@ -443,6 +453,42 @@ base_txn_btree<Transaction, P>::do_search_range_call(
     uppervk = varkey(*upper_str);
   this->underlying_btree.search_range_call(
       varkey(*lower_str), upper_str ? &uppervk : nullptr,
+      c, t.string_allocator()());
+}
+
+template <template <typename> class Transaction, typename P>
+template <typename Traits, typename Callback,
+          typename KeyReader, typename ValueReader>
+void
+base_txn_btree<Transaction, P>::do_rsearch_range_call(
+    Transaction<Traits> &t,
+    const typename P::Key &upper,
+    const typename P::Key *lower,
+    Callback &callback,
+    KeyReader &key_reader,
+    ValueReader &value_reader)
+{
+  t.ensure_active();
+
+  typename P::KeyWriter lower_key_writer(lower);
+  const std::string * const lower_str =
+    lower_key_writer.fully_materialize(true, t.string_allocator());
+
+  typename P::KeyWriter upper_key_writer(&upper);
+  const std::string * const upper_str =
+    upper_key_writer.fully_materialize(true, t.string_allocator());
+
+  if (unlikely(lower_str && *upper_str <= *lower_str))
+    return;
+
+  txn_search_range_callback<Traits, Callback, KeyReader, ValueReader> c(
+			&t, &callback, &key_reader, &value_reader);
+
+  varkey lowervk;
+  if (lower_str)
+    lowervk = varkey(*lower_str);
+  this->underlying_btree.rsearch_range_call(
+      varkey(*upper_str), lower_str ? &lowervk : nullptr,
       c, t.string_allocator()());
 }
 

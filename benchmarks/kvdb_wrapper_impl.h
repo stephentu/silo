@@ -421,6 +421,21 @@ kvdb_ordered_index<UseConcurrencyControl>::scan(
 
 template <bool UseConcurrencyControl>
 void
+kvdb_ordered_index<UseConcurrencyControl>::rscan(
+    void *txn,
+    const std::string &start_key,
+    const std::string *end_key,
+    scan_callback &callback,
+    str_arena *arena)
+{
+  ANON_REGION("kvdb_ordered_index::rscan:", &private_::kvdb_scan_probe0_cg);
+  kvdb_wrapper_search_range_callback<my_btree, UseConcurrencyControl> c(callback, arena);
+  key_type end(end_key ? key_type(*end_key) : key_type());
+  btr.rsearch_range_call(key_type(start_key), end_key ? &end : 0, c, arena->next());
+}
+
+template <bool UseConcurrencyControl>
+void
 kvdb_ordered_index<UseConcurrencyControl>::remove(void *txn, const std::string &key)
 {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
