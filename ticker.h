@@ -192,6 +192,7 @@ private:
         t.tv_sec  = sleep_ns / ONE_SECOND_NS;
         t.tv_nsec = sleep_ns % ONE_SECOND_NS;
         nanosleep(&t, nullptr);
+        loop_timer.lap(); // since we slept away the lag
       }
 
       // bump the current tick
