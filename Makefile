@@ -154,6 +154,7 @@ BENCH_LDFLAGS := $(LDFLAGS) -ldb_cxx -lz -lrt -lcrypt -laio -ldl -lssl -lcrypto
 BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/bench.cc \
 	benchmarks/encstress.cc \
+	benchmarks/bid.cc \
 	benchmarks/masstree/kvrandom.cc \
 	benchmarks/queue.cc \
 	benchmarks/tpcc.cc \
