@@ -79,6 +79,8 @@ public:
 
     const unsigned buf_sz_;
 
+    char __pad__[0] __attribute__((aligned((1<<LG_BLKSIZE))));
+
     // must be last field
     uint8_t buf_start_[0];
 
@@ -279,9 +281,15 @@ private:
       if (IsCompressionEnabled())
         needed += size_t(LZ4_create_size()) +
           sizeof(pbuffer) + g_horizon_buffer_size;
+
+      // round up to next BLKSIZE
+      needed = util::round_up<size_t, LG_BLKSIZE>(needed);
+      ALWAYS_ASSERT(!(needed % (1 << LG_BLKSIZE)));
+
+      // XXX(stephentu): rcu allocator needs to have allocate_static_align()
       char *mem =
         (imode == INITMODE_REG) ?
-          (char *) malloc(needed) :
+          (char *) memalign((1 << LG_BLKSIZE), needed) :
           (char *) rcu::s_instance.alloc_static(needed);
       if (IsCompressionEnabled()) {
         ctx.lz4ctx_ = mem;
@@ -290,7 +298,9 @@ private:
         mem += sizeof(pbuffer) + g_horizon_buffer_size;
       }
       for (size_t i = 0; i < g_perthread_buffers; i++) {
-        ctx.all_buffers_.enq(new (mem) pbuffer(core_id, g_buffer_size));
+        pbuffer *pbuf = new (mem) pbuffer(core_id, g_buffer_size);
+        ALWAYS_ASSERT(!(uintptr_t(&pbuf->buf_start_[0]) % (1 << LG_BLKSIZE)));
+        ctx.all_buffers_.enq(pbuf);
         mem += sizeof(pbuffer) + g_buffer_size;
       }
       ctx.init_ = true;

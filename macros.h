@@ -45,6 +45,8 @@
 #define CACHELINE_SIZE 64 // XXX: don't assume x86
 #define LG_CACHELINE_SIZE __builtin_ctz(CACHELINE_SIZE)
 
+#define LG_BLKSIZE 9
+
 // global maximum on the number of unique threads allowed
 // in the system
 #define NMAXCOREBITS 9

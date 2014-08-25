@@ -52,6 +52,40 @@ event_avg_counter
 static event_avg_counter
   evt_avg_log_buffer_iov_len("avg_log_buffer_iov_len");
 
+enum {
+  FLUSH_METHOD_FSYNC,
+  FLUSH_METHOD_O_DSYNC,
+  FLUSH_METHOD_O_DIRECT,
+};
+
+static int
+GetFlushMethod0(const string &s)
+{
+  if (s.empty() || s == "fsync") {
+    cerr << "FlushMethod: FSYNC" << endl;
+    return FLUSH_METHOD_FSYNC;
+  }
+  if (s == "o_dsync") {
+    cerr << "FlushMethod: O_DSYNC" << endl;
+    return FLUSH_METHOD_O_DSYNC;
+  }
+  if (s == "o_direct") {
+    cerr << "FlushMethod: O_DIRECT" << endl;
+    return FLUSH_METHOD_O_DIRECT;
+  }
+  cerr << "Unknown flush method: " << s << ", setting method FSYNC" << endl;
+  return FLUSH_METHOD_FSYNC;
+}
+
+static inline int
+GetFlushMethod()
+{
+  static const char *px = getenv("TXN_PROTO2_FLUSH_METHOD");
+  static const string s = px ? to_lower(px) : "";
+  static const int meth = GetFlushMethod0(s);
+  return meth;
+}
+
 void
 txn_logger::Init(
     size_t nworkers,
@@ -69,8 +103,19 @@ txn_logger::Init(
   INVARIANT(logfiles.size() <= g_nmax_loggers);
   INVARIANT(!use_compression || g_perthread_buffers > 1); // need 1 as scratch buf
   vector<int> fds;
+
+  int open_flags = O_CREAT | O_WRONLY | O_TRUNC;
+  switch (GetFlushMethod()) {
+  case FLUSH_METHOD_O_DSYNC:
+    open_flags |= (O_DIRECT|O_DSYNC);
+    break;
+  case FLUSH_METHOD_O_DIRECT:
+    open_flags |= O_DIRECT;
+    break;
+  }
+
   for (auto &fname : logfiles) {
-    int fd = open(fname.c_str(), O_CREAT|O_WRONLY|O_TRUNC, 0664);
+    int fd = open(fname.c_str(), open_flags, 0664);
     if (fd == -1) {
       perror("open");
       ALWAYS_ASSERT(false);
@@ -244,6 +289,8 @@ txn_logger::writer(
   NDB_MEMSET(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
   NDB_MEMSET(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
 
+  const bool needs_fsync = GetFlushMethod() != FLUSH_METHOD_O_DSYNC;
+
   // NOTE: a core id in the persistence system really represets
   // all cores in the regular system modulo g_nworkers
   size_t nbufswritten = 0, nbyteswritten = 0;
@@ -298,7 +345,7 @@ txn_logger::writer(
 
           const size_t pxlen = PXLEN(px);
 
-          iovs[nbufswritten].iov_len = pxlen;
+          iovs[nbufswritten].iov_len = util::round_up<size_t, LG_BLKSIZE>(pxlen);
           evt_avg_log_buffer_iov_len.offer(pxlen);
           px->io_scheduled_ = true;
           nbufswritten++;
@@ -351,7 +398,7 @@ txn_logger::writer(
         ALWAYS_ASSERT(false);
       }
 
-      if (g_call_fsync) {
+      if (g_call_fsync && needs_fsync) {
         const int fret = fdatasync(fd);
         if (unlikely(fret == -1)) {
           perror("fdatasync");
