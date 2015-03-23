@@ -32,8 +32,8 @@ btree<P>::node::base_invariant_unique_keys_check() const
     prev.first = keys_[0];
     prev.second = leaf->keyslice_length(0);
     ALWAYS_ASSERT(prev.second <= 9);
-    ALWAYS_ASSERT(!leaf->value_is_layer(0) || prev.second == 9);
-    if (!leaf->value_is_layer(0) && prev.second == 9) {
+    ALWAYS_ASSERT(!leaf->is_layer(0) || prev.second == 9);
+    if (!leaf->is_layer(0) && prev.second == 9) {
       ALWAYS_ASSERT(leaf->suffixes_);
       ALWAYS_ASSERT(leaf->suffixes_[0].size() >= 1);
     }
@@ -42,8 +42,8 @@ btree<P>::node::base_invariant_unique_keys_check() const
       cur_key.first = keys_[i];
       cur_key.second = leaf->keyslice_length(i);
       ALWAYS_ASSERT(cur_key.second <= 9);
-      ALWAYS_ASSERT(!leaf->value_is_layer(i) || cur_key.second == 9);
-      if (!leaf->value_is_layer(i) && cur_key.second == 9) {
+      ALWAYS_ASSERT(!leaf->is_layer(i) || cur_key.second == 9);
+      if (!leaf->is_layer(i) && cur_key.second == 9) {
         ALWAYS_ASSERT(leaf->suffixes_);
         ALWAYS_ASSERT(leaf->suffixes_[i].size() >= 1);
       }
@@ -136,7 +136,7 @@ btree<P>::leaf_node::invariant_checker_impl(const key_slice *min_key,
   ALWAYS_ASSERT(is_root || this->key_slots_used() > 0);
   size_t n = this->key_slots_used();
   for (size_t i = 0; i < n; i++)
-    if (this->value_is_layer(i))
+    if (this->is_layer(i))
       this->values_[i].n_->invariant_checker(NULL, NULL, NULL, NULL, true);
 }
 
@@ -210,7 +210,7 @@ btree<P>::recursive_delete(node *n)
 #endif
     size_t n = leaf->key_slots_used();
     for (size_t i = 0; i < n; i++)
-      if (leaf->value_is_layer(i))
+      if (leaf->is_layer(i))
         recursive_delete(leaf->values_[i].n_);
     leaf_node::deleter(leaf);
   } else {
@@ -278,7 +278,7 @@ process:
       if (ret != -1) {
         // found
         typename leaf_node::value_or_node_ptr vn = leaf->values_[ret];
-        const bool is_layer = leaf->value_is_layer(ret);
+        const bool is_layer = leaf->is_layer(ret);
         INVARIANT(!is_layer || kslicelen == 9);
         varkey suffix(leaf->suffix(ret));
         if (unlikely(!leaf->check_version(version)))
@@ -434,7 +434,7 @@ btree<P>::search_range_at_layer(
         buf.emplace_back(
             leaf->keys_[i],
             leaf->values_[i],
-            leaf->value_is_layer(i),
+            leaf->is_layer(i),
             leaf->keyslice_length(i),
             leaf->suffix(i));
     }
@@ -653,7 +653,7 @@ btree<P>::tree_walk(tree_walk_callback &callback) const
       const size_t n = leaf->key_slots_used();
       std::vector<node *> layers;
       for (size_t i = 0; i < n; i++)
-        if (leaf->value_is_layer(i))
+        if (leaf->is_layer(i))
           layers.push_back(leaf->values_[i].n_);
       leaf_node *next = leaf->next_;
       callback.on_node_begin(leaf);
@@ -677,7 +677,7 @@ btree<P>::size_walk_callback::on_node_begin(const node_opaque_t *n)
   const leaf_node *leaf = (const leaf_node *) n;
   const size_t sz = leaf->key_slots_used();
   for (size_t i = 0; i < sz; i++)
-    if (!leaf->value_is_layer(i))
+    if (!leaf->is_layer(i))
       spec_size_++;
 }
 
@@ -843,7 +843,7 @@ retry_cur_leaf:
     if (lenmatch != -1) {
       // exact match case
       if (kslicelen <= 8 ||
-          (!resp_leaf->value_is_layer(lenmatch) &&
+          (!resp_leaf->is_layer(lenmatch) &&
            resp_leaf->suffix(lenmatch) == k.shift())) {
         const uint64_t locked_version = resp_leaf->lock();
         if (unlikely(!btree::CheckVersion(version, locked_version))) {
@@ -861,7 +861,7 @@ retry_cur_leaf:
         return UnlockAndReturn(locked_nodes, I_NONE_NOMOD);
       }
       INVARIANT(kslicelen == 9);
-      if (resp_leaf->value_is_layer(lenmatch)) {
+      if (resp_leaf->is_layer(lenmatch)) {
         node *subroot = resp_leaf->values_[lenmatch].n_;
         INVARIANT(subroot);
         if (unlikely(!resp_leaf->check_version(version)))
@@ -900,7 +900,7 @@ retry_cur_leaf:
           }
 
           INVARIANT(lenmatch != -1);
-          INVARIANT(resp_leaf->value_is_layer(lenmatch));
+          INVARIANT(resp_leaf->is_layer(lenmatch));
           subroot = resp_leaf->values_[lenmatch].n_;
           INVARIANT(subroot->is_modifying());
           INVARIANT(subroot->is_lock_owner());
@@ -1446,7 +1446,7 @@ retry_cur_leaf:
       return UnlockAndReturn(locked_nodes, R_NONE_NOMOD);
     }
     if (kslicelen == 9) {
-      if (resp_leaf->value_is_layer(ret)) {
+      if (resp_leaf->is_layer(ret)) {
         node *subroot = resp_leaf->values_[ret].n_;
         INVARIANT(subroot);
         if (unlikely(!resp_leaf->check_version(version)))
@@ -1516,7 +1516,7 @@ retry_cur_leaf:
       }
     }
 
-    //INVARIANT(!resp_leaf->value_is_layer(ret));
+    //INVARIANT(!resp_leaf->is_layer(ret));
     if (n > NMinKeysPerNode) {
       const uint64_t locked_version = resp_leaf->lock();
       if (unlikely(!btree::CheckVersion(version, locked_version))) {
@@ -2013,7 +2013,7 @@ btree<P>::NodeStringify(const node_opaque_t *n)
     std::vector<std::string> lengths;
     for (size_t i = 0; i < leaf->key_slots_used(); i++) {
       std::ostringstream inf;
-      inf << "<l=" << leaf->keyslice_length(i) << ",is_layer=" << leaf->value_is_layer(i) << ">";
+      inf << "<l=" << leaf->keyslice_length(i) << ",is_layer=" << leaf->is_layer(i) << ">";
       lengths.push_back(inf.str());
     }
     b << ", lengths=" << util::format_list(lengths.begin(), lengths.end());
@@ -2036,7 +2036,7 @@ btree<P>::ExtractValues(const node_opaque_t *n)
   const leaf_node *leaf = (const leaf_node *) n;
   const size_t sz = leaf->key_slots_used();
   for (size_t i = 0; i < sz; i++)
-    if (!leaf->value_is_layer(i))
+    if (!leaf->is_layer(i))
       ret.emplace_back(leaf->values_[i].v_, leaf->keyslice_length(i) > 8);
   return ret;
 }
