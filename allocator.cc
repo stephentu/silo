@@ -335,7 +335,7 @@ allocator::FaultRegion(size_t cpu)
     reinterpret_cast<uintptr_t>(pc.region_end) -
     reinterpret_cast<uintptr_t>(pc.region_begin);
   void * const x = mmap(pc.region_begin, sz, PROT_READ | PROT_WRITE,
-      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_HUGETLB, -1, 0);
   if (unlikely(x == MAP_FAILED)) {
     perror("mmap");
     std::cerr << "  cpu" << cpu
@@ -345,7 +345,7 @@ allocator::FaultRegion(size_t cpu)
   }
   ALWAYS_ASSERT(x == pc.region_begin);
   const int advice =
-    UseMAdvWillNeed() ? MADV_HUGEPAGE | MADV_WILLNEED : MADV_HUGEPAGE;
+    UseMAdvWillNeed() ? MADV_WILLNEED : MADV_NORMAL;
   if (madvise(x, sz, advice)) {
     perror("madvise");
     ALWAYS_ASSERT(false);
